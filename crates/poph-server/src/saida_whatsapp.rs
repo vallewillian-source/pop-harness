@@ -27,7 +27,7 @@ use std::time::{Duration, Instant};
 use poph_agent::Backoff;
 use poph_agent::entrada_saida::FalhaEnvio;
 use poph_agent::fila_integracao::{chave_idempotencia, comando_do_item};
-use poph_evolution::{BlobsEmDisco, FonteDeMidia, WhatsAppEvolution};
+use poph_evolution::{AttachmentSource, DiskBlobs, WhatsAppEvolution};
 use poph_store::{OutboxItem, Store, StoreError};
 use poph_types::{IntegrationId, OrgId, OutboxId};
 
@@ -101,14 +101,14 @@ impl SaidaWhatsApp {
         pasta_blobs: PathBuf,
         opcoes: OpcoesSaidaWhatsApp,
     ) -> Self {
-        let fonte: Arc<dyn FonteDeMidia> = Arc::new(BlobsEmDisco::nova(pasta_blobs));
+        let fonte: Arc<dyn AttachmentSource> = Arc::new(DiskBlobs::new(pasta_blobs));
         let canais = canais
             .iter()
             .map(|instancia| CanalSaida {
                 org: instancia.org,
                 integracao: instancia.integracao,
                 canal: instancia.cliente.as_ref().map(|cliente| {
-                    Arc::new(WhatsAppEvolution::para_saida(
+                    Arc::new(WhatsAppEvolution::for_output(
                         cliente.clone(),
                         instancia.integracao,
                         Arc::clone(&fonte),
@@ -272,7 +272,7 @@ impl SaidaWhatsApp {
                 return Ok(());
             }
         };
-        match canal.enviar_com_recibo(comando).await {
+        match canal.send_with_receipt(comando).await {
             Ok(id_externo) => {
                 // O id que a Evolution deu à mensagem vai para a fila (MX-40): é o que a fase 2 usa
                 // para reconhecer o eco do próprio envio. Canal sem id grava sem id.

@@ -33,8 +33,8 @@ use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasFluxo, MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{Motor, OpcoesTurno, ProcessadorTurno};
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, LlmProvider, Script, Usage};
-use poph_evolution::webhook::CABECALHO_SEGREDO;
-use poph_evolution::{ClienteEvolution, ConfigEvolution, TETO_MIDIA};
+use poph_evolution::webhook::SECRET_HEADER;
+use poph_evolution::{ATTACHMENT_CAP, ConfigEvolution, EvolutionClient};
 use poph_server::Estado;
 use poph_server::evolution::CanalEvolution;
 use poph_store::{
@@ -259,8 +259,8 @@ impl Cenario {
 
     /// Instância `loja`, com segredo e cliente de envio apontando para a Evolution falsa.
     fn canal(&self) -> CanalEvolution {
-        let cliente = ClienteEvolution::novo(
-            ConfigEvolution::novo(
+        let cliente = EvolutionClient::new(
+            ConfigEvolution::new(
                 self.url_evo.clone(),
                 INSTANCIA,
                 Secret::new(CHAVE_EVO.to_owned()),
@@ -274,7 +274,7 @@ impl Cenario {
             integracao: self.integracao,
             segredo: Some(Secret::new(SEGREDO.to_owned())),
             cliente: Some(cliente),
-            teto_midia: TETO_MIDIA,
+            teto_midia: ATTACHMENT_CAP,
         }
     }
 
@@ -439,7 +439,7 @@ impl Servidor {
         let resposta = self
             .cliente
             .post(url)
-            .header(CABECALHO_SEGREDO, SEGREDO)
+            .header(SECRET_HEADER, SEGREDO)
             .json(&corpo)
             .send()
             .await

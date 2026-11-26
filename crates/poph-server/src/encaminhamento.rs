@@ -168,7 +168,7 @@ pub fn org_do_caminho(caminho: &str) -> Option<&str> {
 fn teto_do_caminho(caminho: &str) -> usize {
     let segmentos: Vec<&str> = caminho.trim_start_matches('/').split('/').collect();
     if segmentos.len() >= 2 && segmentos[0] == "webhook" && segmentos[1] == "evolution" {
-        return poph_evolution::TETO_CORPO_PADRAO as usize;
+        return poph_evolution::DEFAULT_BODY_CAP as usize;
     }
     if caminho.ends_with("/backup/import") {
         return LIMITE_IMPORTACAO_BYTES as usize;
@@ -789,7 +789,7 @@ mod testes {
     fn teto_de_corpo_espelha_o_da_rota() {
         assert_eq!(
             teto_do_caminho("/webhook/evolution/org_01/loja"),
-            poph_evolution::TETO_CORPO_PADRAO as usize
+            poph_evolution::DEFAULT_BODY_CAP as usize
         );
         assert_eq!(
             teto_do_caminho("/admin/v1/orgs/org_01/backup/import"),

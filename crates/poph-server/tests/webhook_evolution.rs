@@ -22,7 +22,7 @@ use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::routing::post;
-use poph_evolution::{ClienteEvolution, ConfigEvolution, TETO_MIDIA};
+use poph_evolution::{ATTACHMENT_CAP, ConfigEvolution, EvolutionClient};
 use poph_server::Estado;
 use poph_server::evolution::{CanalEvolution, canais_da_configuracao};
 use poph_store::{NewAgent, NewOrg, Page, Store};
@@ -202,8 +202,8 @@ impl Cenario {
             .expect("id da integração");
 
         let (url_evo, downloads) = subir_evolucao_falsa().await;
-        let cliente_evo = ClienteEvolution::novo(
-            ConfigEvolution::novo(url_evo, "loja", Secret::new(CHAVE_EVO.to_owned()))
+        let cliente_evo = EvolutionClient::new(
+            ConfigEvolution::new(url_evo, "loja", Secret::new(CHAVE_EVO.to_owned()))
                 .expect("config da Evolution falsa"),
         )
         .expect("cliente da Evolution falsa");
@@ -215,7 +215,7 @@ impl Cenario {
                 integracao,
                 segredo: Some(Secret::new(SEGREDO.to_owned())),
                 cliente: Some(cliente_evo),
-                teto_midia: TETO_MIDIA,
+                teto_midia: ATTACHMENT_CAP,
             },
             // Instância cuja integração não existe no banco.
             CanalEvolution {
@@ -224,7 +224,7 @@ impl Cenario {
                 integracao: IntegrationId::generate(),
                 segredo: Some(Secret::new(SEGREDO.to_owned())),
                 cliente: None,
-                teto_midia: TETO_MIDIA,
+                teto_midia: ATTACHMENT_CAP,
             },
             // Instância sem segredo no ambiente: sempre 401.
             CanalEvolution {
@@ -233,7 +233,7 @@ impl Cenario {
                 integracao,
                 segredo: None,
                 cliente: None,
-                teto_midia: TETO_MIDIA,
+                teto_midia: ATTACHMENT_CAP,
             },
         ];
         let estado = Estado::novo(Arc::clone(&store), config)

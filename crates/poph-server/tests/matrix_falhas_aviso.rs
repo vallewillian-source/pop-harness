@@ -29,7 +29,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{post, put};
 use poph_agent::Backoff;
-use poph_evolution::{ClienteEvolution, ConfigEvolution, TETO_MIDIA};
+use poph_evolution::{ATTACHMENT_CAP, ConfigEvolution, EvolutionClient};
 use poph_matrix::{ClienteMatrix, ConfigCliente, IdsFantasmas};
 use poph_server::evolution::CanalEvolution;
 use poph_server::matrix_falhas_aviso::{AvisoDeFalhas, AvisoNoSynapse, PortaFalhasDoHarness};
@@ -287,8 +287,8 @@ impl Cenario {
 
         let (url_synapse, synapse) = subir_synapse_falso().await;
         let (url_evo, evo) = subir_evolution_falsa().await;
-        let cliente = ClienteEvolution::novo(
-            ConfigEvolution::novo(url_evo, INSTANCIA, Secret::new(CHAVE_EVO.to_owned()))
+        let cliente = EvolutionClient::new(
+            ConfigEvolution::new(url_evo, INSTANCIA, Secret::new(CHAVE_EVO.to_owned()))
                 .expect("config da Evolution falsa"),
         )
         .expect("cliente da Evolution falsa");
@@ -298,7 +298,7 @@ impl Cenario {
             integracao,
             segredo: None,
             cliente: Some(cliente),
-            teto_midia: TETO_MIDIA,
+            teto_midia: ATTACHMENT_CAP,
         }];
         let opcoes = OpcoesSaidaWhatsApp {
             // Espera curta para a nova tentativa não depender de relógio.

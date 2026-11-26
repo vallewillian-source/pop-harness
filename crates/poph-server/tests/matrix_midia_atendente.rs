@@ -36,7 +36,7 @@ use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
-use poph_evolution::{ClienteEvolution, ConfigEvolution, TETO_MIDIA};
+use poph_evolution::{ATTACHMENT_CAP, ConfigEvolution, EvolutionClient};
 use poph_matrix::{ClienteMatrix, ConfigCliente, IdsFantasmas};
 use poph_server::evolution::CanalEvolution;
 use poph_server::{Estado, PortaDoHarness, ReceptorAs, RespostaDoAtendente};
@@ -461,8 +461,8 @@ impl Cenario {
     }
 
     fn canal(&self) -> CanalEvolution {
-        let cliente = ClienteEvolution::novo(
-            ConfigEvolution::novo(
+        let cliente = EvolutionClient::new(
+            ConfigEvolution::new(
                 self.url_evo.clone(),
                 INSTANCIA,
                 Secret::new(CHAVE_EVO.to_owned()),
@@ -483,7 +483,7 @@ impl Cenario {
             integracao,
             segredo: Some(Secret::new(SEGREDO_WEBHOOK.to_owned())),
             cliente: Some(cliente),
-            teto_midia: TETO_MIDIA,
+            teto_midia: ATTACHMENT_CAP,
         }
     }
 

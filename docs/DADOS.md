@@ -493,7 +493,7 @@ padrão, aditiva: itens já enviados ficam com `NULL` (o id deles nunca foi guar
 - **Canal sem id:** plugin em processo externo pode não devolver id, e a Evolution pode responder
   sem `key.id`. Aí a coluna fica `NULL`, e isso **não** é falha de envio: o contrato do canal
   (`FuturoComando`, em `poph-types`) não carrega id; quem precisa dele usa
-  `WhatsAppEvolution::enviar_com_recibo` (`FuturoRecibo`).
+  `WhatsAppEvolution::send_with_receipt` (`ReceiptFuture`).
 - **Leitura:** `caixa_saida().id_externo(org, id)`. Fica fora do formato de `ItemSaida` de
   propósito — o formato do item é usado por outros crates e a coluna é detalhe do canal.
 - **Backup:** a coluna viaja com `outbox` no `--com-conversas`; arquivo antigo, sem ela, importa e

@@ -31,7 +31,7 @@ use axum::{
     extract::{Path, State, rejection::JsonRejection},
     http::{HeaderMap, StatusCode},
 };
-use poph_evolution::{ClienteEvolution, ErroEvolution};
+use poph_evolution::{EvolutionClient, EvolutionError};
 use poph_store::AdminIntegration;
 use poph_types::{AgentId, IntegrationId, OrgId};
 use serde::Deserialize;
@@ -68,7 +68,7 @@ struct Alvo {
     integracao: AdminIntegration,
     /// Nome da instância na Evolution (o mesmo do caminho do webhook).
     instancia: String,
-    cliente: ClienteEvolution,
+    cliente: EvolutionClient,
 }
 
 impl Alvo {
@@ -143,20 +143,20 @@ fn gravar_estado(e: &Estado, alvo: &Alvo, estado: &str) -> Result<(), ApiError> 
 
 /// Erro da Evolution no formato da API. A mensagem do provedor já vem limpa (sem chave, sem
 /// número e cortada) do cliente.
-fn erro_evolution(erro: ErroEvolution, operacao: &str) -> ApiError {
+fn erro_evolution(erro: EvolutionError, operacao: &str) -> ApiError {
     match &erro {
-        ErroEvolution::Rede(_) => ApiError::novo(
+        EvolutionError::Network(_) => ApiError::novo(
             StatusCode::SERVICE_UNAVAILABLE,
             "evolution_indisponivel",
             format!("não consegui falar com a Evolution em `{operacao}`; tente de novo"),
         ),
-        ErroEvolution::Resposta { status, mensagem } => ApiError::novo(
+        EvolutionError::Response { status, message } => ApiError::novo(
             StatusCode::BAD_GATEWAY,
             "evolution_recusou",
-            format!("a Evolution recusou `{operacao}`: {mensagem}"),
+            format!("a Evolution recusou `{operacao}`: {message}"),
         )
         .com_detalhes(json!({ "evolution_status": status })),
-        ErroEvolution::RespostaInvalida(motivo) => ApiError::novo(
+        EvolutionError::InvalidResponse(motivo) => ApiError::novo(
             StatusCode::BAD_GATEWAY,
             "evolution_resposta_invalida",
             format!("a resposta da Evolution não serve para `{operacao}`: {motivo}"),
@@ -173,10 +173,10 @@ fn erro_evolution(erro: ErroEvolution, operacao: &str) -> ApiError {
 ///
 /// Nesse caso a instância é reaproveitada: quem clica em "gerar QR" de novo não pode receber erro
 /// só porque a instância foi criada na primeira vez.
-fn instancia_ja_existe(erro: &ErroEvolution) -> bool {
+fn instancia_ja_existe(erro: &EvolutionError) -> bool {
     match erro {
-        ErroEvolution::Resposta { status, mensagem } => {
-            let texto = mensagem.to_ascii_lowercase();
+        EvolutionError::Response { status, message } => {
+            let texto = message.to_ascii_lowercase();
             (*status == 403 || *status == 409 || *status == 422)
                 && ["already", "in use", "existe"]
                     .iter()
@@ -197,9 +197,9 @@ fn connection_state(bruto: &str) -> &'static str {
 }
 
 /// Lê o estado ao vivo, sem derrubar a rota quando a Evolution não responde.
-async fn estado_opcional(cliente: &ClienteEvolution) -> Option<String> {
+async fn estado_opcional(cliente: &EvolutionClient) -> Option<String> {
     cliente
-        .estado_conexao()
+        .connection_state()
         .await
         .ok()
         .map(|estado| estado.trim().to_ascii_lowercase())
@@ -235,20 +235,20 @@ pub async fn qrcode(
     }
 
     // Cria a instância quando ela ainda não existe; se já existe, segue para o pareamento.
-    match alvo.cliente.criar_instancia().await {
+    match alvo.cliente.create_instance().await {
         Ok(_) => {}
         Err(erro) if instancia_ja_existe(&erro) => {}
         Err(erro) => return Err(erro_evolution(erro, "criar instância")),
     }
     let pareamento = alvo
         .cliente
-        .conectar(numero.as_deref())
+        .connect(numero.as_deref())
         .await
         .map_err(|erro| erro_evolution(erro, "parear"))?;
 
     if pareamento.qr_base64.is_none()
-        && pareamento.qr_texto.is_none()
-        && pareamento.codigo_pareamento.is_none()
+        && pareamento.qr_text.is_none()
+        && pareamento.pairing_code.is_none()
     {
         return Err(ApiError::novo(
             StatusCode::BAD_GATEWAY,
@@ -273,12 +273,12 @@ pub async fn qrcode(
         "connection_state": "awaiting_scan",
         "qrcode": {
             "base64": pareamento.qr_base64,
-            "code": pareamento.qr_texto,
-            "count": pareamento.contador,
+            "code": pareamento.qr_text,
+            "count": pareamento.counter,
         },
         // A Evolution v2 não informa prazo: o QR gira a cada ~20 s e o `count` é o sinal.
         "expira_em": Value::Null,
-        "pairing_code": pareamento.codigo_pareamento,
+        "pairing_code": pareamento.pairing_code,
     })))
 }
 
@@ -291,7 +291,7 @@ pub async fn estado(
     let alvo = alvo(&e, &ident, &c)?;
     let bruto = alvo
         .cliente
-        .estado_conexao()
+        .connection_state()
         .await
         .map_err(|erro| erro_evolution(erro, "estado"))?
         .trim()

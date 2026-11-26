@@ -39,8 +39,8 @@ use poph_agent::limites::{Limitador, OpcoesLimites};
 use poph_agent::metricas::{MetricasFluxo, MetricasMemoria, MetricasTurno};
 use poph_agent::turno::{Motor, OpcoesTurno, ProcessadorTurno};
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, LlmProvider, Script, Usage};
-use poph_evolution::webhook::CABECALHO_SEGREDO;
-use poph_evolution::{ClienteEvolution, ConfigEvolution, TETO_MIDIA};
+use poph_evolution::webhook::SECRET_HEADER;
+use poph_evolution::{ATTACHMENT_CAP, ConfigEvolution, EvolutionClient};
 use poph_matrix::cliente::{ClienteMatrix, ConfigCliente};
 use poph_matrix::config::{ModuloMatrix, SegredosMatrix};
 use poph_matrix::espacos::{DepartamentoEspaco, Espacos, LimitesConvite, Posicao, SalaParaEspaco};
@@ -1030,7 +1030,7 @@ impl Servidor {
         );
         self.http
             .post(url)
-            .header(CABECALHO_SEGREDO, SEGREDO_WEBHOOK)
+            .header(SECRET_HEADER, SEGREDO_WEBHOOK)
             .json(&corpo)
             .send()
             .await
@@ -1083,8 +1083,8 @@ async fn subir_servidor(
         .id
         .parse()
         .expect("id da integração");
-    let cliente_evo = ClienteEvolution::novo(
-        ConfigEvolution::novo(url_evo, INSTANCIA, Secret::new(CHAVE_EVO.to_owned()))
+    let cliente_evo = EvolutionClient::new(
+        ConfigEvolution::new(url_evo, INSTANCIA, Secret::new(CHAVE_EVO.to_owned()))
             .expect("config da Evolution falsa"),
     )
     .expect("cliente da Evolution falsa");
@@ -1094,7 +1094,7 @@ async fn subir_servidor(
         integracao,
         segredo: Some(Secret::new(SEGREDO_WEBHOOK.to_owned())),
         cliente: Some(cliente_evo),
-        teto_midia: TETO_MIDIA,
+        teto_midia: ATTACHMENT_CAP,
     };
     store
         .instructions()

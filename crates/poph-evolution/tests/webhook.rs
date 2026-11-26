@@ -3,8 +3,8 @@
 //! Nada de rede aqui: são os corpos que a Evolution entrega, incluindo os que o POP Atende já trata
 //! hoje (eco da própria mensagem, grupo, figurinha, legenda em imagem, documento PDF).
 
-use poph_evolution::webhook::{Decisao, MotivoIgnorado, Politica, conferir_segredo, interpretar};
-use poph_evolution::{ErroWebhook, anexo_embutido};
+use poph_evolution::webhook::{Decision, IgnoreReason, Policy, check_secret, interpret};
+use poph_evolution::{WebhookError, embedded_attachment};
 use poph_types::{InboundAttachment, IntegrationId, Secret, StateEvent};
 use serde_json::{Value, json};
 
@@ -39,16 +39,16 @@ fn texto_simples_vira_evento_normalizado() {
         "messages.upsert",
         mensagem(json!({"conversation": "quero um orçamento de dedetização"})),
     );
-    let Decisao::Entrada(entrada) = interpretar(integracao(), &corpo, &Politica::default()) else {
+    let Decision::Inbound(entrada) = interpret(integracao(), &corpo, &Policy::default()) else {
         panic!("esperava entrada");
     };
-    assert_eq!(entrada.evento.id_externo, "3EB0A1B2C3D4");
-    assert_eq!(entrada.evento.peer, "5511999999999");
-    assert_eq!(entrada.evento.text, "quero um orçamento de dedetização");
-    assert_eq!(entrada.evento.occurred_at, 1_795_000_000_000);
-    assert_eq!(entrada.evento.attachments.len(), 0);
-    assert!(entrada.midias.is_empty());
-    assert_eq!(entrada.evento.validar(), Ok(()));
+    assert_eq!(entrada.event.id_externo, "3EB0A1B2C3D4");
+    assert_eq!(entrada.event.peer, "5511999999999");
+    assert_eq!(entrada.event.text, "quero um orçamento de dedetização");
+    assert_eq!(entrada.event.occurred_at, 1_795_000_000_000);
+    assert_eq!(entrada.event.attachments.len(), 0);
+    assert!(entrada.attachments.is_empty());
+    assert_eq!(entrada.event.validar(), Ok(()));
 }
 
 #[test]
@@ -57,10 +57,10 @@ fn texto_estendido_tambem_e_lido() {
         "messages.upsert",
         mensagem(json!({"extendedTextMessage": {"text": "e o prazo?"}})),
     );
-    let Decisao::Entrada(entrada) = interpretar(integracao(), &corpo, &Politica::default()) else {
+    let Decision::Inbound(entrada) = interpret(integracao(), &corpo, &Policy::default()) else {
         panic!("esperava entrada");
     };
-    assert_eq!(entrada.evento.text, "e o prazo?");
+    assert_eq!(entrada.event.text, "e o prazo?");
 }
 
 #[test]
@@ -72,14 +72,14 @@ fn imagem_sem_legenda_entra_como_anexo_a_baixar() {
             "fileLength": 204_800,
         }})),
     );
-    let Decisao::Entrada(entrada) = interpretar(integracao(), &corpo, &Politica::default()) else {
+    let Decision::Inbound(entrada) = interpret(integracao(), &corpo, &Policy::default()) else {
         panic!("esperava entrada");
     };
-    assert_eq!(entrada.evento.text, "");
-    assert_eq!(entrada.midias.len(), 1);
-    assert_eq!(entrada.midias[0].mime, "image/jpeg");
-    assert_eq!(entrada.midias[0].tamanho_declarado, Some(204_800));
-    assert_eq!(entrada.midias[0].nome, "imagem-3EB0A1B2C3D4.jpg");
+    assert_eq!(entrada.event.text, "");
+    assert_eq!(entrada.attachments.len(), 1);
+    assert_eq!(entrada.attachments[0].mime, "image/jpeg");
+    assert_eq!(entrada.attachments[0].declared_size, Some(204_800));
+    assert_eq!(entrada.attachments[0].name, "imagem-3EB0A1B2C3D4.jpg");
 }
 
 #[test]
@@ -91,11 +91,11 @@ fn imagem_com_legenda_leva_o_texto_junto() {
             "caption": "essa é a etiqueta do produto",
         }})),
     );
-    let Decisao::Entrada(entrada) = interpretar(integracao(), &corpo, &Politica::default()) else {
+    let Decision::Inbound(entrada) = interpret(integracao(), &corpo, &Policy::default()) else {
         panic!("esperava entrada");
     };
-    assert_eq!(entrada.evento.text, "essa é a etiqueta do produto");
-    assert_eq!(entrada.midias.len(), 1);
+    assert_eq!(entrada.event.text, "essa é a etiqueta do produto");
+    assert_eq!(entrada.attachments.len(), 1);
 }
 
 #[test]
@@ -108,12 +108,12 @@ fn pdf_entra_com_nome_original() {
             "fileLength": "524288",
         }})),
     );
-    let Decisao::Entrada(entrada) = interpretar(integracao(), &corpo, &Politica::default()) else {
+    let Decision::Inbound(entrada) = interpret(integracao(), &corpo, &Policy::default()) else {
         panic!("esperava entrada");
     };
-    assert_eq!(entrada.midias.len(), 1);
-    assert_eq!(entrada.midias[0].nome, "orcamento.pdf");
-    assert_eq!(entrada.midias[0].tamanho_declarado, Some(524_288));
+    assert_eq!(entrada.attachments.len(), 1);
+    assert_eq!(entrada.attachments[0].name, "orcamento.pdf");
+    assert_eq!(entrada.attachments[0].declared_size, Some(524_288));
 }
 
 #[test]
@@ -126,10 +126,8 @@ fn documento_de_tipo_nao_suportado_e_recusado_com_motivo() {
         }})),
     );
     assert_eq!(
-        interpretar(integracao(), &corpo, &Politica::default()),
-        Decisao::Ignorado(MotivoIgnorado::MimeNaoSuportado(
-            "application/zip".to_owned()
-        ))
+        interpret(integracao(), &corpo, &Policy::default()),
+        Decision::Ignored(IgnoreReason::MimeNotSupported("application/zip".to_owned()))
     );
 }
 
@@ -185,11 +183,11 @@ fn midia_fora_do_escopo_vira_texto_de_historico_sem_download() {
     ];
     for (message, tipo) in casos {
         let corpo = corpo("messages.upsert", mensagem(message.clone()));
-        match interpretar(integracao(), &corpo, &Politica::default()) {
-            Decisao::Entrada(entrada) => {
-                assert_eq!(entrada.evento.text, tipo.history_text(), "{message}");
-                assert!(entrada.midias.is_empty(), "não baixa mídia: {message}");
-                assert!(entrada.evento.attachments.is_empty(), "{message}");
+        match interpret(integracao(), &corpo, &Policy::default()) {
+            Decision::Inbound(entrada) => {
+                assert_eq!(entrada.event.text, tipo.history_text(), "{message}");
+                assert!(entrada.attachments.is_empty(), "não baixa mídia: {message}");
+                assert!(entrada.event.attachments.is_empty(), "{message}");
             }
             outra => panic!("esperava texto de histórico para {message}, veio {outra:?}"),
         }
@@ -202,9 +200,9 @@ fn legenda_de_video_nao_entra_no_historico_como_no_python() {
         "messages.upsert",
         mensagem(json!({"videoMessage": {"mimetype": "video/mp4", "caption": "olha isso"}})),
     );
-    match interpretar(integracao(), &corpo, &Politica::default()) {
-        Decisao::Entrada(entrada) => assert_eq!(
-            entrada.evento.text,
+    match interpret(integracao(), &corpo, &Policy::default()) {
+        Decision::Inbound(entrada) => assert_eq!(
+            entrada.event.text,
             poph_types::UnsupportedContent::Video.history_text()
         ),
         outra => panic!("esperava entrada, veio {outra:?}"),
@@ -218,12 +216,12 @@ fn eco_de_midia_fora_do_escopo_do_aparelho_continua_descartado() {
     let mut data = mensagem(json!({"audioMessage": {"mimetype": "audio/ogg"}}));
     data["key"]["fromMe"] = json!(true);
     let corpo = corpo("messages.upsert", data);
-    let politica = Politica {
-        aceitar_de_mim: true,
+    let politica = Policy {
+        accept_from_me: true,
     };
     assert_eq!(
-        interpretar(integracao(), &corpo, &politica),
-        Decisao::Ignorado(MotivoIgnorado::MidiaNaoSuportada("audio".to_owned()))
+        interpret(integracao(), &corpo, &politica),
+        Decision::Ignored(IgnoreReason::AttachmentNotSupported("audio".to_owned()))
     );
 }
 
@@ -238,8 +236,8 @@ fn evento_sem_conteudo_conhecido_continua_descartado() {
     ] {
         let corpo = corpo("messages.upsert", mensagem(message.clone()));
         assert_eq!(
-            interpretar(integracao(), &corpo, &Politica::default()),
-            Decisao::Ignorado(MotivoIgnorado::SemConteudo),
+            interpret(integracao(), &corpo, &Policy::default()),
+            Decision::Ignored(IgnoreReason::NoContent),
             "{message}"
         );
     }
@@ -251,16 +249,16 @@ fn eco_da_propria_mensagem_e_descartado() {
     data["key"]["fromMe"] = json!(true);
     let corpo = corpo("messages.upsert", data);
     assert_eq!(
-        interpretar(integracao(), &corpo, &Politica::default()),
-        Decisao::Ignorado(MotivoIgnorado::DeMimMesmo)
+        interpret(integracao(), &corpo, &Policy::default()),
+        Decision::Ignored(IgnoreReason::FromMe)
     );
     // Aceitar de mim é do chamador: o servidor liga para a org com o módulo Matrix ativo (MX-41).
-    let politica = Politica {
-        aceitar_de_mim: true,
+    let politica = Policy {
+        accept_from_me: true,
     };
     assert!(matches!(
-        interpretar(integracao(), &corpo, &politica),
-        Decisao::Entrada(_)
+        interpret(integracao(), &corpo, &politica),
+        Decision::Inbound(_)
     ));
 }
 
@@ -270,12 +268,12 @@ fn grupo_usa_o_jid_como_destino_e_separa_quem_escreveu() {
     data["key"]["remoteJid"] = json!("120363000000000000@g.us");
     data["key"]["participant"] = json!("5511888888888@s.whatsapp.net");
     let corpo = corpo("messages.upsert", data);
-    let Decisao::Entrada(entrada) = interpretar(integracao(), &corpo, &Politica::default()) else {
+    let Decision::Inbound(entrada) = interpret(integracao(), &corpo, &Policy::default()) else {
         panic!("esperava entrada");
     };
-    assert_eq!(entrada.evento.peer, "120363000000000000@g.us");
+    assert_eq!(entrada.event.peer, "120363000000000000@g.us");
     assert_eq!(
-        entrada.evento.remetente.as_deref(),
+        entrada.event.remetente.as_deref(),
         Some("5511888888888@s.whatsapp.net")
     );
 }
@@ -285,10 +283,10 @@ fn jid_com_dispositivo_perde_o_sufixo() {
     let mut data = mensagem(json!({"conversation": "oi"}));
     data["key"]["remoteJid"] = json!("5511999999999:12@s.whatsapp.net");
     let corpo = corpo("messages.upsert", data);
-    let Decisao::Entrada(entrada) = interpretar(integracao(), &corpo, &Politica::default()) else {
+    let Decision::Inbound(entrada) = interpret(integracao(), &corpo, &Policy::default()) else {
         panic!("esperava entrada");
     };
-    assert_eq!(entrada.evento.peer, "5511999999999");
+    assert_eq!(entrada.event.peer, "5511999999999");
 }
 
 #[test]
@@ -296,23 +294,23 @@ fn mensagem_sem_id_ou_sem_remetente_e_descartada() {
     let mut sem_id = mensagem(json!({"conversation": "oi"}));
     sem_id["key"].as_object_mut().unwrap().remove("id");
     assert_eq!(
-        interpretar(
+        interpret(
             integracao(),
             &corpo("messages.upsert", sem_id),
-            &Politica::default()
+            &Policy::default()
         ),
-        Decisao::Ignorado(MotivoIgnorado::SemId)
+        Decision::Ignored(IgnoreReason::MissingId)
     );
 
     let mut sem_jid = mensagem(json!({"conversation": "oi"}));
     sem_jid["key"].as_object_mut().unwrap().remove("remoteJid");
     assert_eq!(
-        interpretar(
+        interpret(
             integracao(),
             &corpo("messages.upsert", sem_jid),
-            &Politica::default()
+            &Policy::default()
         ),
-        Decisao::Ignorado(MotivoIgnorado::SemRemetente)
+        Decision::Ignored(IgnoreReason::MissingSender)
     );
 }
 
@@ -321,12 +319,12 @@ fn mensagem_sem_hora_valida_e_descartada() {
     let mut data = mensagem(json!({"conversation": "oi"}));
     data["messageTimestamp"] = json!("nao-e-numero");
     assert_eq!(
-        interpretar(
+        interpret(
             integracao(),
             &corpo("messages.upsert", data),
-            &Politica::default()
+            &Policy::default()
         ),
-        Decisao::Ignorado(MotivoIgnorado::SemTimestamp)
+        Decision::Ignored(IgnoreReason::MissingTimestamp)
     );
 }
 
@@ -337,10 +335,8 @@ fn evento_desconhecido_e_ignorado_com_o_nome() {
         json!({"id": "5511999999999@s.whatsapp.net"}),
     );
     assert_eq!(
-        interpretar(integracao(), &corpo, &Politica::default()),
-        Decisao::Ignorado(MotivoIgnorado::EventoDesconhecido(
-            "presence.update".to_owned()
-        ))
+        interpret(integracao(), &corpo, &Policy::default()),
+        Decision::Ignored(IgnoreReason::UnknownEvent("presence.update".to_owned()))
     );
 }
 
@@ -348,20 +344,20 @@ fn evento_desconhecido_e_ignorado_com_o_nome() {
 fn estado_de_conexao_vira_evento_de_estado() {
     let aberto = corpo("connection.update", json!({"state": "open"}));
     assert!(matches!(
-        interpretar(integracao(), &aberto, &Politica::default()),
-        Decisao::Estado(StateEvent::Connected { .. })
+        interpret(integracao(), &aberto, &Policy::default()),
+        Decision::State(StateEvent::Connected { .. })
     ));
     let fechado = corpo("connection.update", json!({"state": "close"}));
     assert!(matches!(
-        interpretar(integracao(), &fechado, &Politica::default()),
-        Decisao::Estado(StateEvent::Disconnected { .. })
+        interpret(integracao(), &fechado, &Policy::default()),
+        Decision::State(StateEvent::Disconnected { .. })
     ));
     let qr = corpo(
         "qrcode.updated",
         json!({"qrcode": {"base64": "data:image/png;base64,AAAA"}}),
     );
-    let Decisao::Estado(StateEvent::Qr { code: codigo, .. }) =
-        interpretar(integracao(), &qr, &Politica::default())
+    let Decision::State(StateEvent::Qr { code: codigo, .. }) =
+        interpret(integracao(), &qr, &Policy::default())
     else {
         panic!("esperava QR");
     };
@@ -371,28 +367,25 @@ fn estado_de_conexao_vira_evento_de_estado() {
 #[test]
 fn segredo_do_webhook_e_conferido() {
     let segredo = Secret::new("segredo-do-webhook".to_owned());
+    assert_eq!(check_secret(&segredo, Some("segredo-do-webhook")), Ok(()));
     assert_eq!(
-        conferir_segredo(&segredo, Some("segredo-do-webhook")),
-        Ok(())
+        check_secret(&segredo, Some("outro")),
+        Err(WebhookError::SecretMismatch)
     );
     assert_eq!(
-        conferir_segredo(&segredo, Some("outro")),
-        Err(ErroWebhook::SegredoInvalido)
-    );
-    assert_eq!(
-        conferir_segredo(&segredo, None),
-        Err(ErroWebhook::SegredoAusente)
+        check_secret(&segredo, None),
+        Err(WebhookError::SecretMissing)
     );
     // Sem segredo configurado, nada é aceito.
     assert_eq!(
-        conferir_segredo(&Secret::new(String::new()), Some("qualquer")),
-        Err(ErroWebhook::SemSegredoConfigurado)
+        check_secret(&Secret::new(String::new()), Some("qualquer")),
+        Err(WebhookError::NoSecretConfigured)
     );
 }
 
 #[test]
 fn anexo_embutido_leva_o_conteudo_em_base64() {
-    let anexo = anexo_embutido("nota.pdf", "application/pdf", b"%PDF-1.4");
+    let anexo = embedded_attachment("nota.pdf", "application/pdf", b"%PDF-1.4");
     let InboundAttachment::Bytes {
         name: nome,
         mime,
@@ -415,15 +408,15 @@ fn reentrega_do_mesmo_webhook_produz_o_mesmo_id_externo() {
         "messages.upsert",
         mensagem(json!({"conversation": "oi, preciso de ajuda"})),
     );
-    let Decisao::Entrada(primeira) = interpretar(integracao, &corpo, &Politica::default()) else {
+    let Decision::Inbound(primeira) = interpret(integracao, &corpo, &Policy::default()) else {
         panic!("esperava entrada");
     };
-    let Decisao::Entrada(segunda) = interpretar(integracao, &corpo, &Politica::default()) else {
+    let Decision::Inbound(segunda) = interpret(integracao, &corpo, &Policy::default()) else {
         panic!("esperava entrada");
     };
-    assert_eq!(primeira.evento.id_externo, segunda.evento.id_externo);
-    assert_eq!(primeira.evento.peer, segunda.evento.peer);
-    assert_eq!(primeira.evento.occurred_at, segunda.evento.occurred_at);
+    assert_eq!(primeira.event.id_externo, segunda.event.id_externo);
+    assert_eq!(primeira.event.peer, segunda.event.peer);
+    assert_eq!(primeira.event.occurred_at, segunda.event.occurred_at);
 }
 
 // ───────────────────────── nome do cliente (MX-32) ─────────────────────────
@@ -439,11 +432,11 @@ fn mensagem_com_nome(nome: Value, de_mim: bool, jid: &str) -> Value {
 
 fn push_name_da(dados: Value) -> Option<String> {
     let corpo = corpo("messages.upsert", dados);
-    let Decisao::Entrada(entrada) = interpretar(integracao(), &corpo, &Politica::default()) else {
+    let Decision::Inbound(entrada) = interpret(integracao(), &corpo, &Policy::default()) else {
         panic!("esperava entrada");
     };
     entrada
-        .evento
+        .event
         .metadata
         .get("push_name")
         .and_then(Value::as_str)
@@ -468,13 +461,13 @@ fn push_name_de_mensagem_do_proprio_aparelho_nao_vai() {
         "messages.upsert",
         mensagem_com_nome(json!("Dono da Loja"), true, "5511999999999@s.whatsapp.net"),
     );
-    let politica = Politica {
-        aceitar_de_mim: true,
+    let politica = Policy {
+        accept_from_me: true,
     };
-    let Decisao::Entrada(entrada) = interpretar(integracao(), &corpo, &politica) else {
+    let Decision::Inbound(entrada) = interpret(integracao(), &corpo, &politica) else {
         panic!("esperava entrada");
     };
-    assert!(entrada.evento.metadata.get("push_name").is_none());
+    assert!(entrada.event.metadata.get("push_name").is_none());
 }
 
 #[test]

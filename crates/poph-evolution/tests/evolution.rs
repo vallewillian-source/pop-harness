@@ -12,8 +12,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use poph_evolution::{
-    BlobsEmDisco, ClienteEvolution, ConfigCanal, ConfigEvolution, ErroEvolution, FonteDeMidia,
-    TETO_MIDIA, WhatsAppEvolution, conferir_segredo, interpretar,
+    ATTACHMENT_CAP, AttachmentSource, ChannelConfig, ConfigEvolution, DiskBlobs, EvolutionClient,
+    EvolutionError, WhatsAppEvolution, check_secret, interpret,
 };
 use poph_types::{
     EventSink, Integration, IntegrationError, IntegrationEvent, IntegrationId, IntegrationState,
@@ -128,24 +128,24 @@ fn responder(fluxo: &TcpStream, codigo: u16, corpo: &str) -> std::io::Result<()>
     fluxo.flush()
 }
 
-fn cliente(url: &str) -> ClienteEvolution {
-    ClienteEvolution::novo(
-        ConfigEvolution::novo(url, "pop-atende", Secret::new(CHAVE.to_owned()))
+fn cliente(url: &str) -> EvolutionClient {
+    EvolutionClient::new(
+        ConfigEvolution::new(url, "pop-atende", Secret::new(CHAVE.to_owned()))
             .expect("configuração válida")
-            .com_timeout(Duration::from_secs(5)),
+            .with_timeout(Duration::from_secs(5)),
     )
     .expect("cliente")
 }
 
 fn canal(url: &str) -> WhatsAppEvolution {
-    WhatsAppEvolution::novo(
+    WhatsAppEvolution::new(
         cliente(url),
-        ConfigCanal::novo(
+        ChannelConfig::new(
             IntegrationId::generate(),
             Secret::new("segredo-do-webhook".to_owned()),
         )
         .expect("configuração do canal"),
-        Arc::new(BlobsEmDisco::nova("/tmp/poph-evolution-testes-sem-blobs")),
+        Arc::new(DiskBlobs::new("/tmp/poph-evolution-testes-sem-blobs")),
     )
 }
 
@@ -155,7 +155,7 @@ fn canal(url: &str) -> WhatsAppEvolution {
 async fn texto_sai_no_formato_do_whatsapp_com_a_chave_no_cabecalho() {
     let (url, recebidos) = servidor(vec![ok(json!({"key": {"id": "ID-1"}}))]);
     let enviado = cliente(&url)
-        .enviar_texto("5511999999999", "**negrito** e _italico_")
+        .send_text("5511999999999", "**negrito** e _italico_")
         .await
         .expect("envio");
     assert_eq!(enviado.as_deref(), Some("ID-1"));
@@ -178,7 +178,7 @@ async fn texto_longo_sai_cortado_no_limite_do_canal() {
     let (url, recebidos) = servidor(vec![ok(json!({}))]);
     let longo = "palavra ".repeat(1000);
     cliente(&url)
-        .enviar_texto("5511999999999", &longo)
+        .send_text("5511999999999", &longo)
         .await
         .expect("envio");
     let pedidos = recebidos.lock().unwrap();
@@ -186,7 +186,7 @@ async fn texto_longo_sai_cortado_no_limite_do_canal() {
         .as_str()
         .expect("texto")
         .to_owned();
-    assert_eq!(texto.chars().count(), poph_evolution::LIMITE_TEXTO);
+    assert_eq!(texto.chars().count(), poph_evolution::TEXT_LIMIT);
     assert!(texto.ends_with('…'));
 }
 
@@ -199,10 +199,10 @@ async fn envio_de_texto_nao_repete_em_500() {
         ok(json!({"key": {"id": "ID-2"}})),
     ]);
     let erro = cliente(&url)
-        .enviar_texto("5511999999999", "oi")
+        .send_text("5511999999999", "oi")
         .await
         .expect_err("500 no envio não pode ser repetido");
-    assert!(matches!(erro, ErroEvolution::Resposta { status: 500, .. }));
+    assert!(matches!(erro, EvolutionError::Response { status: 500, .. }));
     assert_eq!(recebidos.lock().unwrap().len(), 1, "o envio foi repetido");
 }
 
@@ -213,7 +213,7 @@ async fn envio_de_arquivo_nao_repete_em_503() {
         ok(json!({"key": {"id": "ID-4"}})),
     ]);
     cliente(&url)
-        .enviar_midia("5511999999999", b"pdf", "application/pdf", "a.pdf", None)
+        .send_attachment("5511999999999", b"pdf", "application/pdf", "a.pdf", None)
         .await
         .expect_err("503 no envio de arquivo não pode ser repetido");
     assert_eq!(
@@ -230,7 +230,7 @@ async fn presenca_e_download_de_midia_nao_repetem() {
         ok(json!({"base64": "aGk="})),
     ]);
     cliente(&url)
-        .enviar_presenca("5511999999999", true)
+        .send_presence("5511999999999", true)
         .await
         .expect_err("presença não é repetida");
     assert_eq!(recebidos.lock().unwrap().len(), 1);
@@ -241,7 +241,7 @@ async fn presenca_e_download_de_midia_nao_repetem() {
     ]);
     let dados = json!({"key": {"id": "MSG-9"}, "message": {}});
     cliente(&url)
-        .baixar_midia("MSG-9", &dados, TETO_MIDIA)
+        .download_attachment("MSG-9", &dados, ATTACHMENT_CAP)
         .await
         .expect_err("download não é repetido");
     assert_eq!(recebidos.lock().unwrap().len(), 1);
@@ -254,7 +254,7 @@ async fn leitura_repete_uma_vez_em_500() {
         ok(json!({"instance": {"state": "open"}})),
     ]);
     let estado = cliente(&url)
-        .estado_conexao()
+        .connection_state()
         .await
         .expect("leitura repetida com sucesso");
     assert_eq!(estado, "open");
@@ -269,21 +269,21 @@ async fn contadores_contam_chamadas_e_falhas() {
         ok(json!({"key": {"id": "ID-5"}})),
         erro(400, "número inválido"),
     ]);
-    let cliente = ClienteEvolution::novo(
-        ConfigEvolution::novo(&url, "pop-atende", Secret::new(CHAVE.to_owned()))
+    let cliente = EvolutionClient::new(
+        ConfigEvolution::new(&url, "pop-atende", Secret::new(CHAVE.to_owned()))
             .expect("configuração")
-            .com_metricas(metricas.clone()),
+            .with_metrics(metricas.clone()),
     )
     .expect("cliente");
     cliente
-        .enviar_texto("5511999999999", "oi")
+        .send_text("5511999999999", "oi")
         .await
         .expect("feliz");
     assert_eq!(metricas.evolution_calls.value(), 1);
     assert_eq!(metricas.evolution_errors.value(), 0);
 
     cliente
-        .enviar_texto("5511999999999", "oi")
+        .send_text("5511999999999", "oi")
         .await
         .expect_err("400");
     assert_eq!(metricas.evolution_calls.value(), 2);
@@ -297,7 +297,7 @@ async fn erro_do_provedor_nao_leva_numero_jid_nem_chave() {
         &format!("Number 5511999998888@s.whatsapp.net is not registered for {CHAVE}"),
     )]);
     let erro = cliente(&url)
-        .enviar_texto("5511999998888", "oi")
+        .send_text("5511999998888", "oi")
         .await
         .expect_err("400");
     let texto = format!("{erro} {erro:?}");
@@ -312,16 +312,16 @@ async fn mensagem_do_provedor_e_cortada() {
     let longa = "palavra ".repeat(400);
     let (url, _) = servidor(vec![erro(400, &longa)]);
     let erro = cliente(&url)
-        .enviar_texto("5511999999999", "oi")
+        .send_text("5511999999999", "oi")
         .await
         .expect_err("400");
-    let ErroEvolution::Resposta { mensagem, .. } = erro else {
+    let EvolutionError::Response { message, .. } = erro else {
         panic!("esperava erro de resposta");
     };
     assert!(
-        mensagem.chars().count() <= 120,
+        message.chars().count() <= 120,
         "mensagem longa demais: {}",
-        mensagem.len()
+        message.len()
     );
 }
 
@@ -331,17 +331,17 @@ async fn erro_de_rede_nao_mostra_o_endereco() {
         let lista = TcpListener::bind("127.0.0.1:0").expect("porta livre");
         lista.local_addr().expect("endereço").port()
     };
-    let cliente = ClienteEvolution::novo(
-        ConfigEvolution::novo(
+    let cliente = EvolutionClient::new(
+        ConfigEvolution::new(
             format!("http://127.0.0.1:{porta}"),
             "pop-atende",
             Secret::new(CHAVE.to_owned()),
         )
         .expect("configuração")
-        .com_timeout(Duration::from_millis(300)),
+        .with_timeout(Duration::from_millis(300)),
     )
     .expect("cliente");
-    let erro = cliente.estado_conexao().await.expect_err("sem servidor");
+    let erro = cliente.connection_state().await.expect_err("sem servidor");
     let texto = format!("{erro} {erro:?}");
     assert!(!texto.contains("127.0.0.1"), "o endereço apareceu: {texto}");
     assert!(
@@ -378,19 +378,22 @@ async fn resposta_de_sucesso_acima_do_teto_para_de_ler() {
             contagem.fetch_add(pedaco.len() as u64, std::sync::atomic::Ordering::SeqCst);
         }
     });
-    let cliente = ClienteEvolution::novo(
-        ConfigEvolution::novo(
+    let cliente = EvolutionClient::new(
+        ConfigEvolution::new(
             format!("http://127.0.0.1:{porta}"),
             "pop-atende",
             Secret::new(CHAVE.to_owned()),
         )
         .expect("configuração")
-        .com_timeout(Duration::from_secs(10)),
+        .with_timeout(Duration::from_secs(10)),
     )
     .expect("cliente");
-    let erro = cliente.estado_conexao().await.expect_err("passou do teto");
+    let erro = cliente
+        .connection_state()
+        .await
+        .expect_err("passou do teto");
     assert!(
-        matches!(erro, ErroEvolution::RespostaGrande { teto } if teto == poph_evolution::TETO_CORPO_PADRAO)
+        matches!(erro, EvolutionError::ResponseTooLarge { cap } if cap == poph_evolution::DEFAULT_BODY_CAP)
     );
     let enviados = escritos.load(std::sync::atomic::Ordering::SeqCst);
     assert!(
@@ -411,16 +414,16 @@ async fn conectar_leva_o_numero_e_devolve_qr_e_codigo() {
         ok(json!({"code": "2@outro", "pairingCode": null, "qrcode": {"count": "8"}})),
     ]);
     let com = cliente(&url)
-        .conectar(Some("+55 (11) 99999-8888"))
+        .connect(Some("+55 (11) 99999-8888"))
         .await
         .expect("pareamento");
     assert_eq!(com.qr_base64.as_deref(), Some("data:image/png;base64,AAAA"));
-    assert_eq!(com.qr_texto.as_deref(), Some("2@texto-do-qr"));
-    assert_eq!(com.codigo_pareamento.as_deref(), Some("ABCD-1234"));
-    assert_eq!(com.contador, Some(7));
-    let sem = cliente(&url).conectar(None).await.expect("sem número");
-    assert_eq!(sem.codigo_pareamento, None);
-    assert_eq!(sem.contador, Some(8), "`count` em texto também é lido");
+    assert_eq!(com.qr_text.as_deref(), Some("2@texto-do-qr"));
+    assert_eq!(com.pairing_code.as_deref(), Some("ABCD-1234"));
+    assert_eq!(com.counter, Some(7));
+    let sem = cliente(&url).connect(None).await.expect("sem número");
+    assert_eq!(sem.pairing_code, None);
+    assert_eq!(sem.counter, Some(8), "`count` em texto também é lido");
     let pedidos = recebidos.lock().unwrap();
     assert_eq!(
         pedidos[0].trajeto(),
@@ -434,11 +437,11 @@ async fn expiracao_so_com_o_texto_da_evolution() {
     let dados = json!({"key": {"id": "MSG-7"}, "message": {}});
     let (url, _) = servidor(vec![erro(400, "Invalid media type for this message")]);
     let erro = cliente(&url)
-        .baixar_midia("MSG-7", &dados, TETO_MIDIA)
+        .download_attachment("MSG-7", &dados, ATTACHMENT_CAP)
         .await
         .expect_err("400 sem sinal de expiração");
     assert!(
-        matches!(erro, ErroEvolution::Resposta { status: 400, .. }),
+        matches!(erro, EvolutionError::Response { status: 400, .. }),
         "não é expiração: {erro:?}"
     );
 }
@@ -447,16 +450,16 @@ async fn expiracao_so_com_o_texto_da_evolution() {
 async fn erro_400_nao_e_retentado_e_nao_vaza_a_chave() {
     let (url, recebidos) = servidor(vec![erro(400, "número inválido")]);
     let erro = cliente(&url)
-        .enviar_texto("5511999999999", "oi")
+        .send_text("5511999999999", "oi")
         .await
         .expect_err("400 é definitivo");
     assert_eq!(recebidos.lock().unwrap().len(), 1);
-    assert!(matches!(erro, ErroEvolution::Resposta { status: 400, .. }));
+    assert!(matches!(erro, EvolutionError::Response { status: 400, .. }));
     let texto = format!("{erro} {erro:?}");
     assert!(!texto.contains(CHAVE), "a chave apareceu no erro: {texto}");
-    assert!(!erro.transitorio());
+    assert!(!erro.is_transient());
     assert!(matches!(
-        erro.para_integracao("enviar_texto"),
+        erro.to_integration("enviar_texto"),
         IntegrationError::Refused {
             transient: false,
             ..
@@ -471,25 +474,25 @@ async fn queda_de_rede_nao_trava_e_e_transitoria() {
         let lista = TcpListener::bind("127.0.0.1:0").expect("porta livre");
         lista.local_addr().expect("endereço").port()
     };
-    let cliente = ClienteEvolution::novo(
-        ConfigEvolution::novo(
+    let cliente = EvolutionClient::new(
+        ConfigEvolution::new(
             format!("http://127.0.0.1:{porta}"),
             "pop-atende",
             Secret::new(CHAVE.to_owned()),
         )
         .expect("configuração")
-        .com_retentativas(0)
-        .com_timeout(Duration::from_millis(300)),
+        .with_retries(0)
+        .with_timeout(Duration::from_millis(300)),
     )
     .expect("cliente");
     let erro = cliente
-        .enviar_texto("5511999999999", "oi")
+        .send_text("5511999999999", "oi")
         .await
         .expect_err("sem servidor");
-    assert!(matches!(erro, ErroEvolution::Rede(_)));
-    assert!(erro.transitorio());
+    assert!(matches!(erro, EvolutionError::Network(_)));
+    assert!(erro.is_transient());
     assert!(matches!(
-        erro.para_integracao("enviar_texto"),
+        erro.to_integration("enviar_texto"),
         IntegrationError::Unavailable { .. }
     ));
 }
@@ -498,7 +501,7 @@ async fn queda_de_rede_nao_trava_e_e_transitoria() {
 async fn arquivo_sai_como_midia_com_tipo_certo() {
     let (url, recebidos) = servidor(vec![ok(json!({"key": {"id": "ID-3"}}))]);
     cliente(&url)
-        .enviar_midia(
+        .send_attachment(
             "5511999999999",
             b"%PDF-1.4 conteudo",
             "application/pdf",
@@ -525,9 +528,9 @@ async fn arquivo_sai_como_midia_com_tipo_certo() {
 #[tokio::test]
 async fn arquivo_acima_do_teto_e_recusado_antes_de_sair() {
     let (url, recebidos) = servidor(vec![ok(json!({}))]);
-    let grande = vec![0u8; (TETO_MIDIA + 1) as usize];
+    let grande = vec![0u8; (ATTACHMENT_CAP + 1) as usize];
     let erro = cliente(&url)
-        .enviar_midia(
+        .send_attachment(
             "5511999999999",
             &grande,
             "application/pdf",
@@ -536,7 +539,7 @@ async fn arquivo_acima_do_teto_e_recusado_antes_de_sair() {
         )
         .await
         .expect_err("passa do teto");
-    assert!(matches!(erro, ErroEvolution::MidiaGrandeDemais { .. }));
+    assert!(matches!(erro, EvolutionError::AttachmentTooLarge { .. }));
     assert!(
         recebidos.lock().unwrap().is_empty(),
         "nada deveria ter sido enviado"
@@ -561,12 +564,12 @@ async fn midia_e_baixada_e_o_teto_e_conferido_antes_de_decodificar() {
         "fileName": "nota.pdf",
     }))]);
     let baixada = cliente(&url)
-        .baixar_midia("MSG-1", &dados, TETO_MIDIA)
+        .download_attachment("MSG-1", &dados, ATTACHMENT_CAP)
         .await
         .expect("download");
     assert_eq!(baixada.bytes, conteudo);
     assert_eq!(baixada.mime, "application/pdf");
-    assert_eq!(baixada.nome.as_deref(), Some("nota.pdf"));
+    assert_eq!(baixada.name.as_deref(), Some("nota.pdf"));
     {
         let pedidos = recebidos.lock().unwrap();
         assert_eq!(
@@ -579,10 +582,10 @@ async fn midia_e_baixada_e_o_teto_e_conferido_antes_de_decodificar() {
     // Teto minúsculo: recusa sem decodificar.
     let (url, _) = servidor(vec![ok(json!({"base64": codificado}))]);
     let erro = cliente(&url)
-        .baixar_midia("MSG-1", &dados, 4)
+        .download_attachment("MSG-1", &dados, 4)
         .await
         .expect_err("passa do teto");
-    assert!(matches!(erro, ErroEvolution::MidiaGrandeDemais { .. }));
+    assert!(matches!(erro, EvolutionError::AttachmentTooLarge { .. }));
 }
 
 #[tokio::test]
@@ -590,13 +593,13 @@ async fn midia_expirada_na_evolution_vira_erro_definitivo() {
     let dados = json!({"key": {"id": "MSG-2"}, "message": {}});
     let (url, _) = servidor(vec![erro(404, "Message not found")]);
     let erro = cliente(&url)
-        .baixar_midia("MSG-2", &dados, TETO_MIDIA)
+        .download_attachment("MSG-2", &dados, ATTACHMENT_CAP)
         .await
         .expect_err("expirada");
-    assert!(matches!(erro, ErroEvolution::MidiaExpirada(_)));
-    assert!(!erro.transitorio(), "repetir não traz a mídia de volta");
+    assert!(matches!(erro, EvolutionError::AttachmentExpired(_)));
+    assert!(!erro.is_transient(), "repetir não traz a mídia de volta");
     assert!(matches!(
-        erro.para_integracao("baixar_midia"),
+        erro.to_integration("baixar_midia"),
         IntegrationError::Refused {
             ref code,
             transient: false,
@@ -608,11 +611,11 @@ async fn midia_expirada_na_evolution_vira_erro_definitivo() {
 #[tokio::test]
 async fn estado_da_conexao_e_lido_e_a_saude_segue() {
     let (url, _) = servidor(vec![ok(json!({"instance": {"state": "open"}}))]);
-    let aberto = cliente(&url).estado_conexao().await.expect("estado");
+    let aberto = cliente(&url).connection_state().await.expect("estado");
     assert_eq!(aberto, "open");
 
     let (url, _) = servidor(vec![ok(json!({"instance": {"state": "close"}}))]);
-    let fechado = cliente(&url).estado_conexao().await.expect("estado");
+    let fechado = cliente(&url).connection_state().await.expect("estado");
     assert_eq!(fechado, "close");
 }
 
@@ -643,14 +646,14 @@ async fn arquivo_do_agente_sai_da_biblioteca_e_recusa_blob_ausente() {
     std::fs::write(org.join(&sha), b"conteudo do arquivo").expect("blob");
 
     let (url, recebidos) = servidor(vec![ok(json!({"key": {"id": "ID-5"}}))]);
-    let canal = WhatsAppEvolution::novo(
+    let canal = WhatsAppEvolution::new(
         cliente(&url),
-        ConfigCanal::novo(
+        ChannelConfig::new(
             IntegrationId::generate(),
             Secret::new("segredo-do-webhook".to_owned()),
         )
         .expect("configuração"),
-        Arc::new(BlobsEmDisco::nova(&raiz)),
+        Arc::new(DiskBlobs::new(&raiz)),
     );
     canal
         .send_file(SendFile {
@@ -712,7 +715,7 @@ async fn recibo_devolve_o_id_do_texto_e_da_midia_e_presenca_sem_id() {
     let canal = canal(&url);
 
     let texto = canal
-        .enviar_com_recibo(OutboundCommand::Text(SendText {
+        .send_with_receipt(OutboundCommand::Text(SendText {
             idempotency: "turno-3:1".to_owned(),
             peer: "5511999999999".to_owned(),
             text: "com id".to_owned(),
@@ -727,17 +730,17 @@ async fn recibo_devolve_o_id_do_texto_e_da_midia_e_presenca_sem_id() {
     std::fs::create_dir_all(&org).expect("pasta de blobs");
     let sha = "e".repeat(64);
     std::fs::write(org.join(&sha), b"conteudo").expect("blob");
-    let canal_midia = WhatsAppEvolution::novo(
+    let canal_midia = WhatsAppEvolution::new(
         cliente(&url),
-        ConfigCanal::novo(
+        ChannelConfig::new(
             IntegrationId::generate(),
             Secret::new("segredo-do-webhook".to_owned()),
         )
         .expect("configuração"),
-        Arc::new(BlobsEmDisco::nova(&raiz)),
+        Arc::new(DiskBlobs::new(&raiz)),
     );
     let midia = canal_midia
-        .enviar_com_recibo(OutboundCommand::File(SendFile {
+        .send_with_receipt(OutboundCommand::File(SendFile {
             idempotency: "turno-3:2".to_owned(),
             peer: "5511999999999".to_owned(),
             name: "recibo.pdf".to_owned(),
@@ -754,7 +757,7 @@ async fn recibo_devolve_o_id_do_texto_e_da_midia_e_presenca_sem_id() {
 
     // Presença não tem id: devolve `None`, sem erro.
     let presenca = canal
-        .enviar_com_recibo(OutboundCommand::Presence(SetPresence {
+        .send_with_receipt(OutboundCommand::Presence(SetPresence {
             peer: "5511999999999".to_owned(),
             state: Presence::Paused,
         }))
@@ -769,18 +772,18 @@ async fn iniciar_marca_pronto_e_aponta_o_webhook() {
         ok(json!({"instance": {"state": "open"}})),
         ok(json!({"webhook": {"enabled": true}})),
     ]);
-    let canal = WhatsAppEvolution::novo(
+    let canal = WhatsAppEvolution::new(
         cliente(&url),
-        ConfigCanal::novo(
+        ChannelConfig::new(
             IntegrationId::generate(),
             Secret::new("segredo-do-webhook".to_owned()),
         )
         .expect("configuração")
-        .com_webhook("https://harness.exemplo/v1/webhooks/whatsapp"),
-        Arc::new(BlobsEmDisco::nova("/tmp/poph-evolution-sem-blobs")),
+        .with_webhook("https://harness.exemplo/v1/webhooks/whatsapp"),
+        Arc::new(DiskBlobs::new("/tmp/poph-evolution-sem-blobs")),
     );
     assert_eq!(canal.state(), IntegrationState::Starting);
-    let estado = canal.iniciar().await.expect("iniciar");
+    let estado = canal.start().await.expect("iniciar");
     assert_eq!(estado, "open");
     assert_eq!(canal.state(), IntegrationState::Ready);
 
@@ -802,7 +805,7 @@ async fn iniciar_marca_pronto_e_aponta_o_webhook() {
 async fn instancia_fechada_deixa_o_canal_em_iniciando() {
     let (url, _) = servidor(vec![ok(json!({"instance": {"state": "connecting"}}))]);
     let canal = canal(&url);
-    assert_eq!(canal.iniciar().await.expect("iniciar"), "connecting");
+    assert_eq!(canal.start().await.expect("iniciar"), "connecting");
     assert_eq!(canal.state(), IntegrationState::Starting);
 }
 
@@ -834,15 +837,15 @@ async fn saude_segue_o_estado_da_instancia() {
 fn webhook_com_segredo_errado_e_recusado_antes_de_ler() {
     let canal = canal("http://127.0.0.1:1");
     let corpo = json!({"event": "messages.upsert", "data": {}});
-    assert!(canal.receber_webhook(None, &corpo).is_err());
+    assert!(canal.receive_webhook(None, &corpo).is_err());
     assert!(
         canal
-            .receber_webhook(Some("outro-segredo"), &corpo)
+            .receive_webhook(Some("outro-segredo"), &corpo)
             .is_err()
     );
     // A conferência do segredo é a mesma função exportada (comparação em tempo constante).
     assert!(
-        conferir_segredo(
+        check_secret(
             &Secret::new("segredo-do-webhook".to_owned()),
             Some("segredo-do-webhook")
         )
@@ -855,13 +858,13 @@ fn webhook_valido_atualiza_o_estado_do_canal() {
     let canal = canal("http://127.0.0.1:1");
     let conectado = json!({"event": "connection.update", "data": {"state": "open"}});
     canal
-        .receber_webhook(Some("segredo-do-webhook"), &conectado)
+        .receive_webhook(Some("segredo-do-webhook"), &conectado)
         .expect("webhook autenticado");
     assert_eq!(canal.state(), IntegrationState::Ready);
 
     let desconectado = json!({"event": "connection.update", "data": {"state": "close"}});
     canal
-        .receber_webhook(Some("segredo-do-webhook"), &desconectado)
+        .receive_webhook(Some("segredo-do-webhook"), &desconectado)
         .expect("webhook autenticado");
     assert_eq!(canal.state(), IntegrationState::Starting);
 }
@@ -900,10 +903,10 @@ async fn mensagem_com_imagem_e_entregue_com_o_anexo_baixado() {
         }
     });
     let decisao = canal
-        .receber_webhook(Some("segredo-do-webhook"), &corpo)
+        .receive_webhook(Some("segredo-do-webhook"), &corpo)
         .expect("webhook");
     let coletor = Coletor::default();
-    canal.receber_e_entregar(decisao, &coletor).await;
+    canal.receive_and_deliver(decisao, &coletor).await;
 
     let eventos = coletor.eventos.lock().unwrap();
     assert_eq!(eventos.len(), 1);
@@ -930,10 +933,10 @@ async fn midia_que_falha_nao_impede_a_mensagem_de_chegar() {
         }
     });
     let decisao = canal
-        .receber_webhook(Some("segredo-do-webhook"), &corpo)
+        .receive_webhook(Some("segredo-do-webhook"), &corpo)
         .expect("webhook");
     let coletor = Coletor::default();
-    canal.receber_e_entregar(decisao, &coletor).await;
+    canal.receive_and_deliver(decisao, &coletor).await;
     let eventos = coletor.eventos.lock().unwrap();
     let IntegrationEvent::Inbound(evento) = &eventos[0] else {
         panic!("esperava entrada");
@@ -947,10 +950,10 @@ async fn evento_de_estado_do_webhook_e_repassado_ao_receptor() {
     let canal = canal("http://127.0.0.1:1");
     let corpo = json!({"event": "connection.update", "data": {"state": "open"}});
     let decisao = canal
-        .receber_webhook(Some("segredo-do-webhook"), &corpo)
+        .receive_webhook(Some("segredo-do-webhook"), &corpo)
         .expect("webhook");
     let coletor = Coletor::default();
-    canal.receber_e_entregar(decisao, &coletor).await;
+    canal.receive_and_deliver(decisao, &coletor).await;
     let eventos = coletor.eventos.lock().unwrap();
     assert!(matches!(eventos[0], IntegrationEvent::Estado(_)));
 }
@@ -962,18 +965,18 @@ fn corpo_sem_mensagem_do_cliente_nao_vira_evento() {
         "message": {"reactionMessage": {"text": "👍"}},
         "messageTimestamp": 1_795_000_000u64,
     }});
-    let politica = poph_evolution::Politica::default();
+    let politica = poph_evolution::Policy::default();
     assert!(matches!(
-        interpretar(IntegrationId::generate(), &corpo, &politica),
-        poph_evolution::Decisao::Ignorado(_)
+        interpret(IntegrationId::generate(), &corpo, &politica),
+        poph_evolution::Decision::Ignored(_)
     ));
 }
 
 #[test]
 fn fonte_de_midia_aceita_so_caminho_relativo() {
-    let fonte = BlobsEmDisco::nova("/tmp");
+    let fonte = DiskBlobs::new("/tmp");
     assert!(matches!(
-        FonteDeMidia::ler(&fonte, "../../etc/passwd"),
-        Err(ErroEvolution::BlobIlegivel { .. })
+        AttachmentSource::read(&fonte, "../../etc/passwd"),
+        Err(EvolutionError::BlobUnreadable { .. })
     ));
 }

@@ -33,7 +33,7 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::post;
 use poph_agent::Backoff;
-use poph_evolution::{ClienteEvolution, ConfigEvolution, TETO_MIDIA};
+use poph_evolution::{ATTACHMENT_CAP, ConfigEvolution, EvolutionClient};
 use poph_fluxos::EfeitoProduzido;
 use poph_fluxos::ir::Efeito;
 use poph_server::evolution::CanalEvolution;
@@ -63,7 +63,7 @@ const TELEFONE_EQUIPE: &str = "5521988880002";
 /// Chave da Evolution dos testes (só para o cabeçalho `apikey`).
 const CHAVE: &str = "chave-evo-fx21-teste";
 /// Teto de mídia do canal.
-const TETO: u64 = TETO_MIDIA;
+const TETO: u64 = ATTACHMENT_CAP;
 
 // ───────────────────────── captura de logs (para provar o que NÃO sai) ─────────────────────────
 
@@ -292,8 +292,8 @@ impl Cenario {
             None
         } else {
             Some(
-                ClienteEvolution::novo(
-                    ConfigEvolution::novo(url, "loja", Secret::new(CHAVE.to_owned()))
+                EvolutionClient::new(
+                    ConfigEvolution::new(url, "loja", Secret::new(CHAVE.to_owned()))
                         .expect("config da Evolution falsa"),
                 )
                 .expect("cliente da Evolution falsa"),

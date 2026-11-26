@@ -23,7 +23,7 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::post;
 use poph_agent::Backoff;
-use poph_evolution::{ClienteEvolution, ConfigEvolution, TETO_MIDIA};
+use poph_evolution::{ATTACHMENT_CAP, ConfigEvolution, EvolutionClient};
 use poph_server::evolution::CanalEvolution;
 use poph_server::saida_whatsapp::{OpcoesSaidaWhatsApp, SaidaWhatsApp};
 use poph_store::{
@@ -38,7 +38,7 @@ const CHAVE: &str = "chave-evo-saida-26c-teste";
 /// Número de cliente falso. Não é de ninguém.
 const TELEFONE: &str = "5511999990000";
 /// Arquivo com 16 MB: o teto do canal (um byte a mais já é recusado).
-const TETO: u64 = TETO_MIDIA;
+const TETO: u64 = ATTACHMENT_CAP;
 
 // ───────────────────────── captura de logs (para provar o que NÃO sai) ─────────────────────────
 
@@ -283,8 +283,8 @@ impl Cenario {
             Some(Secret::new(CHAVE.to_owned()))
         };
         let cliente = chave.map(|chave| {
-            ClienteEvolution::novo(
-                ConfigEvolution::novo(endereco, "loja", chave).expect("config da Evolution falsa"),
+            EvolutionClient::new(
+                ConfigEvolution::new(endereco, "loja", chave).expect("config da Evolution falsa"),
             )
             .expect("cliente da Evolution falsa")
         });
@@ -294,7 +294,7 @@ impl Cenario {
             integracao,
             segredo: None,
             cliente,
-            teto_midia: TETO_MIDIA,
+            teto_midia: ATTACHMENT_CAP,
         }];
         let opcoes = OpcoesSaidaWhatsApp {
             // Espera curta para o teste de nova tentativa não depender de relógio.

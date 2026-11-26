@@ -1243,7 +1243,7 @@ impl CacheDeNomes {
 
 #[cfg(test)]
 mod testes {
-    use poph_evolution::para_whatsapp;
+    use poph_evolution::to_whatsapp;
 
     use super::*;
 
@@ -1306,22 +1306,22 @@ mod testes {
     fn o_cliente_recebe_o_prefixo_e_o_corpo_convertido_uma_vez_so() {
         let fila = texto_enfileirado("Ana", "olá");
         assert_eq!(fila, "**[Ana]**:\nolá");
-        assert_eq!(para_whatsapp(&fila), "*[Ana]*:\nolá");
+        assert_eq!(to_whatsapp(&fila), "*[Ana]*:\nolá");
     }
 
     #[test]
     fn corpo_com_markdown_nao_e_convertido_duas_vezes() {
         // `**negrito**` tem de virar negrito no WhatsApp, não itálico: quem converte é o envio.
         let fila = texto_enfileirado("Ana", "**atenção** e _ênfase_");
-        let no_cliente = para_whatsapp(&fila);
+        let no_cliente = to_whatsapp(&fila);
         assert_eq!(no_cliente, "*[Ana]*:\n*atenção* e _ênfase_");
     }
 
     #[test]
     fn texto_acima_do_limite_e_cortado_pelo_canal_numa_mensagem_so() {
         let enorme = "a".repeat(5000);
-        let no_cliente = para_whatsapp(&texto_enfileirado("Ana", &enorme));
-        assert!(no_cliente.chars().count() <= poph_evolution::LIMITE_TEXTO);
+        let no_cliente = to_whatsapp(&texto_enfileirado("Ana", &enorme));
+        assert!(no_cliente.chars().count() <= poph_evolution::TEXT_LIMIT);
         assert!(no_cliente.starts_with("*[Ana]*:\n"));
         assert!(
             no_cliente.ends_with('…'),
@@ -1336,7 +1336,7 @@ mod testes {
         assert_eq!(nome_util(Some("Ana\nSouza")), "Ana Souza");
         // Marcador de formatação no nome não pode fechar o negrito antes da hora.
         assert_eq!(
-            para_whatsapp(&texto_enfileirado("Ana*Souza", "oi")),
+            to_whatsapp(&texto_enfileirado("Ana*Souza", "oi")),
             "*[Ana Souza]*:\noi"
         );
         let longo = "n".repeat(200);
@@ -1348,17 +1348,17 @@ mod testes {
         // O que o cliente vê no WhatsApp vem da conversão única do canal (MX-44).
         assert_eq!(legenda_do_arquivo("Ana Atendente"), "**[Ana Atendente]**");
         assert_eq!(
-            para_whatsapp(&legenda_do_arquivo("Ana Atendente")),
+            to_whatsapp(&legenda_do_arquivo("Ana Atendente")),
             "*[Ana Atendente]*"
         );
         // Nome com marcador de formatação é limpo, como no texto.
         assert_eq!(
-            para_whatsapp(&legenda_do_arquivo("Ana*Souza")),
+            to_whatsapp(&legenda_do_arquivo("Ana*Souza")),
             "*[Ana Souza]*"
         );
         // Nome vazio cai no padrão, nunca numa legenda vazia.
         assert_eq!(
-            para_whatsapp(&legenda_do_arquivo("   ")),
+            to_whatsapp(&legenda_do_arquivo("   ")),
             format!("*[{NOME_PADRAO_ATENDENTE}]*")
         );
     }

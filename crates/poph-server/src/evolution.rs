@@ -22,10 +22,9 @@ use axum::extract::rejection::BytesRejection;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use poph_evolution::webhook::{
-    CABECALHO_SEGREDO, Decisao, EntradaRecebida, MidiaParaBaixar, Politica, conferir_segredo,
-    interpretar,
+    AttachmentToDownload, Decision, Policy, ReceivedEntry, SECRET_HEADER, check_secret, interpret,
 };
-use poph_evolution::{ClienteEvolution, ConfigEvolution, ErroEvolution, TETO_MIDIA};
+use poph_evolution::{ATTACHMENT_CAP, ConfigEvolution, EvolutionClient, EvolutionError};
 use poph_files::{Content, FileConfig, FileError};
 use poph_store::{
     NewChannelAttachment, NewChannelInboxItem, NewDeviceMessage, Received, ReceivedFromDevice,
@@ -50,7 +49,7 @@ pub struct CanalEvolution {
     pub segredo: Option<Secret>,
     /// Cliente para baixar mídia. `None` quando falta a chave ou o endereço: a mensagem segue sem
     /// o anexo, com o texto.
-    pub cliente: Option<ClienteEvolution>,
+    pub cliente: Option<EvolutionClient>,
     /// Teto de mídia em bytes.
     pub teto_midia: u64,
 }
@@ -114,8 +113,8 @@ pub fn canais_da_configuracao(
                 );
                 None
             }
-            Some(chave) => ConfigEvolution::novo(evolution.url_base.clone(), nome.clone(), chave)
-                .and_then(ClienteEvolution::novo)
+            Some(chave) => ConfigEvolution::new(evolution.url_base.clone(), nome.clone(), chave)
+                .and_then(EvolutionClient::new)
                 .map_err(|erro| {
                     tracing::warn!(
                         target: "poph_server::evolution",
@@ -133,15 +132,15 @@ pub fn canais_da_configuracao(
             integracao,
             segredo,
             cliente,
-            teto_midia: TETO_MIDIA,
+            teto_midia: ATTACHMENT_CAP,
         });
     }
     Ok(canais)
 }
 
-fn categoria_de_configuracao(erro: &ErroEvolution) -> &'static str {
+fn categoria_de_configuracao(erro: &EvolutionError) -> &'static str {
     match erro {
-        ErroEvolution::Configuracao(_) => "configuração",
+        EvolutionError::InvalidConfiguration(_) => "configuração",
         _ => "erro interno do cliente",
     }
 }
@@ -166,12 +165,12 @@ pub async fn receber(
 
     // Autenticação antes de ler o corpo: entrega sem segredo certo não entra nem é processada.
     let recebido = cabecalhos
-        .get(CABECALHO_SEGREDO)
+        .get(SECRET_HEADER)
         .and_then(|valor| valor.to_str().ok());
     let autorizado = canal
         .segredo
         .as_ref()
-        .is_some_and(|segredo| conferir_segredo(segredo, recebido).is_ok());
+        .is_some_and(|segredo| check_secret(segredo, recebido).is_ok());
     if !autorizado {
         return Err(ApiError::novo(
             StatusCode::UNAUTHORIZED,
@@ -194,14 +193,14 @@ pub async fn receber(
     // MX-41: com o módulo Matrix ligado nesta org, `fromMe` deixa de ser descartado na leitura —
     // quem decide é `receber_entrada`, que separa o eco do nosso envio da mensagem do aparelho.
     // Sem o módulo, nada muda: o descarte é aqui, antes de qualquer gravação.
-    let politica = Politica {
-        aceitar_de_mim: modulo_matrix_ligado(&estado, &canal)?,
+    let politica = Policy {
+        accept_from_me: modulo_matrix_ligado(&estado, &canal)?,
     };
-    let decisao = interpretar(canal.integracao, &valor, &politica);
+    let decisao = interpret(canal.integracao, &valor, &politica);
     match decisao {
-        Decisao::Ignorado(_) => Ok(Json(json!({"recebido": true, "efeito": "nenhum"}))),
-        Decisao::Estado(evento) => receber_estado(&estado, &canal, &evento),
-        Decisao::Entrada(entrada) => receber_entrada(&estado, &canal, entrada).await,
+        Decision::Ignored(_) => Ok(Json(json!({"recebido": true, "efeito": "nenhum"}))),
+        Decision::State(evento) => receber_estado(&estado, &canal, &evento),
+        Decision::Inbound(entrada) => receber_entrada(&estado, &canal, entrada).await,
     }
 }
 
@@ -252,12 +251,12 @@ fn texto_do_estado(evento: &StateEvent) -> Option<&'static str> {
 async fn receber_entrada(
     estado: &Estado,
     canal: &CanalEvolution,
-    entrada: EntradaRecebida,
+    entrada: ReceivedEntry,
 ) -> Result<Json<Value>, ApiError> {
     // 0. Mensagem digitada no aparelho do cliente (MX-41): caminho próprio, decidido antes de
     //    qualquer gravação de entrada — ela não passa pela `inbox` (não há turno) nem pela
     //    `outbox` (já saiu pelo celular).
-    if digitada_no_aparelho(&entrada.evento) {
+    if digitada_no_aparelho(&entrada.event) {
         return receber_do_aparelho(estado, canal, entrada);
     }
 
@@ -265,7 +264,7 @@ async fn receber_entrada(
     let ja_recebida = estado
         .store
         .inbox()
-        .delivery_received(canal.integracao, &entrada.evento.id_externo)
+        .delivery_received(canal.integracao, &entrada.event.id_externo)
         .map_err(|erro| falha_de_gravacao("consulta da entrada", &erro))?;
     if let Some(recebido) = ja_recebida {
         return Ok(Json(resposta_da_entrada(&recebido)));
@@ -275,9 +274,9 @@ async fn receber_entrada(
     let integracao = integracao_do_webhook(estado, canal)?;
 
     // 3. Mídias: as que falham viram aviso no log, e a mensagem segue com o texto.
-    let anexos = baixar_anexos(estado, canal, &entrada.midias).await?;
+    let anexos = baixar_anexos(estado, canal, &entrada.attachments).await?;
 
-    let evento = entrada.evento;
+    let evento = entrada.event;
     let evento_json = serde_json::to_string(&evento).map_err(|_| ApiError::interno())?;
     // Nome do cliente (MX-32): já vem filtrado pelo webhook (contato individual recebido).
     let nome_cliente = evento
@@ -369,9 +368,9 @@ fn integracao_do_webhook(
 fn receber_do_aparelho(
     estado: &Estado,
     canal: &CanalEvolution,
-    entrada: EntradaRecebida,
+    entrada: ReceivedEntry,
 ) -> Result<Json<Value>, ApiError> {
-    let evento = entrada.evento;
+    let evento = entrada.event;
 
     // 1. Eco: o id externo é de um envio nosso já confirmado.
     let eco = estado
@@ -391,7 +390,7 @@ fn receber_do_aparelho(
     // 2. A mensagem precisa de um agente dono (a integração dele).
     let integracao = integracao_do_webhook(estado, canal)?;
 
-    if !entrada.midias.is_empty() {
+    if !entrada.attachments.is_empty() {
         tracing::warn!(
             target: "poph_server::evolution",
             instancia = %canal.instancia,
@@ -455,7 +454,7 @@ fn resposta_da_entrada(recebido: &ReceivedWithMessage) -> Value {
 async fn baixar_anexos(
     estado: &Estado,
     canal: &CanalEvolution,
-    midias: &[MidiaParaBaixar],
+    midias: &[AttachmentToDownload],
 ) -> Result<Vec<NewChannelAttachment>, ApiError> {
     let config = FileConfig::default(estado.config.blobs());
     let mut anexos = Vec::new();
@@ -465,14 +464,14 @@ async fn baixar_anexos(
             continue;
         };
         if midia
-            .tamanho_declarado
+            .declared_size
             .is_some_and(|declarado| declarado > canal.teto_midia)
         {
             tracing::warn!(target: "poph_server::evolution", "mídia acima do teto; segue sem anexo");
             continue;
         }
         let baixada = match cliente
-            .baixar_midia(&midia.message_id, &midia.dados, canal.teto_midia)
+            .download_attachment(&midia.message_id, &midia.data, canal.teto_midia)
             .await
         {
             Ok(baixada) => baixada,
@@ -486,7 +485,7 @@ async fn baixar_anexos(
             }
         };
 
-        let nome = midia.nome.clone();
+        let nome = midia.name.clone();
         let org = canal.org;
         let config_tarefa = config.clone();
         let gravado = tokio::task::spawn_blocking(move || {
@@ -535,10 +534,10 @@ async fn baixar_anexos(
     Ok(anexos)
 }
 
-fn categoria_de_download(erro: &ErroEvolution) -> &'static str {
+fn categoria_de_download(erro: &EvolutionError) -> &'static str {
     match erro {
-        ErroEvolution::MidiaExpirada(_) => "mídia expirada na Evolution",
-        ErroEvolution::MidiaGrandeDemais { .. } => "mídia acima do teto",
+        EvolutionError::AttachmentExpired(_) => "mídia expirada na Evolution",
+        EvolutionError::AttachmentTooLarge { .. } => "mídia acima do teto",
         _ => "falha no download da mídia",
     }
 }

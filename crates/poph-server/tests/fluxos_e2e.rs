@@ -479,7 +479,7 @@ async fn evolution_falsa() -> (String, Arc<std::sync::Mutex<Vec<Value>>>) {
 
 #[tokio::test]
 async fn exemplo_entrega_notificacao_unica_e_transferencia_com_ficha_aberta() {
-    use poph_evolution::{ClienteEvolution, ConfigEvolution, TETO_MIDIA};
+    use poph_evolution::{ATTACHMENT_CAP, ConfigEvolution, EvolutionClient};
     use poph_server::{
         evolution::CanalEvolution,
         fluxos_efeitos::{EfeitosFluxo, OpcoesEfeitosFluxo},
@@ -512,12 +512,12 @@ async fn exemplo_entrega_notificacao_unica_e_transferencia_com_ficha_aberta() {
         integracao,
         segredo: None,
         cliente: Some(
-            ClienteEvolution::novo(
-                ConfigEvolution::novo(url, "teste", Secret::new("ficticia".into())).unwrap(),
+            EvolutionClient::new(
+                ConfigEvolution::new(url, "teste", Secret::new("ficticia".into())).unwrap(),
             )
             .unwrap(),
         ),
-        teto_midia: TETO_MIDIA,
+        teto_midia: ATTACHMENT_CAP,
     };
     let canais = vec![canal];
     let efeitos = EfeitosFluxo::novo(

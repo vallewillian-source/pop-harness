@@ -50,7 +50,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use poph_agent::Backoff;
-use poph_evolution::{BlobsEmDisco, FonteDeMidia, WhatsAppEvolution};
+use poph_evolution::{AttachmentSource, DiskBlobs, WhatsAppEvolution};
 use poph_store::{FlowEffect, NewOutboxItem, Store, StoreError};
 use poph_types::{EventActor, IntegrationId, OrgId, RecordEventKind, TurnId};
 use serde_json::Value;
@@ -158,14 +158,14 @@ impl EfeitosFluxo {
         metricas: Option<Arc<MetricasFluxos>>,
         opcoes: OpcoesEfeitosFluxo,
     ) -> Self {
-        let fonte: Arc<dyn FonteDeMidia> = Arc::new(BlobsEmDisco::nova(pasta_blobs));
+        let fonte: Arc<dyn AttachmentSource> = Arc::new(DiskBlobs::new(pasta_blobs));
         let canais = canais
             .iter()
             .map(|instancia| CanalNotificacao {
                 org: instancia.org,
                 integracao: instancia.integracao,
                 canal: instancia.cliente.as_ref().map(|cliente| {
-                    Arc::new(WhatsAppEvolution::para_saida(
+                    Arc::new(WhatsAppEvolution::for_output(
                         cliente.clone(),
                         instancia.integracao,
                         Arc::clone(&fonte),
@@ -470,7 +470,7 @@ impl EfeitosFluxo {
                     peer: para,
                     text: mensagem,
                 };
-                match canal.enviar_texto_recibo(comando).await {
+                match canal.send_text_receipt(comando).await {
                     Ok(_) => Ok(None),
                     // O motivo do cliente já vem limpo (sem telefone, JID ou chave).
                     Err(erro) if erro.is_transient() => {

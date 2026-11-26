@@ -21,8 +21,13 @@ that POP Atende uses (`core/integrations/evolution_api.py`, `core/integrations/e
 
 Authentication: the key goes only in the `apikey` header. It never appears in an error, `Debug` output or log.
 
-Implemented in the crate: `ClienteEvolution` (the operations above) and `WhatsAppEvolution` (the integration in the
+Implemented in the crate: `EvolutionClient` (the operations above) and `WhatsAppEvolution` (the integration in the
 `Integration` contract, with sending text, files, presence and health).
+
+**Presence.** "Typing" and "paused" are the channel's own words: `true` goes out as `composing`, `false` as `paused`
+(`POST /chat/sendPresence/{instância}`). Evolution returns no ID for presence, so the call returns `None`. A presence
+that Evolution refuses **does not fail the turn**: the error is logged at `debug` and the send continues, because
+"typing" is cosmetic and the customer must still get the reply.
 
 ## ID of the sent message (MX-40)
 
@@ -30,10 +35,10 @@ The response to a send (`sendText` and `sendMedia`) carries the ID that WhatsApp
 the formats Evolution has already used, in this order: `key.id`, `message.key.id`, `id` and `data.key.id` — the first
 one that is a non-empty string. There is no synthetic ID: if none comes back, the result is "sem id" (no id).
 
-- **`ClienteEvolution::enviar_texto` and `enviar_midia`** return `Option<String>` with that ID.
-- **`WhatsAppEvolution::enviar_com_recibo(ComandoSaida)`** is the receipt path: it delivers text or a file and returns
+- **`EvolutionClient::send_text` and `send_attachment`** return `Option<String>` with that ID.
+- **`WhatsAppEvolution::send_with_receipt(OutboundCommand)`** is the receipt path: it delivers text or a file and returns
   the ID; presence returns `None` (Evolution does not return an ID for "typing").
-- **The generic channel contract does not change:** `Integration::enviar_texto`/`enviar_arquivo` still return
+- **The generic channel contract does not change:** `Integration::send_text`/`send_file` still return
   `Result<(), ErroIntegracao>` and discard the ID, because the same contract serves a plugin in an external process,
   which may not return any.
 - **What Harness stores:** the WhatsApp output (`crates/poph-server/src/saida_whatsapp.rs`) records the ID in
@@ -50,17 +55,18 @@ production instance is only confirmed with a real number.
 - Key: environment variable `EVOLUTION_API_KEY`. It does not go in the configuration file.
 - Webhook secret: required. It goes in the `X-Evolution-Webhook-Secret` header, which Evolution repeats on every
   delivery.
-- Optional counters: `ConfigEvolution::com_metricas` turns on `poph_chamadas_evolution_total` (one per HTTP request)
+- Optional counters: `ConfigEvolution::with_metrics` turns on `poph_chamadas_evolution_total` (one per HTTP request)
   and `poph_erros_evolution_total` (one per request that failed). Refusals made before anything leaves (file above
   the cap, configuration) do not count as calls.
 
 ## Limits
 
-- **File** (send and download): 16 MB (`TETO_MIDIA`), checked before uploading or decoding. Media refused on send does
+- **File** (send and download): 16 MB (`ATTACHMENT_CAP`), checked before uploading or decoding. Media refused on send does
   not go out; media above the cap on download is refused without decoding.
 - **Evolution response**: 1 MB for common responses; for media download, what is needed for 16 MB in base64. Beyond
-  that, reading stops and the error is `RespostaGrande`.
-- **Expired media**: a download is only treated as expired with a 400/404 response that contains "message not found",
+  that, reading stops and the error is `ResponseTooLarge`.
+- **Expired media**: Evolution keeps received media for a few days (`ATTACHMENT_DAYS = 4`), then answers the download
+  with an error. A download is only treated as expired with a 400/404 response that contains "message not found",
   "media not found", "media not available" or "expired/expirad" (these are the provider's own texts, matched as they
   are). Any other 400 is a common error.
 - **Provider error text**: cleaned before it becomes a message. Numbers, JIDs (anything with `@`), any run of 7 or more
@@ -119,6 +125,23 @@ The secret comes only from the environment (`POPH_EVO_SEGREDO_LOJA=...`), read a
 (real type from the content, text reading with the extractor). Media that fails (expired, over 16 MB, unsupported
 type, unreadable file) **does not bring down the message**: it comes in with the text it had and a warning in the log.
 Audio, video, stickers, contacts and location do not come in (decision of the maintainer: file = image + PDF/Office).
+
+**`fromMe`.** A message with `fromMe = true` is **discarded by default**, because the webhook returns as `fromMe` both
+our own send and what the customer typed on the phone; without the filter the agent would talk to itself. Accepting it
+is `Policy::accept_from_me` (`ChannelConfig::accept_from_me`), off by default. Whoever turns it on decides what to do
+with the event: today the server turns it on only for the org with the Matrix module active (MX-41), where the echo of
+our own send is discarded and the message typed on the device enters as `direction out` and `origin device`, with no
+turn.
+
+**Unsupported content (MX-45).** Audio, video, sticker, contact, location and poll enter as **history text**, with the
+fixed notice from `poph_types::UnsupportedContent` (for audio, `[O cliente enviou um áudio, que o sistema não consegue
+abrir]`), so the agent knows what happened and can answer; the file itself is not downloaded. The Matrix room shows a
+notice in place of that text (`poph_types::MidiaForaDoEscopo`). The `fromMe` echo of those types stays discarded: it was
+not the customer who sent it.
+
+**Group versus person.** In a one-to-one conversation the `peer` is the number, digits only (what Evolution accepts on
+send). In a group the `peer` is the full JID (`…@g.us`) and whoever wrote goes in `remetente`, so the reply reaches the
+group and the turn knows the person.
 
 **Conversation.** A message goes to the open or transferred conversation of the same contact, in that integration. If
 there is none, a new one opens with the integration's agent and its default department. A transferred conversation

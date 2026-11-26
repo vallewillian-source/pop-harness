@@ -39,7 +39,7 @@ use axum::extract::State;
 use axum::http::header::AUTHORIZATION;
 use axum::http::{HeaderMap, Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
-use poph_evolution::webhook::CABECALHO_SEGREDO;
+use poph_evolution::webhook::SECRET_HEADER;
 use poph_matrix::{ClienteMatrix, ConfigCliente, Espacos, IdsFantasmas, UsuariosVirtuais};
 use poph_server::evolution::CanalEvolution;
 use poph_server::matrix_estado::{DestinoDoSynapse, EstadoDasConversas, PortaEstadoStore};
@@ -919,7 +919,7 @@ async fn webhook(base: &str, org: OrgId, corpo: Value) -> Resposta {
         base,
         MetodoHttp::POST,
         &format!("/webhook/evolution/{org}/{INSTANCIA}"),
-        Some((CABECALHO_SEGREDO, SEGREDO_WEBHOOK)),
+        Some((SECRET_HEADER, SEGREDO_WEBHOOK)),
         Some(corpo),
     )
     .await
@@ -1552,7 +1552,7 @@ async fn tokens_canario_nao_aparecem_em_resposta_log_arquivo_nem_fila() {
             &base,
             MetodoHttp::POST,
             &format!("/webhook/evolution/{}/{INSTANCIA}", cenario.org_a),
-            Some((CABECALHO_SEGREDO, "segredo-errado")),
+            Some((SECRET_HEADER, "segredo-errado")),
             Some(json!({"event": "messages.upsert"})),
         )
         .await,

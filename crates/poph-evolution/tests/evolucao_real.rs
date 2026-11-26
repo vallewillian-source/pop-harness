@@ -11,14 +11,14 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use poph_evolution::{ClienteEvolution, ConfigEvolution, ErroEvolution};
+use poph_evolution::{ConfigEvolution, EvolutionClient, EvolutionError};
 use poph_types::Secret;
 
-fn configurar(url: &str, chave: &str, instancia: &str) -> ClienteEvolution {
-    ClienteEvolution::novo(
-        ConfigEvolution::novo(url, instancia, Secret::new(chave.to_owned()))
+fn configurar(url: &str, chave: &str, instancia: &str) -> EvolutionClient {
+    EvolutionClient::new(
+        ConfigEvolution::new(url, instancia, Secret::new(chave.to_owned()))
             .expect("configuração")
-            .com_timeout(Duration::from_secs(20)),
+            .with_timeout(Duration::from_secs(20)),
     )
     .expect("cliente")
 }
@@ -37,11 +37,11 @@ async fn ciclo_de_instancia_sem_numero_contra_a_evolution_real() {
 
     // Chave errada: 401/403 tipado, sem a chave na mensagem.
     let ruim = configurar(&url, "chave-errada-de-proposito", &instancia);
-    let erro = ruim.listar_instancias().await.expect_err("chave errada");
+    let erro = ruim.list_instances().await.expect_err("chave errada");
     assert!(
         matches!(
             erro,
-            ErroEvolution::Resposta {
+            EvolutionError::Response {
                 status: 401 | 403,
                 ..
             }
@@ -50,11 +50,11 @@ async fn ciclo_de_instancia_sem_numero_contra_a_evolution_real() {
     );
     assert!(!format!("{erro} {erro:?}").contains("chave-errada-de-proposito"));
 
-    cliente.criar_instancia().await.expect("criar instância");
+    cliente.create_instance().await.expect("criar instância");
     // A verificação devolve Err em vez de dar panic: a instância tem de ser apagada mesmo assim.
     let verificacao: Result<(), String> = async {
         let pareamento = cliente
-            .conectar(None)
+            .connect(None)
             .await
             .map_err(|e| format!("connect sem número: {e}"))?;
         if !pareamento
@@ -64,18 +64,18 @@ async fn ciclo_de_instancia_sem_numero_contra_a_evolution_real() {
         {
             return Err("sem imagem do QR".to_owned());
         }
-        if pareamento.codigo_pareamento.is_some() {
+        if pareamento.pairing_code.is_some() {
             return Err("código de pareamento veio sem número".to_owned());
         }
         let estado = cliente
-            .estado_conexao()
+            .connection_state()
             .await
             .map_err(|e| format!("estado: {e}"))?;
         if estado == "open" {
             return Err("instância sem aparelho não pode estar aberta".to_owned());
         }
         let lista = cliente
-            .listar_instancias()
+            .list_instances()
             .await
             .map_err(|e| format!("listar: {e}"))?;
         if !lista.to_string().contains(&instancia) {
@@ -85,7 +85,7 @@ async fn ciclo_de_instancia_sem_numero_contra_a_evolution_real() {
         Ok(())
     }
     .await;
-    let apagada = cliente.apagar().await;
+    let apagada = cliente.delete().await;
     verificacao.expect("verificação contra a Evolution real");
     apagada.expect("apagar instância de teste");
 }

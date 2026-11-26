@@ -382,7 +382,7 @@ pub fn router(estado: Estado) -> Router {
         .route(
             "/webhook/evolution/{org_id}/{instancia}",
             axum::routing::post(crate::evolution::receber).layer(
-                axum::extract::DefaultBodyLimit::max(poph_evolution::TETO_CORPO_PADRAO as usize),
+                axum::extract::DefaultBodyLimit::max(poph_evolution::DEFAULT_BODY_CAP as usize),
             ),
         )
         .route("/openapi.json", get(saude::openapi))

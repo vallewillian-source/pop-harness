@@ -222,7 +222,7 @@ Three details matter for anyone changing this:
 - **Idempotency is the `event_id`.** Synapse resends the transaction when it does not receive a 2xx; the second write
   returns `Duplicada` and nothing is queued again. A resend never becomes a second send.
 - **The queue text is in Markdown**, `**[Nome]**:` followed by the body as the attendant wrote it. The conversion to
-  the WhatsApp format (`para_whatsapp`, which also cuts at 4,000 with `…`) happens **once**, at sending — converting
+  the WhatsApp format (`to_whatsapp`, which also cuts at 4,000 with `…`) happens **once**, at sending — converting
   here would make sending convert again and `**bold**` would arrive as italics.
 - **Our database failure becomes 5xx**, never 4xx: Synapse treats any non-2xx as "Application Service down" and holds
   the queue for minutes. Unknown room and closed conversation are `200` (for the closed one, with a notice in the room

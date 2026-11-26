@@ -4,7 +4,7 @@ This document answers the three checks HR-26 asks for — **(a)** webhook redeli
 **(b)** webhook authentication and **(c)** the long-message rule — and describes what the native module
 delivers, with the evidence in the POP Atende code.
 
-- **Code:** `crates/poph-evolution` (`cliente.rs`, `webhook.rs`, `texto.rs`, `integracao.rs`).
+- **Code:** `crates/poph-evolution` (`client.rs`, `webhook.rs`, `text.rs`, `integration.rs`).
 - **Contract:** the same as HR-25 (`poph_types::Integration`), equal to the external-process plugin.
 - **Tests:** 50 (9 unit, 17 for input, 23 for the client/channel against a fake Evolution, and 1 doc test).
 
@@ -46,10 +46,10 @@ resuming the `inbox` dispatches a pending item at startup.
 - **Header:** `X-Evolution-Webhook-Secret` (header name kept as the code emits it), checked against the secret set in
   the integration.
 - **Refusal:** wrong or missing secret → the delivery is refused; with no secret configured, **no** delivery is
-  accepted (`ErroWebhook::SemSegredoConfigurado`, the error variant name).
-- **Constant-time comparison** (`webhook::conferir_segredo`): the content does not leak through response time.
+  accepted (`WebhookError::NoSecretConfigured`, the error variant name).
+- **Constant-time comparison** (`webhook::check_secret`): the content does not leak through response time.
 - **On the Evolution side**, the secret travels in the `webhook/set` call itself (`headers`), as POP Atende already
-  does — this is what `ClienteEvolution::definir_webhook` builds when the channel starts.
+  does — this is what `EvolutionClient::set_webhook` builds when the channel starts.
 - Evidence in POP Atende: `core/server/routes/evolution_bridge.py:4577-4579` (`X-Evolution-Webhook-Secret`,
   `403 Invalid Evolution webhook secret`, a message emitted by the code).
 
@@ -64,7 +64,7 @@ resuming the `inbox` dispatches a pending item at startup.
 
 The task asked "how it splits long messages and sends them in sequence". **That does not exist in POP Atende today**:
 a text above 4000 characters reaches the customer truncated, not in two messages. The Harness reproduces the behavior
-(`texto::para_whatsapp` + `texto::cortar`), because channel parity is worth more than the assumption in the task — and
+(`text::to_whatsapp` + `text::truncate`), because channel parity is worth more than the assumption in the task — and
 because splitting into N messages changes what the customer sees.
 
 **Consequence recorded:** a turn that produces a reply above 4000 characters loses its end. Splitting into a sequence
@@ -77,10 +77,10 @@ maintainer to decide, not for this delivery.
 
 | Part | What it does | Where |
 |---|---|---|
-| `ClienteEvolution` | create instance, pair (QR), state, disconnect, delete, `webhook/set`, `sendText`, `sendMedia`, `getBase64FromMediaMessage`, `sendPresence` | `cliente.rs` |
-| `webhook::interpretar` | `messages.upsert` → `InboundEvent` (text, image, PDF/Office) and `connection.update`/`qrcode.updated` → `EventoEstado` | `webhook.rs` |
-| `texto::para_whatsapp` | Markdown → WhatsApp format + cut at 4000 | `texto.rs` |
-| `WhatsAppEvolution` | the channel as `Integration`: send text, send a library file, presence, health, state | `integracao.rs` |
+| `EvolutionClient` | create instance, pair (QR), state, disconnect, delete, `webhook/set`, `sendText`, `sendMedia`, `getBase64FromMediaMessage`, `sendPresence` | `client.rs` |
+| `webhook::interpret` | `messages.upsert` → `InboundEvent` (text, image, PDF/Office) and `connection.update`/`qrcode.updated` → `EventoEstado` | `webhook.rs` |
+| `text::to_whatsapp` | Markdown → WhatsApp format + cut at 4000 | `text.rs` |
+| `WhatsAppEvolution` | the channel as `Integration`: send text, send a library file, presence, health, state | `integration.rs` |
 
 Rules that came from POP Atende, and why:
 
@@ -93,7 +93,7 @@ Rules that came from POP Atende, and why:
   a group uses the full jid (`…@g.us`) and whoever wrote the message goes in `remetente`.
 - **Media:** a **16 MB** limit, checked **before** decoding the base64 (a huge file is not loaded into memory just to be
   refused later); Evolution keeps media for **4 days**, and past that it answers "Message not found" →
-  `ErroEvolution::MidiaExpirada`, which is a **definitive** error (it is not retried).
+  `EvolutionError::AttachmentExpired`, which is a **definitive** error (it is not retried).
 - **Retry:** one, only on network drop/timeout/429/5xx; 400/401/404 are not repeated.
 - **The key (`apikey`) only in the header** and never in an error, `Debug` or a log — there is a test that fails if it
   appears in the error message.
@@ -118,7 +118,7 @@ what the test sends. There is no real key and no real Evolution.
    on a real instance. It is the only step of the HR-26 acceptance that does not close here.
 2. **Manifest registration on the server:** today the API refuses to configure an integration (`422
    manifest_indisponivel`, an error code emitted by the code) until there is a trusted source for the manifest. The
-   WhatsApp manifest is already written in code (`integracao.rs`), with `apikey` and `webhook_secret` marked as
+   WhatsApp manifest is already written in code (`integration.rs`), with `apikey` and `webhook_secret` marked as
    `format: password` + `x-secret: true`; whoever hosts this registration turns on the integration config.
 3. **Webhook route on the server** (`poph serve`): the channel already knows how to authenticate and read the body, but
    no HTTP route calls it yet — it needs the integration registration and the turn engine on the server, which does not

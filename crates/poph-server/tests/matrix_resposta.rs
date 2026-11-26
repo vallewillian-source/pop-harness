@@ -34,8 +34,8 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
-use poph_evolution::webhook::CABECALHO_SEGREDO;
-use poph_evolution::{ClienteEvolution, ConfigEvolution, TETO_MIDIA};
+use poph_evolution::webhook::SECRET_HEADER;
+use poph_evolution::{ATTACHMENT_CAP, ConfigEvolution, EvolutionClient};
 use poph_matrix::{ClienteMatrix, ConfigCliente, IdsFantasmas};
 use poph_server::evolution::CanalEvolution;
 use poph_server::{Estado, PortaAtendimento, PortaDoHarness, ReceptorAs, RespostaDoAtendente};
@@ -459,8 +459,8 @@ impl Cenario {
 
     /// O canal da Evolution que o servidor usa para entregar a fila de saída de uma conversa.
     fn canal(&self, org: OrgId, conversa: ConversationId, url_evo: &str) -> CanalEvolution {
-        let cliente = ClienteEvolution::novo(
-            ConfigEvolution::novo(
+        let cliente = EvolutionClient::new(
+            ConfigEvolution::new(
                 url_evo.to_owned(),
                 INSTANCIA,
                 Secret::new(CHAVE_EVO.to_owned()),
@@ -481,7 +481,7 @@ impl Cenario {
             integracao,
             segredo: Some(Secret::new(SEGREDO_WEBHOOK.to_owned())),
             cliente: Some(cliente),
-            teto_midia: TETO_MIDIA,
+            teto_midia: ATTACHMENT_CAP,
         }
     }
 
@@ -683,7 +683,7 @@ impl Servidor {
         let resposta = self
             .cliente
             .post(format!("{}/webhook/evolution/{org}/{INSTANCIA}", self.base))
-            .header(CABECALHO_SEGREDO, SEGREDO_WEBHOOK)
+            .header(SECRET_HEADER, SEGREDO_WEBHOOK)
             .json(corpo)
             .send()
             .await
