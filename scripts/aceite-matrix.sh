@@ -1,51 +1,52 @@
 #!/usr/bin/env bash
-# ═══════════════════════════════════════════════════════════════════════════════
-# aceite-matrix.sh — aceite ponta a ponta do módulo Matrix (MX-31), o gate da fase 1.
-#
-# Sobe o `poph serve` de verdade contra o Synapse de desenvolvimento da MX-01
-# (scripts/matrix-dev.sh, porta 18008), com o registro NOVO do Harness — o arquivo do
-# ambiente, com a `url` terminando em `/matrix`, que é o caminho real — e o registro
-# ANTIGO do Python carregados ao mesmo tempo, Evolution e LLM falsos, um atendente
-# humano de verdade no Synapse e o Element atual servido localmente.
-#
-# O que ele NÃO faz: produção, deploy, push, correção de código. É prova de ambiente.
-# Nada de token, senha ou telefone é impresso; os valores ficam em arquivos 0600.
-#
-# Uso:
-#   bash apps/pop-harness/scripts/aceite-matrix.sh
-#   bash apps/pop-harness/scripts/aceite-matrix.sh --sem-element   # sem capturas
-#   bash apps/pop-harness/scripts/aceite-matrix.sh --fase2         # inclui o aceite A14 (fase 2)
-#   bash apps/pop-harness/scripts/aceite-matrix.sh --manter        # não apaga a pasta
-#
-# Variáveis:
-#   POPH_ACEITE_DIR   pasta de trabalho (padrão ~/.cache/poph-aceite-matrix)
-#   CHROME_BIN        navegador para as capturas (padrão google-chrome)
-#   ACEITE_ESPERA_ESPACO  segundos de espera do A6 para a sala entrar no espaço novo e sair do
-#                     antigo (padrão 60); a asserção reprova quando o limite estoura
-#
-# Sai com 0 quando todos os critérios conferidos passam; 1 quando algum falha;
-# 2 quando falta pré-requisito do ambiente (Synapse, container, porta ocupada).
-# ═══════════════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
+usage() {
+    cat <<'USAGE'
+Acceptance run of the Matrix module (MX-31), the phase 1 gate.
+
+Starts a real `poph serve` against the development Synapse from MX-01
+(scripts/matrix-dev.sh, port 18008), with the NEW Harness registration (the environment
+file, with a `url` ending in `/matrix`, which is the real path) and the OLD Python
+registration loaded at the same time, fake Evolution and LLM servers, a real human agent
+on Synapse and the current Element served locally.
+
+It does NOT do production, deploy, push or code fixes. It is an environment proof.
+No token, password or phone number is printed; the values stay in 0600 files.
+
+Usage:
+  bash apps/pop-harness/scripts/aceite-matrix.sh
+  bash apps/pop-harness/scripts/aceite-matrix.sh --sem-element   # no screenshots
+  bash apps/pop-harness/scripts/aceite-matrix.sh --fase2         # includes acceptance A14 (phase 2)
+  bash apps/pop-harness/scripts/aceite-matrix.sh --manter        # keeps the working folder
+
+Variables:
+  POPH_ACEITE_DIR       working folder (default ~/.cache/poph-aceite-matrix)
+  CHROME_BIN            browser for the screenshots (default google-chrome)
+  ACEITE_ESPERA_ESPACO  seconds the A6 check waits for the room to join the new space and
+                        leave the old one (default 60); the assertion fails when it runs out
+
+Exits 0 when every checked criterion passes, 1 when one fails, and 2 when an environment
+prerequisite is missing (Synapse, container, busy port).
+USAGE
+}
+
 APP="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-RAIZ="$(cd "$APP/../.." && pwd)"
-# POPH_BIN permite rodar o roteiro com um binário construído fora desta árvore (ex.: de um
-# worktree do HEAD, quando outro agente está com código não commitado na pasta de trabalho).
+ROOT="$(cd "$APP/../.." && pwd)"
 POPH="${POPH_BIN:-$APP/target/debug/poph}"
 AUX="$APP/scripts/aceite-matrix-aux.py"
 ELEMENT_JS="$APP/scripts/aceite-matrix-element.mjs"
 
 DIR="${POPH_ACEITE_DIR:-$HOME/.cache/poph-aceite-matrix}"
 MANTER=0
-SEM_ELEMENT=0
+NO_ELEMENT=0
 FASE2=0
 for arg in "$@"; do
     case "$arg" in
         --manter) MANTER=1 ;;
-        --sem-element) SEM_ELEMENT=1 ;;
+        --sem-element) NO_ELEMENT=1 ;;
         --fase2) FASE2=1 ;;
-        -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
+        -h|--help) usage; exit 0 ;;
         *) echo "argumento desconhecido: $arg" >&2; exit 2 ;;
     esac
 done
@@ -54,31 +55,31 @@ SYNAPSE="http://127.0.0.1:18008"
 SERVER="matrix-dev.local"
 IP_LAN="$(hostname -I | awk '{print $1}')"
 CONTAINER="poph-matrix-synapse"
-SERVE_PORTA=18010
-LLM_PORTA=18401
-EVO_PORTA=18402
-ELEMENT_PORTA=18403
+SERVE_PORT=18010
+LLM_PORT=18401
+EVO_PORT=18402
+ELEMENT_PORT=18403
 
-falha() { echo "erro: $*" >&2; exit 2; }
-aviso() { echo "aviso: $*" >&2; }
-precisa() { command -v "$1" >/dev/null 2>&1 || falha "$1 não está no PATH"; }
+fail() { echo "erro: $*" >&2; exit 2; }
+warn() { echo "aviso: $*" >&2; }
+need() { command -v "$1" >/dev/null 2>&1 || fail "$1 não está no PATH"; }
 ocultar() { sed -E 's/(token|senha|secret|apikey)([^ ]*)[:=" ]+[^ "]+/\1\2 [oculto]/gi'; }
 
 echo "== 0. pré-requisitos =="
-precisa curl
-precisa python3
-precisa docker
-[ -x "$POPH" ] || falha "binário ausente: $POPH (rode cargo build -p poph)"
-[ -f "$AUX" ] || falha "auxiliar ausente: $AUX"
+need curl
+need python3
+need docker
+[ -x "$POPH" ] || fail "binário ausente: $POPH (rode cargo build -p poph)"
+[ -f "$AUX" ] || fail "auxiliar ausente: $AUX"
 curl -fsS -m 3 -o /dev/null "$SYNAPSE/_matrix/client/versions" \
-    || falha "Synapse de dev fora do ar em $SYNAPSE (suba com: bash apps/pop-harness/scripts/matrix-dev.sh subir)"
+    || fail "Synapse de dev fora do ar em $SYNAPSE (suba com: bash apps/pop-harness/scripts/matrix-dev.sh subir)"
 docker container inspect "$CONTAINER" >/dev/null 2>&1 \
-    || falha "container $CONTAINER não existe (é o Synapse da MX-01)"
-if ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]$SERVE_PORTA$"; then
-    falha "porta $SERVE_PORTA ocupada; pare o processo antes (é a porta do AS do Harness)"
+    || fail "container $CONTAINER não existe (é o Synapse da MX-01)"
+if ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]$SERVE_PORT$"; then
+    fail "porta $SERVE_PORT ocupada; pare o processo antes (é a porta do AS do Harness)"
 fi
-if ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]$ELEMENT_PORTA$"; then
-    falha "porta $ELEMENT_PORTA ocupada; pare o processo antes"
+if ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]$ELEMENT_PORT$"; then
+    fail "porta $ELEMENT_PORT ocupada; pare o processo antes"
 fi
 
 echo "== 1. pasta de trabalho =="
@@ -89,79 +90,71 @@ mkdir -p "$DIR/falsos" "$DIR/data" "$DIR/capturas"
 chmod 700 "$DIR"
 
 PIDS=()
-limpar() {
+cleanup() {
     local pid
     for pid in "${PIDS[@]:-}"; do
         kill "$pid" 2>/dev/null || true
     done
     PIDS=()
 }
-# O registro do Synapse NÃO é alterado por este roteiro: ele usa o arquivo do ambiente como está
-# (url com `/matrix`, o mesmo que reflete produção), então não há nada a restaurar no fim.
-trap limpar EXIT INT TERM
+trap cleanup EXIT INT TERM
 
-# ── segredos do ambiente MX-01 ────────────────────────────────────────────────
 [ -f "$HOME/.cache/poph-matrix/credenciais.env" ] \
-    || falha "credenciais do MX-01 ausentes (~/.cache/poph-matrix/credenciais.env)"
+    || fail "credenciais do MX-01 ausentes (~/.cache/poph-matrix/credenciais.env)"
 # shellcheck disable=SC1090
 . "$HOME/.cache/poph-matrix/credenciais.env"
 AS_TOKEN="$POPH_MATRIX_DEV_HARNESS_AS_TOKEN"
 HS_TOKEN="$POPH_MATRIX_DEV_HARNESS_HS_TOKEN"
 PY_AS_TOKEN="$POPH_MATRIX_DEV_PYTHON_AS_TOKEN"
-# O token de administrador do Synapse (MX-46) não nasce com o matrix-dev.sh: ele mora num
-# arquivo próprio, porque o `matrix-dev.sh subir` reescreve o credenciais.env a cada execução.
 ADMIN_TOKEN="${POPH_MATRIX_DEV_ADMIN_TOKEN:-}"
 if [ -z "$ADMIN_TOKEN" ] && [ -f "$HOME/.cache/poph-matrix/admin-token.env" ]; then
     # shellcheck disable=SC1091
     . "$HOME/.cache/poph-matrix/admin-token.env"
     ADMIN_TOKEN="${POPH_MATRIX_DEV_ADMIN_TOKEN:-}"
 fi
-[ -n "$AS_TOKEN" ] && [ -n "$HS_TOKEN" ] || falha "credenciais do MX-01 sem os tokens do Harness"
+[ -n "$AS_TOKEN" ] && [ -n "$HS_TOKEN" ] || fail "credenciais do MX-01 sem os tokens do Harness"
 
-SEGREDO_WEBHOOK="aceite-$(python3 -c 'import secrets;print(secrets.token_hex(12))')"
-CHAVE_CIFRA="aceite-$(python3 -c 'import secrets;print(secrets.token_hex(16))')"
-USUARIO_ATENDENTE="atendente_$(python3 -c 'import secrets;print(secrets.token_hex(3))')"
-SENHA_ATENDENTE="aceite-$(python3 -c 'import secrets;print(secrets.token_hex(8))')"
-printf '%s' "$USUARIO_ATENDENTE" > "$DIR/atendente.usuario"
-printf '%s' "$SENHA_ATENDENTE" > "$DIR/atendente.senha"
+WEBHOOK_SECRET="aceite-$(python3 -c 'import secrets;print(secrets.token_hex(12))')"
+CIPHER_KEY="aceite-$(python3 -c 'import secrets;print(secrets.token_hex(16))')"
+AGENT_USER="atendente_$(python3 -c 'import secrets;print(secrets.token_hex(3))')"
+AGENT_PASSWORD="aceite-$(python3 -c 'import secrets;print(secrets.token_hex(8))')"
+printf '%s' "$AGENT_USER" > "$DIR/atendente.usuario"
+printf '%s' "$AGENT_PASSWORD" > "$DIR/atendente.senha"
 chmod 600 "$DIR/atendente.senha" "$DIR/atendente.usuario"
 
 cat > "$DIR/ambiente.sh" <<ENV
 export POPH_CONFIG="$DIR/poph.toml"
-export POPH_CHAVE_CIFRA="$CHAVE_CIFRA"
+export POPH_CHAVE_CIFRA="$CIPHER_KEY"
 export ANTIGRAVITY_API_KEY="chave-falsa-do-llm-falso"
 export EVOLUTION_API_KEY="chave-falsa-da-evolution-falsa"
-export POPH_EVO_SEGREDO_ACEITE="$SEGREDO_WEBHOOK"
+export POPH_EVO_SEGREDO_ACEITE="$WEBHOOK_SECRET"
 export POPH_MATRIX_AS_TOKEN="$AS_TOKEN"
 export POPH_MATRIX_HS_TOKEN="$HS_TOKEN"
 export POPH_MATRIX_ADMIN_TOKEN="$ADMIN_TOKEN"
 export ACEITE_TOKEN_HUMANO="\${ACEITE_TOKEN_HUMANO:-}"
 export ACEITE_AS_TOKEN="$AS_TOKEN"
-export ACEITE_SEGREDO_WEBHOOK="$SEGREDO_WEBHOOK"
+export ACEITE_SEGREDO_WEBHOOK="$WEBHOOK_SECRET"
 export PATH="$HOME/.cargo/bin:\$PATH"
 ENV
 chmod 600 "$DIR/ambiente.sh"
 # shellcheck disable=SC1091
 . "$DIR/ambiente.sh"
 
-# ── configuração do Harness ───────────────────────────────────────────────────
-# No aceite da fase 2 o prazo da mídia cai para 1 dia (o padrão é 4): o valor encurtado só vale
-# nesta pasta de trabalho e o relatório diz qual foi usado.
-RETENCAO_TOML=""
-[ "$FASE2" = 1 ] && RETENCAO_TOML="midia_retencao_dias = 1"
+RETENTION_TOML=""
+[ "$FASE2" = 1 ] && RETENTION_TOML="midia_retencao_dias = 1"
 cat > "$DIR/poph.toml" <<TOML
 servidor.endereco = "0.0.0.0"
-servidor.porta = $SERVE_PORTA
+servidor.porta = $SERVE_PORT
 dados.diretorio = "$DIR/data"
 log.nivel = "info"
 log.formato = "legivel"
 llm.provedor = "antigravity2api"
-llm.url_base = "http://127.0.0.1:$LLM_PORTA/v1"
+llm.url_base = "http://127.0.0.1:$LLM_PORT/v1"
 llm.modelo = "modelo-falso"
 llm.timeout_segundos = 30
 llm.retentativas = 0
 [evolution]
-url_base = "http://127.0.0.1:$EVO_PORTA"
+url_base = "http://127.0.0.1:$EVO_PORT"
 [matrix]
 habilitado = true
 homeserver_url = "$SYNAPSE"
@@ -169,36 +162,32 @@ server_name = "$SERVER"
 prefixo = "ph"
 concorrencia = 4
 intervalo_ms = 300
-${RETENCAO_TOML}
+${RETENTION_TOML}
 TOML
 
 echo "== 2. registro do Synapse (caminho real, com /matrix) =="
-# O registro do Harness do ambiente (e o de produção) tem a `url` terminando em `/matrix`: o Synapse
-# chama `<url>/_matrix/app/v1/transactions/...`, ou seja `/matrix/_matrix/app/v1/...`, e o receptor
-# atende esse caminho desde a correção da MX-31. Este roteiro usa o arquivo COMO ESTÁ — não gera
-# registro alternativo, não mexe no registro do Synapse e não restaura nada no fim.
-REGISTRO_ATUAL="$HOME/.cache/poph-matrix/data/registro-harness.yaml"
-[ -f "$REGISTRO_ATUAL" ] \
-    || falha "registro do Harness ausente em $REGISTRO_ATUAL (gere com: poph matrix registro --saida ...)"
-URL_REGISTRO="$(sed -nE 's/^url:[[:space:]]*"([^"]+)".*/\1/p' "$REGISTRO_ATUAL" | head -1)"
-case "$URL_REGISTRO" in
-    "http://$IP_LAN:$SERVE_PORTA/matrix") : ;;
-    *) falha "o registro do Harness aponta para '$URL_REGISTRO'; este roteiro espera 'http://$IP_LAN:$SERVE_PORTA/matrix' (o caminho real, com /matrix). Se o IP da estação mudou, regenere com: poph matrix registro --saida $REGISTRO_ATUAL --url http://$IP_LAN:$SERVE_PORTA/matrix --forcar" ;;
+CURRENT_REGISTRY="$HOME/.cache/poph-matrix/data/registro-harness.yaml"
+[ -f "$CURRENT_REGISTRY" ] \
+    || fail "registro do Harness ausente em $CURRENT_REGISTRY (gere com: poph matrix registro --saida ...)"
+REGISTRY_URL="$(sed -nE 's/^url:[[:space:]]*"([^"]+)".*/\1/p' "$CURRENT_REGISTRY" | head -1)"
+case "$REGISTRY_URL" in
+    "http://$IP_LAN:$SERVE_PORT/matrix") : ;;
+    *) fail "o registro do Harness aponta para '$REGISTRY_URL'; este roteiro espera 'http://$IP_LAN:$SERVE_PORT/matrix' (o caminho real, com /matrix). Se o IP da estação mudou, regenere com: poph matrix registro --saida $CURRENT_REGISTRY --url http://$IP_LAN:$SERVE_PORT/matrix --forcar" ;;
 esac
-cp "$REGISTRO_ATUAL" "$DIR/registro-harness.yaml"
+cp "$CURRENT_REGISTRY" "$DIR/registro-harness.yaml"
 chmod 600 "$DIR/registro-harness.yaml"
 POPH_MATRIX_DEV_REUSAR_TOKENS=1 \
 POPH_MATRIX_DEV_REGISTRO_H="$DIR/registro-harness.yaml" \
     bash "$APP/scripts/matrix-dev.sh" subir > "$DIR/synapse-subida.log" 2>&1
 grep -q "Loaded application service" "$DIR/synapse-subida.log" \
-    || falha "o Synapse não carregou os Application Services; veja $DIR/synapse-subida.log"
-echo "registro usado: $URL_REGISTRO (arquivo do ambiente, sem alteração)"
+    || fail "o Synapse não carregou os Application Services; veja $DIR/synapse-subida.log"
+echo "registro usado: $REGISTRY_URL (arquivo do ambiente, sem alteração)"
 
 echo "== 3. falsos (LLM e Evolution) =="
-python3 "$AUX" falsos "$DIR/falsos" "$LLM_PORTA" "$EVO_PORTA" > "$DIR/falsos.log" 2>&1 &
+python3 "$AUX" falsos "$DIR/falsos" "$LLM_PORT" "$EVO_PORT" > "$DIR/falsos.log" 2>&1 &
 PIDS+=($!)
 for _ in $(seq 1 50); do
-    curl -fsS -m 1 -o /dev/null "http://127.0.0.1:$LLM_PORTA/" 2>/dev/null && break || true
+    curl -fsS -m 1 -o /dev/null "http://127.0.0.1:$LLM_PORT/" 2>/dev/null && break || true
     sleep 0.2
 done
 
@@ -221,15 +210,15 @@ echo "== 5. subida do servidor (1/2: criar a integração) =="
 SERVE_PID=$!
 PIDS+=("$SERVE_PID")
 for _ in $(seq 1 100); do
-    curl -fsS -m 1 -o /dev/null "http://127.0.0.1:$SERVE_PORTA/healthz" 2>/dev/null && break || true
+    curl -fsS -m 1 -o /dev/null "http://127.0.0.1:$SERVE_PORT/healthz" 2>/dev/null && break || true
     sleep 0.2
 done
-curl -fsS -m 2 -o /dev/null "http://127.0.0.1:$SERVE_PORTA/healthz" || falha "o servidor não subiu (veja $DIR/serve-1.log)"
+curl -fsS -m 2 -o /dev/null "http://127.0.0.1:$SERVE_PORT/healthz" || fail "o servidor não subiu (veja $DIR/serve-1.log)"
 curl -sS -o "$DIR/integracao.json" -w '%{http_code}' -X POST \
-    "http://127.0.0.1:$SERVE_PORTA/admin/v1/orgs/$ORG/agents/$AG/integrations" \
+    "http://127.0.0.1:$SERVE_PORT/admin/v1/orgs/$ORG/agents/$AG/integrations" \
     -H "Authorization: Bearer $TOKEN_ADMIN" -H 'Content-Type: application/json' \
     -d '{"kind":"whatsapp"}' > "$DIR/integracao.status"
-[ "$(cat "$DIR/integracao.status")" = "201" ] || falha "não criou a integração WhatsApp"
+[ "$(cat "$DIR/integracao.status")" = "201" ] || fail "não criou a integração WhatsApp"
 INTEG="$(python3 -c "import json;print(json.load(open('$DIR/integracao.json'))['id'])")"
 kill "$SERVE_PID" 2>/dev/null || true
 wait "$SERVE_PID" 2>/dev/null || true
@@ -246,10 +235,10 @@ TOML
 
 echo "== 6. atendente humano e espaços =="
 docker exec "$CONTAINER" register_new_matrix_user -c /data/homeserver.yaml \
-    -u "$USUARIO_ATENDENTE" -p "$SENHA_ATENDENTE" --no-admin --exists-ok http://localhost:8008 \
+    -u "$AGENT_USER" -p "$AGENT_PASSWORD" --no-admin --exists-ok http://localhost:8008 \
     > "$DIR/registro-atendente.log" 2>&1
 curl -fsS -X POST "$SYNAPSE/_matrix/client/v3/login" -H 'Content-Type: application/json' \
-    -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"$USUARIO_ATENDENTE\"},\"password\":\"$SENHA_ATENDENTE\"}" \
+    -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"$AGENT_USER\"},\"password\":\"$AGENT_PASSWORD\"}" \
     > "$DIR/login.json"
 HUMANO_TOKEN="$(python3 -c "import json;print(json.load(open('$DIR/login.json'))['access_token'])")"
 printf '%s' "$HUMANO_TOKEN" > "$DIR/atendente.token"
@@ -258,36 +247,33 @@ sed -i "s|^export ACEITE_TOKEN_HUMANO=.*|export ACEITE_TOKEN_HUMANO=\"$HUMANO_TO
 export ACEITE_TOKEN_HUMANO="$HUMANO_TOKEN"
 
 python3 "$AUX" espacos "$DIR" > "$DIR/espacos.log"
-ESP_COM="$(python3 -c "import json;print(json.load(open('$DIR/espacos.json'))['comercial']['alias'])")"
-ESP_SUP="$(python3 -c "import json;print(json.load(open('$DIR/espacos.json'))['suporte']['alias'])")"
-SALA_COM="$(python3 -c "import json;print(json.load(open('$DIR/espacos.json'))['comercial']['sala'])")"
-SALA_SUP="$(python3 -c "import json;print(json.load(open('$DIR/espacos.json'))['suporte']['sala'])")"
+SPACE_SALES="$(python3 -c "import json;print(json.load(open('$DIR/espacos.json'))['comercial']['alias'])")"
+SPACE_SUPPORT="$(python3 -c "import json;print(json.load(open('$DIR/espacos.json'))['suporte']['alias'])")"
+ROOM_SALES="$(python3 -c "import json;print(json.load(open('$DIR/espacos.json'))['comercial']['sala'])")"
+ROOM_SUPPORT="$(python3 -c "import json;print(json.load(open('$DIR/espacos.json'))['suporte']['sala'])")"
 
 echo "== 7. módulo ligado e espaços vinculados =="
 "$POPH" --offline --org aceite-matrix matrix ligar --json > "$DIR/ligado.json"
-"$POPH" --offline --org aceite-matrix matrix espaco --departamento "$COM" --espaco "$ESP_COM" --json > "$DIR/espaco-comercial.json"
-"$POPH" --offline --org aceite-matrix matrix espaco --departamento "$SUP" --espaco "$ESP_SUP" --json > "$DIR/espaco-suporte.json"
+"$POPH" --offline --org aceite-matrix matrix espaco --departamento "$COM" --espaco "$SPACE_SALES" --json > "$DIR/espaco-comercial.json"
+"$POPH" --offline --org aceite-matrix matrix espaco --departamento "$SUP" --espaco "$SPACE_SUPPORT" --json > "$DIR/espaco-suporte.json"
 
 echo "== 8. subida do servidor (2/2: módulo no ar) =="
 "$POPH" serve > "$DIR/serve.log" 2>&1 &
 SERVE_PID=$!
 PIDS+=("$SERVE_PID")
 for _ in $(seq 1 100); do
-    curl -fsS -m 1 -o /dev/null "http://127.0.0.1:$SERVE_PORTA/healthz" 2>/dev/null && break || true
+    curl -fsS -m 1 -o /dev/null "http://127.0.0.1:$SERVE_PORT/healthz" 2>/dev/null && break || true
     sleep 0.2
 done
-curl -fsS -m 2 -o /dev/null "http://127.0.0.1:$SERVE_PORTA/healthz" || falha "o servidor não subiu (veja $DIR/serve.log)"
+curl -fsS -m 2 -o /dev/null "http://127.0.0.1:$SERVE_PORT/healthz" || fail "o servidor não subiu (veja $DIR/serve.log)"
 
 RESULTADO="$DIR/resultado.txt"
 : > "$RESULTADO"
 anotar() { printf '%s\t%s\n' "$1" "$2" >> "$RESULTADO"; echo "[$1] $2"; }
 
-# ── Element (capturas) ───────────────────────────────────────────────────────
-# Sobe o Element atual servido localmente UMA vez; as capturas rodam em passadas separadas porque
-# o A1 precisa ser provado ANTES de qualquer transferência e o estado final depois dela.
 ELEMENT_OK=0
 iniciar_element() {
-    if [ "$SEM_ELEMENT" = 1 ]; then
+    if [ "$NO_ELEMENT" = 1 ]; then
         anotar A12 "NÃO CONFERIDO: rodada com --sem-element"
         return 1
     fi
@@ -319,7 +305,7 @@ c["enable_presence_by_hs_url"] = {"$SYNAPSE": False}
 c["features"] = {}
 json.dump(c, open("$DIR/element/config.json", "w"), indent=2)
 JSON
-    python3 -m http.server "$ELEMENT_PORTA" --bind 127.0.0.1 --directory "$DIR/element" \
+    python3 -m http.server "$ELEMENT_PORT" --bind 127.0.0.1 --directory "$DIR/element" \
         > "$DIR/element.log" 2>&1 &
     PIDS+=($!)
     sleep 1
@@ -327,19 +313,17 @@ JSON
     return 0
 }
 
-# capturar_elemento <modo> <sala> <espaco> [sala2]
 capturar_elemento() {
     [ "$ELEMENT_OK" = 1 ] || return 1
     local modo="$1" sala="$2" espaco="$3" sala2="${4:-}"
     CHROME_BIN="${CHROME_BIN:-google-chrome}" \
-    ACEITE_ELEMENT="http://127.0.0.1:$ELEMENT_PORTA" \
+    ACEITE_ELEMENT="http://127.0.0.1:$ELEMENT_PORT" \
     ACEITE_SENHA="$(cat "$DIR/atendente.senha")" \
-    ACEITE_USUARIO="$USUARIO_ATENDENTE" \
+    ACEITE_USUARIO="$AGENT_USER" \
         node "$ELEMENT_JS" "$modo" "$DIR/capturas" "$sala" "$espaco" "$DIR" "$sala2" \
         > "$DIR/element-captura-$modo.log" 2>&1
 }
 
-# esta_no_espaco <sala> <espaco> — sucesso quando o espaço tem `m.space.child` da sala
 esta_no_espaco() {
     local saida
     saida="$(python3 "$AUX" pai-do-espaco "$1" "$2")"
@@ -347,10 +331,6 @@ esta_no_espaco() {
     [ "$saida" != "{}" ]
 }
 
-# fora_do_espaco <sala> <espaco> — 0 quando o espaço NÃO tem `m.space.child` da sala (o Synapse
-# responde 404 para o evento de estado ausente, e 200 com `{}` para o filho removido), 1 quando a
-# sala ainda está lá e 2 quando não deu para ler o estado (erro transitório, 403 etc.). O 2 existe
-# para o roteiro nunca confundir "não consegui ler" com "a sala saiu do espaço".
 fora_do_espaco() {
     local saida
     saida="$(python3 "$AUX" pai-do-espaco "$1" "$2" 2>/dev/null || true)"
@@ -379,35 +359,31 @@ FIMSQL
     [ -n "$CONV" ] && break
     sleep 1
 done
-[ -n "$CONV" ] || falha "nenhuma sala foi criada em 60 s (veja $DIR/serve.log)"
-SALA=""
+[ -n "$CONV" ] || fail "nenhuma sala foi criada em 60 s (veja $DIR/serve.log)"
+ROOM=""
 for _ in $(seq 1 60); do
-    SALA="$(python3 - "$DIR/data/harness.db" "$CONV" <<'FIMSQL'
+    ROOM="$(python3 - "$DIR/data/harness.db" "$CONV" <<'FIMSQL'
 import sqlite3, sys
 c = sqlite3.connect(sys.argv[1])
 r = c.execute("select room_id from matrix_rooms where conversation_id=? and state='ready'", (sys.argv[2],)).fetchone()
 print(r[0] if r else "")
 FIMSQL
 )"
-    [ -n "$SALA" ] && break
+    [ -n "$ROOM" ] && break
     sleep 1
 done
-[ -n "$SALA" ] || falha "a sala da conversa não ficou pronta em 60 s (veja $DIR/serve.log)"
-echo "conversa=$CONV sala=$SALA" | tee "$DIR/ids.txt"
+[ -n "$ROOM" ] || fail "a sala da conversa não ficou pronta em 60 s (veja $DIR/serve.log)"
+echo "conversa=$CONV sala=$ROOM" | tee "$DIR/ids.txt"
 
-# A sala recém-criada entra no espaço do departamento na própria criação (correção da MX-31).
-# Esta checagem é ANTES da transferência: ela prova o A1 sem truque de gatilho.
-NO_ESPACO=0
-for _ in $(seq 1 60); do esta_no_espaco "$SALA" "$SALA_COM" && { NO_ESPACO=1; break; }; sleep 1; done
+IN_SPACE=0
+for _ in $(seq 1 60); do esta_no_espaco "$ROOM" "$ROOM_SALES" && { IN_SPACE=1; break; }; sleep 1; done
 
-# o atendente é membro do espaço e entra na sala restrita (o join_rules é escrito na criação)
 for _ in $(seq 1 20); do
-    python3 "$AUX" entrar "$SALA" > "$DIR/entrar-a1.json" 2>&1 || true
+    python3 "$AUX" entrar "$ROOM" > "$DIR/entrar-a1.json" 2>&1 || true
     grep -q '^200' "$DIR/entrar-a1.json" && break
     sleep 1
 done
 
-# a primeira mensagem pode chegar antes da sala; espera o espelho gravar a resposta do agente
 for _ in $(seq 1 40); do
     N="$(python3 - "$DIR/data/harness.db" "$CONV" <<'FIMSQL'
 import sqlite3, sys
@@ -419,13 +395,13 @@ FIMSQL
     sleep 1
 done
 
-python3 "$AUX" estado-sala "$SALA" > "$DIR/estado-sala-a1.json"
-NOME="$(python3 -c "
+python3 "$AUX" estado-sala "$ROOM" > "$DIR/estado-sala-a1.json"
+NAME="$(python3 -c "
 import json
 d=json.load(open('$DIR/estado-sala-a1.json'))
 print(d['m.room.name'].get('name',''))
 ")"
-NOME_META="$(python3 -c "
+NAME_META="$(python3 -c "
 import json
 d=json.load(open('$DIR/estado-sala-a1.json'))
 for k,v in d.items():
@@ -433,13 +409,13 @@ for k,v in d.items():
         print(v.get('client_name',''))
         break
 ")"
-if [ "$NOME" = "Ana Souza" ] && [ "$NOME_META" = "Ana Souza" ] && [ "$NO_ESPACO" = 1 ]; then
+if [ "$NAME" = "Ana Souza" ] && [ "$NAME_META" = "Ana Souza" ] && [ "$IN_SPACE" = 1 ]; then
     anotar A1 "OK: sala 'Ana Souza' (metadata idem) já no espaço Comercial na criação, sem transferência"
 else
-    anotar A1 "FALHOU: nome da sala='$NOME' (metadata='$NOME_META'), no espaço Comercial=$NO_ESPACO"
+    anotar A1 "FALHOU: nome da sala='$NAME' (metadata='$NAME_META'), no espaço Comercial=$IN_SPACE"
 fi
 if [ "$ELEMENT_OK" = 1 ]; then
-    if capturar_elemento a1 "$SALA" "$SALA_COM"; then
+    if capturar_elemento a1 "$ROOM" "$ROOM_SALES"; then
         anotar A12 "OK (A1): capturas a1-sala.png e a1-espaco.png (sala nomeada e sob o espaço Comercial)"
     else
         anotar A12 "NÃO CONFERIDO: a captura do A1 falhou (veja $DIR/element-captura-a1.log)"
@@ -447,21 +423,10 @@ if [ "$ELEMENT_OK" = 1 ]; then
 fi
 
 echo "== 10. A6: transferência pelo departamento move a sala de espaço =="
-# O posicionamento é feito em duas fases pelo próprio produto: o Harness escreve o
-# `m.space.child` no espaço NOVO, dá os convites e SÓ ENTÃO grava em `matrix_rooms.space_room_id`
-# qual é o espaço da sala — e é esse registro que a transferência usa como "espaço antigo" para
-# saber de onde sair (MX-15, `espacos::posicionar`). Pedir a transferência enquanto a gravação da
-# criação ainda não aconteceu faz o produto não ter de onde sair: a sala fica nos dois espaços e
-# nenhuma passagem seguinte corrige, porque depois disso o registro já diz "Suporte". Medido na
-# MX-50: a gravação da criação chega ~1,5 s depois do `m.space.child`, e o roteiro transferia
-# dentro dessa janela em parte das rodadas (a intermitência do A6). Aqui o roteiro espera O
-# POSICIONAMENTO DA CRIAÇÃO ESTAR GRAVADO antes de transferir; a asserção do A6 continua esperando
-# as duas condições (entrou no espaço novo e saiu do antigo) com limite explícito e reprova quando
-# estoura — nada de passar por tempo.
 ESPERA_ESPACO="${ACEITE_ESPERA_ESPACO:-60}"
 ESPACO_DA_CRIACAO=0
 for _ in $(seq 1 "$ESPERA_ESPACO"); do
-    ESPACO_DA_CRIACAO="$(python3 - "$DIR/data/harness.db" "$CONV" "$SALA_COM" <<'FIMSQL'
+    ESPACO_DA_CRIACAO="$(python3 - "$DIR/data/harness.db" "$CONV" "$ROOM_SALES" <<'FIMSQL'
 import sqlite3, sys
 c = sqlite3.connect(sys.argv[1])
 r = c.execute("select space_room_id from matrix_rooms where conversation_id=?", (sys.argv[2],)).fetchone()
@@ -474,15 +439,13 @@ done
 [ "$ESPACO_DA_CRIACAO" = 1 ] \
     || echo "aviso: o espaço da criação não foi gravado em ${ESPERA_ESPACO}s; a transferência segue (o A6 vai reprovar se o produto não souber de onde sair)"
 python3 "$AUX" transferir "$DIR/data/harness.db" "$CONV" "$SUP" > "$DIR/transferencia.txt"
-# O produto entra no espaço novo antes de sair do antigo (de propósito: cair no meio deixa a sala
-# em dois espaços, nunca em nenhum). Por isso a asserção espera as duas condições juntas.
 MOVED=0
 FORA=0
 LEITURA_FALHOU=0
 for _ in $(seq 1 "$ESPERA_ESPACO"); do
-    if esta_no_espaco "$SALA" "$SALA_SUP"; then MOVED=1; else MOVED=0; fi
+    if esta_no_espaco "$ROOM" "$ROOM_SUPPORT"; then MOVED=1; else MOVED=0; fi
     RC_FORA=0
-    fora_do_espaco "$SALA" "$SALA_COM" || RC_FORA=$?
+    fora_do_espaco "$ROOM" "$ROOM_SALES" || RC_FORA=$?
     case "$RC_FORA" in
         0) FORA=1; LEITURA_FALHOU=0 ;;
         2) LEITURA_FALHOU=1 ;;
@@ -499,7 +462,7 @@ fi
 if [ "$FORA" = 1 ]; then
     anotar A6 "OK: sala fora do espaço Comercial"
 else
-    FORA_COM="$(python3 "$AUX" pai-do-espaco "$SALA" "$SALA_COM")"
+    FORA_COM="$(python3 "$AUX" pai-do-espaco "$ROOM" "$ROOM_SALES")"
     if [ "$LEITURA_FALHOU" = 1 ]; then
         anotar A6 "FALHOU: não consegui ler o vínculo da sala com o espaço Comercial em ${ESPERA_ESPACO}s ($FORA_COM)"
     else
@@ -509,8 +472,8 @@ fi
 
 
 
-echo "== 11. A2: resposta do atendente =="
-python3 "$AUX" atendente-envia "$SALA" "Claro! O plano anual sai por R\$ 1.188, com 50% de desconto no primeiro ano." > "$DIR/envio-atendente.json"
+echo "== 11. A2: agent reply =="
+python3 "$AUX" atendente-envia "$ROOM" "Claro! O plano anual sai por R\$ 1.188, com 50% de desconto no primeiro ano." > "$DIR/envio-atendente.json"
 for _ in $(seq 1 40); do
     grep -qF '*[atendente' "$DIR/falsos/evo.jsonl" 2>/dev/null && break
     sleep 0.5
@@ -528,7 +491,6 @@ FIMSQL
 )"
 [ "$STATUS" = "transferred" ] && anotar A2 "OK: conversa transferred (o agente parou)" || anotar A2 "FALHOU: conversa ficou '$STATUS'"
 
-# mensagem seguinte do cliente: gravada, sem resposta nova
 ANTES="$(wc -l < "$DIR/falsos/evo.jsonl" 2>/dev/null || echo 0)"
 python3 "$AUX" webhook "$ORG" aceite ACEITE-MSG-2 "Perfeito, vou fechar! Pode mandar o link?" "Ana Souza" >/dev/null 2>&1
 sleep 5
@@ -536,21 +498,21 @@ DEPOIS="$(wc -l < "$DIR/falsos/evo.jsonl" 2>/dev/null || echo 0)"
 [ "$ANTES" = "$DEPOIS" ] && anotar A2 "OK: mensagem seguinte do cliente não gerou resposta" || anotar A2 "FALHOU: o agente respondeu depois da transferência"
 
 echo "== 12. A7: reabertura, fechamento e conversa nova =="
-VERSAO="$(curl -sS "http://127.0.0.1:$SERVE_PORTA/admin/v1/orgs/$ORG/conversations/$CONV" \
+VERSAO="$(curl -sS "http://127.0.0.1:$SERVE_PORT/admin/v1/orgs/$ORG/conversations/$CONV" \
     -H "Authorization: Bearer $TOKEN_ADMIN" | python3 -c "import json,sys;print(json.load(sys.stdin)['version'])")"
 curl -sS -o "$DIR/reopen.json" -w '%{http_code}' -X POST \
-    "http://127.0.0.1:$SERVE_PORTA/admin/v1/orgs/$ORG/conversations/$CONV/reopen" \
+    "http://127.0.0.1:$SERVE_PORT/admin/v1/orgs/$ORG/conversations/$CONV/reopen" \
     -H "Authorization: Bearer $TOKEN_ADMIN" -H "If-Match: $VERSAO" > "$DIR/reopen.status"
 [ "$(cat "$DIR/reopen.status")" = "200" ] && anotar A7 "OK: reabertura pela API" || anotar A7 "FALHOU: reabertura devolveu $(cat "$DIR/reopen.status")"
 sleep 4
-python3 "$AUX" estado-sala "$SALA" > "$DIR/estado-reaberta.json"
+python3 "$AUX" estado-sala "$ROOM" > "$DIR/estado-reaberta.json"
 VERSAO="$(python3 -c "import json;print(json.load(open('$DIR/reopen.json'))['version'])")"
 curl -sS -o "$DIR/close.json" -w '%{http_code}' -X POST \
-    "http://127.0.0.1:$SERVE_PORTA/admin/v1/orgs/$ORG/conversations/$CONV/close" \
+    "http://127.0.0.1:$SERVE_PORT/admin/v1/orgs/$ORG/conversations/$CONV/close" \
     -H "Authorization: Bearer $TOKEN_ADMIN" -H "If-Match: $VERSAO" > "$DIR/close.status"
 [ "$(cat "$DIR/close.status")" = "200" ] && anotar A7 "OK: fechamento pela API" || anotar A7 "FALHOU: fechamento devolveu $(cat "$DIR/close.status")"
 sleep 4
-STATUS_META="$(python3 "$AUX" estado-sala "$SALA" | python3 -c "import json,sys;print(json.load(sys.stdin)['com.sofacoding.atendimento.metadata'].get('status'))")"
+STATUS_META="$(python3 "$AUX" estado-sala "$ROOM" | python3 -c "import json,sys;print(json.load(sys.stdin)['com.sofacoding.atendimento.metadata'].get('status'))")"
 [ "$STATUS_META" = "closed" ] && anotar A7 "OK: metadata closed" || anotar A7 "FALHOU: metadata '$STATUS_META'"
 python3 "$AUX" webhook "$ORG" aceite ACEITE-MSG-4 "Oi de novo, nova conversa." "Ana Souza" >/dev/null 2>&1
 NOVA=0
@@ -567,11 +529,8 @@ done
 [ "$NOVA" -ge 2 ] && anotar A7 "OK: mensagem depois do fechamento abriu conversa nova" || anotar A7 "FALHOU: não abriu conversa nova"
 
 echo "== 12b. nome do cliente chegando DEPOIS da sala criada (MX-32/MX-33) =="
-# Sala nasce só com o telefone (primeira mensagem SEM pushName) e o nome chega na mensagem seguinte.
-# O que se prova: título da sala, client_name do metadata e nome de exibição do fantasma mudam, e
-# nenhum m.notice novo aparece (trocar nome não é evento de atendimento).
 TEL_TARDIO="5521977776666"
-SALA2=""
+ROOM2=""
 CONV2=""
 ACEITE_TELEFONE="$TEL_TARDIO" python3 "$AUX" webhook "$ORG" aceite ACEITE-MSG-N1 \
     "Oi, tudo bem?" "" > "$DIR/webhook-nome1.json" 2>&1
@@ -587,48 +546,47 @@ FIMSQL
     sleep 1
 done
 for _ in $(seq 1 60); do
-    SALA2="$(python3 - "$DIR/data/harness.db" "$CONV2" <<'FIMSQL'
+    ROOM2="$(python3 - "$DIR/data/harness.db" "$CONV2" <<'FIMSQL'
 import sqlite3, sys
 c = sqlite3.connect(sys.argv[1])
 r = c.execute("select room_id from matrix_rooms where conversation_id=? and state='ready'", (sys.argv[2],)).fetchone()
 print(r[0] if r else "")
 FIMSQL
 )"
-    [ -n "$SALA2" ] && break
+    [ -n "$ROOM2" ] && break
     sleep 1
 done
-if [ -z "$CONV2" ] || [ -z "$SALA2" ]; then
-    anotar MX33 "FALHOU: a conversa/sala sem nome não foi criada (conversa='$CONV2' sala='$SALA2')"
+if [ -z "$CONV2" ] || [ -z "$ROOM2" ]; then
+    anotar MX33 "FALHOU: a conversa/sala sem nome não foi criada (conversa='$CONV2' sala='$ROOM2')"
 else
-    # o atendente é membro do espaço e entra na sala restrita para ler estado e histórico
     for _ in $(seq 1 20); do
-        python3 "$AUX" entrar "$SALA2" > "$DIR/entrar-nome.json" 2>&1 || true
+        python3 "$AUX" entrar "$ROOM2" > "$DIR/entrar-nome.json" 2>&1 || true
         grep -q '^200' "$DIR/entrar-nome.json" && break
         sleep 1
     done
-    python3 "$AUX" estado-sala "$SALA2" > "$DIR/estado-nome-antes.json"
-    NOME_ANTES="$(python3 -c "
+    python3 "$AUX" estado-sala "$ROOM2" > "$DIR/estado-nome-antes.json"
+    NAME_BEFORE="$(python3 -c "
 import json
 d=json.load(open('$DIR/estado-nome-antes.json'))
 print(d['m.room.name'].get('name',''))
 ")"
-    FANTASMA_ANTES="$(python3 "$AUX" perfil "@ph_wa_${TEL_TARDIO}:matrix-dev.local" | python3 -c "import json,sys;print(json.load(sys.stdin).get('displayname',''))")"
-    AVISOS_ANTES="$(python3 "$AUX" avisos "$SALA2" | python3 -c "import json,sys;print(json.load(sys.stdin).get('total','erro'))")"
+    GHOST_BEFORE="$(python3 "$AUX" perfil "@ph_wa_${TEL_TARDIO}:matrix-dev.local" | python3 -c "import json,sys;print(json.load(sys.stdin).get('displayname',''))")"
+    AVISOS_ANTES="$(python3 "$AUX" avisos "$ROOM2" | python3 -c "import json,sys;print(json.load(sys.stdin).get('total','error'))")"
 
     ACEITE_TELEFONE="$TEL_TARDIO" python3 "$AUX" webhook "$ORG" aceite ACEITE-MSG-N2 \
         "Sou o Carlos Pereira." "Carlos Pereira" > "$DIR/webhook-nome2.json" 2>&1
-    NOME_DEPOIS=""
+    NAME_AFTER=""
     for _ in $(seq 1 60); do
-        NOME_DEPOIS="$(python3 "$AUX" estado-sala "$SALA2" | python3 -c "
+        NAME_AFTER="$(python3 "$AUX" estado-sala "$ROOM2" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
 print(d['m.room.name'].get('name',''))
 ")"
-        [ "$NOME_DEPOIS" = "Carlos Pereira" ] && break
+        [ "$NAME_AFTER" = "Carlos Pereira" ] && break
         sleep 1
     done
-    python3 "$AUX" estado-sala "$SALA2" > "$DIR/estado-nome-depois.json"
-    NOME_META2="$(python3 -c "
+    python3 "$AUX" estado-sala "$ROOM2" > "$DIR/estado-nome-depois.json"
+    NAME_META2="$(python3 -c "
 import json
 d=json.load(open('$DIR/estado-nome-depois.json'))
 for k,v in d.items():
@@ -636,21 +594,21 @@ for k,v in d.items():
         print(v.get('client_name',''))
         break
 ")"
-    FANTASMA_DEPOIS="$(python3 "$AUX" perfil "@ph_wa_${TEL_TARDIO}:matrix-dev.local" | python3 -c "import json,sys;print(json.load(sys.stdin).get('displayname',''))")"
-    AVISOS_DEPOIS="$(python3 "$AUX" avisos "$SALA2" | python3 -c "import json,sys;print(json.load(sys.stdin).get('total','erro'))")"
-    if [ "$NOME_ANTES" != "Carlos Pereira" ] && [ "$NOME_DEPOIS" = "Carlos Pereira" ] \
-        && [ "$NOME_META2" = "Carlos Pereira" ] \
-        && [ "$FANTASMA_DEPOIS" = "Carlos Pereira (WhatsApp)" ] \
+    GHOST_AFTER="$(python3 "$AUX" perfil "@ph_wa_${TEL_TARDIO}:matrix-dev.local" | python3 -c "import json,sys;print(json.load(sys.stdin).get('displayname',''))")"
+    AVISOS_DEPOIS="$(python3 "$AUX" avisos "$ROOM2" | python3 -c "import json,sys;print(json.load(sys.stdin).get('total','error'))")"
+    if [ "$NAME_BEFORE" != "Carlos Pereira" ] && [ "$NAME_AFTER" = "Carlos Pereira" ] \
+        && [ "$NAME_META2" = "Carlos Pereira" ] \
+        && [ "$GHOST_AFTER" = "Carlos Pereira (WhatsApp)" ] \
         && [ "$AVISOS_ANTES" = "$AVISOS_DEPOIS" ]; then
-        anotar MX33 "OK: sala nasceu '$NOME_ANTES'/fantasma '$FANTASMA_ANTES' e passou a 'Carlos Pereira' (metadata e fantasma idem) sem novo aviso (notices $AVISOS_ANTES -> $AVISOS_DEPOIS)"
+        anotar MX33 "OK: sala nasceu '$NAME_BEFORE'/fantasma '$GHOST_BEFORE' e passou a 'Carlos Pereira' (metadata e fantasma idem) sem novo aviso (notices $AVISOS_ANTES -> $AVISOS_DEPOIS)"
     else
-        anotar MX33 "FALHOU: antes='$NOME_ANTES'/fantasma '$FANTASMA_ANTES', depois='$NOME_DEPOIS'/metadata '$NOME_META2'/fantasma '$FANTASMA_DEPOIS', notices $AVISOS_ANTES -> $AVISOS_DEPOIS"
+        anotar MX33 "FALHOU: antes='$NAME_BEFORE'/fantasma '$GHOST_BEFORE', depois='$NAME_AFTER'/metadata '$NAME_META2'/fantasma '$GHOST_AFTER', notices $AVISOS_ANTES -> $AVISOS_DEPOIS"
     fi
 fi
 
 echo "== 13. A11: dois registros, sem evento cruzado =="
 ANTES_TX="$(grep -c 'transação do Application Service processada' "$DIR/serve.log" 2>/dev/null || echo 0)"
-SALA_PY="$(SYNAPSE="$SYNAPSE" python3 - "$PY_AS_TOKEN" <<'PY'
+ROOM_PY="$(SYNAPSE="$SYNAPSE" python3 - "$PY_AS_TOKEN" <<'PY'
 import json, os, sys, urllib.request
 base = os.environ["SYNAPSE"]; token = sys.argv[1]
 def pedir(metodo, caminho, corpo=None):
@@ -672,17 +630,17 @@ PY
 )"
 sleep 5
 DEPOIS_TX="$(grep -c 'transação do Application Service processada' "$DIR/serve.log" 2>/dev/null || echo 0)"
-if [ -n "$SALA_PY" ] && [ "$ANTES_TX" = "$DEPOIS_TX" ]; then
-    anotar A11 "OK: registro antigo ativo (criou $SALA_PY) e o Harness não recebeu a transação dele"
+if [ -n "$ROOM_PY" ] && [ "$ANTES_TX" = "$DEPOIS_TX" ]; then
+    anotar A11 "OK: registro antigo ativo (criou $ROOM_PY) e o Harness não recebeu a transação dele"
 else
-    anotar A11 "FALHOU: transações do Harness $ANTES_TX -> $DEPOIS_TX (sala do Python '$SALA_PY')"
+    anotar A11 "FALHOU: transações do Harness $ANTES_TX -> $DEPOIS_TX (sala do Python '$ROOM_PY')"
 fi
 grep -q "Loaded application service" "$DIR/synapse-subida.log" \
     && anotar A11 "OK: o log do Synapse mostra os dois registros carregados"
 
 echo "== 14. A12: Element (capturas finais) =="
 if [ "$ELEMENT_OK" = 1 ]; then
-    if capturar_elemento final "$SALA" "$SALA_SUP" "$SALA2"; then
+    if capturar_elemento final "$ROOM" "$ROOM_SUPPORT" "$ROOM2"; then
         anotar A12 "OK: capturas finais em $DIR/capturas (sala no Suporte, espaço, home e sala com o nome tardio)"
     else
         anotar A12 "NÃO CONFERIDO: a captura final falhou (veja $DIR/element-captura-final.log)"
@@ -702,10 +660,6 @@ else
     anotar A13 "NÃO MEDIDO: docs/MATRIZ_MEMORIA.md ainda não existe (MX-30 em execução)"
 fi
 
-# ─────────────────────────────── fase 2 (A14, MX-43 a MX-46) ───────────────────────────────
-# Os cinco pontos do critério A14, no formato da fase 1: cenário, ação, asserção e evidência.
-# Nada de produção: Synapse de desenvolvimento (18008), Evolution e LLM falsos, fixtures geradas
-# pelo auxiliar (sem dado de cliente). O prazo da mídia fica em 1 dia só nesta pasta de trabalho.
 if [ "$FASE2" = 1 ]; then
     FIXTURES="$DIR/fixtures"
     python3 "$AUX" fixtures "$FIXTURES" > "$DIR/fixtures.json"
@@ -715,7 +669,6 @@ if [ "$FASE2" = 1 ]; then
     VIDEO_DO_ATENDENTE="$(python3 -c "import json;print(json.load(open('$DIR/fixtures.json'))['video/mp4'])")"
     TEL_F2="5521988887777"
 
-    # reinicia o servidor para a passagem da expiração (ela roda na subida)
     reiniciar_serve() {
         kill "$SERVE_PID" 2>/dev/null || true
         wait "$SERVE_PID" 2>/dev/null || true
@@ -723,11 +676,11 @@ if [ "$FASE2" = 1 ]; then
         SERVE_PID=$!
         PIDS+=("$SERVE_PID")
         for _ in $(seq 1 150); do
-            curl -fsS -m 1 -o /dev/null "http://127.0.0.1:$SERVE_PORTA/healthz" 2>/dev/null && break
+            curl -fsS -m 1 -o /dev/null "http://127.0.0.1:$SERVE_PORT/healthz" 2>/dev/null && break
             sleep 0.2
         done
-        curl -fsS -m 2 -o /dev/null "http://127.0.0.1:$SERVE_PORTA/healthz" \
-            || falha "o servidor não voltou depois do reinício (veja $DIR/serve-fase2.log)"
+        curl -fsS -m 2 -o /dev/null "http://127.0.0.1:$SERVE_PORT/healthz" \
+            || fail "o servidor não voltou depois do reinício (veja $DIR/serve-fase2.log)"
     }
 
     echo "== 16. A14/MX-43: imagem e PDF do cliente aparecem na sala =="
@@ -741,23 +694,23 @@ r = c.execute(
 print(r[0] if r else "")
 FIMSQL
 )"
-    SALA3=""
+    ROOM3=""
     for _ in $(seq 1 60); do
-        SALA3="$(python3 - "$DIR/data/harness.db" "$CONV3" <<'FIMSQL'
+        ROOM3="$(python3 - "$DIR/data/harness.db" "$CONV3" <<'FIMSQL'
 import sqlite3, sys
 c = sqlite3.connect(sys.argv[1])
 r = c.execute("select room_id from matrix_rooms where conversation_id=? and state='ready'", (sys.argv[2],)).fetchone()
 print(r[0] if r else "")
 FIMSQL
 )"
-        [ -n "$SALA3" ] && break
+        [ -n "$ROOM3" ] && break
         sleep 1
     done
-    if [ -z "$CONV3" ] || [ -z "$SALA3" ]; then
-        falha "a conversa mais recente não tem sala pronta (conversa='$CONV3' sala='$SALA3')"
+    if [ -z "$CONV3" ] || [ -z "$ROOM3" ]; then
+        fail "a conversa mais recente não tem sala pronta (conversa='$CONV3' sala='$ROOM3')"
     fi
     for _ in $(seq 1 20); do
-        python3 "$AUX" entrar "$SALA3" > "$DIR/entrar-f2.json" 2>&1 || true
+        python3 "$AUX" entrar "$ROOM3" > "$DIR/entrar-f2.json" 2>&1 || true
         grep -q '^200' "$DIR/entrar-f2.json" && break
         sleep 1
     done
@@ -767,7 +720,7 @@ FIMSQL
     python3 "$AUX" webhook-midia "$ORG" aceite ACEITE-F2-PDF documento \
         "Segue o laudo assinado." "Ana Souza" > "$DIR/f2-pdf.json" 2>&1 || true
     for _ in $(seq 1 60); do
-        python3 "$AUX" eventos "$SALA3" 80 > "$DIR/eventos-f2.json"
+        python3 "$AUX" eventos "$ROOM3" 80 > "$DIR/eventos-f2.json"
         if python3 - "$DIR/eventos-f2.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
@@ -815,13 +768,13 @@ PY
 )"
     anotar MX43 "$RESULTADO_MX43"
 
-    echo "== 17. A14/MX-45: áudio, vídeo, figurinha, contato, localização e enquete =="
+    echo "== 17. A14/MX-45: audio, video, sticker, contact, location and poll =="
     for tipo in audio video figurinha contato localizacao enquete; do
         python3 "$AUX" webhook-tipo "$ORG" aceite "ACEITE-F2-${tipo^^}" "$tipo" "Ana Souza" \
             > "$DIR/f2-$tipo.json" 2>&1 || true
     done
     for _ in $(seq 1 60); do
-        python3 "$AUX" eventos "$SALA3" 100 > "$DIR/eventos-f2b.json"
+        python3 "$AUX" eventos "$ROOM3" 100 > "$DIR/eventos-f2b.json"
         N_AVISOS="$(python3 - "$DIR/eventos-f2b.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
@@ -860,7 +813,7 @@ PY
     python3 "$AUX" webhook-aparelho "$ORG" aceite ACEITE-F2-APARELHO \
         "Mensagem digitada no celular da loja." > "$DIR/f2-aparelho.json" 2>&1 || true
     for _ in $(seq 1 60); do
-        python3 "$AUX" eventos "$SALA3" 120 > "$DIR/eventos-f2c.json"
+        python3 "$AUX" eventos "$ROOM3" 120 > "$DIR/eventos-f2c.json"
         N_AP="$(python3 - "$DIR/eventos-f2c.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
@@ -873,7 +826,7 @@ PY
     python3 "$AUX" webhook-aparelho "$ORG" aceite ACEITE-F2-APARELHO \
         "Mensagem digitada no celular da loja." > "$DIR/f2-aparelho-2.json" 2>&1 || true
     sleep 4
-    python3 "$AUX" eventos "$SALA3" 120 > "$DIR/eventos-f2c2.json"
+    python3 "$AUX" eventos "$ROOM3" 120 > "$DIR/eventos-f2c2.json"
     RESULTADO_MX41="$(python3 - "$DIR/eventos-f2c2.json" "$DIR/data/harness.db" "$DIR/f2-aparelho-2.json" "$CONV3" <<'PY'
 import json, sqlite3, sys
 d = json.load(open(sys.argv[1]))
@@ -900,10 +853,10 @@ PY
 
     echo "== 19. A14/MX-44: imagem e PDF do atendente chegam ao Evolution =="
     ANTES_MIDIA="$(wc -l < "$DIR/falsos/evo_midia.jsonl" 2>/dev/null || echo 0)"
-    python3 "$AUX" atendente-envia-midia "$SALA3" "$IMG_DO_ATENDENTE" image/png \
+    python3 "$AUX" atendente-envia-midia "$ROOM3" "$IMG_DO_ATENDENTE" image/png \
         "foto-da-loja.png" > "$DIR/f2-atendente-img.json" 2>&1 || true
     sleep 2
-    python3 "$AUX" atendente-envia-midia "$SALA3" "$PDF_DO_ATENDENTE" application/pdf \
+    python3 "$AUX" atendente-envia-midia "$ROOM3" "$PDF_DO_ATENDENTE" application/pdf \
         "laudo-assinado.pdf" > "$DIR/f2-atendente-pdf.json" 2>&1 || true
     for _ in $(seq 1 40); do
         DEPOIS_MIDIA="$(wc -l < "$DIR/falsos/evo_midia.jsonl" 2>/dev/null || echo 0)"
@@ -936,9 +889,8 @@ else:
     print("FALHOU: o arquivo do atendente não chegou ao Evolution (motivo no log: %s; entradas novas: %d)" % (motivo, len(novas)))
 PY
 )"
-    # Diagnóstico do motivo: o Application Service não pode se passar pelo usuário humano.
     if printf '%s' "$RESULTADO_MX44" | grep -q FALHOU; then
-        python3 "$AUX" eventos "$SALA3" 120 > "$DIR/eventos-f2d.json"
+        python3 "$AUX" eventos "$ROOM3" 120 > "$DIR/eventos-f2d.json"
         MXC_E_REMETENTE="$(python3 - "$DIR/eventos-f2d.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
@@ -955,32 +907,31 @@ PY
             CODIGO="$(curl -sS -o "$DIR/diag-midia.json" -w '%{http_code}' \
                 -H "Authorization: Bearer $AS_TOKEN" \
                 "http://127.0.0.1:18008/_matrix/client/v1/media/download/${SERV_ID%%/*}/${SERV_ID#*/}?user_id=$(python3 -c "import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1],safe=''))" "$REMETENTE_ATENDENTE")")"
-            ERRO="$(python3 -c "import json;print(json.load(open('$DIR/diag-midia.json')).get('errcode',''))" 2>/dev/null || true)"
-            RESULTADO_MX44="$RESULTADO_MX44 — diagnóstico: baixar o arquivo com o token do Application Service e o usuário do atendente devolve HTTP $CODIGO $ERRO"
+            ERROR="$(python3 -c "import json;print(json.load(open('$DIR/diag-midia.json')).get('errcode',''))" 2>/dev/null || true)"
+            RESULTADO_MX44="$RESULTADO_MX44 — diagnóstico: baixar o arquivo com o token do Application Service e o usuário do atendente devolve HTTP $CODIGO $ERROR"
         fi
     fi
     anotar MX44 "$RESULTADO_MX44"
 
     echo "== 20. MX-49: áudio e vídeo do atendente chegam ao Evolution =="
     ANTES_MIDIA49="$(wc -l < "$DIR/falsos/evo_midia.jsonl" 2>/dev/null || echo 0)"
-    python3 "$AUX" eventos "$SALA3" 200 > "$DIR/eventos-mx49-antes.json"
+    python3 "$AUX" eventos "$ROOM3" 200 > "$DIR/eventos-mx49-antes.json"
     TXN_AUDIO="aceite-mx49-audio-$(python3 -c 'import time;print(int(time.time()*1000))')"
     TXN_VIDEO="aceite-mx49-video-$(python3 -c 'import time;print(int(time.time()*1000))')"
-    python3 "$AUX" atendente-envia-midia "$SALA3" "$AUDIO_DO_ATENDENTE" audio/ogg \
+    python3 "$AUX" atendente-envia-midia "$ROOM3" "$AUDIO_DO_ATENDENTE" audio/ogg \
         "audio-da-loja.ogg" "$TXN_AUDIO" > "$DIR/mx49-audio.json" 2>&1 || true
     sleep 2
-    python3 "$AUX" atendente-envia-midia "$SALA3" "$VIDEO_DO_ATENDENTE" video/mp4 \
+    python3 "$AUX" atendente-envia-midia "$ROOM3" "$VIDEO_DO_ATENDENTE" video/mp4 \
         "video-da-loja.mp4" "$TXN_VIDEO" > "$DIR/mx49-video.json" 2>&1 || true
     for _ in $(seq 1 60); do
         DEPOIS_MIDIA49="$(wc -l < "$DIR/falsos/evo_midia.jsonl" 2>/dev/null || echo 0)"
         [ "$DEPOIS_MIDIA49" -ge $((ANTES_MIDIA49 + 2)) ] && break
         sleep 1
     done
-    # Reentrega da mesma transação do Element: o Synapse devolve o mesmo evento e não republica.
-    python3 "$AUX" atendente-envia-midia "$SALA3" "$AUDIO_DO_ATENDENTE" audio/ogg \
+    python3 "$AUX" atendente-envia-midia "$ROOM3" "$AUDIO_DO_ATENDENTE" audio/ogg \
         "audio-da-loja.ogg" "$TXN_AUDIO" > "$DIR/mx49-audio-reentrega.json" 2>&1 || true
     sleep 5
-    python3 "$AUX" eventos "$SALA3" 200 > "$DIR/eventos-mx49-depois.json"
+    python3 "$AUX" eventos "$ROOM3" 200 > "$DIR/eventos-mx49-depois.json"
     RESULTADO_MX49="$(python3 - "$DIR/falsos/evo_midia.jsonl" "$ANTES_MIDIA49" \
         "$AUDIO_DO_ATENDENTE" "$VIDEO_DO_ATENDENTE" "$DIR/eventos-mx49-antes.json" \
         "$DIR/eventos-mx49-depois.json" <<'PY'
@@ -1065,7 +1016,7 @@ PY
             [ "$PENDENTES" = "0" ] && break
             sleep 1
         done
-        python3 "$AUX" eventos "$SALA3" 120 > "$DIR/eventos-f2e.json"
+        python3 "$AUX" eventos "$ROOM3" 120 > "$DIR/eventos-f2e.json"
         SUMIRAM=0
         TOTAL_MIDIA=0
         for MXC in $(python3 - "$DIR/data/harness.db" <<'PY'
