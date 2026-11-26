@@ -44,7 +44,6 @@ alerta	alert
 alfa	alpha
 alheio	foreign
 alteracao	change
-alteracoes	changes
 alterada	changed
 alteradas	changed
 alterado	changed
@@ -134,7 +133,6 @@ avisar	notify
 aviso	notice
 avisos	notices
 avulsa	one_off
-avulso	one_off
 baixa	low
 baixada	downloaded
 baixado	downloaded
@@ -185,7 +183,6 @@ carregando	loading
 carregar	load
 carrinho	cart
 carrinhos	carts
-cartao	card
 casca	shell
 caso	case
 casos	cases
@@ -293,7 +290,6 @@ convidados	guests
 convidar	invite
 convite	invitation
 convites	invitations
-copiado	copied
 copiar	copy
 corpo	body
 corpos	bodies
@@ -427,7 +423,6 @@ encontrado	found
 endereco	address
 enfileirar	enqueue
 enganosa	misleading
-enquete	poll
 entao	then
 entidade	entity
 entra	enters
@@ -488,7 +483,6 @@ estavel	stable
 este	this
 estimar	estimate
 estrutura	structure
-estruturadas	structured
 estruturado	structured
 etapa	step
 etapas	steps
@@ -617,7 +611,6 @@ hoje	today
 hora	hour
 humana	human
 humano	human
-icone	icon
 ida	trip
 idade	age
 idempotencia	idempotency
@@ -632,7 +625,6 @@ imagem	image
 imagens	images
 impacto	impact
 importacao	import
-importando	importing
 importar	import
 impressao	printout
 impresso	printed
@@ -640,7 +632,6 @@ imprimir	print
 inalterados	unchanged
 inativo	inactive
 inclui	includes
-incrementar	increment
 indexacao	indexing
 indexar	index
 indice	index
@@ -740,7 +731,6 @@ margem	margin
 maximo	maximum
 mediana	median
 medicao	measurement
-medidor	meter
 medir	measure
 meio	middle
 melhores	best
@@ -759,8 +749,6 @@ metrica	metric
 metricas	metrics
 midia	media
 midias	media
-migalha	crumb
-migalhas	crumbs
 migracao	migration
 migracoes	migrations
 migrar	migrate
@@ -793,7 +781,6 @@ na	towards
 nada	nothing
 nao	not
 nas	in_the
-navegacao	navigation
 navegar	navigate
 negativo	negative
 nem	nor
@@ -821,7 +808,6 @@ nunca	never
 objeto	object
 obrigatorio	required
 observador	observer
-observar	observe
 obter	get
 obtido	obtained
 ocupada	busy
@@ -989,7 +975,6 @@ recuo	backoff
 recuperado	recovered
 recuperados	recovered
 recurso	resource
-recursos	resources
 recusa	refusal
 recusada	refused
 recusado	refused
@@ -1073,7 +1058,6 @@ roteiros	scripts
 rotina	routine
 rotulado	labelled
 rotulo	label
-rotulos	labels
 ruim	poor
 saida	output
 saidas	outputs
@@ -1189,7 +1173,6 @@ travar	lock
 trecho	passage
 trechos	passages
 tres	three
-trilha	trail
 trocado	swapped
 trocaram	swapped
 truncar	truncate
@@ -1261,6 +1244,5 @@ vivos	live
 vizinha	neighbouring
 volatil	volatile
 volta	return
-voltar	return
 voltou	returned
 whatsapp	whatsapp

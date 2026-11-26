@@ -33,6 +33,7 @@ name	acao	flow language word, frozen by P6
 name	action	published coluna: action
 name	actions	published rota: actions
 name	active	published flag cli: active
+name	active_flow_nodes	published campo json: active_flow_nodes
 name	actor_id	published coluna: actor_id
 name	actor_kind	published coluna: actor_kind
 name	admin	published rota: admin
@@ -51,6 +52,8 @@ name	alias	published coluna: alias
 name	aliases	published campo json: aliases
 name	aliases_json	published coluna: aliases_json
 name	all	flow language word, frozen by P6
+name	analytics	published rota: analytics
+name	analytics_resumo_operacional	published operation id: analytics_resumo_operacional
 name	anexos	published protocolo plugin: anexos
 name	ANTIGRAVITY_API_KEY	published variavel ambiente: ANTIGRAVITY_API_KEY
 name	any	flow language word, frozen by P6
@@ -72,6 +75,7 @@ name	atualizar	published operation id: atualizar
 name	atualizar_item	published operation id: atualizar_item
 name	audit_log	published tabela: audit_log
 name	author_name	published coluna: author_name
+name	avg_resolution_ms	published campo json: avg_resolution_ms
 name	backlog	published campo json: backlog
 name	backup	published rota: backup
 name	backup_exportar	published operation id: backup_exportar
@@ -105,6 +109,7 @@ name	check	published comando cli: check
 name	client_name	published coluna: client_name
 name	client_name_espelhado	published coluna: client_name_espelhado
 name	close	published rota: close
+name	closed_fichas	published campo json: closed_fichas
 name	cluster	published rota: cluster
 name	cluster_map_fingerprint	published campo json: cluster_map_fingerprint
 name	code	published campo json: code
@@ -132,6 +137,7 @@ name	conversations	published tabela: conversations
 name	conversations_cursor_at	published coluna: conversations_cursor_at
 name	conversations_cursor_id	published coluna: conversations_cursor_id
 name	cost_micros	published coluna: cost_micros
+name	count	published campo json: count
 name	create	published comando cli: create
 name	created_at	published coluna: created_at
 name	criar	published operation id: criar
@@ -441,6 +447,7 @@ name	next_cursor	published campo json: next_cursor
 name	nivel	published chave toml: nivel
 name	no_atual	published coluna: no_atual
 name	no_id	published coluna: no_id
+name	node_id	published campo json: node_id
 name	nome	published coluna: nome
 name	None	flow language word, frozen by P6
 name	notificar_whatsapp	flow language word, frozen by P6
@@ -450,9 +457,12 @@ name	ocorrido_em	published protocolo plugin: ocorrido_em
 name	offline	published flag cli: offline
 name	oldest_seconds	published campo json: oldest_seconds
 name	only	published flag cli: only
+name	open_conversations	published campo json: open_conversations
+name	open_fichas	published campo json: open_fichas
 name	openapi	published comando cli: openapi
 name	operacao_healthz	published operation id: operacao_healthz
 name	operacao_metrics	published operation id: operacao_metrics
+name	operational	published rota: operational
 name	ordem	published coluna: ordem
 name	org	published comando cli: org
 name	org_id	published coluna: org_id
