@@ -21,14 +21,14 @@ import AppSource from "../App.tsx?raw";
 const stateHealth = vi.hoisted(() => ({
     atual: {
         saude: { version: "0.9.1" } as { version: string } | null,
-        semConexao: false,
+        disconnected: false,
         degradada: false,
     },
 }));
 vi.mock("./health", () => ({ useHealth: () => stateHealth.atual }));
 
 const KEY_SESSION = "poph-console.sessao";
-const CONTEXT_EMPTY: ContextNavigation = { orgId: null, agentId: null, totalDeOrgs: null };
+const CONTEXT_EMPTY: ContextNavigation = { orgId: null, agentId: null, totalOrgs: null };
 
 function item(label: string): ItemNavigation {
     const finding = ITEMS_NAVIGATION.find((candidate) => candidate.rotulo === label);
@@ -143,7 +143,7 @@ describe("itens do menu", () => {
     it("desabilita item que exige organização quando não há organização na URL", () => {
         render(
             <MemoryRouter>
-                <NavItemEntry item={item("Estrutura")} contexto={CONTEXT_EMPTY} />
+                <NavItemEntry item={item("Estrutura")} context={CONTEXT_EMPTY} />
             </MemoryRouter>,
         );
 
@@ -164,7 +164,7 @@ describe("itens do menu", () => {
                 <MemoryRouter>
                     <NavItemEntry
                         item={item(label)}
-                        contexto={{ orgId: "org_1", agentId: null, totalDeOrgs: null }}
+                        context={{ orgId: "org_1", agentId: null, totalOrgs: null }}
                     />
                 </MemoryRouter>,
             );
@@ -178,7 +178,7 @@ describe("itens do menu", () => {
             <MemoryRouter>
                 <NavItemEntry
                     item={item("Modelo e Jev")}
-                    contexto={{ orgId: "org_1", agentId: null, totalDeOrgs: null }}
+                    context={{ orgId: "org_1", agentId: null, totalOrgs: null }}
                 />
             </MemoryRouter>,
         );
@@ -192,7 +192,7 @@ describe("itens do menu", () => {
             <MemoryRouter>
                 <NavItemEntry
                     item={item("Modelo e Jev")}
-                    contexto={{ orgId: "org_1", agentId: "agt_1", totalDeOrgs: null }}
+                    context={{ orgId: "org_1", agentId: "agt_1", totalOrgs: null }}
                 />
             </MemoryRouter>,
         );
@@ -206,7 +206,7 @@ describe("itens do menu", () => {
     it("item sem exigência continua link sem organização aberta", () => {
         render(
             <MemoryRouter>
-                <NavItemEntry item={item("Organizações")} contexto={CONTEXT_EMPTY} />
+                <NavItemEntry item={item("Organizações")} context={CONTEXT_EMPTY} />
             </MemoryRouter>,
         );
 
@@ -219,7 +219,7 @@ describe("itens do menu", () => {
             <MemoryRouter initialEntries={["/orgs/org_1"]}>
                 <NavItemEntry
                     item={item("Plugins e extensões")}
-                    contexto={{ orgId: "org_1", agentId: null, totalDeOrgs: null }}
+                    context={{ orgId: "org_1", agentId: null, totalOrgs: null }}
                 />
                 <Probe />
             </MemoryRouter>,
@@ -239,7 +239,7 @@ describe("itens do menu", () => {
             <MemoryRouter>
                 <NavItemEntry
                     item={item("Organizações")}
-                    contexto={{ orgId: null, agentId: null, totalDeOrgs: 7 }}
+                    context={{ orgId: null, agentId: null, totalOrgs: 7 }}
                 />
             </MemoryRouter>,
         );
@@ -382,7 +382,7 @@ describe('"em breve" aparece só nos itens que ainda não têm tela', () => {
             <MemoryRouter>
                 <NavItemEntry
                     item={item("Chat de teste")}
-                    contexto={{ orgId: "org_1", agentId: "agt_1", totalDeOrgs: null }}
+                    context={{ orgId: "org_1", agentId: "agt_1", totalOrgs: null }}
                 />
             </MemoryRouter>,
         );
@@ -397,7 +397,7 @@ describe('"em breve" aparece só nos itens que ainda não têm tela', () => {
             <MemoryRouter>
                 <NavItemEntry
                     item={item("Modelo e Jev")}
-                    contexto={{ orgId: "org_1", agentId: "agt_1", totalDeOrgs: null }}
+                    context={{ orgId: "org_1", agentId: "agt_1", totalOrgs: null }}
                 />
             </MemoryRouter>,
         );
@@ -448,7 +448,7 @@ describe('"em breve" aparece só nos itens que ainda não têm tela', () => {
                 <MemoryRouter>
                     <NavItemEntry
                         item={item(label)}
-                        contexto={{ orgId: "org_1", agentId: "agt_1", totalDeOrgs: null }}
+                        context={{ orgId: "org_1", agentId: "agt_1", totalOrgs: null }}
                     />
                 </MemoryRouter>,
             );
@@ -583,25 +583,25 @@ describe("menu montado com a sessão", () => {
             return { cssClass, titulo: finding?.closest(".poph-rail__cluster")?.getAttribute("title") };
         };
 
-        stateHealth.atual = { saude: { version: "0.9.1" }, semConexao: false, degradada: false };
+        stateHealth.atual = { saude: { version: "0.9.1" }, disconnected: false, degradada: false };
         expect(point()).toEqual({
             cssClass: "poph-rail__cluster-point",
             titulo: "POP Harness Cluster · instância respondendo",
         });
 
-        stateHealth.atual = { saude: null, semConexao: false, degradada: true };
+        stateHealth.atual = { saude: null, disconnected: false, degradada: true };
         expect(point().titulo).toBe("POP Harness Cluster · instância degradada");
         expect(point().cssClass).toContain("poph-rail__cluster-point--alert");
 
-        stateHealth.atual = { saude: null, semConexao: true, degradada: false };
+        stateHealth.atual = { saude: null, disconnected: true, degradada: false };
         expect(point().titulo).toBe("POP Harness Cluster · sem conexão com a instância");
         expect(point().cssClass).toContain("poph-rail__cluster-point--alert");
 
-        stateHealth.atual = { saude: null, semConexao: false, degradada: false };
+        stateHealth.atual = { saude: null, disconnected: false, degradada: false };
         expect(point().titulo).toBe("POP Harness Cluster · verificando a instância");
         expect(point().cssClass).toContain("poph-rail__cluster-point--neutral");
 
-        stateHealth.atual = { saude: { version: "0.9.1" }, semConexao: false, degradada: false };
+        stateHealth.atual = { saude: { version: "0.9.1" }, disconnected: false, degradada: false };
     });
 
     it("fora das telas de organização, sem organização aberta, diz Selecionar organização", () => {
@@ -838,7 +838,7 @@ describe("menu montado com a sessão", () => {
         ) {
             prepareSession("global", TWO_ORGS);
             return {
-                aoAlternarCompacta: onToggleCompact,
+                onToggleCompact,
                 ...render(
                     <MemoryRouter initialEntries={[path]}>
                         <SessionProvider>
@@ -857,7 +857,7 @@ describe("menu montado com a sessão", () => {
 
         it("expandido: mostra o chip do cluster na lista e o botão de recolher", async () => {
             const user = userEvent.setup();
-            const { aoAlternarCompacta: onToggleCompact } = buildState(false);
+            const { onToggleCompact } = buildState(false);
 
             expect(screen.getByText("POP Harness Cluster")).toBeInTheDocument();
             expect(screen.getByText("POP Harness v0.9.1 · Rust")).toBeInTheDocument();
@@ -896,7 +896,7 @@ describe("menu montado com a sessão", () => {
 
         it("o botão que alterna continua alcançável por teclado nos dois estados", async () => {
             const user = userEvent.setup();
-            const { aoAlternarCompacta: onToggleCompact } = buildState(true);
+            const { onToggleCompact } = buildState(true);
 
             const expandir = screen.getByRole("button", { name: "Expandir menu lateral" });
             expandir.focus();
@@ -1346,7 +1346,7 @@ describe("CF-09: cockpit do agente no rail", () => {
     it("toda rota do cockpit existe no App.tsx", () => {
         const declared = Array.from(AppSource.matchAll(/path="([^"]+)"/g), (finding) => finding[1] ?? "");
         for (const entry of ITEMS_COCKPIT_AGENT) {
-            const route = entry.rota({ orgId: "org_1", agentId: "agt_1", totalDeOrgs: null });
+            const route = entry.route({ orgId: "org_1", agentId: "agt_1", totalOrgs: null });
             if (route === null) continue;
             const fallback = route
                 .replace("/orgs/org_1", "/orgs/:orgId")

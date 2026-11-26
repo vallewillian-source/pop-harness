@@ -74,12 +74,12 @@ const TURN_COMPLETE: TestTurn = {
 
 type Options = {
     turno?: TestTurn | null;
-    erro?: string | null;
+    error?: string | null;
     updating?: boolean;
     onTryNew?: () => void;
 };
 
-function Vitrine({ turno, erro: error = null, updating = false, onTryNew = () => {} }: Options) {
+function Vitrine({ turno, error = null, updating = false, onTryNew = () => {} }: Options) {
     const [isOpen, setOpen] = useState(false);
     return (
         <>
@@ -204,7 +204,7 @@ describe("conteúdo do painel", () => {
 describe("leitura, foco e fechamento", () => {
     it("erro de leitura aparece no painel com Tentar de novo, e o que já estava na tela continua", async () => {
         const tryAction = vi.fn();
-        const user = open({ erro: "falha de conexão com o servidor", onTryNew: tryAction });
+        const user = open({ error: "falha de conexão com o servidor", onTryNew: tryAction });
         await user.click(screen.getByRole("button", { name: "Ver por quê (turno 1)" }));
         const dialog = await screen.findByRole("dialog");
 

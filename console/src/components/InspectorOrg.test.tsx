@@ -92,13 +92,13 @@ function build(props: Partial<InspectorOrgProps> = {}) {
         </MemoryRouter>,
     );
     const drawer = screen.getByRole("complementary", { name: "Detalhes de Sessão Matrix" });
-    return { gaveta: drawer, utilitarios, aoFechar: onClose, aoAcessar: onAccess, aoEditar: onEdit, aoExportar: onExport, aoExcluir: onDelete };
+    return { drawer, utilitarios, onClose, onAccess, onEdit, onExport, onDelete };
 }
 
 describe("InspetorOrg · cabeçalho e badges (prancha 01b)", () => {
     it("mostra o nome, o slug com a versão de concorrência e o botão de fechar", async () => {
         servidor();
-        const { gaveta: drawer } = build();
+        const { drawer } = build();
 
         expect(within(drawer).getByRole("heading", { name: "Sessão Matrix" })).toBeInTheDocument();
         expect(
@@ -111,7 +111,7 @@ describe("InspetorOrg · cabeçalho e badges (prancha 01b)", () => {
 
     it("mostra a situação, o nó primário e o id abreviado com o id inteiro no title", async () => {
         servidor();
-        const { gaveta: drawer } = build();
+        const { drawer } = build();
 
         const situacao = within(drawer).getByText("Ativa");
         expect(situacao.closest(".poph-status")).toHaveClass("poph-status--active");
@@ -127,7 +127,7 @@ describe("InspetorOrg · cabeçalho e badges (prancha 01b)", () => {
 
     it("instalação de nó único (id vazio) aparece como 'nó local'", async () => {
         servidor();
-        const { gaveta: drawer } = build({ no: { id: "", situacao: "local" } });
+        const { drawer } = build({ no: { id: "", situacao: "local" } });
 
         expect(within(drawer).getAllByText("nó local")).toHaveLength(2);
         expect(within(drawer).queryByTitle("nó local")).not.toBeInTheDocument();
@@ -135,7 +135,7 @@ describe("InspetorOrg · cabeçalho e badges (prancha 01b)", () => {
 
     it("sem o estado do cluster (token de org) a instância aparece como — com explicação", async () => {
         servidor();
-        const { gaveta: drawer } = build({ no: null });
+        const { drawer } = build({ no: null });
 
         const value = within(drawer).getByTitle(
             "A resposta não traz o estado das instâncias (token de organização)",
@@ -145,7 +145,7 @@ describe("InspetorOrg · cabeçalho e badges (prancha 01b)", () => {
 
     it("organização inativa mostra a pílula inativa", async () => {
         servidor();
-        const { gaveta: drawer } = build({ org: { ...ORG, status: "inactive" } });
+        const { drawer } = build({ org: { ...ORG, status: "inactive" } });
 
         expect(within(drawer).getByText("Inativa").closest(".poph-status")).toHaveClass(
             "poph-status--inactive",
@@ -156,7 +156,7 @@ describe("InspetorOrg · cabeçalho e badges (prancha 01b)", () => {
 describe("InspetorOrg · propriedades", () => {
     it("mostra retenção, datas completas em pt-BR e a instância alocada", async () => {
         servidor();
-        const { gaveta: drawer } = build();
+        const { drawer } = build();
 
         expect(within(drawer).getByText("Retenção de histórico")).toBeInTheDocument();
         expect(within(drawer).getByText("30 dias")).toBeInTheDocument();
@@ -167,14 +167,14 @@ describe("InspetorOrg · propriedades", () => {
 
     it("retenção ausente na config aparece como 'padrão'", async () => {
         servidor();
-        const { gaveta: drawer } = build({ org: { ...ORG, config: {} as unknown as Org["config"] } });
+        const { drawer } = build({ org: { ...ORG, config: {} as unknown as Org["config"] } });
 
         expect(within(drawer).getByText("padrão")).toBeInTheDocument();
     });
 
     it("Espelho Matrix conectado mostra o estado real, com o detalhe no title", async () => {
         servidor({ matrix: stateMatrix() });
-        const { gaveta: drawer } = build();
+        const { drawer } = build();
 
         const value = await within(drawer).findByText("Conectado");
         expect(value).toHaveAttribute("title", "Nada pendente de espelhamento nesta organização.");
@@ -182,7 +182,7 @@ describe("InspetorOrg · propriedades", () => {
 
     it("Espelho Matrix ligado e desconectado aparece como 'Desconectado'", async () => {
         servidor({ matrix: stateMatrix({ connected: false }) });
-        const { gaveta: drawer } = build();
+        const { drawer } = build();
 
         const value = await within(drawer).findByText("Desconectado");
         expect(value).toHaveAttribute("title", expect.stringContaining("Synapse"));
@@ -190,21 +190,21 @@ describe("InspetorOrg · propriedades", () => {
 
     it("Espelho Matrix desligado na organização aparece como 'Desligado nesta organização'", async () => {
         servidor({ matrix: stateMatrix({ enabled: false }) });
-        const { gaveta: drawer } = build();
+        const { drawer } = build();
 
         expect(await within(drawer).findByText("Desligado nesta organização")).toBeInTheDocument();
     });
 
     it("módulo não configurado na instância aparece como 'Não configurado'", async () => {
         servidor({ matrix: stateMatrix({ connected: null, enabled: false }) });
-        const { gaveta: drawer } = build();
+        const { drawer } = build();
 
         expect(await within(drawer).findByText("Não configurado")).toBeInTheDocument();
     });
 
     it("falha na rota do Matrix vira 'indisponível' com o motivo no title, sem derrubar a gaveta", async () => {
         servidor({ matrix: "erro" });
-        const { gaveta: drawer } = build();
+        const { drawer } = build();
 
         const value = await within(drawer).findByText("indisponível");
         expect(value).toHaveAttribute("title", "falha ao ler o matrix");
@@ -216,7 +216,7 @@ describe("InspetorOrg · propriedades", () => {
 describe("InspetorOrg · agentes vinculados", () => {
     it("mostra um card por agente, com modelo, situação e link para o agente", async () => {
         servidor();
-        const { gaveta: drawer } = build();
+        const { drawer } = build();
 
         expect(await within(drawer).findByText("Atendente Matrix")).toBeInTheDocument();
         expect(within(drawer).getByText("gemini-3.8-flash · Ativo")).toBeInTheDocument();
@@ -231,7 +231,7 @@ describe("InspetorOrg · agentes vinculados", () => {
 
     it("agente sem modelo cai no padrão do servidor, sem inventar nome de modelo", async () => {
         servidor({ agentes: [{ ...AGENT_MATRIX, model: undefined, status: "inactive" }] });
-        const { gaveta: drawer } = build();
+        const { drawer } = build();
 
         expect(
             await within(drawer).findByText("modelo padrão do servidor · Inativo"),
@@ -240,7 +240,7 @@ describe("InspetorOrg · agentes vinculados", () => {
 
     it("organização sem agente mostra o estado vazio honesto", async () => {
         servidor({ agentes: [] });
-        const { gaveta: drawer } = build();
+        const { drawer } = build();
 
         expect(
             await within(drawer).findByText("Nenhum agente cadastrado nesta organização."),
@@ -250,7 +250,7 @@ describe("InspetorOrg · agentes vinculados", () => {
 
     it("falha na listagem de agentes aparece só no bloco, sem derrubar a gaveta", async () => {
         servidor({ agentes: "erro" });
-        const { gaveta: drawer } = build();
+        const { drawer } = build();
 
         const notice = await within(drawer).findByText("não consegui carregar os agentes");
         expect(notice).toHaveAttribute("title", "falha ao listar agentes");
@@ -266,7 +266,7 @@ describe("InspetorOrg · agentes vinculados", () => {
             slug: `atendente-${index}`,
         }));
         servidor({ agentes: muitos });
-        const { gaveta: drawer } = build();
+        const { drawer } = build();
 
         expect(await within(drawer).findByText("Atendente 0")).toBeInTheDocument();
         expect(within(drawer).queryByText("Atendente 9")).not.toBeInTheDocument();
@@ -278,7 +278,7 @@ describe("InspetorOrg · agentes vinculados", () => {
 
     it("organização de outro nó não navega para o agente", async () => {
         servidor();
-        const { gaveta: drawer } = build({
+        const { drawer } = build({
             no: { id: "node-2", situacao: "ok" },
             remote: true,
         });
@@ -292,7 +292,7 @@ describe("InspetorOrg · rodapé de ações", () => {
     it("com token global oferece Acessar, Editar, Exportar e Excluir, cada um chamando o pai", async () => {
         servidor();
         const user = userEvent.setup();
-        const { gaveta: drawer, aoAcessar: onAccess, aoEditar: onEdit, aoExportar: onExport, aoExcluir: onDelete } = build();
+        const { drawer, onAccess, onEdit, onExport, onDelete } = build();
 
         await user.click(within(drawer).getByRole("button", { name: "Acessar Organização →" }));
         await user.click(within(drawer).getByRole("button", { name: "Editar" }));
@@ -307,7 +307,7 @@ describe("InspetorOrg · rodapé de ações", () => {
 
     it("com token de organização o rodapé tem só o Acessar", async () => {
         servidor();
-        const { gaveta: drawer } = build({ canManage: false });
+        const { drawer } = build({ canManage: false });
 
         expect(within(drawer).getByRole("button", { name: "Acessar Organização →" })).toBeInTheDocument();
         expect(within(drawer).queryByRole("button", { name: "Editar" })).not.toBeInTheDocument();
@@ -319,7 +319,7 @@ describe("InspetorOrg · rodapé de ações", () => {
 
     it("organização de outro nó desabilita Acessar e Editar, como na lista", async () => {
         servidor();
-        const { gaveta: drawer } = build({ no: { id: "node-2", situacao: "ok" }, remote: true });
+        const { drawer } = build({ no: { id: "node-2", situacao: "ok" }, remote: true });
 
         expect(within(drawer).getByRole("button", { name: "Acessar Organização →" })).toBeDisabled();
         expect(within(drawer).getByRole("button", { name: "Editar" })).toBeDisabled();
@@ -336,7 +336,7 @@ describe("InspetorOrg · comando de teste", () => {
             value: { writeText: escrever },
             configurable: true,
         });
-        const { gaveta: drawer } = build();
+        const { drawer } = build();
 
         const command = await within(drawer).findByText(
             "poph chat --org sessao-matrix atendente-matrix",
@@ -349,7 +349,7 @@ describe("InspetorOrg · comando de teste", () => {
 
     it("sem agente ativo o comando fica com o marcador <agente>", async () => {
         servidor({ agentes: [] });
-        const { gaveta: drawer } = build();
+        const { drawer } = build();
 
         expect(
             await within(drawer).findByText("poph chat --org sessao-matrix <agente>"),
@@ -391,7 +391,7 @@ describe("InspetorOrg em en-US", () => {
     it("troca o idioma da gaveta aberta sem recarregar", async () => {
         servidor();
         setLocale("pt-BR");
-        const { gaveta: drawer } = build();
+        const { drawer } = build();
 
         expect(within(drawer).getByText("Retenção de histórico")).toBeInTheDocument();
 
@@ -406,7 +406,7 @@ describe("InspetorOrg · teclado", () => {
     it("Esc fecha a gaveta e delega o fechamento a quem a monta", async () => {
         servidor();
         const user = userEvent.setup();
-        const { aoFechar: onClose } = build();
+        const { onClose } = build();
 
         await user.keyboard("{Escape}");
 
@@ -415,7 +415,7 @@ describe("InspetorOrg · teclado", () => {
 
     it("Esc dentro de um diálogo aberto não fecha a gaveta por baixo", async () => {
         servidor();
-        const { aoFechar: onClose } = build();
+        const { onClose } = build();
 
         const dialog = document.createElement("div");
         dialog.setAttribute("role", "dialog");

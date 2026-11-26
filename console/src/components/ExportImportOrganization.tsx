@@ -100,12 +100,12 @@ function NoticeFailure({
 }
 
 function RefusalOverwritten({
-    recusa: refusal,
+    refusal,
     importing,
     onAuthorize,
     onCancel,
 }: {
-    recusa: OverwriteRefusal;
+    refusal: OverwriteRefusal;
     importing: boolean;
     onAuthorize: () => void;
     onCancel: () => void;
@@ -437,7 +437,7 @@ export function ExportImportOrganization({ org }: SectionBackupProps) {
                     ) : null}
                     {refusal ? (
                         <RefusalOverwritten
-                            recusa={refusal}
+                            refusal={refusal}
                             importing={importing}
                             onAuthorize={() => void runImport(true)}
                             onCancel={() => setRefusal(null)}

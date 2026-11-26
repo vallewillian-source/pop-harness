@@ -18,22 +18,22 @@ type ApiResponse = {
 
 type Route = {
     "metodo": string;
-    "trecho": string;
+    "excerpt": string;
     "responder": (call: Call) => ApiResponse;
 };
 
 export class FakeServer {
-    readonly "chamadas": Call[] = [];
-    private "rotas": Route[] = [];
+    readonly "calls": Call[] = [];
+    private "routes": Route[] = [];
 
     "responder"(
         method: string,
         excerpt: string,
         response: ApiResponse | ((call: Call) => ApiResponse),
     ): this {
-        this["rotas"].push({
+        this["routes"].push({
             "metodo": method.toUpperCase(),
-            "trecho": excerpt,
+            "excerpt": excerpt,
             "responder": typeof response === "function" ? response : () => response,
         });
         return this;
@@ -63,11 +63,11 @@ export class FakeServer {
                     }
                 }
                 const call: Call = { "metodo": method, url, "cabecalhos": headers, "corpo": body, "bruto": init?.body };
-                this["chamadas"].push(call);
+                this["calls"].push(call);
 
-                const route = this["rotas"].find(
+                const route = this["routes"].find(
                     (candidate) =>
-                        candidate["metodo"] === method && url.includes(candidate["trecho"]),
+                        candidate["metodo"] === method && url.includes(candidate["excerpt"]),
                 );
                 if (!route) {
                     throw new Error(`sem rota falsa para ${method} ${url}`);
@@ -93,7 +93,7 @@ export class FakeServer {
     }
 
     "chamadasPara"(method: string, excerpt: string): Call[] {
-        return this["chamadas"].filter(
+        return this["calls"].filter(
             (call) => call["metodo"] === method.toUpperCase() && call.url.includes(excerpt),
         );
     }

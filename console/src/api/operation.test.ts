@@ -125,7 +125,7 @@ describe("listarPlugins (HR-48c)", () => {
             { kind: "eco", situacao: "ok", nome: "Eco", versao: "0.1.0" },
             { kind: "whatsapp", situacao: "indisponivel", mensagem: "sem resposta" },
         ]);
-        expect(servidor["chamadas"][0]?.url).toBe("/admin/v1/orgs/org_1/manifests");
+        expect(servidor["calls"][0]?.url).toBe("/admin/v1/orgs/org_1/manifests");
     });
 
     it("plugin indisponível sem mensagem ganha a frase de operação, sem nome nem versão", async () => {

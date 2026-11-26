@@ -199,24 +199,24 @@ export function valuesIntegration(
 export type FormSchemaProps = {
     configuracao: SchemaObject;
     segredos?: SchemaObject | null;
-    valores: ValuesSchema;
+    values: ValuesSchema;
     onChange: (nome: string, value: unknown) => void;
-    erros?: Record<string, string>;
+    errors?: Record<string, string>;
     idPrefix: string;
     onlyRead?: boolean;
-    estadoDosSegredos?: StateSecrets;
+    secretsState?: StateSecrets;
     onToggleRemoval?: (nome: string, remove: boolean) => void;
 };
 
 export function FormSchema({
     configuracao,
     segredos = null,
-    valores: values,
+    values,
     onChange,
-    erros: errors = {},
+    errors = {},
     idPrefix,
     onlyRead = false,
-    estadoDosSegredos: stateSecrets = {},
+    secretsState: stateSecrets = {},
     onToggleRemoval,
 }: FormSchemaProps) {
     const { translate: t } = useI18n();

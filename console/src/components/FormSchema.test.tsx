@@ -62,7 +62,7 @@ function FormTest({
         <FormSchema
             configuracao={configuracao}
             segredos={segredos}
-            valores={values}
+            values={values}
             idPrefix="teste"
             onChange={(nome, value) => setValues((current) => ({ ...current, [nome]: value }))}
         />

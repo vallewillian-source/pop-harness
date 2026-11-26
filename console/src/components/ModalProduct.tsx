@@ -187,7 +187,7 @@ export function ModalProduct({
         return calculado;
     }
 
-    function validar(): { erros: Errors; cents: number } {
+    function validar(): { errors: Errors; cents: number } {
         const freshItems: Errors = {};
         if (!category) {
             freshItems.categoria = translate("products.validationCategoryRequired");
@@ -201,7 +201,7 @@ export function ModalProduct({
         if (cents === null) {
             freshItems.preco = translate("products.validationPriceFormat");
         }
-        return { erros: freshItems, cents: cents ?? 0 };
+        return { errors: freshItems, cents: cents ?? 0 };
     }
 
     function showErrorApi(failure: ApiError) {
@@ -219,7 +219,7 @@ export function ModalProduct({
 
     async function save(evento?: FormEvent) {
         evento?.preventDefault();
-        const { erros: freshItems, cents } = validar();
+        const { errors: freshItems, cents } = validar();
         setErrors(freshItems);
         setErrorGeneral(null);
         setConflict(null);

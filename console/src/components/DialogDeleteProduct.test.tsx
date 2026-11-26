@@ -41,7 +41,7 @@ function build(agentsSee: number | null, onDelete = vi.fn(), onClose = vi.fn()) 
             aoExcluir={onDelete}
         />,
     );
-    return { aoExcluir: onDelete, aoFechar: onClose };
+    return { onDelete, onClose };
 }
 
 function refusalCart(items: number, carts: number) {
@@ -92,7 +92,7 @@ describe("DialogoExcluirProduto", () => {
                 },
             })
             .instalar();
-        const { aoExcluir: onDelete } = build(1);
+        const { onDelete } = build(1);
         await waitForModalFocus();
 
         await user.type(screen.getByLabelText(/Digite/i), "Clareamento dental");
@@ -116,7 +116,7 @@ describe("DialogoExcluirProduto", () => {
                 apiError(404, "not_found", "produto `prod_1` não encontrado"),
             )
             .instalar();
-        const { aoExcluir: onDelete } = build(0);
+        const { onDelete } = build(0);
         await waitForModalFocus();
 
         await user.type(screen.getByLabelText(/Digite/i), "Clareamento dental");
@@ -136,7 +136,7 @@ describe("DialogoExcluirProduto", () => {
                     : refusalCart(3, 2),
             )
             .instalar();
-        const { aoExcluir: onDelete, aoFechar: onClose } = build(1);
+        const { onDelete, onClose } = build(1);
         const dialog = await screen.findByRole("dialog", { name: "Excluir produto?" });
         await waitForModalFocus();
         expect(within(dialog).queryByRole("checkbox")).toBeNull();
@@ -172,7 +172,7 @@ describe("DialogoExcluirProduto", () => {
         const servidor = new FakeServer()
             .responder("DELETE", `/admin/v1/orgs/${ORG}/products/prod_1`, refusalCart(1, 1))
             .instalar();
-        const { aoExcluir: onDelete, aoFechar: onClose } = build(0);
+        const { onDelete, onClose } = build(0);
         await waitForModalFocus();
 
         await user.type(screen.getByLabelText(/Digite/i), "Clareamento dental");

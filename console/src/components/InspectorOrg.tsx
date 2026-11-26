@@ -155,7 +155,7 @@ function nodeText(no: OrgNode | null | undefined): { chip: string; valor: string
     }
 }
 
-function mirrorMatrix(estado: MatrixState): { valor: string; detalhe: string } {
+function mirrorMatrix(estado: MatrixState): { valor: string; detail: string } {
     const pending = estado.backlog?.messages ?? 0;
     const age = estado.backlog?.oldest_seconds ?? 0;
     const parts: string[] = [];
@@ -184,21 +184,21 @@ function mirrorMatrix(estado: MatrixState): { valor: string; detalhe: string } {
     if (estado.connected === null || estado.connected === undefined) {
         return {
             valor: translate("orgs.matrixNotConfigured"),
-            detalhe: translate("orgs.matrixNotConfiguredDetail"),
+            detail: translate("orgs.matrixNotConfiguredDetail"),
         };
     }
     if (!estado.enabled) {
         return {
             valor: translate("orgs.matrixDisabled"),
-            detalhe: translate("orgs.matrixDisabledDetail", { detail: detail }),
+            detail: translate("orgs.matrixDisabledDetail", { detail: detail }),
         };
     }
     if (estado.connected) {
-        return { valor: translate("orgs.matrixConnected"), detalhe: detail };
+        return { valor: translate("orgs.matrixConnected"), detail };
     }
     return {
         valor: translate("orgs.matrixDisconnected"),
-        detalhe: translate("orgs.matrixDisconnectedDetail", { detail: detail }),
+        detail: translate("orgs.matrixDisconnectedDetail", { detail: detail }),
     };
 }
 
@@ -387,7 +387,7 @@ export function InspectorOrg({
                                     (() => {
                                         const mirror = mirrorMatrix(matrix.dados);
                                         return (
-                                            <span className="poph-inspector__with-hint" title={mirror.detalhe}>
+                                            <span className="poph-inspector__with-hint" title={mirror.detail}>
                                                 {mirror.valor}
                                             </span>
                                         );

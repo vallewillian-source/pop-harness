@@ -56,7 +56,7 @@ function build(props: Partial<React.ComponentProps<typeof ModalProduct>> = {}) {
             {...props}
         />,
     );
-    return { aoSalvar: onSave, aoFechar: onClose };
+    return { onSave, onClose };
 }
 
 describe("conversão de preço e listas", () => {
@@ -92,7 +92,7 @@ describe("ModalProduto", () => {
         const servidor = new FakeServer()
             .responder("POST", `/admin/v1/orgs/${ORG}/products`, { status: 201, corpo: created })
             .instalar();
-        const { aoSalvar: onSave, aoFechar: onClose } = build();
+        const { onSave, onClose } = build();
         await waitForModalFocus();
 
         await user.selectOptions(screen.getByRole("combobox", { name: "Categoria" }), "cat_2");
@@ -141,7 +141,7 @@ describe("ModalProduto", () => {
         expect(await screen.findByText("escolha a categoria do produto")).toBeInTheDocument();
         expect(screen.getByText("informe o nome do produto")).toBeInTheDocument();
         expect(screen.getByText("use o formato 450 ou 450,00 (valor em reais)")).toBeInTheDocument();
-        expect(servidor.chamadas).toHaveLength(0);
+        expect(servidor.calls).toHaveLength(0);
     });
 
     it("erro de campo vindo da API (slug repetido) aparece no campo Identificador", async () => {

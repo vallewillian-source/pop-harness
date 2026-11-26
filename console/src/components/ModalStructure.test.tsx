@@ -88,7 +88,7 @@ describe("ModalEstrutura", () => {
         await user.click(screen.getByRole("button", { name: "Criar departamento" }));
 
         expect(await screen.findByText("informe o nome do departamento")).toBeInTheDocument();
-        expect(servidor.chamadas).toHaveLength(0);
+        expect(servidor.calls).toHaveLength(0);
     });
 
     it("nome repetido volta da API e aparece no campo Nome, com o motivo real", async () => {
