@@ -220,6 +220,15 @@ command), `cai_em_todo_comando` (crashes on every command), `lixo` (garbage), `p
 `manifesto_invalido` (invalid manifest)). The mode names are identifiers used by the tests, so they stay as they are.
 It exists only for the tests: the distribution package (`scripts/build-dist.sh`) does not include it.
 
+The fixture also honours `config.dump_dir`: it writes there `args.txt`, `env.txt`, `segredos.txt` (secret
+names and lengths only — the value is never written to disk) and `comandos.jsonl`, plus the marker files
+`travado-uma-vez` and `caido-uma-vez` for the "first command only" modes, and `saiu.txt` on `encerrar`.
+That dump is how the tests prove what actually **arrived** in the plugin: that the secret travels only in
+the handshake and never through argv or the inherited environment. The `lixo` mode prints one non-JSON
+line and one 2 MiB line (above the 1 MiB cap); both must be discarded and counted as junk. With the cap of
+three consecutive failures, `cai_em_todo_comando` makes the supervisor mark the integration down and stop
+restarting it.
+
 ## 8. How the Harness uses the contract
 
 ```rust
