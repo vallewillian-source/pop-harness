@@ -99,7 +99,7 @@ The HTTP daemon port defaults to `17485`. The login screen explicitly renders th
 From the root of the `apps/pop-harness` repository:
 
 ```bash
-bash design_assets/20261123-refactor-baseline/scripts/capturar.sh
+bash design_assets/20261123-refactor-baseline/scripts/capture.sh
 ```
 
 The script:
