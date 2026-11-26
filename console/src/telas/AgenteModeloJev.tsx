@@ -32,37 +32,37 @@ import {
     SofaSkeleton,
     SofaSwitch,
 } from "@sofacoding/sofa-ui";
-import { ErroApi } from "../api/cliente";
-import { obterAgente, type Agente } from "../api/agentes";
-import { obterOrg } from "../api/orgs";
+import { ApiError } from "../api/client";
+import { getAgent, type Agente } from "../api/agents";
+import { getOrg } from "../api/orgs";
 import {
-    CHAVES_PRESERVADAS,
-    type CampoModelo,
-    DESCRICAO_GATE,
-    type EstadoGate,
+    PRESERVED_KEYS,
+    type ModelField,
+    GATE_DESCRIPTION,
+    type GateState,
     GATES,
     type IdGate,
-    LIMITE_CONTEXTO_MIN,
-    LIMITE_CORTE_MAX,
-    LIMITE_CORTE_MIN,
-    LIMITE_FERRAMENTAS_MAX,
-    LIMITE_JANELA_MS,
-    LIMITE_RODADAS_MAX,
-    LIMITE_TEMPERATURA_MAX,
-    LIMITE_TEMPERATURA_MIN,
-    LIMITE_TOP_K_MAX,
-    LIMITE_TOP_K_MIN,
-    type ModeloTexto,
-    PADRAO_DE_FABRICA,
-    type ValoresJev,
-    efeitoDoGate,
-    jevDoAgente,
-    modeloDoAgente,
-    mudancaDoJev,
-    mudancasDoModelo,
-    salvarModeloJev,
-    validarModelo,
-} from "../api/modeloJev";
+    LIMIT_CONTEXT_MIN,
+    LIMIT_CUT_MAX,
+    LIMIT_CUT_MIN,
+    LIMIT_TOOLS_MAX,
+    LIMIT_WINDOW_MS,
+    LIMIT_ROUNDS_MAX,
+    LIMIT_TEMPERATURE_MAX,
+    LIMIT_TEMPERATURE_MIN,
+    LIMIT_TOP_K_MAX,
+    LIMIT_TOP_K_MIN,
+    type TextModel,
+    FACTORY_DEFAULTS,
+    type JevValues,
+    gateEffect,
+    agentJev,
+    agentModel,
+    jevChange,
+    modelChanges,
+    saveModelJev,
+    validateModel,
+} from "../api/modelJev";
 import { AbasDoAgente, CabecalhoDoAgente, SecaoDoAgente } from "../componentes/AbasDoAgente";
 import { useGuardaDeAlteracoes } from "../componentes/GuardaAlteracoes";
 import { translate, useI18n } from "../i18n";
@@ -74,17 +74,17 @@ function ligacoes(controle: SofaFieldControlProps) {
 }
 
 /** Mesmo conteúdo de dois modelos (texto digitado, com espaços das pontas ignorados). */
-function mesmoModelo(a: ModeloTexto, b: ModeloTexto): boolean {
-    return (Object.keys(a) as CampoModelo[]).every((campo) => a[campo].trim() === b[campo].trim());
+function mesmoModelo(a: TextModel, b: TextModel): boolean {
+    return (Object.keys(a) as ModelField[]).every((campo) => a[campo].trim() === b[campo].trim());
 }
 
-function mesmoJev(a: ValoresJev, b: ValoresJev): boolean {
+function mesmoJev(a: JevValues, b: JevValues): boolean {
     return a.jevDesligado === b.jevDesligado && GATES.every((gate) => a.gates[gate] === b.gates[gate]);
 }
 
 /** Texto curto do que o gate faz neste agente agora, com a origem do valor. */
-function situacaoDoGate(valores: ValoresJev, gate: IdGate): string {
-    const ligado = efeitoDoGate(valores, gate);
+function situacaoDoGate(valores: JevValues, gate: IdGate): string {
+    const ligado = gateEffect(valores, gate);
     if (valores.jevDesligado) return translate("modelJev.gateStatusDisabledBySwitch");
     if (valores.gates[gate] === "herdar") {
         return translate("modelJev.gateStatusInherit", {
@@ -108,14 +108,14 @@ export function AgenteModeloJev() {
 
     const [agente, setAgente] = useState<Agente | null>(null);
     const [versao, setVersao] = useState<number>(0);
-    const [baseModelo, setBaseModelo] = useState<ModeloTexto | null>(null);
-    const [rascunhoModelo, setRascunhoModelo] = useState<ModeloTexto | null>(null);
-    const [baseJev, setBaseJev] = useState<ValoresJev | null>(null);
-    const [rascunhoJev, setRascunhoJev] = useState<ValoresJev | null>(null);
+    const [baseModelo, setBaseModelo] = useState<TextModel | null>(null);
+    const [rascunhoModelo, setRascunhoModelo] = useState<TextModel | null>(null);
+    const [baseJev, setBaseJev] = useState<JevValues | null>(null);
+    const [rascunhoJev, setRascunhoJev] = useState<JevValues | null>(null);
     const [nomeDaOrg, setNomeDaOrg] = useState<string | null>(null);
     const [erroDeCarga, setErroDeCarga] = useState<string | null>(null);
 
-    const [erros, setErros] = useState<Partial<Record<CampoModelo, string>>>({});
+    const [erros, setErros] = useState<Partial<Record<ModelField, string>>>({});
     const [erroGeral, setErroGeral] = useState<string | null>(null);
     const [conflito, setConflito] = useState<string | null>(null);
     const [aviso, setAviso] = useState<string | null>(null);
@@ -124,8 +124,8 @@ export function AgenteModeloJev() {
     const aplicarAgente = useCallback((dados: Agente) => {
         setAgente(dados);
         setVersao(dados.version);
-        const modelo = modeloDoAgente(dados);
-        const jev = jevDoAgente(dados.jev);
+        const modelo = agentModel(dados);
+        const jev = agentJev(dados.jev);
         setBaseModelo(modelo);
         setRascunhoModelo(modelo);
         setBaseJev(jev);
@@ -135,7 +135,7 @@ export function AgenteModeloJev() {
     const carregar = useCallback(async () => {
         setErroDeCarga(null);
         try {
-            aplicarAgente(await obterAgente(orgId, agentId));
+            aplicarAgente(await getAgent(orgId, agentId));
         } catch (falha) {
             setErroDeCarga(
                 falha instanceof Error ? falha.message : t("modelJev.loadAgentFallbackError"),
@@ -145,7 +145,7 @@ export function AgenteModeloJev() {
 
     useEffect(() => {
         void carregar();
-        obterOrg(orgId)
+        getOrg(orgId)
             .then((org) => setNomeDaOrg(org.name))
             .catch(() => setNomeDaOrg(null));
     }, [carregar, orgId]);
@@ -163,7 +163,7 @@ export function AgenteModeloJev() {
      */
     const releraAgente = useCallback(async (): Promise<number | undefined> => {
         try {
-            const atual = await obterAgente(orgId, agentId);
+            const atual = await getAgent(orgId, agentId);
             setAgente(atual);
             setVersao(atual.version);
             return atual.version;
@@ -174,15 +174,15 @@ export function AgenteModeloJev() {
 
     const salvar = useCallback(async (): Promise<boolean> => {
         if (!agente || !baseModelo || !rascunhoModelo || !baseJev || !rascunhoJev) return true;
-        const novosErros = validarModelo(rascunhoModelo, baseModelo);
+        const novosErros = validateModel(rascunhoModelo, baseModelo);
         setErros(novosErros);
         setErroGeral(null);
         setConflito(null);
         setAviso(null);
         if (Object.keys(novosErros).length > 0) return false;
 
-        const mudancaModelo = mudancasDoModelo(baseModelo, rascunhoModelo);
-        const jevJson = mudancaDoJev(agente.jev, baseJev, rascunhoJev);
+        const mudancaModelo = modelChanges(baseModelo, rascunhoModelo);
+        const jevJson = jevChange(agente.jev, baseJev, rascunhoJev);
         const mudanca = jevJson === undefined ? mudancaModelo : { ...mudancaModelo, jev_json: jevJson };
         if (Object.keys(mudanca).length === 0) {
             setAviso(t("modelJev.nothingToSave"));
@@ -191,12 +191,12 @@ export function AgenteModeloJev() {
 
         setSalvando(true);
         try {
-            const gravado = await salvarModeloJev(orgId, agentId, versao, mudanca);
+            const gravado = await saveModelJev(orgId, agentId, versao, mudanca);
             aplicarAgente(gravado);
             setAviso(t("modelJev.savedNotice", { version: gravado.version }));
             return true;
         } catch (falha) {
-            if (falha instanceof ErroApi && falha.status === 412) {
+            if (falha instanceof ApiError && falha.status === 412) {
                 const atual = await releraAgente();
                 setConflito(
                     t("modelJev.conflictMessage", {
@@ -208,7 +208,7 @@ export function AgenteModeloJev() {
                 );
                 return false;
             }
-            if (falha instanceof ErroApi) {
+            if (falha instanceof ApiError) {
                 const detalhes = falha.detalhes as Record<string, unknown> | null | undefined;
                 const campo = typeof detalhes?.["field"] === "string" ? detalhes["field"] : "";
                 const motivo = typeof detalhes?.["reason"] === "string" ? detalhes["reason"] : null;
@@ -260,13 +260,13 @@ export function AgenteModeloJev() {
         return () => window.removeEventListener("keydown", aoTeclar);
     }, [sujo, salvando, salvar]);
 
-    function alterarModelo(campo: CampoModelo, valor: string) {
+    function alterarModelo(campo: ModelField, valor: string) {
         setRascunhoModelo((atual) => (atual ? { ...atual, [campo]: valor } : atual));
         setErros((atuais) => ({ ...atuais, [campo]: undefined }));
         setAviso(null);
     }
 
-    function alterarGate(gate: IdGate, estado: EstadoGate) {
+    function alterarGate(gate: IdGate, estado: GateState) {
         setRascunhoJev((atual) =>
             atual ? { ...atual, gates: { ...atual.gates, [gate]: estado } } : atual,
         );
@@ -329,7 +329,7 @@ export function AgenteModeloJev() {
     }
 
     function campoTexto(
-        campo: CampoModelo,
+        campo: ModelField,
         rotulo: string,
         opcoes: { dica?: string; placeholder?: string; modo?: "decimal" | "numeric" } = {},
     ) {
@@ -411,8 +411,8 @@ export function AgenteModeloJev() {
                                         ? t("modelJev.placeholderInheritsDefault")
                                         : undefined,
                                 dica: t("modelJev.fieldTemperatureHint", {
-                                    min: LIMITE_TEMPERATURA_MIN,
-                                    max: LIMITE_TEMPERATURA_MAX,
+                                    min: LIMIT_TEMPERATURE_MIN,
+                                    max: LIMIT_TEMPERATURE_MAX,
                                 }),
                             })}
                             {campoTexto("max_output_tokens", t("modelJev.fieldMaxOutputLabel"), {
@@ -425,7 +425,7 @@ export function AgenteModeloJev() {
                             })}
                             {campoTexto("max_context_tokens", t("modelJev.fieldMaxContextLabel"), {
                                 modo: "numeric",
-                                dica: t("modelJev.fieldMaxContextHint", { min: LIMITE_CONTEXTO_MIN }),
+                                dica: t("modelJev.fieldMaxContextHint", { min: LIMIT_CONTEXT_MIN }),
                             })}
                         </div>
                     </SecaoDoAgente>
@@ -437,15 +437,15 @@ export function AgenteModeloJev() {
                         <div className="poph-modelo-jev__grade">
                             {campoTexto("grouping_window_ms", t("modelJev.fieldGroupingWindowLabel"), {
                                 modo: "numeric",
-                                dica: t("modelJev.fieldGroupingWindowHint", { max: LIMITE_JANELA_MS }),
+                                dica: t("modelJev.fieldGroupingWindowHint", { max: LIMIT_WINDOW_MS }),
                             })}
                             {campoTexto("max_tool_rounds", t("modelJev.fieldMaxToolRoundsLabel"), {
                                 modo: "numeric",
-                                dica: t("modelJev.fieldMaxToolRoundsHint", { max: LIMITE_RODADAS_MAX }),
+                                dica: t("modelJev.fieldMaxToolRoundsHint", { max: LIMIT_ROUNDS_MAX }),
                             })}
                             {campoTexto("max_tool_calls", t("modelJev.fieldMaxToolCallsLabel"), {
                                 modo: "numeric",
-                                dica: t("modelJev.fieldMaxToolCallsHint", { max: LIMITE_FERRAMENTAS_MAX }),
+                                dica: t("modelJev.fieldMaxToolCallsHint", { max: LIMIT_TOOLS_MAX }),
                             })}
                         </div>
                     </SecaoDoAgente>
@@ -458,15 +458,15 @@ export function AgenteModeloJev() {
                             {campoTexto("rag_top_k", t("modelJev.fieldRagTopKLabel"), {
                                 modo: "numeric",
                                 dica: t("modelJev.fieldRagTopKHint", {
-                                    min: LIMITE_TOP_K_MIN,
-                                    max: LIMITE_TOP_K_MAX,
+                                    min: LIMIT_TOP_K_MIN,
+                                    max: LIMIT_TOP_K_MAX,
                                 }),
                             })}
                             {campoTexto("rag_min_score", t("modelJev.fieldRagMinScoreLabel"), {
                                 modo: "decimal",
                                 dica: t("modelJev.fieldRagMinScoreHint", {
-                                    min: LIMITE_CORTE_MIN,
-                                    max: LIMITE_CORTE_MAX,
+                                    min: LIMIT_CUT_MIN,
+                                    max: LIMIT_CUT_MAX,
                                 }),
                             })}
                         </div>
@@ -485,7 +485,7 @@ export function AgenteModeloJev() {
 
                         <div className="poph-modelo-jev__grade">
                             {GATES.map((gate) => {
-                                const descricao = DESCRICAO_GATE[gate];
+                                const descricao = GATE_DESCRIPTION[gate];
                                 return (
                                     <SofaField
                                         key={gate}
@@ -501,12 +501,12 @@ export function AgenteModeloJev() {
                                                 {...ligacoes(controle)}
                                                 value={rascunhoJev.gates[gate]}
                                                 onChange={(evento) =>
-                                                    alterarGate(gate, evento.target.value as EstadoGate)
+                                                    alterarGate(gate, evento.target.value as GateState)
                                                 }
                                             >
                                                 <option value="herdar">
                                                     {t("modelJev.gateOptionInherit", {
-                                                        defaultState: PADRAO_DE_FABRICA[gate]
+                                                        defaultState: FACTORY_DEFAULTS[gate]
                                                             ? t("modelJev.gateStateOnLower")
                                                             : t("modelJev.gateStateOffLower"),
                                                     })}
@@ -526,7 +526,7 @@ export function AgenteModeloJev() {
                         descricao={t("modelJev.sectionOtherKeysDescription")}
                     >
                         <ul className="poph-modelo-jev__chaves">
-                            {CHAVES_PRESERVADAS.map((item) => (
+                            {PRESERVED_KEYS.map((item) => (
                                 <li key={item.chave}>
                                     <code>{item.chave}</code> ·{" "}
                                     {chavesNoAgente.has(item.chave)

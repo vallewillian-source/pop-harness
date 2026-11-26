@@ -17,7 +17,7 @@ import { I18nProvider, setLocale } from "../i18n";
 afterEach(() => {
     setLocale("pt-BR");
 });
-import { ServidorFalso, erroApi } from "../testes/servidor";
+import { FakeServer, apiError } from "../testing/server";
 import { AgenteModeloJev } from "./AgenteModeloJev";
 
 const ORG = "org_1";
@@ -85,7 +85,7 @@ function servidorCom(opcoes: {
     let leituras = 0;
     let patches = 0;
     const agente = opcoes.agente ?? agenteJson();
-    const servidor = new ServidorFalso()
+    const servidor = new FakeServer()
         .responder("PATCH", `/agents/${AGENTE}`, () => {
             const resposta = opcoes.patches?.[patches] ?? { status: 200, corpo: agenteJson({ version: 2 }) };
             patches += 1;
@@ -93,7 +93,7 @@ function servidorCom(opcoes: {
         })
         .responder("GET", `/agents/${AGENTE}`, () => {
             leituras += 1;
-            if (opcoes.leituraFalha) return erroApi(500, "internal", "falha simulada");
+            if (opcoes.leituraFalha) return apiError(500, "internal", "falha simulada");
             if (leituras > 1 && opcoes.relido) return { status: 200, corpo: opcoes.relido };
             return { status: 200, corpo: agente };
         })
@@ -104,7 +104,7 @@ function servidorCom(opcoes: {
     return servidor.instalar();
 }
 
-function corpoDoPatch(servidor: ServidorFalso, indice = 0): Record<string, unknown> {
+function corpoDoPatch(servidor: FakeServer, indice = 0): Record<string, unknown> {
     return servidor.chamadasPara("PATCH", `/agents/${AGENTE}`)[indice]!.corpo as Record<string, unknown>;
 }
 

@@ -16,10 +16,10 @@ import {
     SofaInput,
     SofaStatusIndicator,
 } from "@sofacoding/sofa-ui";
-import { ErroApi } from "../api/cliente";
+import { ApiError } from "../api/client";
 import { LanguageSwitcher } from "../componentes/LanguageSwitcher";
 import { useI18n } from "../i18n";
-import { resolveDefaultOrgPath, useSessao } from "../sessao/Sessao";
+import { resolveDefaultOrgPath, useSession } from "../session/Session";
 import "../estilos/login.css";
 
 /** Endereço desta instância — o Console é servido pelo próprio binário, então é a origem atual. */
@@ -29,7 +29,7 @@ function instancia(): string {
 
 export function Login() {
     const { translate } = useI18n();
-    const { entrar, expirada, limparAvisoExpiracao } = useSessao();
+    const { entrar, expirada, limparAvisoExpiracao } = useSession();
     const navegar = useNavigate();
     const [token, setToken] = useState("");
     const [visivel, setVisivel] = useState(false);
@@ -48,7 +48,7 @@ export function Login() {
             // Vale para os dois escopos: token de org só enxerga a própria, que é a primeira da lista.
             navegar(resolveDefaultOrgPath(sessao.orgs), { replace: true });
         } catch (erro) {
-            if (erro instanceof ErroApi) {
+            if (erro instanceof ApiError) {
                 if (erro.naoAutorizado) {
                     setErroToken(translate("login.invalidToken"));
                 } else if (erro.semServidor) {

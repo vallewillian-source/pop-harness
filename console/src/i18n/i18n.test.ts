@@ -146,42 +146,40 @@ describe("mounted shell", () => {
             "poph-console.sessao",
             JSON.stringify({
                 token: "pophg_teste",
-                escopo: "global",
+                "escopo": "global",
                 orgs: [{ id: "org_1", name: "Loja Antiga", slug: "loja-antiga", status: "active" }],
             }),
         );
-        const { ServidorFalso } = await import("../testes/servidor");
-        new ServidorFalso()
-            .responder("GET", "/healthz", {
+        const { FakeServer } = await import("../testing/server");
+        new FakeServer()["responder"]("GET", "/healthz", {
                 status: 200,
-                corpo: {
+                "corpo": {
                     status: "ok",
                     version: "0.4.2",
                     uptime_seconds: 10,
                     databases: { harness: 1, rag: 1 },
                 },
-            })
-            .instalar();
+            })["instalar"]();
 
         const { createElement } = await import("react");
         const { act, render, screen } = await import("@testing-library/react");
         const { default: userEvent } = await import("@testing-library/user-event");
         const { MemoryRouter } = await import("react-router-dom");
-        const { SessaoProvider } = await import("../sessao/Sessao");
-        const { GuardaAlteracoesProvider } = await import("../componentes/GuardaAlteracoes");
+        const { SessionProvider } = await import("../session/Session");
+        const { "GuardaAlteracoesProvider": ChangeGuardProvider } = await import("../componentes/GuardaAlteracoes");
         const { Shell } = await import("../componentes/Shell");
         const { setLocale } = await import("./index");
 
-        const usuario = userEvent.setup();
+        const user = userEvent.setup();
         render(
             createElement(
                 MemoryRouter,
                 { initialEntries: ["/orgs"] },
                 createElement(
-                    SessaoProvider,
+                    SessionProvider,
                     null,
                     createElement(
-                        GuardaAlteracoesProvider,
+                        ChangeGuardProvider,
                         null,
                         createElement(Shell, null, createElement("p", null, "conteudo")),
                     ),
@@ -194,7 +192,7 @@ describe("mounted shell", () => {
         expect(screen.getByText("Token global")).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "Sair do Console" })).toBeInTheDocument();
 
-        await usuario.click(screen.getByRole("button", { name: "Inglês (Estados Unidos)" }));
+        await user.click(screen.getByRole("button", { name: "Inglês (Estados Unidos)" }));
 
         expect(screen.getByText("SYSTEM")).toBeInTheDocument();
         expect(screen.getByText("Instance health")).toBeInTheDocument();
@@ -203,7 +201,7 @@ describe("mounted shell", () => {
         expect(window.localStorage.getItem(STORAGE_KEY)).toBe("en-US");
         expect(document.documentElement.lang).toBe("en-US");
 
-        await usuario.click(screen.getByRole("button", { name: "Keyboard shortcuts" }));
+        await user.click(screen.getByRole("button", { name: "Keyboard shortcuts" }));
 
         expect(await screen.findByText("Console shortcuts")).toBeInTheDocument();
         expect(screen.getByText("Navigate between controls")).toBeInTheDocument();

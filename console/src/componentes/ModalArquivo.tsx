@@ -18,15 +18,15 @@ import {
     SofaTextarea,
     type SofaFieldControlProps,
 } from "@sofacoding/sofa-ui";
-import { ErroApi } from "../api/cliente";
+import { ApiError } from "../api/client";
 import {
-    LIMITE_ARQUIVO_BYTES,
-    LIMITE_DESCRICAO_ARQUIVO,
-    LIMITE_NOME_ARQUIVO,
-    enviarArquivo,
-    tamanhoEmMb,
-    type Arquivo,
-} from "../api/arquivos";
+    LIMIT_FILE_BYTES,
+    LIMIT_FILE_DESCRIPTION,
+    LIMIT_FILE_NAME,
+    sendFile,
+    sizeInMb,
+    type LibraryFile,
+} from "../api/files";
 import { translate, useI18n } from "../i18n";
 
 /** Tipos que o servidor aceita (docs/BIBLIOTECA_ARQUIVOS.md e docs/ARQUIVOS.md). */
@@ -39,7 +39,7 @@ export type ModalArquivoProps = {
     aberto: boolean;
     aoFechar: () => void;
     /** Chamado com o arquivo devolvido pela API, já na biblioteca. */
-    aoEnviar: (arquivo: Arquivo) => void;
+    aoEnviar: (arquivo: LibraryFile) => void;
 };
 
 type Erros = { arquivo?: string; nome?: string; descricao?: string };
@@ -52,17 +52,17 @@ function semDescribedBy(controle: SofaFieldControlProps) {
 
 /** Quanto o arquivo passa do limite, em KB (abaixo de 1 MB) ou MB. */
 function excessoLegivel(bytes: number): string {
-    const excesso = bytes - LIMITE_ARQUIVO_BYTES;
+    const excesso = bytes - LIMIT_FILE_BYTES;
     if (excesso < 1024 * 1024) {
         return `${Math.max(1, Math.ceil(excesso / 1024))} KB`;
     }
-    return tamanhoEmMb(excesso);
+    return sizeInMb(excesso);
 }
 
 /** Mensagem de tamanho para o arquivo escolhido, ou `null` se cabe no limite. */
 export function erroDeTamanho(bytes: number): string | null {
     if (bytes === 0) return translate("files.fileEmpty");
-    if (bytes > LIMITE_ARQUIVO_BYTES) {
+    if (bytes > LIMIT_FILE_BYTES) {
         return translate("files.fileTooLarge", { excess: excessoLegivel(bytes) });
     }
     return null;
@@ -105,12 +105,12 @@ export function ModalArquivo({ org, agente, aberto, aoFechar, aoEnviar }: ModalA
             const tamanho = erroDeTamanho(escolhido.size);
             if (tamanho) novos.arquivo = tamanho;
         }
-        if (nome.trim().length > LIMITE_NOME_ARQUIVO) {
-            novos.nome = t("files.nameTooLong", { limit: LIMITE_NOME_ARQUIVO });
+        if (nome.trim().length > LIMIT_FILE_NAME) {
+            novos.nome = t("files.nameTooLong", { limit: LIMIT_FILE_NAME });
         }
-        if (descricao.trim().length > LIMITE_DESCRICAO_ARQUIVO) {
+        if (descricao.trim().length > LIMIT_FILE_DESCRIPTION) {
             novos.descricao = t("files.descriptionTooLong", {
-                limit: LIMITE_DESCRICAO_ARQUIVO,
+                limit: LIMIT_FILE_DESCRIPTION,
             });
         }
         return novos;
@@ -125,11 +125,11 @@ export function ModalArquivo({ org, agente, aberto, aoFechar, aoEnviar }: ModalA
 
         setEnviando(true);
         try {
-            const criado = await enviarArquivo(org, agente, escolhido, nome, descricao);
+            const criado = await sendFile(org, agente, escolhido, nome, descricao);
             aoEnviar(criado);
             aoFechar();
         } catch (falha) {
-            if (falha instanceof ErroApi) {
+            if (falha instanceof ApiError) {
                 // O servidor diz o motivo em `details.reason` (tipo, vazio, tamanho); a mensagem
                 // genérica ("campo arquivo inválido") fica de lado quando o motivo existe.
                 const detalhes = falha.detalhes as Record<string, unknown> | null | undefined;
@@ -214,14 +214,14 @@ export function ModalArquivo({ org, agente, aberto, aoFechar, aoEnviar }: ModalA
                     <p className="poph-mono-mudo" style={{ margin: 0 }}>
                         {t("files.chosenFile", {
                             name: escolhido.name,
-                            size: tamanhoEmMb(escolhido.size),
+                            size: sizeInMb(escolhido.size),
                         })}
                     </p>
                 )}
 
                 <SofaField
                     label={t("files.nameLabel")}
-                    hint={t("files.nameHint", { limit: LIMITE_NOME_ARQUIVO })}
+                    hint={t("files.nameHint", { limit: LIMIT_FILE_NAME })}
                     error={erros.nome}
                     htmlFor="poph-arquivo-nome"
                 >
@@ -237,7 +237,7 @@ export function ModalArquivo({ org, agente, aberto, aoFechar, aoEnviar }: ModalA
 
                 <SofaField
                     label={t("files.descriptionLabel")}
-                    hint={t("files.descriptionHint", { limit: LIMITE_DESCRICAO_ARQUIVO })}
+                    hint={t("files.descriptionHint", { limit: LIMIT_FILE_DESCRIPTION })}
                     error={erros.descricao}
                     htmlFor="poph-arquivo-descricao"
                 >

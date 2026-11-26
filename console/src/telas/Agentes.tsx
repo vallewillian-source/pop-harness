@@ -21,9 +21,9 @@ import {
     SofaErrorState,
     SofaTable,
 } from "@sofacoding/sofa-ui";
-import { listarAgentes, type Agente } from "../api/agentes";
-import { listarEstrutura, type Departamento } from "../api/estrutura";
-import { obterOrg } from "../api/orgs";
+import { listAgents, type Agente } from "../api/agents";
+import { listStructure, type Departamento } from "../api/structure";
+import { getOrg } from "../api/orgs";
 import { translate, useI18n } from "../i18n";
 import "../estilos/agentes.css";
 
@@ -68,7 +68,7 @@ export function Agentes() {
         setCarregando(true);
         setErro(null);
         try {
-            const lista = await listarAgentes(orgId);
+            const lista = await listAgents(orgId);
             setAgentes(lista);
         } catch (falha) {
             setErro(falha instanceof Error ? falha.message : t("agents.loadFailed"));
@@ -79,11 +79,11 @@ export function Agentes() {
 
     useEffect(() => {
         void carregar();
-        obterOrg(orgId)
+        getOrg(orgId)
             .then((org) => setNomeDaOrg(org.name))
             .catch(() => setNomeDaOrg(null));
         // Sem os departamentos a coluna mostra "—"; a lista de agentes não depende disso.
-        listarEstrutura("departamento", orgId)
+        listStructure("departamento", orgId)
             .then((itens) => setDepartamentos(itens as Departamento[]))
             .catch(() => setDepartamentos([]));
     }, [carregar, orgId]);

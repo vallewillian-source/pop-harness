@@ -9,8 +9,8 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { setLocale } from "../i18n";
-import { SessaoProvider } from "../sessao/Sessao";
-import { ServidorFalso, erroApi } from "../testes/servidor";
+import { SessionProvider } from "../session/Session";
+import { FakeServer, apiError } from "../testing/server";
 import { GuardaAlteracoesProvider } from "./GuardaAlteracoes";
 import { Shell } from "./Shell";
 
@@ -56,13 +56,13 @@ function prepararSessao() {
 function montar(caminho: string) {
     return render(
         <MemoryRouter initialEntries={[caminho]}>
-            <SessaoProvider>
+            <SessionProvider>
                 <GuardaAlteracoesProvider>
                     <Shell>
                         <p>Conteúdo da tela</p>
                     </Shell>
                 </GuardaAlteracoesProvider>
-            </SessaoProvider>
+            </SessionProvider>
         </MemoryRouter>,
     );
 }
@@ -77,7 +77,7 @@ describe("Casca do Console (HR-61)", () => {
     it("botão de ajuda no header abre o modal de atalhos", async () => {
         const usuario = userEvent.setup();
         prepararSessao();
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
         montar("/orgs");
 
         await usuario.click(screen.getByRole("button", { name: "Atalhos do teclado" }));
@@ -88,7 +88,7 @@ describe("Casca do Console (HR-61)", () => {
     it("mostra o total de agentes da organização aberta, com uma consulta só ao navegar", async () => {
         const usuario = userEvent.setup();
         prepararSessao();
-        const servidor = new ServidorFalso()
+        const servidor = new FakeServer()
             .responder("GET", "/healthz", { status: 200, corpo: SAUDE })
             .responder("GET", "/admin/v1/orgs/org_1/agents", { status: 200, corpo: TRES_AGENTES })
             .instalar();
@@ -107,7 +107,7 @@ describe("Casca do Console (HR-61)", () => {
     it("lista os agentes da organização no menu, sem segunda consulta", async () => {
         const usuario = userEvent.setup();
         prepararSessao();
-        const servidor = new ServidorFalso()
+        const servidor = new FakeServer()
             .responder("GET", "/healthz", { status: 200, corpo: SAUDE })
             .responder("GET", "/admin/v1/orgs/org_1/agents", {
                 status: 200,
@@ -131,7 +131,7 @@ describe("Casca do Console (HR-61)", () => {
 
     it("sem organização aberta, o item Agentes não tem contador nem faz consulta", () => {
         prepararSessao();
-        const servidor = new ServidorFalso()
+        const servidor = new FakeServer()
             .responder("GET", "/healthz", { status: 200, corpo: SAUDE })
             .instalar();
         montar("/orgs");
@@ -143,9 +143,9 @@ describe("Casca do Console (HR-61)", () => {
 
     it("se a consulta de agentes falha, o item fica sem contador e a tela segue", async () => {
         prepararSessao();
-        const servidor = new ServidorFalso()
+        const servidor = new FakeServer()
             .responder("GET", "/healthz", { status: 200, corpo: SAUDE })
-            .responder("GET", "/admin/v1/orgs/org_1/agents", erroApi(500, "interno", "falha de teste"))
+            .responder("GET", "/admin/v1/orgs/org_1/agents", apiError(500, "interno", "falha de teste"))
             .instalar();
         montar("/orgs/org_1/structure");
 
@@ -163,7 +163,7 @@ describe("Casca do Console (HR-61)", () => {
     it("switches the shortcuts modal to en-US when clicking EN", async () => {
         const user = userEvent.setup();
         prepararSessao();
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
         montar("/orgs");
 
         await user.click(screen.getByRole("button", { name: "Inglês (Estados Unidos)" }));

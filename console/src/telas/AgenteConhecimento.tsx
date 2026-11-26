@@ -41,21 +41,21 @@ import {
     SofaSkeleton,
     type SofaMenuItemSpec,
 } from "@sofacoding/sofa-ui";
-import { ErroApi } from "../api/cliente";
-import { listarAgentes, obterAgente, type Agente } from "../api/agentes";
+import { ApiError } from "../api/client";
+import { listAgents, getAgent, type Agente } from "../api/agents";
 import {
-    desvincularGrupo,
-    excluirItem,
-    listarGrupos,
-    listarItens,
-    obterGrupo,
-    reindexarAgente,
-    vincularGrupo,
-    type GrupoConhecimento,
-    type ItemConhecimento,
-    type RelatorioIndexacao,
-} from "../api/conhecimento";
-import { obterOrg } from "../api/orgs";
+    unlinkGroup,
+    deleteItem,
+    listGroups,
+    listItems,
+    getGroup,
+    reindexAgent,
+    linkGroup,
+    type KnowledgeGroup,
+    type KnowledgeItem,
+    type IndexReport,
+} from "../api/knowledge";
+import { getOrg } from "../api/orgs";
 import { AbasDoAgente, CabecalhoDoAgente } from "../componentes/AbasDoAgente";
 import { DialogoExcluirGrupo } from "../componentes/DialogoExcluirGrupo";
 import { DialogoExclusao } from "../componentes/DialogoExclusao";
@@ -68,7 +68,7 @@ import "../estilos/conhecimento.css";
 
 type EstadoDoIndice =
     | { tipo: "nao-verificado" }
-    | { tipo: "atualizado"; origem: TranslationKey; relatorio?: RelatorioIndexacao }
+    | { tipo: "atualizado"; origem: TranslationKey; relatorio?: IndexReport }
     | { tipo: "pendente"; mensagem: string };
 
 /** Classe do ponto de status (6 px + texto), no padrão de Orgs e OrgPainel. */
@@ -117,7 +117,7 @@ function classeDoIndice(indice: EstadoDoIndice): string {
 }
 
 /** Resumo do relatório do reindex em uma linha. */
-function resumoDoRelatorio(relatorio: RelatorioIndexacao): string {
+function resumoDoRelatorio(relatorio: IndexReport): string {
     return [
         countLabel(relatorio.itens_novos, "knowledge.reindexNewOne", "knowledge.reindexNewMany"),
         countLabel(
@@ -165,13 +165,13 @@ export function AgenteConhecimento() {
     const [carregando, setCarregando] = useState(true);
     const [erroDeCarga, setErroDeCarga] = useState<string | null>(null);
 
-    const [grupos, setGrupos] = useState<GrupoConhecimento[]>([]);
+    const [grupos, setGrupos] = useState<KnowledgeGroup[]>([]);
     const [nomesDosAgentes, setNomesDosAgentes] = useState<Record<string, string>>({});
     const [carregandoGrupos, setCarregandoGrupos] = useState(true);
     const [erroGrupos, setErroGrupos] = useState<string | null>(null);
 
     const [selecionado, setSelecionado] = useState<string | null>(null);
-    const [itens, setItens] = useState<ItemConhecimento[]>([]);
+    const [itens, setItens] = useState<KnowledgeItem[]>([]);
     const [carregandoItens, setCarregandoItens] = useState(false);
     const [erroItens, setErroItens] = useState<string | null>(null);
 
@@ -182,17 +182,17 @@ export function AgenteConhecimento() {
     const [emVinculo, setEmVinculo] = useState<string | null>(null);
     const [erroDeVinculo, setErroDeVinculo] = useState<string | null>(null);
 
-    const [modalGrupo, setModalGrupo] = useState<{ aberto: boolean; grupo: GrupoConhecimento | null }>({
+    const [modalGrupo, setModalGrupo] = useState<{ aberto: boolean; grupo: KnowledgeGroup | null }>({
         aberto: false,
         grupo: null,
     });
-    const [grupoParaExcluir, setGrupoParaExcluir] = useState<GrupoConhecimento | null>(null);
+    const [grupoParaExcluir, setGrupoParaExcluir] = useState<KnowledgeGroup | null>(null);
 
-    const [modalItem, setModalItem] = useState<{ aberto: boolean; item: ItemConhecimento | null }>({
+    const [modalItem, setModalItem] = useState<{ aberto: boolean; item: KnowledgeItem | null }>({
         aberto: false,
         item: null,
     });
-    const [itemParaExcluir, setItemParaExcluir] = useState<ItemConhecimento | null>(null);
+    const [itemParaExcluir, setItemParaExcluir] = useState<KnowledgeItem | null>(null);
     const [erroDeItem, setErroDeItem] = useState<string | null>(null);
     const [removendoItem, setRemovendoItem] = useState(false);
 
@@ -206,12 +206,12 @@ export function AgenteConhecimento() {
         setCarregandoGrupos(true);
         setErroGrupos(null);
         try {
-            const lista = await listarGrupos(orgId);
+            const lista = await listGroups(orgId);
             // O vínculo só aparece no detalhe do grupo; uma falha isolada não derruba a lista.
             const comAgentes = await Promise.all(
                 lista.map(async (grupo) => {
                     try {
-                        return await obterGrupo(orgId, grupo.id);
+                        return await getGroup(orgId, grupo.id);
                     } catch {
                         return grupo;
                     }
@@ -243,7 +243,7 @@ export function AgenteConhecimento() {
             setCarregandoItens(true);
             setErroItens(null);
             try {
-                setItens(await listarItens(orgId, grupo));
+                setItens(await listItems(orgId, grupo));
             } catch (falha) {
                 setErroItens(
                     falha instanceof Error ? falha.message : t("knowledge.itemsLoadFailed"),
@@ -260,7 +260,7 @@ export function AgenteConhecimento() {
         setCarregando(true);
         setErroDeCarga(null);
         try {
-            const dados = await obterAgente(orgId, agentId);
+            const dados = await getAgent(orgId, agentId);
             setAgente(dados);
         } catch (falha) {
             setErroDeCarga(
@@ -275,10 +275,10 @@ export function AgenteConhecimento() {
 
     useEffect(() => {
         void carregar();
-        obterOrg(orgId)
+        getOrg(orgId)
             .then((org) => setNomeDaOrg(org.name))
             .catch(() => setNomeDaOrg(null));
-        listarAgentes(orgId)
+        listAgents(orgId)
             .then((lista) =>
                 setNomesDosAgentes(
                     Object.fromEntries(lista.map((candidato) => [candidato.id, candidato.name])),
@@ -300,15 +300,15 @@ export function AgenteConhecimento() {
         );
     }
 
-    async function alternarVinculo(grupo: GrupoConhecimento) {
+    async function alternarVinculo(grupo: KnowledgeGroup) {
         const vinculado = grupo.agents?.includes(agentId) ?? false;
         setEmVinculo(grupo.id);
         setErroDeVinculo(null);
         try {
             if (vinculado) {
-                await desvincularGrupo(orgId, agentId, grupo.id);
+                await unlinkGroup(orgId, agentId, grupo.id);
             } else {
-                await vincularGrupo(orgId, agentId, grupo.id);
+                await linkGroup(orgId, agentId, grupo.id);
             }
             await carregarGrupos();
             // O vínculo sincroniza o índice do agente; relê o detalhe para saber se atrasou.
@@ -326,14 +326,14 @@ export function AgenteConhecimento() {
         setReindexando(true);
         setErroReindex(null);
         try {
-            const resultado = await reindexarAgente(orgId, agentId);
+            const resultado = await reindexAgent(orgId, agentId);
             setIndice({
                 tipo: "atualizado",
                 origem: "knowledge.indexOriginReindexed",
                 relatorio: resultado.indexed,
             });
         } catch (falha) {
-            if (falha instanceof ErroApi && falha.codigo === "embedding_unavailable") {
+            if (falha instanceof ApiError && falha.codigo === "embedding_unavailable") {
                 setErroReindex(
                     t("knowledge.embeddingUnavailable", { message: falha.message }),
                 );
@@ -347,7 +347,7 @@ export function AgenteConhecimento() {
         }
     }
 
-    function aoSalvarGrupo(grupo: GrupoConhecimento) {
+    function aoSalvarGrupo(grupo: KnowledgeGroup) {
         const anterior = grupos.find((candidato) => candidato.id === grupo.id);
         const vinculado = (grupo.agents ?? anterior?.agents)?.includes(agentId) ?? false;
         setGrupos((atuais) => {
@@ -365,7 +365,7 @@ export function AgenteConhecimento() {
         void carregarGrupos();
     }
 
-    function aoSalvarItem(item: ItemConhecimento) {
+    function aoSalvarItem(item: KnowledgeItem) {
         setItens((atuais) => {
             const existe = atuais.some((candidato) => candidato.id === item.id);
             return existe
@@ -385,7 +385,7 @@ export function AgenteConhecimento() {
         setRemovendoItem(true);
         setErroDeItem(null);
         try {
-            await excluirItem(orgId, grupoDoItem, itemParaExcluir.id);
+            await deleteItem(orgId, grupoDoItem, itemParaExcluir.id);
             setItens((atuais) => atuais.filter((item) => item.id !== itemParaExcluir.id));
             setItemParaExcluir(null);
             if (grupoAberto?.agents?.includes(agentId)) {
@@ -441,10 +441,10 @@ export function AgenteConhecimento() {
 
     if (!agente) return null;
 
-    const vinculadoAoAgente = (grupo: GrupoConhecimento) =>
+    const vinculadoAoAgente = (grupo: KnowledgeGroup) =>
         grupo.agents?.includes(agentId) ?? false;
 
-    function itensDoMenuDoGrupo(grupo: GrupoConhecimento): SofaMenuItemSpec[] {
+    function itensDoMenuDoGrupo(grupo: KnowledgeGroup): SofaMenuItemSpec[] {
         const vinculado = vinculadoAoAgente(grupo);
         return [
             {
@@ -470,7 +470,7 @@ export function AgenteConhecimento() {
         ];
     }
 
-    function itensDoMenuDoTrecho(trecho: ItemConhecimento): SofaMenuItemSpec[] {
+    function itensDoMenuDoTrecho(trecho: KnowledgeItem): SofaMenuItemSpec[] {
         return [
             {
                 id: "editar",

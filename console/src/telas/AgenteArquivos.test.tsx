@@ -11,8 +11,8 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { GuardaAlteracoesProvider } from "../componentes/GuardaAlteracoes";
-import { esperarFocoDoModal } from "../testes/modal";
-import { ServidorFalso, erroApi } from "../testes/servidor";
+import { waitForModalFocus } from "../testing/modal";
+import { FakeServer, apiError } from "../testing/server";
 import { setLocale } from "../i18n";
 import { AgenteArquivos } from "./AgenteArquivos";
 
@@ -76,7 +76,7 @@ function montar() {
 /** Servidor falso com a biblioteca dada. Rotas de arquivo vêm antes da rota do agente. */
 function servidorCom(biblioteca: Arquivo[], envio?: () => { status: number; corpo?: unknown }) {
     const estado = { biblioteca: [...biblioteca] };
-    const servidor = new ServidorFalso()
+    const servidor = new FakeServer()
         .responder("POST", `/agents/${AGENTE}/files`, (chamada) => {
             if (envio) return envio();
             const nome = new URL(chamada.url, "http://x").searchParams.get("name") ?? "";
@@ -137,7 +137,7 @@ describe("Aba Arquivos", () => {
         const usuario = userEvent.setup();
 
         await usuario.click(screen.getByRole("button", { name: "Enviar arquivo" }));
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         const escolhido = new File([new Uint8Array(69)], "pixel.png", { type: "image/png" });
         const entrada = document.querySelector('input[type="file"]') as HTMLInputElement;
         await usuario.upload(entrada, escolhido);
@@ -164,7 +164,7 @@ describe("Aba Arquivos", () => {
         const usuario = userEvent.setup();
 
         await usuario.click(screen.getByRole("button", { name: "Enviar arquivo" }));
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         const grande = new File([new Uint8Array(LIMITE + 1024 * 1024)], "catalogo.pdf", {
             type: "application/pdf",
         });
@@ -179,7 +179,7 @@ describe("Aba Arquivos", () => {
 
     it("mostra o motivo que o servidor devolve quando recusa o arquivo", async () => {
         servidorCom([], () =>
-            erroApi(400, "validation_error", "campo `arquivo` inválido", {
+            apiError(400, "validation_error", "campo `arquivo` inválido", {
                 field: "arquivo",
                 reason:
                     "arquivo recusado: a extensão diz PDF, mas o conteúdo não é PDF. Envie o arquivo original.",
@@ -190,7 +190,7 @@ describe("Aba Arquivos", () => {
         const usuario = userEvent.setup();
 
         await usuario.click(screen.getByRole("button", { name: "Enviar arquivo" }));
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         const falso = new File(["oi"], "documento.pdf", { type: "application/pdf" });
         const entrada = document.querySelector('input[type="file"]') as HTMLInputElement;
         await usuario.upload(entrada, falso);
@@ -209,7 +209,7 @@ describe("Aba Arquivos", () => {
         const usuario = userEvent.setup();
 
         await usuario.click(screen.getByRole("button", { name: "Excluir arquivo Tabela de preços" }));
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         const dialogo = document.querySelector('[role="dialog"]') as HTMLElement;
         const confirmar = within(dialogo).getByRole("button", { name: "Excluir arquivo" });
         expect(confirmar).toBeDisabled();
@@ -282,7 +282,7 @@ describe("I18N-08: aba Arquivos em en-US", () => {
         const usuario = userEvent.setup();
 
         await usuario.click(screen.getByRole("button", { name: "Upload file" }));
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         const dialogo = document.querySelector('[role="dialog"]') as HTMLElement;
         expect(within(dialogo).getByText("Upload file to the agent")).toBeInTheDocument();
 
@@ -321,7 +321,7 @@ describe("I18N-08: aba Arquivos em en-US", () => {
         const usuario = userEvent.setup();
 
         await usuario.click(screen.getByRole("button", { name: "Delete file Price table" }));
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         const dialogo = document.querySelector('[role="dialog"]') as HTMLElement;
         expect(within(dialogo).getByText("Delete file?")).toBeInTheDocument();
         const confirmar = within(dialogo).getByRole("button", { name: "Delete file" });

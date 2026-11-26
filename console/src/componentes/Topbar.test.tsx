@@ -19,8 +19,8 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { useEffect } from "react";
 import { setLocale } from "../i18n";
-import { SessaoProvider } from "../sessao/Sessao";
-import { ServidorFalso } from "../testes/servidor";
+import { SessionProvider } from "../session/Session";
+import { FakeServer } from "../testing/server";
 import { GuardaAlteracoesProvider, useGuardaDeAlteracoes } from "./GuardaAlteracoes";
 import { publishAgentModel } from "./agentModel";
 import { Topbar } from "./Topbar";
@@ -73,7 +73,7 @@ function montar(
 ) {
     return render(
         <MemoryRouter initialEntries={[caminho]}>
-            <SessaoProvider>
+            <SessionProvider>
                 <GuardaAlteracoesProvider>
                     {opcoes.comCampoExterno && <input aria-label="Campo de outra tela" />}
                     <Routes>
@@ -88,7 +88,7 @@ function montar(
                     {opcoes.sujo && <Sujo />}
                     <Sonda />
                 </GuardaAlteracoesProvider>
-            </SessaoProvider>
+            </SessionProvider>
         </MemoryRouter>,
     );
 }
@@ -106,7 +106,7 @@ afterEach(() => {
 describe("Topbar", () => {
     it("mostra 'Token global' e o endereço local na sessão global", () => {
         prepararSessao("pophg_teste", "global");
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
 
         montar();
 
@@ -120,7 +120,7 @@ describe("Topbar", () => {
 
     it("mostra 'Token de org' com token de organização", () => {
         prepararSessao("poph_org_teste", "org");
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
 
         montar();
 
@@ -131,7 +131,7 @@ describe("Topbar", () => {
     it("mostra 'Sem conexão' quando a consulta de saúde falha", async () => {
         prepararSessao("pophg_teste", "global");
         // Sem rota para /healthz: o fetch falso recusa, que é o caso de instância fora do ar.
-        new ServidorFalso().instalar();
+        new FakeServer().instalar();
 
         montar();
 
@@ -142,7 +142,7 @@ describe("Topbar", () => {
     it("o botão sair limpa a sessão e vai para /login", async () => {
         const usuario = userEvent.setup();
         prepararSessao("pophg_teste", "global");
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
 
         montar();
 
@@ -154,7 +154,7 @@ describe("Topbar", () => {
 
     it("a trilha mostra 'Modelo e Jev' na aba model-jev", () => {
         prepararSessao("pophg_teste", "global");
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
 
         montar("/orgs/org_1/agents/agt_1/model-jev");
 
@@ -163,7 +163,7 @@ describe("Topbar", () => {
 
     it("não renderiza mais o selo 'DEV LOCAL'", () => {
         prepararSessao("pophg_teste", "global");
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
 
         montar();
 
@@ -174,7 +174,7 @@ describe("Topbar", () => {
 describe("busca rápida de organizações (RL-04)", () => {
     it("o campo tem nome acessível de verdade", () => {
         prepararSessao("pophg_teste", "global", TRES_ORGS);
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
 
         montar();
 
@@ -184,7 +184,7 @@ describe("busca rápida de organizações (RL-04)", () => {
     it("Ctrl+K foca o campo de busca", async () => {
         const usuario = userEvent.setup();
         prepararSessao("pophg_teste", "global", TRES_ORGS);
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
 
         montar();
         await usuario.keyboard("{Control>}k{/Control}");
@@ -195,7 +195,7 @@ describe("busca rápida de organizações (RL-04)", () => {
     it("⌘K (Meta+K) também foca o campo de busca", async () => {
         const usuario = userEvent.setup();
         prepararSessao("pophg_teste", "global", TRES_ORGS);
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
 
         montar();
         await usuario.keyboard("{Meta>}k{/Meta}");
@@ -206,7 +206,7 @@ describe("busca rápida de organizações (RL-04)", () => {
     it("o atalho não sequestra a combinação quando o foco está em outro campo de texto", async () => {
         const usuario = userEvent.setup();
         prepararSessao("pophg_teste", "global", TRES_ORGS);
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
 
         montar("/orgs", { comCampoExterno: true });
         const outro = screen.getByRole("textbox", { name: "Campo de outra tela" });
@@ -220,7 +220,7 @@ describe("busca rápida de organizações (RL-04)", () => {
     it("filtra por nome e por slug, sem acento e sem caixa", async () => {
         const usuario = userEvent.setup();
         prepararSessao("pophg_teste", "global", TRES_ORGS);
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
 
         montar();
         await usuario.click(campoDeBusca());
@@ -242,7 +242,7 @@ describe("busca rápida de organizações (RL-04)", () => {
     it("setas escolhem a organização e Enter abre /orgs/:id", async () => {
         const usuario = userEvent.setup();
         prepararSessao("pophg_teste", "global", TRES_ORGS);
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
 
         montar();
         await usuario.type(campoDeBusca(), "a");
@@ -263,7 +263,7 @@ describe("busca rápida de organizações (RL-04)", () => {
     it("Enter com alterações não salvas abre o aviso e não sai da tela", async () => {
         const usuario = userEvent.setup();
         prepararSessao("pophg_teste", "global", TRES_ORGS);
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
 
         montar("/orgs", { sujo: true });
         await usuario.type(campoDeBusca(), "padaria");
@@ -278,7 +278,7 @@ describe("busca rápida de organizações (RL-04)", () => {
     it("Esc limpa o campo e fecha a lista", async () => {
         const usuario = userEvent.setup();
         prepararSessao("pophg_teste", "global", TRES_ORGS);
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
 
         montar();
         await usuario.type(campoDeBusca(), "loja");
@@ -294,7 +294,7 @@ describe("busca rápida de organizações (RL-04)", () => {
     it("sem resultado mostra 'Nenhuma organização encontrada'", async () => {
         const usuario = userEvent.setup();
         prepararSessao("pophg_teste", "global", TRES_ORGS);
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
 
         montar();
         await usuario.type(campoDeBusca(), "zzzz");
@@ -314,7 +314,7 @@ describe("busca global, versão e estado da instância (CF-04)", () => {
 
     it("mostra o chip de versão da instância ao lado da marca", async () => {
         prepararSessao("pophg_teste", "global");
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_COM_VERSAO }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE_COM_VERSAO }).instalar();
 
         montar();
 
@@ -323,7 +323,7 @@ describe("busca global, versão e estado da instância (CF-04)", () => {
 
     it("mostra 'Engine: 200 OK · 125 MB' com a memória lida de /metrics", async () => {
         prepararSessao("pophg_teste", "global");
-        new ServidorFalso()
+        new FakeServer()
             .responder("GET", "/healthz", { status: 200, corpo: SAUDE_COM_VERSAO })
             .responder("GET", "/metrics", {
                 status: 200,
@@ -339,7 +339,7 @@ describe("busca global, versão e estado da instância (CF-04)", () => {
     it("sem a memória, mostra só 'Engine: 200 OK' (sem MB inventado)", async () => {
         prepararSessao("pophg_teste", "global");
         // Sem rota para /metrics: a consulta falha e a tela não mostra o número.
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_COM_VERSAO }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE_COM_VERSAO }).instalar();
 
         montar();
 
@@ -349,7 +349,7 @@ describe("busca global, versão e estado da instância (CF-04)", () => {
 
     it("saúde 503 aparece como 'degradada', e não como 'Sem conexão'", async () => {
         prepararSessao("pophg_teste", "global");
-        new ServidorFalso()
+        new FakeServer()
             .responder("GET", "/healthz", { status: 503, corpo: { ...SAUDE_COM_VERSAO, status: "degraded" } })
             .instalar();
 
@@ -362,7 +362,7 @@ describe("busca global, versão e estado da instância (CF-04)", () => {
     it("agrupa o resultado em Organizações, Telas e Comandos do poph", async () => {
         const usuario = userEvent.setup();
         prepararSessao("pophg_teste", "global", TRES_ORGS);
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_COM_VERSAO }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE_COM_VERSAO }).instalar();
 
         montar();
         await usuario.type(campoDeBusca(), "organiz");
@@ -376,7 +376,7 @@ describe("busca global, versão e estado da instância (CF-04)", () => {
     it("tela do menu só aparece na busca quando a organização está aberta na URL", async () => {
         const usuario = userEvent.setup();
         prepararSessao("pophg_teste", "global", TRES_ORGS);
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_COM_VERSAO }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE_COM_VERSAO }).instalar();
 
         montar("/orgs/org_2/structure");
         await usuario.type(campoDeBusca(), "produtos");
@@ -391,7 +391,7 @@ describe("busca global, versão e estado da instância (CF-04)", () => {
     it("sem organização aberta, as telas que exigem organização não aparecem", async () => {
         const usuario = userEvent.setup();
         prepararSessao("pophg_teste", "global", TRES_ORGS);
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_COM_VERSAO }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE_COM_VERSAO }).instalar();
 
         montar("/orgs");
         await usuario.type(campoDeBusca(), "produtos");
@@ -408,7 +408,7 @@ describe("busca global, versão e estado da instância (CF-04)", () => {
             configurable: true,
         });
         prepararSessao("pophg_teste", "global", TRES_ORGS);
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_COM_VERSAO }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE_COM_VERSAO }).instalar();
 
         montar();
         await usuario.type(campoDeBusca(), "doctor");
@@ -426,7 +426,7 @@ describe("busca global, versão e estado da instância (CF-04)", () => {
         const usuario = userEvent.setup();
         Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
         prepararSessao("pophg_teste", "global", TRES_ORGS);
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_COM_VERSAO }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE_COM_VERSAO }).instalar();
 
         montar();
         await usuario.type(campoDeBusca(), "doctor");
@@ -438,7 +438,7 @@ describe("busca global, versão e estado da instância (CF-04)", () => {
     it("Enter numa organização continua abrindo /orgs/:id pela busca global", async () => {
         const usuario = userEvent.setup();
         prepararSessao("pophg_teste", "global", TRES_ORGS);
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_COM_VERSAO }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE_COM_VERSAO }).instalar();
 
         montar();
         await usuario.type(campoDeBusca(), "padaria");
@@ -453,7 +453,7 @@ describe("cabeçalho da visão do agente (CF-10)", () => {
 
     it("a busca da visão do agente usa o placeholder contextual", () => {
         prepararSessao("pophg_teste", "global");
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
 
         montar("/orgs/org_1/agents/agt_ctx/instructions");
 
@@ -466,7 +466,7 @@ describe("cabeçalho da visão do agente (CF-10)", () => {
     it("a busca da visão do agente abre a aba do agente pela rota real", async () => {
         const usuario = userEvent.setup();
         prepararSessao("pophg_teste", "global", TRES_ORGS);
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
 
         montar("/orgs/org_1/agents/agt_busca/instructions");
         await usuario.type(campoDeBusca(), "roteamento");
@@ -482,7 +482,7 @@ describe("cabeçalho da visão do agente (CF-10)", () => {
     it("a busca da visão do agente lista as seis abas com rota", async () => {
         const usuario = userEvent.setup();
         prepararSessao("pophg_teste", "global", TRES_ORGS);
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
 
         montar("/orgs/org_1/agents/agt_abas/instructions");
         await usuario.type(campoDeBusca(), "e");
@@ -507,7 +507,7 @@ describe("cabeçalho da visão do agente (CF-10)", () => {
 
     it("fora da visão do agente a busca continua global", () => {
         prepararSessao("pophg_teste", "global");
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
 
         montar("/orgs/org_1/structure");
 
@@ -520,7 +520,7 @@ describe("cabeçalho da visão do agente (CF-10)", () => {
     it("a busca da organização não oferece as abas do agente", async () => {
         const usuario = userEvent.setup();
         prepararSessao("pophg_teste", "global", TRES_ORGS);
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
 
         montar("/orgs/org_1/structure");
         await usuario.type(campoDeBusca(), "conhecimento");
@@ -531,7 +531,7 @@ describe("cabeçalho da visão do agente (CF-10)", () => {
 
     it("o chip mostra o modelo do agente aberto e a saúde da instância", async () => {
         prepararSessao("pophg_teste", "global");
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
         publishAgentModel("agt_chip", "gemini-3.8-flash");
 
         montar("/orgs/org_1/agents/agt_chip/instructions");
@@ -542,7 +542,7 @@ describe("cabeçalho da visão do agente (CF-10)", () => {
 
     it("sem modelo publicado o chip mostra 'Modelo: —'", async () => {
         prepararSessao("pophg_teste", "global");
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
 
         montar("/orgs/org_1/agents/agt_sem_modelo/instructions");
 
@@ -551,7 +551,7 @@ describe("cabeçalho da visão do agente (CF-10)", () => {
 
     it("o chip avisa quando a instância responde 503", async () => {
         prepararSessao("pophg_teste", "global");
-        new ServidorFalso()
+        new FakeServer()
             .responder("GET", "/healthz", { status: 503, corpo: { ...SAUDE_OK, status: "degraded" } })
             .instalar();
         publishAgentModel("agt_degradado", "gemini-3.8-flash");
@@ -564,7 +564,7 @@ describe("cabeçalho da visão do agente (CF-10)", () => {
 
     it("o chip avisa quando a instância não responde", async () => {
         prepararSessao("pophg_teste", "global");
-        new ServidorFalso().instalar();
+        new FakeServer().instalar();
         publishAgentModel("agt_sem_conexao", "gemini-3.8-flash");
 
         montar("/orgs/org_1/agents/agt_sem_conexao/instructions");
@@ -574,7 +574,7 @@ describe("cabeçalho da visão do agente (CF-10)", () => {
 
     it("na visão do agente o botão de sair aparece com o texto 'Sair'", () => {
         prepararSessao("pophg_teste", "global");
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
 
         montar("/orgs/org_1/agents/agt_sair/instructions");
 
@@ -584,7 +584,7 @@ describe("cabeçalho da visão do agente (CF-10)", () => {
 
     it("fora da visão do agente o botão de sair continua só com o ícone", () => {
         prepararSessao("pophg_teste", "global");
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
 
         montar("/orgs/org_1/structure");
 
@@ -598,7 +598,7 @@ describe("cabeçalho da visão do agente sem selo de token e com trilha curta (C
 
     it("na visão do agente o selo de token sai e o escopo fica só na dica do chip", async () => {
         prepararSessao("pophg_teste", "global");
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
 
         montar("/orgs/org_1/agents/agt_selo/instructions");
 
@@ -610,7 +610,7 @@ describe("cabeçalho da visão do agente sem selo de token e com trilha curta (C
 
     it("na visão do agente com token de organização o selo também sai", async () => {
         prepararSessao("poph_org_teste", "org");
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
 
         montar("/orgs/org_1/agents/agt_selo_org/instructions");
 
@@ -620,7 +620,7 @@ describe("cabeçalho da visão do agente sem selo de token e com trilha curta (C
 
     it("fora da visão do agente o selo de token continua", () => {
         prepararSessao("pophg_teste", "global");
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
 
         montar("/orgs/org_1/structure");
 
@@ -629,7 +629,7 @@ describe("cabeçalho da visão do agente sem selo de token e com trilha curta (C
 
     it("a trilha da visão do agente tem três passos, sem Organizações e sem Agentes", () => {
         prepararSessao("pophg_teste", "global");
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
 
         montar("/orgs/org_1/agents/agt_trilha/instructions");
 
@@ -645,7 +645,7 @@ describe("cabeçalho da visão do agente sem selo de token e com trilha curta (C
 
     it("na lista de agentes da organização a trilha continua como era", () => {
         prepararSessao("pophg_teste", "global");
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
 
         montar("/orgs/org_1/agents");
 
@@ -663,7 +663,7 @@ describe("trilha do agente de três passos em 1280 (CF-11 rodada 1)", () => {
 
     it("na visão do agente o cabeçalho e a trilha levam a marca --agent", async () => {
         prepararSessao("pophg_teste", "global");
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
 
         const { container } = montar("/orgs/org_1/agents/agt_largura/instructions");
 
@@ -676,7 +676,7 @@ describe("trilha do agente de três passos em 1280 (CF-11 rodada 1)", () => {
 
     it("na rota de organização nem o cabeçalho nem a trilha levam a marca", () => {
         prepararSessao("pophg_teste", "global");
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
 
         const { container } = montar("/orgs/org_1/structure");
 
@@ -688,7 +688,7 @@ describe("trilha do agente de três passos em 1280 (CF-11 rodada 1)", () => {
 
     it("na lista de agentes da organização a trilha também fica sem a marca", () => {
         prepararSessao("pophg_teste", "global");
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK }).instalar();
 
         const { container } = montar("/orgs/org_1/agents");
 
@@ -702,7 +702,7 @@ describe("Topbar i18n", () => {
     it("switches Topbar, global search, and unsaved guard to en-US", async () => {
         const user = userEvent.setup();
         prepararSessao("pophg_teste", "global", TRES_ORGS);
-        new ServidorFalso().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
+        new FakeServer().responder("GET", "/healthz", { status: 200, corpo: SAUDE }).instalar();
 
         montar("/orgs", { sujo: true });
 

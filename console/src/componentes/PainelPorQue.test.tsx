@@ -8,11 +8,11 @@ import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { TurnoTeste } from "../api/testeChat";
+import type { TestTurn } from "../api/testChat";
 import { setLocale } from "../i18n";
 import { PainelPorQue } from "./PainelPorQue";
 
-const TURNO_COMPLETO: TurnoTeste = {
+const TURNO_COMPLETO: TestTurn = {
     id: "turno-1",
     state: "done",
     files_out: [],
@@ -78,7 +78,7 @@ const TURNO_COMPLETO: TurnoTeste = {
 };
 
 type Opcoes = {
-    turno?: TurnoTeste | null;
+    turno?: TestTurn | null;
     erro?: string | null;
     atualizando?: boolean;
     aoTentarDeNovo?: () => void;
@@ -383,9 +383,9 @@ describe("chamadas de ferramenta (HR-47c, tool_calls)", () => {
     });
 
     it("turno antigo (tools preenchido, sem tool_calls) mostra os nomes e declara o que não foi gravado", async () => {
-        const semCampo = { ...TURNO_COMPLETO, tools: ["consultar_base", "consultar_base"] } as Partial<TurnoTeste>;
+        const semCampo = { ...TURNO_COMPLETO, tools: ["consultar_base", "consultar_base"] } as Partial<TestTurn>;
         delete semCampo.tool_calls;
-        const usuario = abrir({ turno: semCampo as TurnoTeste });
+        const usuario = abrir({ turno: semCampo as TestTurn });
         await usuario.click(screen.getByRole("button", { name: "Ver por quê (turno 1)" }));
         const dialogo = await screen.findByRole("dialog");
 

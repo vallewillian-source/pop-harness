@@ -13,7 +13,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { GuardaAlteracoesProvider } from "../componentes/GuardaAlteracoes";
-import { definirToken } from "../api/cliente";
+import { setToken } from "../api/client";
 import { setLocale } from "../i18n";
 import { AgenteChatTeste } from "./AgenteChatTeste";
 
@@ -652,7 +652,7 @@ describe("arquivos do cliente: ver e baixar (HR-46c)", () => {
     });
 
     afterEach(() => {
-        definirToken(null);
+        setToken(null);
         vi.restoreAllMocks();
     });
 
@@ -664,7 +664,7 @@ describe("arquivos do cliente: ver e baixar (HR-46c)", () => {
     });
 
     it("Ver abre a imagem em data:, busca com o token da sessão e não oferece ação no anexo do agente", async () => {
-        definirToken("token_da_sessao");
+        setToken("token_da_sessao");
         const usuario = userEvent.setup();
         montar();
 
@@ -901,7 +901,7 @@ describe("arquivos que o agente enviou no turno (HR-46e)", () => {
     });
 
     afterEach(() => {
-        definirToken(null);
+        setToken(null);
         vi.restoreAllMocks();
     });
 
@@ -911,7 +911,7 @@ describe("arquivos que o agente enviou no turno (HR-46e)", () => {
     });
 
     it("mostra os arquivos no turno do agente e baixa pela biblioteca, com o token e o nome do cabeçalho", async () => {
-        definirToken("token_da_sessao");
+        setToken("token_da_sessao");
         const usuario = userEvent.setup();
         montar();
 

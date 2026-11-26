@@ -17,7 +17,7 @@ import {
     SofaModal,
     type SofaFieldControlProps,
 } from "@sofacoding/sofa-ui";
-import { ErroApi } from "../api/cliente";
+import { ApiError } from "../api/client";
 import { translate, useI18n } from "../i18n";
 
 /** Ligações do `SofaField` sem `describedBy`, que vira `aria-describedby` no controle. */
@@ -61,7 +61,7 @@ export type DialogoExclusaoProps = {
 };
 
 function mensagemDoErro(erro: unknown): { texto: string; codigo?: string } {
-    if (erro instanceof ErroApi) {
+    if (erro instanceof ApiError) {
         return { texto: erro.message, codigo: erro.codigo };
     }
     if (erro instanceof Error) {
@@ -118,7 +118,7 @@ export function DialogoExclusao({
             const traduzido = mensagemDoErro(falha);
             setErro(traduzido);
             // 409 é a recusa por conteúdo: a confirmação extra passa a ser a saída.
-            if (permiteForcar && falha instanceof ErroApi && falha.status === 409) {
+            if (permiteForcar && falha instanceof ApiError && falha.status === 409) {
                 setRecusouPorVinculo(true);
             }
         } finally {

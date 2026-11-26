@@ -7,9 +7,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { Org } from "../api/cliente";
-import { esperarFocoDoModal } from "../testes/modal";
-import { ServidorFalso, erroApi } from "../testes/servidor";
+import type { Org } from "../api/client";
+import { waitForModalFocus } from "../testing/modal";
+import { FakeServer, apiError } from "../testing/server";
 import { ModalOrg } from "./ModalOrg";
 import { setLocale } from "../i18n";
 
@@ -42,12 +42,12 @@ describe("ModalOrg", () => {
         const aoSalvar = vi.fn();
         const aoFechar = vi.fn();
         const criada = orgFalsa({ id: "org_9", name: "Loja Nova", slug: "loja-nova" });
-        const servidor = new ServidorFalso()
+        const servidor = new FakeServer()
             .responder("POST", "/admin/v1/orgs", { status: 201, corpo: criada })
             .instalar();
 
         render(<ModalOrg aberto org={null} aoFechar={aoFechar} aoSalvar={aoSalvar} />);
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         await usuario.type(campoNome(), "Loja Nova");
         await usuario.type(campoSlug(), "loja-nova");
@@ -66,12 +66,12 @@ describe("ModalOrg", () => {
 
     it("recusa nome vazio sem chamar a API", async () => {
         const usuario = userEvent.setup();
-        const servidor = new ServidorFalso().instalar();
+        const servidor = new FakeServer().instalar();
 
         render(
             <ModalOrg aberto org={null} aoFechar={vi.fn()} aoSalvar={vi.fn()} />,
         );
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         await usuario.click(screen.getByRole("button", { name: "Criar organização" }));
 
@@ -83,11 +83,11 @@ describe("ModalOrg", () => {
         const usuario = userEvent.setup();
         const aoSalvar = vi.fn();
         let patches = 0;
-        const servidor = new ServidorFalso()
+        const servidor = new FakeServer()
             .responder("PATCH", "/admin/v1/orgs/org_1", () => {
                 patches += 1;
                 return patches === 1
-                    ? erroApi(412, "version_conflict", "a versão informada não é a atual", {
+                    ? apiError(412, "version_conflict", "a versão informada não é a atual", {
                           expected_version: 3,
                           current_version: 4,
                       })
@@ -102,7 +102,7 @@ describe("ModalOrg", () => {
         render(
             <ModalOrg aberto org={orgFalsa()} aoFechar={vi.fn()} aoSalvar={aoSalvar} />,
         );
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         const nome = campoNome();
         await usuario.clear(nome);
@@ -128,11 +128,11 @@ describe("ModalOrg", () => {
 
     it("mostra o erro de validação da API no campo que ela aponta", async () => {
         const usuario = userEvent.setup();
-        new ServidorFalso()
+        new FakeServer()
             .responder(
                 "POST",
                 "/admin/v1/orgs",
-                erroApi(400, "validation_error", "campo `name` inválido", {
+                apiError(400, "validation_error", "campo `name` inválido", {
                     field: "name",
                     reason: "curto demais",
                 }),
@@ -142,7 +142,7 @@ describe("ModalOrg", () => {
         render(
             <ModalOrg aberto org={null} aoFechar={vi.fn()} aoSalvar={vi.fn()} />,
         );
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         await usuario.type(campoNome(), "X");
         await usuario.click(screen.getByRole("button", { name: "Criar organização" }));
@@ -158,10 +158,10 @@ describe("ModalOrg em en-US", () => {
     it("mostra o formulário e a validação em inglês", async () => {
         const usuario = userEvent.setup();
         setLocale("en-US");
-        new ServidorFalso().instalar();
+        new FakeServer().instalar();
 
         render(<ModalOrg aberto org={null} aoFechar={vi.fn()} aoSalvar={vi.fn()} />);
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         expect(screen.getByRole("dialog")).toHaveAccessibleName("New organization");
         expect(screen.getByRole("textbox", { name: "Name" })).toBeInTheDocument();
@@ -175,10 +175,10 @@ describe("ModalOrg em en-US", () => {
 
     it("troca o idioma do formulário aberto sem recarregar", async () => {
         setLocale("pt-BR");
-        new ServidorFalso().instalar();
+        new FakeServer().instalar();
 
         render(<ModalOrg aberto org={orgFalsa()} aoFechar={vi.fn()} aoSalvar={vi.fn()} />);
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         expect(screen.getByRole("dialog")).toHaveAccessibleName("Editar organização");
 

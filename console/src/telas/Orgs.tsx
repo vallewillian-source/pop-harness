@@ -35,26 +35,26 @@ import {
     type SofaMenuItemSpec,
 } from "@sofacoding/sofa-ui";
 import {
-    pedir,
-    type InstanciaDaLista,
-    type ListaOrgsDoCluster,
+    request,
+    type ListInstance,
+    type ClusterOrgList,
     type Org,
-    type OrgNaLista,
-} from "../api/cliente";
-import { atualizarOrg, conflitoDeVersao, excluirOrg } from "../api/orgs";
-import { consultarMetricas, consultarSaude } from "../api/operacao";
-import { baixarArquivo, exportarOrganizacao, falhaDeBackup } from "../api/backup";
+    type OrgInList,
+} from "../api/client";
+import { updateOrg, versionConflict, deleteOrg } from "../api/orgs";
+import { fetchMetrics, fetchHealth } from "../api/operation";
+import { downloadFile, exportOrg, backupFailure } from "../api/backup";
 import { DialogoExclusao } from "../componentes/DialogoExclusao";
 import { useGuardaDeAlteracoes } from "../componentes/GuardaAlteracoes";
 import { InspetorOrg, type NoDaOrg } from "../componentes/InspetorOrg";
 import { ModalOrg } from "../componentes/ModalOrg";
-import { useSessao } from "../sessao/Sessao";
+import { useSession } from "../session/Session";
 import { translate, useI18n } from "../i18n";
 import type { TranslationKey } from "../i18n/catalog";
 import { formatDate } from "../i18n/format";
 import "../estilos/orgs.css";
 
-const coluna = createColumnHelper<OrgNaLista>();
+const coluna = createColumnHelper<OrgInList>();
 
 /** Abas de filtro da lista (PRD §5.3). "Arquivadas" só aparece quando existe alguma. */
 type Aba = "todas" | "ativas" | "inativas" | "arquivadas";
@@ -127,7 +127,7 @@ function retencao(org: Org): string {
 }
 
 /** Frase do nó na coluna "Nó / instância", a partir do estado que a listagem devolve. */
-function rotuloDoNo(instancia: InstanciaDaLista | null | undefined): string {
+function rotuloDoNo(instancia: ListInstance | null | undefined): string {
     switch (instancia?.situacao) {
         case "local":
             return translate("orgs.nodeOnline");
@@ -163,7 +163,7 @@ type Telemetria = {
 };
 
 async function lerTelemetria(): Promise<Telemetria> {
-    const [saudeLida, metricasLidas] = await Promise.allSettled([consultarSaude(), consultarMetricas()]);
+    const [saudeLida, metricasLidas] = await Promise.allSettled([fetchHealth(), fetchMetrics()]);
     return {
         situacao: saudeLida.status === "fulfilled" ? saudeLida.value.situacao : "sem_resposta",
         uptimeSegundos:
@@ -177,12 +177,12 @@ type Aviso = { tom: "warn" | "danger"; titulo: string; texto: string };
 
 export function Orgs() {
     const { translate: t, locale } = useI18n();
-    const { sessao, recarregarOrgs } = useSessao();
+    const { sessao, recarregarOrgs } = useSession();
     const navegar = useNavigate();
     const { tentarNavegar } = useGuardaDeAlteracoes();
-    const [orgs, setOrgs] = useState<OrgNaLista[]>(sessao?.orgs ?? []);
+    const [orgs, setOrgs] = useState<OrgInList[]>(sessao?.orgs ?? []);
     /** Estado das instâncias do cluster. `null` quando a resposta não traz (token de org). */
-    const [instancias, setInstancias] = useState<InstanciaDaLista[] | null>(null);
+    const [instancias, setInstancias] = useState<ListInstance[] | null>(null);
     const [telemetria, setTelemetria] = useState<Telemetria | null>(null);
     const [carregando, setCarregando] = useState(true);
     const [erro, setErro] = useState<string | null>(null);
@@ -218,7 +218,7 @@ export function Orgs() {
      * abre (o botão fica desabilitado e a linha não navega). Sem dado de cluster, nada é remoto.
      */
     const ehDeOutroNo = useCallback(
-        (org: OrgNaLista): boolean =>
+        (org: OrgInList): boolean =>
             instanciaLocal !== null && !!org.instancia && org.instancia !== instanciaLocal.id,
         [instanciaLocal],
     );
@@ -229,7 +229,7 @@ export function Orgs() {
      * instalação de nó único.
      */
     const noDaOrg = useCallback(
-        (org: OrgNaLista): NoDaOrg | null => {
+        (org: OrgInList): NoDaOrg | null => {
             if (instancias === null) return null;
             const id = org.instancia ?? "";
             if (id === "") return { id: "", situacao: "local" };
@@ -243,7 +243,7 @@ export function Orgs() {
         setErro(null);
         const telemetriaPronta = lerTelemetria();
         try {
-            const lista = await pedir<ListaOrgsDoCluster>("/admin/v1/orgs?cluster=true");
+            const lista = await request<ClusterOrgList>("/admin/v1/orgs?cluster=true");
             setOrgs(lista.items);
             setInstancias(lista.instancias ?? null);
             // A lista também alimenta o seletor da casca.
@@ -301,7 +301,7 @@ export function Orgs() {
     }
 
     /** Clique simples seleciona a linha e abre o inspetor (PRD §5.3/§5.4); duplo clique navega. */
-    function selecionarLinha(org: OrgNaLista) {
+    function selecionarLinha(org: OrgInList) {
         const agora = Date.now();
         const anterior = ultimoClique.current;
         ultimoClique.current = { id: org.id, quando: agora };
@@ -334,7 +334,7 @@ export function Orgs() {
     }, [selecionada]);
 
     /** "Acessar →": navegação da gaveta, passando pela guarda de alterações. */
-    function acessarOrg(org: OrgNaLista) {
+    function acessarOrg(org: OrgInList) {
         if (ehDeOutroNo(org)) {
             setAviso({
                 tom: "warn",
@@ -350,12 +350,12 @@ export function Orgs() {
     }
 
     /** Exportar: baixa o arquivo da organização (sem conversas), o mesmo que a tela de operação baixa. */
-    async function exportar(org: OrgNaLista) {
+    async function exportar(org: OrgInList) {
         setAviso(null);
         try {
-            baixarArquivo(await exportarOrganizacao(org.id, false));
+            downloadFile(await exportOrg(org.id, false));
         } catch (falha) {
-            const detalhe = falhaDeBackup(falha, "exportar");
+            const detalhe = backupFailure(falha, "exportar");
             setAviso({ tom: "danger", titulo: detalhe.titulo, texto: detalhe.texto });
         }
     }
@@ -366,14 +366,14 @@ export function Orgs() {
      * O `412` é tratado como o `ModalOrg` trata: nada se perde, a lista é relida e o operador vê
      * o conflito na hora, em vez de um erro genérico.
      */
-    async function reativar(org: OrgNaLista) {
+    async function reativar(org: OrgInList) {
         setReativando(org.id);
         setAviso(null);
         try {
-            await atualizarOrg(org.id, org.version, { status: "active" });
+            await updateOrg(org.id, org.version, { status: "active" });
             await carregar();
         } catch (falha) {
-            const disputa = conflitoDeVersao(falha);
+            const disputa = versionConflict(falha);
             if (disputa) {
                 setAviso({
                     tom: "warn",
@@ -402,7 +402,7 @@ export function Orgs() {
         }
     }
 
-    function itensDoMenu(org: OrgNaLista): SofaMenuItemSpec[] {
+    function itensDoMenu(org: OrgInList): SofaMenuItemSpec[] {
         const remota = ehDeOutroNo(org);
         const itens: SofaMenuItemSpec[] = [
             {
@@ -922,7 +922,7 @@ export function Orgs() {
                                 {t("orgs.deleteOrgConsequence")}
                             </p>
                         }
-                        aoConfirmar={(forcar) => excluirOrg(paraExcluir.id, forcar)}
+                        aoConfirmar={(forcar) => deleteOrg(paraExcluir.id, forcar)}
                         aoExcluir={() => {
                             setParaExcluir(null);
                             void carregar();

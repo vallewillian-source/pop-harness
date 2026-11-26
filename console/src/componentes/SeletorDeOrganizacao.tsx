@@ -23,7 +23,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { IconBuilding, IconCheck, IconGrid, IconSearch } from "@sofacoding/sofa-ui";
-import type { Org } from "../api/cliente";
+import type { Org } from "../api/client";
 import { filtrarOrgs } from "./busca";
 import { useGuardaDeAlteracoes } from "./GuardaAlteracoes";
 import { useI18n } from "../i18n";

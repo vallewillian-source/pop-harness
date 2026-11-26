@@ -28,7 +28,7 @@ import {
 import { Link } from "react-router-dom";
 import { createPortal } from "react-dom";
 import { IconArrowLeft, IconBot, IconCheck, IconSearch } from "@sofacoding/sofa-ui";
-import { listarAgentes, obterAgente, type Agente } from "../api/agentes";
+import { listAgents, getAgent, type Agente } from "../api/agents";
 import { normalizarBusca } from "./busca";
 import { useGuardaDeAlteracoes } from "./GuardaAlteracoes";
 import { posicaoDoGatilho, type Posicao } from "./SeletorDeOrganizacao";
@@ -171,7 +171,7 @@ export function SeletorDeAgente({
             encerrado = true;
             setLista({ estado: "erro", mensagem: translate("agents.agentsTimeout") });
         }, PRAZO_DA_LEITURA_MS);
-        listarAgentes(orgId)
+        listAgents(orgId)
             .then((agentes) => {
                 if (encerrado) return;
                 encerrado = true;
@@ -201,7 +201,7 @@ export function SeletorDeAgente({
     useEffect(() => {
         if (!precisarLerAvulso) return;
         let encerrado = false;
-        obterAgente(orgId, agentId)
+        getAgent(orgId, agentId)
             .then((agente) => {
                 if (!encerrado) setAvulso({ chave: chaveAvulsa, agente });
             })

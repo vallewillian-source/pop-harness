@@ -9,13 +9,13 @@
  */
 
 import { SofaBanner, SofaButton, SofaModal } from "@sofacoding/sofa-ui";
-import type { OrigemDeArquivo } from "../api/arquivoTeste";
+import type { FileOrigin } from "../api/testFile";
 import { useI18n } from "../i18n";
 import "../estilos/chat-teste.css";
 
 export type PreviaDeImagem = {
     /** De onde vem a imagem: é o que o "Tentar de novo" reabre. */
-    origem: OrigemDeArquivo;
+    origem: FileOrigin;
     estado: "carregando" | "pronta" | "erro";
     /** Imagem em `data:` quando `estado` é `pronta`. */
     src: string | null;

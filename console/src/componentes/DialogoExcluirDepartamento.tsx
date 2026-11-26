@@ -10,12 +10,12 @@
 import { useEffect, useState } from "react";
 import { SofaSkeleton } from "@sofacoding/sofa-ui";
 import {
-    agentesQueUsam,
-    excluirDepartamento,
-    listarAgentes,
-    type AgenteResumo,
+    agentsUsing,
+    deleteDepartment,
+    listAgents,
+    type AgentSummary,
     type Departamento,
-} from "../api/estrutura";
+} from "../api/structure";
 import { useI18n } from "../i18n";
 import { DialogoExclusao } from "./DialogoExclusao";
 
@@ -37,7 +37,7 @@ export function DialogoExcluirDepartamento({
 }: DialogoExcluirDepartamentoProps) {
     const { translate } = useI18n();
     const [carregando, setCarregando] = useState(false);
-    const [afetados, setAfetados] = useState<AgenteResumo[] | null>(null);
+    const [afetados, setAfetados] = useState<AgentSummary[] | null>(null);
     const [falhaAoVerificar, setFalhaAoVerificar] = useState(false);
 
     useEffect(() => {
@@ -46,9 +46,9 @@ export function DialogoExcluirDepartamento({
         setCarregando(true);
         setAfetados(null);
         setFalhaAoVerificar(false);
-        listarAgentes(org)
+        listAgents(org)
             .then((agentes) => {
-                if (!cancelado) setAfetados(agentesQueUsam(agentes, departamento.id));
+                if (!cancelado) setAfetados(agentsUsing(agentes, departamento.id));
             })
             .catch(() => {
                 if (!cancelado) setFalhaAoVerificar(true);
@@ -104,7 +104,7 @@ export function DialogoExcluirDepartamento({
             rotuloConfirmar={translate("structure.deleteDeptConfirm")}
             consequencia={consequencia()}
             aoConfirmar={async () => {
-                await excluirDepartamento(org, departamento.id);
+                await deleteDepartment(org, departamento.id);
             }}
             aoExcluir={aoExcluir}
         />

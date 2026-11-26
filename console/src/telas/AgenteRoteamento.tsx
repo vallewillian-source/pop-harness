@@ -29,21 +29,21 @@ import {
     SofaSkeleton,
     SofaSwitch,
 } from "@sofacoding/sofa-ui";
-import { ErroApi } from "../api/cliente";
-import { obterAgente, type Agente } from "../api/agentes";
-import { listarEstrutura, type Departamento } from "../api/estrutura";
-import { obterOrg } from "../api/orgs";
+import { ApiError } from "../api/client";
+import { getAgent, type Agente } from "../api/agents";
+import { listStructure, type Departamento } from "../api/structure";
+import { getOrg } from "../api/orgs";
 import {
-    LIMITE_MOTIVO,
-    LIMITE_MOTIVOS,
-    jevComMotivos,
-    motivosLimpos,
-    roteamentoDoAgente,
-    salvarRoteamento,
-    validarRoteamento,
-    type MudancaRoteamento,
-    type Roteamento,
-} from "../api/roteamento";
+    LIMIT_REASON,
+    LIMIT_REASONS,
+    jevWithReasons,
+    cleanReasons,
+    agentRouting,
+    saveRouting,
+    validateRouting,
+    type RoutingChange,
+    type Routing,
+} from "../api/routing";
 import {
     AbasDoAgente,
     CabecalhoDoAgente,
@@ -54,12 +54,12 @@ import { useI18n } from "../i18n";
 import "../estilos/roteamento.css";
 
 /** Compara dois roteamentos como a tela os grava (motivos sem espaços vazios). */
-function mesmoRoteamento(a: Roteamento, b: Roteamento): boolean {
+function mesmoRoteamento(a: Routing, b: Routing): boolean {
     return (
         a.departamentoPadrao === b.departamentoPadrao &&
         a.transferenciaHumana === b.transferenciaHumana &&
         a.departamentoHumano === b.departamentoHumano &&
-        JSON.stringify(motivosLimpos(a.motivos)) === JSON.stringify(motivosLimpos(b.motivos))
+        JSON.stringify(cleanReasons(a.motivos)) === JSON.stringify(cleanReasons(b.motivos))
     );
 }
 
@@ -68,11 +68,11 @@ function mesmoRoteamento(a: Roteamento, b: Roteamento): boolean {
  * `jev_json` inteiro, com as outras chaves do agente (ver `jevComMotivos`).
  */
 export function mudancaDoRoteamento(
-    salvo: Roteamento,
-    rascunho: Roteamento,
+    salvo: Routing,
+    rascunho: Routing,
     jevAtual: Record<string, unknown> | undefined,
-): MudancaRoteamento {
-    const mudanca: MudancaRoteamento = {};
+): RoutingChange {
+    const mudanca: RoutingChange = {};
     if (rascunho.departamentoPadrao && rascunho.departamentoPadrao !== salvo.departamentoPadrao) {
         mudanca.department = rascunho.departamentoPadrao;
     }
@@ -82,8 +82,8 @@ export function mudancaDoRoteamento(
     if (rascunho.departamentoHumano && rascunho.departamentoHumano !== salvo.departamentoHumano) {
         mudanca.handoff_department = rascunho.departamentoHumano;
     }
-    if (JSON.stringify(motivosLimpos(rascunho.motivos)) !== JSON.stringify(motivosLimpos(salvo.motivos))) {
-        mudanca.jev_json = jevComMotivos(jevAtual, motivosLimpos(rascunho.motivos));
+    if (JSON.stringify(cleanReasons(rascunho.motivos)) !== JSON.stringify(cleanReasons(salvo.motivos))) {
+        mudanca.jev_json = jevWithReasons(jevAtual, cleanReasons(rascunho.motivos));
     }
     return mudanca;
 }
@@ -108,8 +108,8 @@ export function AgenteRoteamento() {
     const { translate: t } = useI18n();
 
     const [agente, setAgente] = useState<Agente | null>(null);
-    const [salvo, setSalvo] = useState<Roteamento | null>(null);
-    const [rascunho, setRascunho] = useState<Roteamento | null>(null);
+    const [salvo, setSalvo] = useState<Routing | null>(null);
+    const [rascunho, setRascunho] = useState<Routing | null>(null);
     const [versao, setVersao] = useState<number>(0);
     const [nomeDaOrg, setNomeDaOrg] = useState<string | null>(null);
     const [erroDeCarga, setErroDeCarga] = useState<string | null>(null);
@@ -128,7 +128,7 @@ export function AgenteRoteamento() {
         setCarregandoDepartamentos(true);
         setErroDepartamentos(null);
         try {
-            const lista = await listarEstrutura("departamento", orgId);
+            const lista = await listStructure("departamento", orgId);
             setDepartamentos(lista as Departamento[]);
         } catch (falha) {
             setErroDepartamentos(
@@ -143,8 +143,8 @@ export function AgenteRoteamento() {
     const carregar = useCallback(async () => {
         setErroDeCarga(null);
         try {
-            const dados = await obterAgente(orgId, agentId);
-            const roteamento = roteamentoDoAgente(dados);
+            const dados = await getAgent(orgId, agentId);
+            const roteamento = agentRouting(dados);
             setAgente(dados);
             setVersao(dados.version);
             setSalvo(roteamento);
@@ -158,7 +158,7 @@ export function AgenteRoteamento() {
 
     useEffect(() => {
         void carregar();
-        obterOrg(orgId)
+        getOrg(orgId)
             .then((org) => setNomeDaOrg(org.name))
             .catch(() => setNomeDaOrg(null));
     }, [carregar, orgId]);
@@ -168,7 +168,7 @@ export function AgenteRoteamento() {
     /** Lê o agente de novo depois de um 412: nova versão e jev atual; o rascunho não é tocado. */
     const releraAgente = useCallback(async (): Promise<number | undefined> => {
         try {
-            const atual = await obterAgente(orgId, agentId);
+            const atual = await getAgent(orgId, agentId);
             setAgente(atual);
             setVersao(atual.version);
             return atual.version;
@@ -179,7 +179,7 @@ export function AgenteRoteamento() {
 
     const salvar = useCallback(async (): Promise<boolean> => {
         if (!rascunho || !salvo || !agente) return true;
-        const novosErros = validarRoteamento(rascunho);
+        const novosErros = validateRouting(rascunho);
         setErros(novosErros);
         setErroGeral(null);
         setConflito(null);
@@ -194,16 +194,16 @@ export function AgenteRoteamento() {
 
         setSalvando(true);
         try {
-            const gravado = await salvarRoteamento(orgId, agentId, versao, mudanca);
+            const gravado = await saveRouting(orgId, agentId, versao, mudanca);
             setAgente(gravado);
             setVersao(gravado.version);
-            const novo = roteamentoDoAgente(gravado);
+            const novo = agentRouting(gravado);
             setSalvo(novo);
             setRascunho(novo);
             setAviso(t("routing.savedVersion", { version: gravado.version }));
             return true;
         } catch (falha) {
-            if (falha instanceof ErroApi && falha.status === 412) {
+            if (falha instanceof ApiError && falha.status === 412) {
                 const atual = await releraAgente();
                 setConflito(
                     typeof atual === "number"
@@ -212,7 +212,7 @@ export function AgenteRoteamento() {
                 );
                 return false;
             }
-            if (falha instanceof ErroApi) {
+            if (falha instanceof ApiError) {
                 const detalhes = falha.detalhes as Record<string, unknown> | null | undefined;
                 const campo = typeof detalhes?.["field"] === "string" ? detalhes["field"] : "";
                 const motivo =
@@ -282,7 +282,7 @@ export function AgenteRoteamento() {
         return opcoes;
     }, [departamentos, rascunho?.departamentoPadrao, rascunho?.departamentoHumano, t]);
 
-    function alterar(parcial: Partial<Roteamento>) {
+    function alterar(parcial: Partial<Routing>) {
         setRascunho((atual) => (atual ? { ...atual, ...parcial } : atual));
         setAviso(null);
     }
@@ -345,7 +345,7 @@ export function AgenteRoteamento() {
     }
 
     const semDepartamentos = !carregandoDepartamentos && !erroDepartamentos && departamentos.length === 0;
-    const motivosCheios = rascunho.motivos.length >= LIMITE_MOTIVOS;
+    const motivosCheios = rascunho.motivos.length >= LIMIT_REASONS;
 
     return (
         <div className="poph-pagina">
@@ -483,8 +483,8 @@ export function AgenteRoteamento() {
             <SecaoDoAgente
                 titulo={t("routing.sectionReasons")}
                 descricao={t("routing.sectionReasonsDescription", {
-                    limit: LIMITE_MOTIVOS,
-                    maxLength: LIMITE_MOTIVO,
+                    limit: LIMIT_REASONS,
+                    maxLength: LIMIT_REASON,
                 })}
                 acoes={
                     <SofaButton
@@ -507,7 +507,7 @@ export function AgenteRoteamento() {
                                 <div className="poph-roteamento__motivo-campo">
                                     <SofaField
                                         label={t("routing.reasonLabel", { number: indice + 1 })}
-                                        hint={`${motivo.trim().length}/${LIMITE_MOTIVO}`}
+                                        hint={`${motivo.trim().length}/${LIMIT_REASON}`}
                                         error={erros[`motivo-${indice}`]}
                                         htmlFor={`poph-motivo-${indice}`}
                                     >

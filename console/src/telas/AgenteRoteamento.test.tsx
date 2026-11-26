@@ -12,7 +12,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { GuardaAlteracoesProvider } from "../componentes/GuardaAlteracoes";
-import { ServidorFalso, erroApi } from "../testes/servidor";
+import { FakeServer, apiError } from "../testing/server";
 import { AgenteRoteamento } from "./AgenteRoteamento";
 import { setLocale } from "../i18n";
 
@@ -72,7 +72,7 @@ function servidorCom(opcoes: {
     let leituras = 0;
     let patches = 0;
     const agente = opcoes.agente ?? agenteJson();
-    const servidor = new ServidorFalso()
+    const servidor = new FakeServer()
         .responder("GET", `/admin/v1/orgs/${ORG}/departments`, {
             status: 200,
             corpo: { items: DEPARTAMENTOS, next_cursor: null },
@@ -204,7 +204,7 @@ describe("Aba Roteamento", () => {
     it("mostra o código e o motivo reais quando a API recusa a gravação", async () => {
         const servidor = servidorCom({
             patches: [
-                erroApi(404, "not_found", "departamento `dep_2` não encontrado", null),
+                apiError(404, "not_found", "departamento `dep_2` não encontrado", null),
             ],
         });
         montar();
@@ -228,7 +228,7 @@ describe("Aba Roteamento", () => {
     });
 
     it("sem departamentos na org, mostra o estado vazio com caminho para Estrutura", async () => {
-        const servidor = new ServidorFalso()
+        const servidor = new FakeServer()
             .responder("GET", `/admin/v1/orgs/${ORG}/departments`, { status: 200, corpo: { items: [], next_cursor: null } })
             .responder("GET", `/agents/${AGENTE}`, { status: 200, corpo: agenteJson() })
             .responder("GET", `/admin/v1/orgs/${ORG}`, { status: 200, corpo: { id: ORG, name: "Clínica", status: "active", version: 1 } });

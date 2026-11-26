@@ -9,7 +9,7 @@ import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { setLocale } from "../i18n";
-import { ServidorFalso, erroApi } from "../testes/servidor";
+import { FakeServer, apiError } from "../testing/server";
 import { Produtos } from "./Produtos";
 
 const ORG = "org_1";
@@ -61,7 +61,7 @@ const AGENTES = [
 ];
 
 function servidorPadrao(produtos = PRODUTOS, categorias = CATEGORIAS) {
-    return new ServidorFalso()
+    return new FakeServer()
         .responder("GET", `${BASE}/agents/ag_1`, { status: 200, corpo: AGENTES[0] })
         .responder("GET", `${BASE}/agents/ag_2`, { status: 200, corpo: AGENTES[1] })
         .responder("GET", `${BASE}/agents`, {
@@ -166,8 +166,8 @@ describe("Produtos", () => {
     });
 
     it("falha ao carregar os produtos mostra o erro com tentar de novo, sem derrubar a tela", async () => {
-        new ServidorFalso()
-            .responder("GET", `${BASE}/products`, erroApi(500, "internal", "falha interna ao listar"))
+        new FakeServer()
+            .responder("GET", `${BASE}/products`, apiError(500, "internal", "falha interna ao listar"))
             .responder("GET", `${BASE}/categories`, { status: 200, corpo: { items: CATEGORIAS, next_cursor: null } })
             .responder("GET", `${BASE}/agents`, { status: 200, corpo: { items: [], next_cursor: null } })
             .responder("GET", BASE, { status: 200, corpo: { id: ORG, name: "Clínica Teste" } })

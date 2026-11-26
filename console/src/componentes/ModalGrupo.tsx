@@ -20,14 +20,14 @@ import {
     SofaTextarea,
     type SofaFieldControlProps,
 } from "@sofacoding/sofa-ui";
-import { ErroApi } from "../api/cliente";
+import { ApiError } from "../api/client";
 import {
-    atualizarGrupo,
-    criarGrupo,
-    obterGrupo,
-    LIMITE_NOME_GRUPO,
-    type GrupoConhecimento,
-} from "../api/conhecimento";
+    updateGroup,
+    createGroup,
+    getGroup,
+    LIMIT_GROUP_NAME,
+    type KnowledgeGroup,
+} from "../api/knowledge";
 import { useI18n } from "../i18n";
 import type { TranslationKey } from "../i18n/catalog";
 
@@ -42,9 +42,9 @@ export type ModalGrupoProps = {
     aberto: boolean;
     aoFechar: () => void;
     /** Grupo em edição; `null` cria um novo. */
-    grupo: GrupoConhecimento | null;
+    grupo: KnowledgeGroup | null;
     /** Chamado com o grupo devolvido pela API (criado ou alterado). */
-    aoSalvar: (grupo: GrupoConhecimento) => void;
+    aoSalvar: (grupo: KnowledgeGroup) => void;
 };
 
 type Erros = { nome?: string; descricao?: string };
@@ -91,14 +91,14 @@ export function ModalGrupo({ org, aberto, aoFechar, grupo, aoSalvar }: ModalGrup
         const novos: Erros = {};
         if (!nome.trim()) {
             novos.nome = t("knowledge.groupNameRequired");
-        } else if (nome.trim().length > LIMITE_NOME_GRUPO) {
-            novos.nome = t("knowledge.groupNameTooLong", { limit: LIMITE_NOME_GRUPO });
+        } else if (nome.trim().length > LIMIT_GROUP_NAME) {
+            novos.nome = t("knowledge.groupNameTooLong", { limit: LIMIT_GROUP_NAME });
         }
         return novos;
     }
 
     /** Põe o erro da API no campo que ele aponta; o que não tem campo vai para o aviso geral. */
-    function mostrarErroDaApi(falha: ErroApi) {
+    function mostrarErroDaApi(falha: ApiError) {
         const detalhes = falha.detalhes as Record<string, unknown> | null | undefined;
         const campo = typeof detalhes?.["field"] === "string" ? detalhes["field"] : undefined;
         const motivo =
@@ -125,7 +125,7 @@ export function ModalGrupo({ org, aberto, aoFechar, grupo, aoSalvar }: ModalGrup
         setEnviando(true);
         try {
             if (!grupo) {
-                const criado = await criarGrupo(org, {
+                const criado = await createGroup(org, {
                     name: nome.trim(),
                     description: descricao,
                 });
@@ -134,7 +134,7 @@ export function ModalGrupo({ org, aberto, aoFechar, grupo, aoSalvar }: ModalGrup
                 return;
             }
 
-            const alterado = await atualizarGrupo(org, grupo.id, versao, {
+            const alterado = await updateGroup(org, grupo.id, versao, {
                 name: nome.trim(),
                 description: descricao,
                 status: situacao,
@@ -142,11 +142,11 @@ export function ModalGrupo({ org, aberto, aoFechar, grupo, aoSalvar }: ModalGrup
             aoSalvar(alterado);
             aoFechar();
         } catch (falha) {
-            if (falha instanceof ErroApi && falha.status === 412 && grupo) {
+            if (falha instanceof ApiError && falha.status === 412 && grupo) {
                 // Relê para continuar de uma versão válida; o que foi digitado não é tocado.
                 let versaoAtual: number | undefined;
                 try {
-                    const atual = await obterGrupo(org, grupo.id);
+                    const atual = await getGroup(org, grupo.id);
                     versaoAtual = atual.version;
                 } catch {
                     // Sem a releitura, a próxima tentativa devolve 412 de novo; nada se perde.
@@ -159,7 +159,7 @@ export function ModalGrupo({ org, aberto, aoFechar, grupo, aoSalvar }: ModalGrup
                 );
                 return;
             }
-            if (falha instanceof ErroApi) {
+            if (falha instanceof ApiError) {
                 mostrarErroDaApi(falha);
                 return;
             }
@@ -222,7 +222,7 @@ export function ModalGrupo({ org, aberto, aoFechar, grupo, aoSalvar }: ModalGrup
 
                 <SofaField
                     label={t("knowledge.nameLabel")}
-                    hint={t("knowledge.groupNameHint", { limit: LIMITE_NOME_GRUPO })}
+                    hint={t("knowledge.groupNameHint", { limit: LIMIT_GROUP_NAME })}
                     error={erros.nome}
                     required
                     htmlFor="poph-grupo-nome"

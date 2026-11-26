@@ -1,31 +1,26 @@
-/**
- * Entrada do Console. A ordem de importação de CSS importa: os estilos da SofaUI vêm primeiro
- * (tokens e componentes) e o CSS do app depois (fundação do `body` e classes da casca).
- */
 
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import "@sofacoding/sofa-ui/styles.css";
 import "./main.css";
-/* Base do re-layout do Console (RL-01): blocos reutilizáveis com prefixo `poph-`. */
 import "./estilos/relayout.css";
 import { App } from "./App";
 import { I18nProvider } from "./i18n";
-import { SessaoProvider } from "./sessao/Sessao";
+import { SessionProvider } from "./session/Session";
 
-const raiz = document.getElementById("root");
-if (!raiz) {
+const root = document.getElementById("root");
+if (!root) {
     throw new Error("elemento #root ausente no index.html");
 }
 
-createRoot(raiz).render(
+createRoot(root).render(
     <StrictMode>
         <BrowserRouter>
             <I18nProvider>
-                <SessaoProvider>
+                <SessionProvider>
                     <App />
-                </SessaoProvider>
+                </SessionProvider>
             </I18nProvider>
         </BrowserRouter>
     </StrictMode>,

@@ -10,9 +10,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import type { Org } from "../api/cliente";
-import { SessaoProvider } from "../sessao/Sessao";
-import { ServidorFalso } from "../testes/servidor";
+import type { Org } from "../api/client";
+import { SessionProvider } from "../session/Session";
+import { FakeServer } from "../testing/server";
 import { OrgPainel } from "./OrgPainel";
 import { setLocale } from "../i18n";
 
@@ -39,7 +39,7 @@ function prepararSessao(token: string, escopo: "global" | "org") {
  * `/admin/v1/orgs` também casa com `/admin/v1/orgs/org_1`.
  */
 function servidorComOrg(org: Org = ORG) {
-    const servidor = new ServidorFalso();
+    const servidor = new FakeServer();
     servidor
         .responder("GET", "/admin/v1/orgs/org_1", { status: 200, corpo: org })
         .responder("GET", "/admin/v1/orgs", { status: 200, corpo: { items: [org], next_cursor: null } })
@@ -50,12 +50,12 @@ function servidorComOrg(org: Org = ORG) {
 function montar() {
     return render(
         <MemoryRouter initialEntries={["/orgs/org_1"]}>
-            <SessaoProvider>
+            <SessionProvider>
                 <Routes>
                     <Route path="/orgs/:orgId" element={<OrgPainel />} />
                     <Route path="/orgs" element={<p>lista de organizações</p>} />
                 </Routes>
-            </SessaoProvider>
+            </SessionProvider>
         </MemoryRouter>,
     );
 }

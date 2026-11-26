@@ -12,7 +12,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { useEffect } from "react";
 import { ItenDeNavegacao, Rail } from "./Rail";
-import type { Agente } from "../api/agentes";
+import type { Agente } from "../api/agents";
 import {
     ITENS_DE_NAVEGACAO,
     ITENS_DO_COCKPIT_DO_AGENTE,
@@ -21,8 +21,8 @@ import {
 } from "./navegacao";
 import { GuardaAlteracoesProvider, useGuardaDeAlteracoes } from "./GuardaAlteracoes";
 import { setLocale } from "../i18n";
-import { SessaoProvider } from "../sessao/Sessao";
-import { ServidorFalso, erroApi } from "../testes/servidor";
+import { SessionProvider } from "../session/Session";
+import { FakeServer, apiError } from "../testing/server";
 import AppFonte from "../App.tsx?raw";
 
 // Rotas declaradas no `App.tsx`, lidas do próprio arquivo: o cockpit só aponta para tela que existe.
@@ -87,7 +87,7 @@ function montarRail(
 ) {
     return render(
         <MemoryRouter initialEntries={[caminho]}>
-            <SessaoProvider>
+            <SessionProvider>
                 <GuardaAlteracoesProvider>
                     <Rail
                         aoAbrirAtalhos={opcoes.aoAbrirAtalhos ?? (() => {})}
@@ -97,7 +97,7 @@ function montarRail(
                     {opcoes.sujo && <Sujo />}
                     <Sonda />
                 </GuardaAlteracoesProvider>
-            </SessaoProvider>
+            </SessionProvider>
         </MemoryRouter>,
     );
 }
@@ -858,7 +858,7 @@ describe("menu montado com a sessão", () => {
                 aoAlternarCompacta,
                 ...render(
                     <MemoryRouter initialEntries={[caminho]}>
-                        <SessaoProvider>
+                        <SessionProvider>
                             <GuardaAlteracoesProvider>
                                 <Rail
                                     aoAbrirAtalhos={() => {}}
@@ -866,7 +866,7 @@ describe("menu montado com a sessão", () => {
                                     aoAlternarCompacta={aoAlternarCompacta}
                                 />
                             </GuardaAlteracoesProvider>
-                        </SessaoProvider>
+                        </SessionProvider>
                     </MemoryRouter>,
                 ),
             };
@@ -981,7 +981,7 @@ describe("CF-07: seletor de agente no topo do rail", () => {
             falhaNaLista?: boolean;
         } = {},
     ) {
-        const servidor = new ServidorFalso();
+        const servidor = new FakeServer();
         const avulso = opcoes.avulso;
         if (avulso && "agente" in avulso) {
             servidor.responder("GET", `/agents/${avulso.agente.id}`, {
@@ -990,12 +990,12 @@ describe("CF-07: seletor de agente no topo do rail", () => {
             });
         } else if (avulso) {
             servidor.responder("GET", "/agents/", () =>
-                erroApi(404, "not_found", "agente não encontrado"),
+                apiError(404, "not_found", "agente não encontrado"),
             );
         }
         servidor.responder("GET", "/agents", () =>
             opcoes.falhaNaLista
-                ? erroApi(500, "interno", "falha ao ler os agentes")
+                ? apiError(500, "interno", "falha ao ler os agentes")
                 : {
                       status: 200,
                       corpo: { items: opcoes.agentes ?? [MATRIX, PATINHAS, TRIAGEM], next_cursor: null },
@@ -1009,12 +1009,12 @@ describe("CF-07: seletor de agente no topo do rail", () => {
         prepararSessao("global", DUAS_ORGS);
         return render(
             <MemoryRouter initialEntries={[caminho]}>
-                <SessaoProvider>
+                <SessionProvider>
                     <GuardaAlteracoesProvider>
                         <Rail aoAbrirAtalhos={() => {}} compacta={compacta} />
                         <Sonda />
                     </GuardaAlteracoesProvider>
-                </SessaoProvider>
+                </SessionProvider>
             </MemoryRouter>,
         );
     }
@@ -1097,13 +1097,13 @@ describe("CF-07: seletor de agente no topo do rail", () => {
         prepararSessao("global", DUAS_ORGS);
         render(
             <MemoryRouter initialEntries={["/orgs/org_1/agents/agt_1/instructions"]}>
-                <SessaoProvider>
+                <SessionProvider>
                     <GuardaAlteracoesProvider>
                         <Rail aoAbrirAtalhos={() => {}} />
                         <Sujo />
                         <Sonda />
                     </GuardaAlteracoesProvider>
-                </SessaoProvider>
+                </SessionProvider>
             </MemoryRouter>,
         );
 
@@ -1241,12 +1241,12 @@ describe("CF-07: seletor de agente no topo do rail", () => {
         prepararServidor();
         render(
             <MemoryRouter initialEntries={["/orgs/org_1/agents/agt_1/instructions"]}>
-                <SessaoProvider>
+                <SessionProvider>
                     <GuardaAlteracoesProvider>
                         <Rail aoAbrirAtalhos={() => {}} />
                         <Sonda />
                     </GuardaAlteracoesProvider>
-                </SessaoProvider>
+                </SessionProvider>
             </MemoryRouter>,
         );
 
@@ -1287,7 +1287,7 @@ describe("CF-09: cockpit do agente no rail", () => {
 
     /** Lista de agentes do servidor falso: o combobox do agente e o rodapé leem daqui. */
     function prepararServidor() {
-        const servidor = new ServidorFalso();
+        const servidor = new FakeServer();
         servidor.responder("GET", "/agents", {
             status: 200,
             corpo: { items: [AGENTE], next_cursor: null },
@@ -1300,13 +1300,13 @@ describe("CF-09: cockpit do agente no rail", () => {
         prepararSessao("global", DUAS_ORGS);
         return render(
             <MemoryRouter initialEntries={[caminho]}>
-                <SessaoProvider>
+                <SessionProvider>
                     <GuardaAlteracoesProvider>
                         <Rail aoAbrirAtalhos={() => {}} compacta={opcoes.compacta ?? false} />
                         {opcoes.sujo && <Sujo />}
                         <Sonda />
                     </GuardaAlteracoesProvider>
-                </SessaoProvider>
+                </SessionProvider>
             </MemoryRouter>,
         );
     }
@@ -1472,7 +1472,7 @@ describe("I18N-04: rail e seletores em en-US", () => {
     };
 
     function servirAgentes(agentes: Agente[] = [AGENTE_EN]) {
-        return new ServidorFalso()
+        return new FakeServer()
             .responder("GET", "/agents", {
                 status: 200,
                 corpo: { items: agentes, next_cursor: null },

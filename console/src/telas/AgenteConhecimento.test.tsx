@@ -12,8 +12,8 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { GuardaAlteracoesProvider } from "../componentes/GuardaAlteracoes";
-import { esperarFocoDoModal } from "../testes/modal";
-import { ServidorFalso, erroApi } from "../testes/servidor";
+import { waitForModalFocus } from "../testing/modal";
+import { FakeServer, apiError } from "../testing/server";
 import { setLocale } from "../i18n";
 import { AgenteConhecimento } from "./AgenteConhecimento";
 
@@ -111,8 +111,8 @@ type Cenario = {
     erroAoCriarGrupo?: { status: number; corpo: unknown } | null;
 };
 
-function servidorCom(cenario: Cenario): ServidorFalso {
-    const servidor = new ServidorFalso()
+function servidorCom(cenario: Cenario): FakeServer {
+    const servidor = new FakeServer()
         .responder("GET", `/agents/${AGENTE}`, { status: 200, corpo: AGENTE_JSON })
         .responder("GET", `/admin/v1/orgs/${ORG}/agents`, {
             status: 200,
@@ -155,7 +155,7 @@ function servidorCom(cenario: Cenario): ServidorFalso {
         const encontrado = cenario.grupos.find((atual) => atual.id === id);
         return encontrado
             ? { status: 200, corpo: encontrado }
-            : erroApi(404, "not_found", "grupo não encontrado");
+            : apiError(404, "not_found", "grupo não encontrado");
     });
 
     servidor
@@ -303,7 +303,7 @@ describe("AgenteConhecimento", () => {
 
         await screen.findByText("Políticas da loja");
         await usuario.click(screen.getByRole("button", { name: "Novo grupo" }));
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         await usuario.type(screen.getByRole("textbox", { name: /^Nome/ }), "Horários");
         await usuario.click(screen.getByRole("button", { name: "Criar grupo" }));
 
@@ -319,7 +319,7 @@ describe("AgenteConhecimento", () => {
 
         await screen.findByText("Prazo de entrega");
         await usuario.click(screen.getByRole("button", { name: "Novo trecho" }));
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         await usuario.type(
             screen.getByRole("textbox", { name: /^Título/ }),
             "Frete grátis",
@@ -352,7 +352,7 @@ describe("AgenteConhecimento", () => {
 
         await screen.findByText("Prazo de entrega");
         await usuario.click(screen.getByRole("button", { name: "Novo trecho" }));
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         await usuario.click(screen.getByRole("button", { name: "Criar trecho" }));
 
         expect(await screen.findByText("informe o título do trecho")).toBeInTheDocument();
@@ -378,7 +378,7 @@ describe("AgenteConhecimento", () => {
 
         await screen.findByText("Políticas da loja");
         await usuario.click(screen.getByRole("button", { name: "Novo grupo" }));
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         await usuario.type(screen.getByRole("textbox", { name: /^Nome/ }), "Políticas da loja");
         await usuario.click(screen.getByRole("button", { name: "Criar grupo" }));
 
@@ -396,7 +396,7 @@ describe("AgenteConhecimento", () => {
 
         await screen.findByText("Políticas da loja");
         await escolherNoMenu(usuario, "Ações de Políticas da loja", "Excluir");
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         const dialogo = await screen.findByRole("dialog");
         // O diálogo conta os trechos numa consulta própria: enquanto ela não volta, mostra skeleton.
@@ -441,7 +441,7 @@ describe("AgenteConhecimento", () => {
         servidor.responder("PATCH", "/knowledge/grupo-1", () => {
             // Outra pessoa salvou primeiro: a próxima leitura já traz a versão 3.
             cenario.grupos[0]!.version = 3;
-            return erroApi(412, "version_conflict", "versão desatualizada", {
+            return apiError(412, "version_conflict", "versão desatualizada", {
                 expected_version: 2,
                 current_version: 3,
             });
@@ -450,7 +450,7 @@ describe("AgenteConhecimento", () => {
 
         await screen.findByText("Políticas da loja");
         await escolherNoMenu(usuario, "Ações de Políticas da loja", "Editar");
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         const campo = screen.getByRole("textbox", { name: /^Nome/ });
         await usuario.clear(campo);
         await usuario.type(campo, "Políticas novas");
@@ -473,7 +473,7 @@ describe("AgenteConhecimento", () => {
             cenario.itens["grupo-1"] = [
                 { ...cenario.itens["grupo-1"]![0]!, version: 2 },
             ];
-            return erroApi(412, "version_conflict", "versão desatualizada", {
+            return apiError(412, "version_conflict", "versão desatualizada", {
                 expected_version: 1,
                 current_version: 2,
             });
@@ -482,7 +482,7 @@ describe("AgenteConhecimento", () => {
 
         await screen.findByText("Prazo de entrega");
         await escolherNoMenu(usuario, "Ações de Prazo de entrega", "Editar");
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         const conteudo = screen.getByRole("textbox", { name: /^Conteúdo/ });
         await usuario.clear(conteudo);
         await usuario.type(conteudo, "O prazo mudou: 10 dias úteis.");
@@ -502,7 +502,7 @@ describe("AgenteConhecimento", () => {
 
         await screen.findByText("Prazo de entrega");
         await escolherNoMenu(usuario, "Ações de Prazo de entrega", "Excluir");
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         const dialogo = await screen.findByRole("dialog");
         const botao = within(dialogo).getByRole("button", { name: "Excluir trecho" });
@@ -545,7 +545,7 @@ describe("AgenteConhecimento", () => {
         const cenario = cenarioPadrao();
         let falhar = true;
         // Rota registrada antes da de sucesso: o servidor falso casa a primeira que bater.
-        new ServidorFalso()
+        new FakeServer()
             .responder("GET", `/agents/${AGENTE}`, { status: 200, corpo: AGENTE_JSON })
             .responder("GET", `/admin/v1/orgs/${ORG}/agents`, {
                 status: 200,
@@ -553,7 +553,7 @@ describe("AgenteConhecimento", () => {
             })
             .responder("GET", "/items", () =>
                 falhar
-                    ? erroApi(500, "internal", "falha inesperada")
+                    ? apiError(500, "internal", "falha inesperada")
                     : {
                           status: 200,
                           corpo: {
@@ -601,7 +601,7 @@ describe("AgenteConhecimento", () => {
 
     it("explica quando o modelo de embedding não está instalado", async () => {
         const usuario = userEvent.setup();
-        const servidor = new ServidorFalso()
+        const servidor = new FakeServer()
             .responder("GET", `/agents/${AGENTE}`, { status: 200, corpo: AGENTE_JSON })
             .responder("GET", `/admin/v1/orgs/${ORG}/agents`, {
                 status: 200,
@@ -620,7 +620,7 @@ describe("AgenteConhecimento", () => {
                 },
             })
             .responder("POST", `/agents/${AGENTE}/knowledge/reindex`, () =>
-                erroApi(503, "embedding_unavailable", "modelo de embedding indisponível; instale o modelo"),
+                apiError(503, "embedding_unavailable", "modelo de embedding indisponível; instale o modelo"),
             )
             .responder("GET", `/admin/v1/orgs/${ORG}`, {
                 status: 200,
@@ -699,7 +699,7 @@ describe("I18N-08: Base de conhecimento em en-US", () => {
 
         await screen.findByText("Prazo de entrega");
         await usuario.click(screen.getByRole("button", { name: "New entry" }));
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         await usuario.click(screen.getByRole("button", { name: "Create entry" }));
 
         expect(await screen.findByText("enter the entry title")).toBeInTheDocument();
@@ -719,7 +719,7 @@ describe("I18N-08: Base de conhecimento em en-US", () => {
             screen.getByRole("button", { name: "Actions for Políticas da loja" }),
         );
         await usuario.click(await screen.findByRole("menuitem", { name: "Delete" }));
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         const dialogo = await screen.findByRole("dialog");
         expect(within(dialogo).getByText("Delete group?")).toBeInTheDocument();
@@ -749,7 +749,7 @@ describe("I18N-08: Base de conhecimento em en-US", () => {
 
         await screen.findByText("Prazo de entrega");
         await usuario.click(screen.getByRole("button", { name: "New entry" }));
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         const dialogo = await screen.findByRole("dialog");
         expect(within(dialogo).getByText("New entry")).toBeInTheDocument();

@@ -21,17 +21,17 @@ import {
     SofaTextarea,
     type SofaFieldControlProps,
 } from "@sofacoding/sofa-ui";
-import { ErroApi } from "../api/cliente";
+import { ApiError } from "../api/client";
 import {
-    atualizarItem,
-    criarItem,
-    escreverTags,
-    lerTags,
-    LIMITE_CONTEUDO_ITEM,
-    LIMITE_TITULO_ITEM,
-    listarItens,
-    type ItemConhecimento,
-} from "../api/conhecimento";
+    updateItem,
+    createItem,
+    writeTags,
+    readTags,
+    LIMIT_ITEM_CONTENT,
+    LIMIT_ITEM_TITLE,
+    listItems,
+    type KnowledgeItem,
+} from "../api/knowledge";
 import { useI18n } from "../i18n";
 import type { TranslationKey } from "../i18n/catalog";
 
@@ -47,9 +47,9 @@ export type ModalItemProps = {
     aberto: boolean;
     aoFechar: () => void;
     /** Item em edição; `null` cria um novo. */
-    item: ItemConhecimento | null;
+    item: KnowledgeItem | null;
     /** Chamado com o item devolvido pela API (criado ou alterado). */
-    aoSalvar: (item: ItemConhecimento) => void;
+    aoSalvar: (item: KnowledgeItem) => void;
 };
 
 type Erros = { titulo?: string; conteudo?: string; ordem?: string };
@@ -73,8 +73,8 @@ async function relerItem(
     org: string,
     grupo: string,
     id: string,
-): Promise<ItemConhecimento | null> {
-    const itens = await listarItens(org, grupo);
+): Promise<KnowledgeItem | null> {
+    const itens = await listItems(org, grupo);
     return itens.find((candidato) => candidato.id === id) ?? null;
 }
 
@@ -96,7 +96,7 @@ export function ModalItem({ org, grupo, aberto, aoFechar, item, aoSalvar }: Moda
         if (!aberto) return;
         setTitulo(item?.title ?? "");
         setConteudo(item?.content ?? "");
-        setTags(escreverTags(item?.tags ?? []));
+        setTags(writeTags(item?.tags ?? []));
         setPosicao(String(item?.position ?? 0));
         setSituacao(item?.status ?? "active");
         setVersao(item?.version ?? 0);
@@ -112,14 +112,14 @@ export function ModalItem({ org, grupo, aberto, aoFechar, item, aoSalvar }: Moda
         const novos: Erros = {};
         if (!titulo.trim()) {
             novos.titulo = t("knowledge.itemTitleRequired");
-        } else if (titulo.trim().length > LIMITE_TITULO_ITEM) {
-            novos.titulo = t("knowledge.itemTitleTooLong", { limit: LIMITE_TITULO_ITEM });
+        } else if (titulo.trim().length > LIMIT_ITEM_TITLE) {
+            novos.titulo = t("knowledge.itemTitleTooLong", { limit: LIMIT_ITEM_TITLE });
         }
         if (!conteudo.trim()) {
             novos.conteudo = t("knowledge.itemContentRequired");
-        } else if (caracteres > LIMITE_CONTEUDO_ITEM) {
+        } else if (caracteres > LIMIT_ITEM_CONTENT) {
             novos.conteudo = t("knowledge.itemContentTooLong", {
-                limit: LIMITE_CONTEUDO_ITEM,
+                limit: LIMIT_ITEM_CONTENT,
                 count: caracteres,
             });
         }
@@ -130,7 +130,7 @@ export function ModalItem({ org, grupo, aberto, aoFechar, item, aoSalvar }: Moda
     }
 
     /** Põe o erro da API no campo que ele aponta; o que não tem campo vai para o aviso geral. */
-    function mostrarErroDaApi(falha: ErroApi) {
+    function mostrarErroDaApi(falha: ApiError) {
         const detalhes = falha.detalhes as Record<string, unknown> | null | undefined;
         const campo = typeof detalhes?.["field"] === "string" ? detalhes["field"] : undefined;
         const motivo =
@@ -158,10 +158,10 @@ export function ModalItem({ org, grupo, aberto, aoFechar, item, aoSalvar }: Moda
         setEnviando(true);
         try {
             if (!item) {
-                const criado = await criarItem(org, grupo, {
+                const criado = await createItem(org, grupo, {
                     title: titulo.trim(),
                     content: conteudo,
-                    tags: lerTags(tags),
+                    tags: readTags(tags),
                     position: ordem,
                 });
                 aoSalvar(criado);
@@ -169,17 +169,17 @@ export function ModalItem({ org, grupo, aberto, aoFechar, item, aoSalvar }: Moda
                 return;
             }
 
-            const alterado = await atualizarItem(org, grupo, item.id, versao, {
+            const alterado = await updateItem(org, grupo, item.id, versao, {
                 title: titulo.trim(),
                 content: conteudo,
-                tags: lerTags(tags),
+                tags: readTags(tags),
                 position: ordem,
                 status: situacao,
             });
             aoSalvar(alterado);
             aoFechar();
         } catch (falha) {
-            if (falha instanceof ErroApi && falha.status === 412 && item) {
+            if (falha instanceof ApiError && falha.status === 412 && item) {
                 let versaoAtual: number | undefined;
                 try {
                     const atual = await relerItem(org, grupo, item.id);
@@ -195,7 +195,7 @@ export function ModalItem({ org, grupo, aberto, aoFechar, item, aoSalvar }: Moda
                 );
                 return;
             }
-            if (falha instanceof ErroApi) {
+            if (falha instanceof ApiError) {
                 mostrarErroDaApi(falha);
                 return;
             }
@@ -258,7 +258,7 @@ export function ModalItem({ org, grupo, aberto, aoFechar, item, aoSalvar }: Moda
 
                 <SofaField
                     label={t("knowledge.itemTitleLabel")}
-                    hint={t("knowledge.itemTitleHint", { limit: LIMITE_TITULO_ITEM })}
+                    hint={t("knowledge.itemTitleHint", { limit: LIMIT_ITEM_TITLE })}
                     error={erros.titulo}
                     required
                     htmlFor="poph-item-titulo"
@@ -275,7 +275,7 @@ export function ModalItem({ org, grupo, aberto, aoFechar, item, aoSalvar }: Moda
 
                 <SofaField
                     label={t("knowledge.itemContentLabel")}
-                    hint={t("knowledge.itemContentHint", { limit: LIMITE_CONTEUDO_ITEM })}
+                    hint={t("knowledge.itemContentHint", { limit: LIMIT_ITEM_CONTENT })}
                     error={erros.conteudo}
                     required
                     htmlFor="poph-item-conteudo"
@@ -296,14 +296,14 @@ export function ModalItem({ org, grupo, aberto, aoFechar, item, aoSalvar }: Moda
                     style={{
                         marginTop: -8,
                         color:
-                            caracteres > LIMITE_CONTEUDO_ITEM
+                            caracteres > LIMIT_ITEM_CONTENT
                                 ? "var(--pop-danger, #e5484d)"
                                 : undefined,
                     }}
                 >
                     {t("knowledge.itemCounter", {
                         count: caracteres,
-                        limit: LIMITE_CONTEUDO_ITEM,
+                        limit: LIMIT_ITEM_CONTENT,
                     })}
                 </div>
 

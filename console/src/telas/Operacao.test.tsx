@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it, vi, type Mock } from "vitest";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { ServidorFalso, erroApi } from "../testes/servidor";
+import { FakeServer, apiError } from "../testing/server";
 import {
     Operacao,
     formatarMemoria,
@@ -20,9 +20,9 @@ import {
     INTERVALO_DE_ATUALIZACAO_MS,
     mensagemDeFalha,
 } from "./Operacao";
-import { ErroApi } from "../api/cliente";
+import { ApiError } from "../api/client";
 import { setLocale } from "../i18n";
-import { esperarFocoDoModal } from "../testes/modal";
+import { waitForModalFocus } from "../testing/modal";
 
 const SAUDE_OK = {
     status: "ok",
@@ -95,7 +95,7 @@ function servidorPadrao(
     saude: { status: number; corpo?: unknown } = { status: 200, corpo: SAUDE_OK },
     lista: { status: number; corpo?: unknown } = { status: 200, corpo: { items: [] } },
 ) {
-    return new ServidorFalso()
+    return new FakeServer()
         .responder("GET", "/healthz", saude)
         .responder("GET", "/metrics", { status: 200, texto: METRICAS })
         .responder("GET", "/manifests", lista)
@@ -123,10 +123,10 @@ describe("formatação", () => {
     });
 
     it("mensagens de erro em português, sem corpo cru", () => {
-        expect(mensagemDeFalha(new ErroApi(403, "x", "cru"), "o plugin")).toMatch(/não alcança esta organização/);
-        expect(mensagemDeFalha(new ErroApi(404, "x", "cru"), "o plugin")).toBe("Não encontrei o plugin.");
-        expect(mensagemDeFalha(new ErroApi(500, "x", "cru"), "o plugin")).toMatch(/respondeu com erro \(500\)/);
-        expect(mensagemDeFalha(new ErroApi(0, "rede", "cru"), "o plugin")).toMatch(/sem conexão|Confira se/);
+        expect(mensagemDeFalha(new ApiError(403, "x", "cru"), "o plugin")).toMatch(/não alcança esta organização/);
+        expect(mensagemDeFalha(new ApiError(404, "x", "cru"), "o plugin")).toBe("Não encontrei o plugin.");
+        expect(mensagemDeFalha(new ApiError(500, "x", "cru"), "o plugin")).toMatch(/respondeu com erro \(500\)/);
+        expect(mensagemDeFalha(new ApiError(0, "rede", "cru"), "o plugin")).toMatch(/sem conexão|Confira se/);
     });
 });
 
@@ -179,8 +179,8 @@ describe("Operacao: saúde e métricas", () => {
     });
 
     it("'Tentar de novo' refaz a consulta da seção com erro", async () => {
-        const servidor = new ServidorFalso()
-            .responder("GET", "/healthz", erroApi(500, "interno", "falha"))
+        const servidor = new FakeServer()
+            .responder("GET", "/healthz", apiError(500, "interno", "falha"))
             .responder("GET", "/metrics", { status: 200, texto: METRICAS })
             .responder("GET", "/manifests", { status: 200, corpo: { items: [] } })
             .instalar();
@@ -198,7 +198,7 @@ describe("Operacao: saúde e métricas", () => {
     });
 
     it("métricas sem nenhum valor conhecido mostram 'não informado', sem zero inventado", async () => {
-        new ServidorFalso()
+        new FakeServer()
             .responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK })
             .responder("GET", "/metrics", { status: 200, texto: "# só comentário\n" })
             .responder("GET", "/manifests", { status: 200, corpo: { items: [] } })
@@ -215,9 +215,9 @@ describe("Operacao: saúde e métricas", () => {
     });
 
     it("erro nas métricas mostra 'Tentar de novo' e segue com a saúde", async () => {
-        new ServidorFalso()
+        new FakeServer()
             .responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK })
-            .responder("GET", "/metrics", erroApi(500, "interno", "falha"))
+            .responder("GET", "/metrics", apiError(500, "interno", "falha"))
             .responder("GET", "/manifests", { status: 200, corpo: { items: [] } })
             .instalar();
 
@@ -322,13 +322,13 @@ describe("Operacao: lista de plugins declarados (HR-48c)", () => {
 
     it("erro 403 na lista explica o token e 'Tentar de novo' recupera a lista", async () => {
         let chamadas = 0;
-        new ServidorFalso()
+        new FakeServer()
             .responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK })
             .responder("GET", "/metrics", { status: 200, texto: METRICAS })
             .responder("GET", "/manifests", () => {
                 chamadas += 1;
                 return chamadas === 1
-                    ? erroApi(403, "forbidden", "outra org")
+                    ? apiError(403, "forbidden", "outra org")
                     : { status: 200, corpo: LISTA_DOIS_PLUGINS };
             })
             .instalar();
@@ -348,7 +348,7 @@ describe("Operacao: lista de plugins declarados (HR-48c)", () => {
     });
 
     it("erro na lista não derruba a saúde nem as métricas", async () => {
-        servidorPadrao(undefined, erroApi(500, "interno", "falha"));
+        servidorPadrao(undefined, apiError(500, "interno", "falha"));
         montar();
 
         await screen.findByText("No ar, com os bancos respondendo");
@@ -357,7 +357,7 @@ describe("Operacao: lista de plugins declarados (HR-48c)", () => {
     });
 
     it("o detalhe abre pela linha da lista e mostra nome, versão e a contagem de campos", async () => {
-        const servidor = new ServidorFalso()
+        const servidor = new FakeServer()
             .responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK })
             .responder("GET", "/metrics", { status: 200, texto: METRICAS })
             .responder("GET", "/admin/v1/orgs/org_1/manifests/eco", { status: 200, corpo: MANIFESTO_ECO })
@@ -383,10 +383,10 @@ describe("Operacao: lista de plugins declarados (HR-48c)", () => {
     });
 
     it("plugin que não responde no detalhe (503) explica e oferece 'Tentar de novo'", async () => {
-        new ServidorFalso()
+        new FakeServer()
             .responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK })
             .responder("GET", "/metrics", { status: 200, texto: METRICAS })
-            .responder("GET", "/admin/v1/orgs/org_1/manifests/eco", erroApi(503, "manifesto_indisponivel", "sem resposta"))
+            .responder("GET", "/admin/v1/orgs/org_1/manifests/eco", apiError(503, "manifesto_indisponivel", "sem resposta"))
             .responder("GET", "/manifests", { status: 200, corpo: LISTA_DOIS_PLUGINS })
             .instalar();
         montar();
@@ -466,8 +466,8 @@ describe("Operacao: cluster, recarga do mapa (HR-48f)", () => {
         instancias_removidas: [],
     };
 
-    function servidorComRecarga(resposta: Parameters<ServidorFalso["responder"]>[2]) {
-        return new ServidorFalso()
+    function servidorComRecarga(resposta: Parameters<FakeServer["responder"]>[2]) {
+        return new FakeServer()
             .responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK })
             .responder("GET", "/metrics", { status: 200, texto: METRICAS })
             .responder("GET", "/manifests", { status: 200, corpo: { items: [] } })
@@ -479,7 +479,7 @@ describe("Operacao: cluster, recarga do mapa (HR-48f)", () => {
     async function abrirConfirmacao(): Promise<HTMLElement> {
         await userEvent.click(within(secao("Cluster")).getByRole("button", { name: "Recarregar mapa do cluster" }));
         const dialogo = await screen.findByRole("dialog");
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         return dialogo;
     }
 
@@ -581,7 +581,7 @@ describe("Operacao: cluster, recarga do mapa (HR-48f)", () => {
 
     it("400 cluster_invalido: lista os problemas, diz que o mapa anterior segue, e mostra o arquivo", async () => {
         servidorComRecarga(
-            erroApi(400, "cluster_invalido", "cluster.toml inválido: instância 'b' sem endereço", {
+            apiError(400, "cluster_invalido", "cluster.toml inválido: instância 'b' sem endereço", {
                 arquivo: "/etc/poph/cluster.toml",
                 problemas: ["instância 'b' sem endereço", "org 'org_9' aponta para instância inexistente"],
             }),
@@ -609,7 +609,7 @@ describe("Operacao: cluster, recarga do mapa (HR-48f)", () => {
             chamadas += 1;
             return chamadas === 1
                 ? { status: 200, corpo: RELATORIO_COM_MUDANCA }
-                : erroApi(400, "cluster_invalido", "cluster.toml inválido", { arquivo: "/x/cluster.toml", problemas: ["linha 3: erro"] });
+                : apiError(400, "cluster_invalido", "cluster.toml inválido", { arquivo: "/x/cluster.toml", problemas: ["linha 3: erro"] });
         });
         montar();
         await screen.findByText("No ar, com os bancos respondendo");
@@ -628,7 +628,7 @@ describe("Operacao: cluster, recarga do mapa (HR-48f)", () => {
     });
 
     it("403: diz que a ação exige token global, em vez de erro genérico", async () => {
-        servidorComRecarga(erroApi(403, "forbidden", "token de org não pode esta ação"));
+        servidorComRecarga(apiError(403, "forbidden", "token de org não pode esta ação"));
         montar();
         await screen.findByText("No ar, com os bancos respondendo");
 
@@ -716,11 +716,11 @@ describe("Operacao em en-US", () => {
         expect(formatarMemoria(1_572_864)).toBe("1.5 MB");
         expect(formatarVersaoDoBanco(0)).toBe("no version stored yet");
         expect(formatarVersaoDoBanco(12)).toBe("schema 12");
-        expect(mensagemDeFalha(new ErroApi(404, "x", "cru"), "the plugin")).toBe("Could not find the plugin.");
-        expect(mensagemDeFalha(new ErroApi(403, "x", "cru"), "the plugin")).toMatch(
+        expect(mensagemDeFalha(new ApiError(404, "x", "cru"), "the plugin")).toBe("Could not find the plugin.");
+        expect(mensagemDeFalha(new ApiError(403, "x", "cru"), "the plugin")).toMatch(
             /does not reach this organization/,
         );
-        expect(mensagemDeFalha(new ErroApi(500, "x", "cru"), "the plugin")).toMatch(/error \(500\)/);
+        expect(mensagemDeFalha(new ApiError(500, "x", "cru"), "the plugin")).toMatch(/error \(500\)/);
     });
 
     it("tela traduzida: título, seções, situação, métricas e números no formato inglês", async () => {
@@ -775,7 +775,7 @@ describe("Operacao em en-US", () => {
 
     it("lista de plugins e detalhe em inglês", async () => {
         setLocale("en-US");
-        new ServidorFalso()
+        new FakeServer()
             .responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK })
             .responder("GET", "/metrics", { status: 200, texto: METRICAS })
             .responder("GET", "/admin/v1/orgs/org_1/manifests/eco", { status: 200, corpo: MANIFESTO_ECO })
@@ -832,7 +832,7 @@ describe("Operacao em en-US", () => {
             instancias_adicionadas: ["b"],
             instancias_removidas: [],
         };
-        new ServidorFalso()
+        new FakeServer()
             .responder("GET", "/healthz", { status: 200, corpo: SAUDE_OK })
             .responder("GET", "/metrics", { status: 200, texto: METRICAS })
             .responder("GET", "/manifests", { status: 200, corpo: { items: [] } })
@@ -843,7 +843,7 @@ describe("Operacao em en-US", () => {
 
         await userEvent.click(within(secao("Cluster")).getByRole("button", { name: "Reload cluster map" }));
         const dialogo = await screen.findByRole("dialog");
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         expect(within(dialogo).getByText("Reload the cluster map?")).toBeInTheDocument();
 
         await userEvent.click(within(dialogo).getByRole("button", { name: "Reload now" }));

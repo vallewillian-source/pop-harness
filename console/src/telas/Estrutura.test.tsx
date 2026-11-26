@@ -11,8 +11,8 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { setLocale } from "../i18n";
-import { esperarFocoDoModal } from "../testes/modal";
-import { ServidorFalso, erroApi } from "../testes/servidor";
+import { waitForModalFocus } from "../testing/modal";
+import { FakeServer, apiError } from "../testing/server";
 import { Estrutura } from "./Estrutura";
 
 const ORG = "org_1";
@@ -46,7 +46,7 @@ function montar() {
 
 describe("Estrutura", () => {
     it("mostra departamentos com a contagem de agentes e categorias na mesma tela", async () => {
-        new ServidorFalso()
+        new FakeServer()
             .responder("GET", `/admin/v1/orgs/${ORG}/departments`, {
                 status: 200,
                 corpo: {
@@ -97,7 +97,7 @@ describe("Estrutura", () => {
     });
 
     it("categoria tem botão de excluir, e a tela não diz mais que a exclusão ficou de fora", async () => {
-        new ServidorFalso()
+        new FakeServer()
             .responder("GET", `/admin/v1/orgs/${ORG}/departments`, {
                 status: 200,
                 corpo: { items: [], next_cursor: null },
@@ -119,7 +119,7 @@ describe("Estrutura", () => {
 
     it("estado vazio de departamento oferece o CTA e abre o formulário de criação", async () => {
         const usuario = userEvent.setup();
-        new ServidorFalso()
+        new FakeServer()
             .responder("GET", `/admin/v1/orgs/${ORG}/departments`, {
                 status: 200,
                 corpo: { items: [], next_cursor: null },
@@ -135,7 +135,7 @@ describe("Estrutura", () => {
         montar();
 
         await usuario.click(await screen.findByRole("button", { name: "Criar primeiro departamento" }));
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         expect(screen.getByRole("dialog", { name: "Novo departamento" })).toBeInTheDocument();
     });
@@ -143,7 +143,7 @@ describe("Estrutura", () => {
     it("excluir departamento mostra quem fica sem ele, libera o botão só com o nome e apaga sem force", async () => {
         const usuario = userEvent.setup();
         let departamentos = [departamento("dep_1", "Financeiro"), departamento("dep_2", "Plantão")];
-        const servidor = new ServidorFalso()
+        const servidor = new FakeServer()
             .responder("DELETE", `/departments/dep_1`, () => {
                 departamentos = departamentos.filter((item) => item.id !== "dep_1");
                 return { status: 204 };
@@ -169,7 +169,7 @@ describe("Estrutura", () => {
 
         await usuario.click(await screen.findByRole("button", { name: "Excluir departamento Financeiro" }));
         const dialogo = await screen.findByRole("dialog", { name: "Excluir departamento?" });
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         // A consequência aparece antes do botão: o agente que fica sem departamento está nomeado.
         expect(await within(dialogo).findByText(/1 agente usa este departamento/)).toBeInTheDocument();
@@ -200,7 +200,7 @@ describe("Estrutura", () => {
     it("erro de categorias não derruba a lista de departamentos e tenta de novo sozinho", async () => {
         const usuario = userEvent.setup();
         let falhas = 1;
-        new ServidorFalso()
+        new FakeServer()
             .responder("GET", `/admin/v1/orgs/${ORG}/departments`, {
                 status: 200,
                 corpo: { items: [departamento("dep_1", "Financeiro")], next_cursor: null },
@@ -209,7 +209,7 @@ describe("Estrutura", () => {
             .responder("GET", `/admin/v1/orgs/${ORG}/categories`, () => {
                 if (falhas > 0) {
                     falhas -= 1;
-                    return erroApi(500, "internal", "falha simulada");
+                    return apiError(500, "internal", "falha simulada");
                 }
                 return { status: 200, corpo: { items: [categoria("cat_1", "Implantes")], next_cursor: null } };
             })
@@ -227,7 +227,7 @@ describe("Estrutura", () => {
     });
 
     it("é duas seções planas com título, sem cartão", async () => {
-        new ServidorFalso()
+        new FakeServer()
             .responder("GET", `/admin/v1/orgs/${ORG}/departments`, { status: 200, corpo: { items: [departamento("dep_1", "Financeiro")], next_cursor: null } })
             .responder("GET", `/admin/v1/orgs/${ORG}/agents`, { status: 200, corpo: { items: [], next_cursor: null } })
             .responder("GET", `/admin/v1/orgs/${ORG}/categories`, { status: 200, corpo: { items: [categoria("cat_1", "Ortodontia")], next_cursor: null } })
@@ -245,7 +245,7 @@ describe("Estrutura", () => {
 
     it("renders in en-US and updates live when locale changes", async () => {
         setLocale("en-US");
-        new ServidorFalso()
+        new FakeServer()
             .responder("GET", `/admin/v1/orgs/${ORG}/departments`, {
                 status: 200,
                 corpo: { items: [departamento("dep_1", "Finance")], next_cursor: null },

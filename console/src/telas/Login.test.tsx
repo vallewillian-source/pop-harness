@@ -15,8 +15,8 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useParams } from "react-router-dom";
 import { setLocale } from "../i18n";
-import { LAST_ORG_STORAGE_KEY, SessaoProvider } from "../sessao/Sessao";
-import { ServidorFalso } from "../testes/servidor";
+import { LAST_ORG_STORAGE_KEY, SessionProvider } from "../session/Session";
+import { FakeServer } from "../testing/server";
 import { Login } from "./Login";
 
 const ORGS = [
@@ -27,13 +27,13 @@ const ORGS = [
 function montar() {
     return render(
         <MemoryRouter initialEntries={["/login"]}>
-            <SessaoProvider>
+            <SessionProvider>
                 <Routes>
                     <Route path="/login" element={<Login />} />
                     <Route path="/orgs" element={<p>lista de organizações</p>} />
                     <Route path="/orgs/:orgId" element={<PainelDaOrg />} />
                 </Routes>
-            </SessaoProvider>
+            </SessionProvider>
         </MemoryRouter>,
     );
 }
@@ -49,7 +49,7 @@ function campoDoToken() {
 }
 
 function servirOrgs(itens: { id: string; name: string; slug: string; status: string }[]) {
-    return new ServidorFalso()
+    return new FakeServer()
         .responder("GET", "/admin/v1/orgs", {
             status: 200,
             corpo: { items: itens, next_cursor: null },
@@ -144,7 +144,7 @@ describe("Login", () => {
     });
 
     it("token recusado mostra o erro no campo e não navega", async () => {
-        const servidor = new ServidorFalso();
+        const servidor = new FakeServer();
         servidor
             .responder("GET", "/admin/v1/orgs", { status: 401, corpo: { error: "unauthorized" } })
             .instalar();

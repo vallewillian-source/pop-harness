@@ -37,7 +37,7 @@ import {
     SofaRailItem,
     SofaSidebarRail,
 } from "@sofacoding/sofa-ui";
-import { useSessao } from "../sessao/Sessao";
+import { useSession } from "../session/Session";
 import {
     GRUPO_DIAGNOSTICO_DO_AGENTE,
     GRUPOS_DE_NAVEGACAO,
@@ -49,7 +49,7 @@ import {
 } from "./navegacao";
 import { translate, useI18n } from "../i18n";
 import { ChipDoCluster, type SituacaoDoCluster } from "./ChipDoCluster";
-import type { Agente } from "../api/agentes";
+import type { Agente } from "../api/agents";
 import { SeletorDeOrganizacao } from "./SeletorDeOrganizacao";
 import { SeletorDeAgente, VoltarParaAgentes } from "./SeletorDeAgente";
 import { useSaude } from "./saude";
@@ -209,7 +209,7 @@ export function Rail({
     aoAlternarCompacta?: () => void;
 }) {
     const { translate: t } = useI18n();
-    const { sessao } = useSessao();
+    const { sessao } = useSession();
     const { saude: dados, semConexao, degradada } = useSaude();
     const { pathname } = useLocation();
     // O botão que alterna o rail é remontado no outro extremo a cada troca de estado; sem devolver o

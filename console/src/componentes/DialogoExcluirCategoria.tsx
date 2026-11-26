@@ -10,13 +10,13 @@
 import { useEffect, useState } from "react";
 import { SofaSkeleton } from "@sofacoding/sofa-ui";
 import {
-    agentesQueUsamCategoria,
-    excluirCategoria,
-    produtosDaCategoria,
-    type AgenteResumo,
-    type Categoria,
-    type ProdutoDaCategoria,
-} from "../api/estrutura";
+    agentsUsingCategory,
+    deleteCategory,
+    categoryProducts,
+    type AgentSummary,
+    type Category,
+    type CategoryProduct,
+} from "../api/structure";
 import { useI18n } from "../i18n";
 import { DialogoExclusao } from "./DialogoExclusao";
 
@@ -24,14 +24,14 @@ export type DialogoExcluirCategoriaProps = {
     aberto: boolean;
     aoFechar: () => void;
     org: string;
-    categoria: Categoria | null;
+    categoria: Category | null;
     /** Chamado depois da exclusão, para a lista se atualizar. */
     aoExcluir: () => void;
 };
 
 type Vinculos = {
-    produtos: ProdutoDaCategoria[];
-    agentes: AgenteResumo[];
+    produtos: CategoryProduct[];
+    agentes: AgentSummary[];
 };
 
 export function DialogoExcluirCategoria({
@@ -53,8 +53,8 @@ export function DialogoExcluirCategoria({
         setVinculos(null);
         setFalhaAoVerificar(false);
         Promise.all([
-            produtosDaCategoria(org, categoria.id),
-            agentesQueUsamCategoria(org, categoria.id),
+            categoryProducts(org, categoria.id),
+            agentsUsingCategory(org, categoria.id),
         ])
             .then(([produtos, agentes]) => {
                 if (!cancelado) setVinculos({ produtos, agentes });
@@ -151,7 +151,7 @@ export function DialogoExcluirCategoria({
             rotuloForcar={rotuloForcar}
             descricaoForcar={translate("structure.deleteCatForceDescription")}
             aoConfirmar={async (forcar) => {
-                await excluirCategoria(org, categoria.id, forcar);
+                await deleteCategory(org, categoria.id, forcar);
             }}
             aoExcluir={aoExcluir}
         />

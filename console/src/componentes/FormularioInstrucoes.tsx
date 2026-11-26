@@ -23,15 +23,15 @@ import {
     type SofaFieldControlProps,
 } from "@sofacoding/sofa-ui";
 import {
-    ACOES_DE_CONTINGENCIA,
+    CONTINGENCY_ACTIONS,
     EMOJIS,
     ESTILOS,
-    FERRAMENTAS,
-    FORMATOS,
+    TOOLS,
+    FORMATS,
     IDIOMAS,
-    NOMES_DE_FERRAMENTA,
-    type Estruturadas,
-} from "../api/instrucoes";
+    TOOL_NAMES,
+    type Structured,
+} from "../api/instructions";
 import { SecaoDoAgente } from "./AbasDoAgente";
 import { useI18n } from "../i18n";
 
@@ -48,8 +48,8 @@ export type ErrosDoFormulario = {
 };
 
 export type FormularioInstrucoesProps = {
-    valor: Estruturadas;
-    aoMudar: (novo: Estruturadas) => void;
+    valor: Structured;
+    aoMudar: (novo: Structured) => void;
     erros: ErrosDoFormulario;
     desabilitado?: boolean;
 };
@@ -65,11 +65,11 @@ export function FormularioInstrucoes({
     const tom = valor.tone;
     const escopo = valor.scope;
 
-    function mudarIdentidade(campo: keyof Estruturadas["identity"], texto: string) {
+    function mudarIdentidade(campo: keyof Structured["identity"], texto: string) {
         aoMudar({ ...valor, identity: { ...identidade, [campo]: texto } });
     }
 
-    function mudarTom(campo: keyof Estruturadas["tone"], texto: string) {
+    function mudarTom(campo: keyof Structured["tone"], texto: string) {
         aoMudar({ ...valor, tone: { ...tom, [campo]: texto } });
     }
 
@@ -77,7 +77,7 @@ export function FormularioInstrucoes({
         aoMudar({ ...valor, scope: { ...escopo, [campo]: texto } });
     }
 
-    function mudarPrincipio(indice: number, mudanca: Partial<Estruturadas["principles"][number]>) {
+    function mudarPrincipio(indice: number, mudanca: Partial<Structured["principles"][number]>) {
         const principles = valor.principles.map((principio, posicao) =>
             posicao === indice ? { ...principio, ...mudanca } : principio,
         );
@@ -100,7 +100,7 @@ export function FormularioInstrucoes({
 
     function mudarFerramenta(
         indice: number,
-        mudanca: Partial<Estruturadas["tools"][number]>,
+        mudanca: Partial<Structured["tools"][number]>,
     ) {
         const tools = valor.tools.map((ferramenta, posicao) =>
             posicao === indice ? { ...ferramenta, ...mudanca } : ferramenta,
@@ -123,7 +123,7 @@ export function FormularioInstrucoes({
 
     const ferramentaPorNome = new Map(valor.tools.map((ferramenta, indice) => [ferramenta.name, indice]));
     const desconhecidas = valor.tools.filter(
-        (ferramenta) => !NOMES_DE_FERRAMENTA.includes(ferramenta.name),
+        (ferramenta) => !TOOL_NAMES.includes(ferramenta.name),
     );
 
     return (
@@ -240,7 +240,7 @@ export function FormularioInstrucoes({
                                                 })
                                             }
                                         >
-                                            {ACOES_DE_CONTINGENCIA.map((acao) => (
+                                            {CONTINGENCY_ACTIONS.map((acao) => (
                                                 <option key={acao.valor} value={acao.valor}>
                                                     {t(acao.labelKey)}
                                                 </option>
@@ -363,7 +363,7 @@ export function FormularioInstrucoes({
                                 disabled={desabilitado}
                                 onChange={(evento) => mudarTom("format", evento.target.value)}
                             >
-                                {FORMATOS.map((formato) => (
+                                {FORMATS.map((formato) => (
                                     <option key={formato.valor} value={formato.valor}>
                                         {t(formato.labelKey)}
                                     </option>
@@ -400,7 +400,7 @@ export function FormularioInstrucoes({
                     </p>
                 )}
                 <div className="poph-lista-ferramentas">
-                    {FERRAMENTAS.map((ferramenta) => {
+                    {TOOLS.map((ferramenta) => {
                         const indice = ferramentaPorNome.get(ferramenta.nome);
                         const atual = indice === undefined ? undefined : valor.tools[indice];
                         const ligada = atual?.enabled ?? false;

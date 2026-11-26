@@ -20,14 +20,14 @@ import {
     SofaSelect,
     type SofaFieldControlProps,
 } from "@sofacoding/sofa-ui";
-import { ErroApi, type Org } from "../api/cliente";
+import { ApiError, type Org } from "../api/client";
 import {
-    atualizarOrg,
-    comRetencao,
-    conflitoDeVersao,
-    criarOrg,
-    obterOrg,
-    retencaoEmDias,
+    updateOrg,
+    withRetention,
+    versionConflict,
+    createOrg,
+    getOrg,
+    retentionDays,
 } from "../api/orgs";
 import { useI18n } from "../i18n";
 import type { TranslationKey } from "../i18n/catalog";
@@ -87,7 +87,7 @@ export function ModalOrg({ aberto, aoFechar, org, aoSalvar }: ModalOrgProps) {
         setNome(org?.name ?? "");
         setSlug(org?.slug ?? "");
         setSituacao(org?.status ?? "active");
-        const dias = org ? retencaoEmDias(org) : undefined;
+        const dias = org ? retentionDays(org) : undefined;
         setRetencao(dias === undefined ? "" : String(dias));
         setVersao(org?.version ?? 0);
         setErros({});
@@ -116,7 +116,7 @@ export function ModalOrg({ aberto, aoFechar, org, aoSalvar }: ModalOrgProps) {
     }
 
     /** Aplica o erro da API no campo que ele aponta, quando o contrato informa. */
-    function mostrarErroDaApi(falha: ErroApi, criar: boolean) {
+    function mostrarErroDaApi(falha: ApiError, criar: boolean) {
         const detalhes = falha.detalhes as Record<string, unknown> | null | undefined;
         const campo = typeof detalhes?.["field"] === "string" ? detalhes["field"] : undefined;
         if (falha.status === 409 || falha.codigo === "conflict") {
@@ -151,7 +151,7 @@ export function ModalOrg({ aberto, aoFechar, org, aoSalvar }: ModalOrgProps) {
             if (!org) {
                 const config: Record<string, unknown> = {};
                 if (dias !== null) config["retention_days"] = dias;
-                const criada = await criarOrg({
+                const criada = await createOrg({
                     name: nome.trim(),
                     ...(slug.trim() ? { slug: slug.trim() } : {}),
                     config,
@@ -161,20 +161,20 @@ export function ModalOrg({ aberto, aoFechar, org, aoSalvar }: ModalOrgProps) {
                 return;
             }
 
-            const alterada = await atualizarOrg(org.id, versao, {
+            const alterada = await updateOrg(org.id, versao, {
                 name: nome.trim(),
                 status: situacao,
-                config: comRetencao(org.config as Record<string, unknown>, dias),
+                config: withRetention(org.config as Record<string, unknown>, dias),
             });
             aoSalvar(alterada);
             aoFechar();
         } catch (falha) {
-            const disputa = conflitoDeVersao(falha);
+            const disputa = versionConflict(falha);
             if (disputa && org) {
                 // Relê para continuar de uma versão válida, sem tocar no que foi digitado.
                 let versaoAtual = disputa.atual;
                 try {
-                    const atual = await obterOrg(org.id);
+                    const atual = await getOrg(org.id);
                     versaoAtual = atual.version;
                 } catch {
                     // Sem a releitura, a próxima tentativa devolve 412 de novo — mas nada se perde.
@@ -187,7 +187,7 @@ export function ModalOrg({ aberto, aoFechar, org, aoSalvar }: ModalOrgProps) {
                 );
                 return;
             }
-            if (falha instanceof ErroApi) {
+            if (falha instanceof ApiError) {
                 mostrarErroDaApi(falha, !editando);
                 return;
             }

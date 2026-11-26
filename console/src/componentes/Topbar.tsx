@@ -25,7 +25,7 @@ import {
     type SofaIconProps,
 } from "@sofacoding/sofa-ui";
 import { translate, useI18n } from "../i18n";
-import { useSessao } from "../sessao/Sessao";
+import { useSession } from "../session/Session";
 import { useGuardaDeAlteracoes } from "./GuardaAlteracoes";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import {
@@ -113,7 +113,7 @@ const DURACAO_DO_AVISO_MS = 3000;
  */
 function BuscaGlobal({ telas, placeholder }: { telas: TelaBuscavel[]; placeholder: string }) {
     const { translate } = useI18n();
-    const { sessao } = useSessao();
+    const { sessao } = useSession();
     const guarda = useGuardaDeAlteracoes();
     const campo = useRef<HTMLInputElement>(null);
     const idBase = useId();
@@ -385,7 +385,7 @@ export function Topbar({
     aoAbrirAtalhos: () => void;
 }) {
     const { translate } = useI18n();
-    const { sessao, sair } = useSessao();
+    const { sessao, sair } = useSession();
     const navegar = useNavigate();
     const { pathname } = useLocation();
     const { saude: dados, semConexao, degradada } = useSaude();

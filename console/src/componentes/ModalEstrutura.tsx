@@ -20,15 +20,15 @@ import {
     SofaTextarea,
     type SofaFieldControlProps,
 } from "@sofacoding/sofa-ui";
-import { ErroApi } from "../api/cliente";
+import { ApiError } from "../api/client";
 import { useI18n } from "../i18n";
 import {
-    atualizarEstrutura,
-    criarEstrutura,
-    obterEstrutura,
+    updateStructure,
+    createStructure,
+    getStructure,
     type Registro,
-    type TipoEstrutura,
-} from "../api/estrutura";
+    type StructureType,
+} from "../api/structure";
 
 const SITUACOES = [
     { valor: "active", chave: "structure.statusActive" as const },
@@ -37,7 +37,7 @@ const SITUACOES = [
 ];
 
 export type ModalEstruturaProps = {
-    tipo: TipoEstrutura;
+    tipo: StructureType;
     org: string;
     aberto: boolean;
     aoFechar: () => void;
@@ -114,7 +114,7 @@ export function ModalEstrutura({
     }
 
     /** Põe o erro da API no campo que ele aponta; o que não tem campo vai para o aviso geral. */
-    function mostrarErroDaApi(falha: ErroApi) {
+    function mostrarErroDaApi(falha: ApiError) {
         const detalhes = falha.detalhes as Record<string, unknown> | null | undefined;
         const campo = typeof detalhes?.["field"] === "string" ? detalhes["field"] : undefined;
         const motivo =
@@ -138,7 +138,7 @@ export function ModalEstrutura({
         setEnviando(true);
         try {
             if (!registro) {
-                const criado = await criarEstrutura(tipo, org, {
+                const criado = await createStructure(tipo, org, {
                     name: nome.trim(),
                     description: descricao,
                 });
@@ -147,7 +147,7 @@ export function ModalEstrutura({
                 return;
             }
 
-            const alterado = await atualizarEstrutura(tipo, org, registro.id, versao, {
+            const alterado = await updateStructure(tipo, org, registro.id, versao, {
                 name: nome.trim(),
                 description: descricao,
                 status: situacao,
@@ -155,11 +155,11 @@ export function ModalEstrutura({
             aoSalvar(alterado);
             aoFechar();
         } catch (falha) {
-            if (falha instanceof ErroApi && falha.status === 412 && registro) {
+            if (falha instanceof ApiError && falha.status === 412 && registro) {
                 // Relê para continuar de uma versão válida; o que foi digitado não é tocado.
                 let versaoAtual: number | undefined;
                 try {
-                    const atual = await obterEstrutura(tipo, org, registro.id);
+                    const atual = await getStructure(tipo, org, registro.id);
                     versaoAtual = atual.version;
                 } catch {
                     // Sem a releitura, a próxima tentativa devolve 412 de novo; nada se perde.
@@ -176,7 +176,7 @@ export function ModalEstrutura({
                 );
                 return;
             }
-            if (falha instanceof ErroApi) {
+            if (falha instanceof ApiError) {
                 mostrarErroDaApi(falha);
                 return;
             }

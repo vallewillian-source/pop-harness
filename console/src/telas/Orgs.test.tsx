@@ -14,15 +14,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
-import type { Agente } from "../api/agentes";
-import type { InstanciaDaLista, Org, OrgNaLista } from "../api/cliente";
+import type { Agente } from "../api/agents";
+import type { ListInstance, Org, OrgInList } from "../api/client";
 import { GuardaAlteracoesProvider, useGuardaDeAlteracoes } from "../componentes/GuardaAlteracoes";
-import { SessaoProvider } from "../sessao/Sessao";
-import { ServidorFalso } from "../testes/servidor";
+import { SessionProvider } from "../session/Session";
+import { FakeServer } from "../testing/server";
 import { Orgs } from "./Orgs";
 import { setLocale } from "../i18n";
 
-function org(parcial: Partial<OrgNaLista> & Pick<OrgNaLista, "id" | "name" | "slug">): OrgNaLista {
+function org(parcial: Partial<OrgInList> & Pick<OrgInList, "id" | "name" | "slug">): OrgInList {
     return {
         status: "active",
         version: 3,
@@ -77,7 +77,7 @@ function EdicaoPendente() {
 function montar(inicial = "/orgs", opcoes: { sujo?: boolean } = {}) {
     return render(
         <MemoryRouter initialEntries={[inicial]}>
-            <SessaoProvider>
+            <SessionProvider>
                 <GuardaAlteracoesProvider>
                     {opcoes.sujo ? <EdicaoPendente /> : null}
                     <Routes>
@@ -85,7 +85,7 @@ function montar(inicial = "/orgs", opcoes: { sujo?: boolean } = {}) {
                         <Route path="/orgs/:orgId" element={<Destino />} />
                     </Routes>
                 </GuardaAlteracoesProvider>
-            </SessaoProvider>
+            </SessionProvider>
         </MemoryRouter>,
     );
 }
@@ -120,7 +120,7 @@ const MATRIX_CONECTADO = {
 
 /** Servidor com a lista e as consultas que a gaveta faz ao abrir (agentes e Matrix). */
 function servidorCom(items: Org[]) {
-    const servidor = new ServidorFalso();
+    const servidor = new FakeServer();
     // A rota mais específica vem primeiro: o roteador falso casa por `includes`, em ordem.
     servidor
         .responder("GET", "/agents", () => ({
@@ -325,7 +325,7 @@ describe("Orgs", () => {
         const usuario = userEvent.setup();
         prepararSessao("pophg_teste", "global", [ATIVA, INATIVA]);
         let reativada = false;
-        const servidor = new ServidorFalso();
+        const servidor = new FakeServer();
         // A lista reflete o PATCH: depois de reativar, a org volta ativa (como a instância faria).
         servidor
             .responder("GET", "/admin/v1/orgs", () => ({
@@ -402,7 +402,7 @@ describe("Orgs", () => {
 
     it("mostra o estado de erro com tentativa de novo quando a API falha", async () => {
         prepararSessao("pophg_teste", "global", []);
-        new ServidorFalso()
+        new FakeServer()
             .responder("GET", "/admin/v1/orgs", {
                 status: 500,
                 corpo: { code: "internal", message: "falha inesperada", details: null },
@@ -533,7 +533,7 @@ describe("Orgs", () => {
     it("falha na consulta de agentes aparece só na linha de Agentes", async () => {
         const usuario = userEvent.setup();
         prepararSessao("pophg_teste", "global", [ATIVA]);
-        const servidor = new ServidorFalso();
+        const servidor = new FakeServer();
         servidor
             .responder("GET", "/agents", {
                 status: 500,
@@ -629,8 +629,8 @@ describe("Orgs", () => {
 
 describe("Orgs · layout da prancha 01 (CF-03b)", () => {
     /** Servidor com a listagem do cluster, o estado dos nós e a saúde/métricas do nó local. */
-    function servidorDoCluster(items: OrgNaLista[], instancias: InstanciaDaLista[] | null) {
-        const servidor = new ServidorFalso();
+    function servidorDoCluster(items: OrgInList[], instancias: ListInstance[] | null) {
+        const servidor = new FakeServer();
         servidor
             .responder("GET", "/agents", () => ({ status: 200, corpo: { items: [AGENTE], next_cursor: null } }))
             .responder("GET", "/backup", {

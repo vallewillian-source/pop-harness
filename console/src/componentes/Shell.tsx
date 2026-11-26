@@ -11,7 +11,7 @@ import { useLocation } from "react-router-dom";
 import { IconClose, SofaAdminShell, SofaModal } from "@sofacoding/sofa-ui";
 import "../estilos/casca.css";
 import { useI18n } from "../i18n";
-import { useSessao } from "../sessao/Sessao";
+import { useSession } from "../session/Session";
 import { Rail } from "./Rail";
 import { Topbar } from "./Topbar";
 import { useOrgAgents } from "./totalDeAgentes";
@@ -19,7 +19,7 @@ import { useOrgAgents } from "./totalDeAgentes";
 /** Casca com barra superior e menu; o conteúdo da rota entra em `children`. */
 export function Shell({ children }: { children: ReactNode }) {
     const { translate } = useI18n();
-    const { sessao } = useSessao();
+    const { sessao } = useSession();
     const { pathname } = useLocation();
     const [atalhos, setAtalhos] = useState(false);
     const [railCompacta, setRailCompacta] = useState(false);

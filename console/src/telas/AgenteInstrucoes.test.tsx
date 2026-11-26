@@ -12,8 +12,8 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { GuardaAlteracoesProvider } from "../componentes/GuardaAlteracoes";
-import { esperarFocoDoModal } from "../testes/modal";
-import { ServidorFalso, erroApi } from "../testes/servidor";
+import { waitForModalFocus } from "../testing/modal";
+import { FakeServer, apiError } from "../testing/server";
 import { AgenteInstrucoes } from "./AgenteInstrucoes";
 import { setLocale } from "../i18n";
 
@@ -110,7 +110,7 @@ function montar() {
 
 /** Servidor com as rotas da tela, na ordem em que o `ServidorFalso` casa (mais específica antes). */
 function servidorCom(instrucoesAtuais: unknown = instrucoes()) {
-    return new ServidorFalso()
+    return new FakeServer()
         .responder("GET", `/agents/${AGENTE}/instructions/current`, {
             status: 200,
             corpo: instrucoesAtuais,
@@ -139,7 +139,7 @@ describe("AgenteInstrucoes", () => {
 
     it("salva com o If-Match da versão lida e atualiza a prévia com o texto recomposto", async () => {
         const usuario = userEvent.setup();
-        const servidor = new ServidorFalso()
+        const servidor = new FakeServer()
             .responder("GET", `/agents/${AGENTE}/instructions/current`, {
                 status: 200,
                 corpo: instrucoes(),
@@ -178,7 +178,7 @@ describe("AgenteInstrucoes", () => {
         const usuario = userEvent.setup();
         // A releitura depois do 412 devolve a versão 3, como se outra pessoa tivesse salvado.
         let versaoAtual = 2;
-        new ServidorFalso()
+        new FakeServer()
             .responder("GET", `/agents/${AGENTE}/instructions/current`, () => ({
                 status: 200,
                 corpo:
@@ -196,7 +196,7 @@ describe("AgenteInstrucoes", () => {
             })
             .responder("PATCH", `/agents/${AGENTE}/instructions/current`, () => {
                 versaoAtual = 3;
-                return erroApi(412, "version_conflict", "versão desatualizada", {
+                return apiError(412, "version_conflict", "versão desatualizada", {
                     expected_version: 2,
                     current_version: 3,
                 });
@@ -234,11 +234,11 @@ describe("AgenteInstrucoes", () => {
 
     it("cria as instruções quando o agente ainda não tem nenhuma", async () => {
         const usuario = userEvent.setup();
-        const servidor = new ServidorFalso()
+        const servidor = new FakeServer()
             .responder(
                 "GET",
                 `/agents/${AGENTE}/instructions/current`,
-                erroApi(404, "not_found", "instruções não encontradas"),
+                apiError(404, "not_found", "instruções não encontradas"),
             )
             .responder("GET", `/agents/${AGENTE}`, { status: 200, corpo: agente() })
             .responder("GET", `/admin/v1/orgs/${ORG}`, {
@@ -267,7 +267,7 @@ describe("AgenteInstrucoes", () => {
 
     it("erro de validação da API volta na seção de ferramentas, com o motivo real", async () => {
         const usuario = userEvent.setup();
-        const servidor = new ServidorFalso()
+        const servidor = new FakeServer()
             .responder("GET", `/agents/${AGENTE}/instructions/current`, {
                 status: 200,
                 corpo: instrucoes(),
@@ -280,7 +280,7 @@ describe("AgenteInstrucoes", () => {
             .responder(
                 "PATCH",
                 `/agents/${AGENTE}/instructions/current`,
-                erroApi(400, "validation_error", "campo `structured` inválido", {
+                apiError(400, "validation_error", "campo `structured` inválido", {
                     field: "structured",
                     reason: "`search_knowledge_base` não é ferramenta da V1",
                 }),
@@ -314,14 +314,14 @@ describe("AgenteInstrucoes", () => {
         // Nada navegou ainda.
         expect(screen.queryByText("Tela de agentes")).toBeNull();
 
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         await usuario.click(within(dialogo).getByRole("button", { name: "Cancelar" }));
         expect(screen.queryByRole("dialog", { name: "Alterações não salvas" })).toBeNull();
         expect(screen.getByDisplayValue("Beatriz Lima")).toBeInTheDocument();
 
         await usuario.click(screen.getByRole("link", { name: "Agentes" }));
         const segundo = await screen.findByRole("dialog", { name: "Alterações não salvas" });
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         await usuario.click(within(segundo).getByRole("button", { name: "Descartar alterações" }));
 
         expect(await screen.findByText("Tela de agentes")).toBeInTheDocument();

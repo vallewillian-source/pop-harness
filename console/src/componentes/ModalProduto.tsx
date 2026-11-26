@@ -27,21 +27,21 @@ import {
     SofaTextarea,
     type SofaFieldControlProps,
 } from "@sofacoding/sofa-ui";
-import { ErroApi } from "../api/cliente";
-import type { Categoria } from "../api/estrutura";
+import { ApiError } from "../api/client";
+import type { Category } from "../api/structure";
 import { useI18n } from "../i18n";
 import {
-    atualizarProduto,
-    criarProduto,
-    obterProduto,
-    type MudancaProduto,
-    type Produto,
-    type SituacaoProduto,
-} from "../api/produtos";
+    updateProduct,
+    createProduct,
+    getProduct,
+    type ProductChange,
+    type Product,
+    type ProductStatus,
+} from "../api/products";
 
 export const LIMITE_NOME_PRODUTO = 160;
 
-const SITUACOES: { valor: SituacaoProduto; chave: "products.statusActive" | "products.statusInactive" | "products.statusArchived" }[] = [
+const SITUACOES: { valor: ProductStatus; chave: "products.statusActive" | "products.statusInactive" | "products.statusArchived" }[] = [
     { valor: "active", chave: "products.statusActive" },
     { valor: "inactive", chave: "products.statusInactive" },
     { valor: "archived", chave: "products.statusArchived" },
@@ -136,11 +136,11 @@ export type ModalProdutoProps = {
     aberto: boolean;
     aoFechar: () => void;
     /** Produto em edição; `null` cria um novo. */
-    produto: Produto | null;
+    produto: Product | null;
     /** Categorias da org para escolher; sem categoria não há como criar produto. */
-    categorias: Categoria[];
+    categorias: Category[];
     /** Chamado com o produto devolvido pela API (criado ou alterado). */
-    aoSalvar: (produto: Produto) => void;
+    aoSalvar: (produto: Product) => void;
 };
 
 export function ModalProduto({
@@ -162,14 +162,14 @@ export function ModalProduto({
     /** O operador mexeu no campo "Preço como o cliente vê"? Sem isso, o texto não vai no corpo. */
     const [textoMexido, setTextoMexido] = useState(false);
     /** Produto contra o qual a tela compara o preço digitado (o 412 troca pelo valor atual). */
-    const [base, setBase] = useState<Produto | null>(produto);
+    const [base, setBase] = useState<Product | null>(produto);
     const [unidade, setUnidade] = useState("");
     const [descricao, setDescricao] = useState("");
     const [inclui, setInclui] = useState("");
     const [exclui, setExclui] = useState("");
     const [condicoes, setCondicoes] = useState("");
     const [etiquetas, setEtiquetas] = useState("");
-    const [situacao, setSituacao] = useState<SituacaoProduto>("active");
+    const [situacao, setSituacao] = useState<ProductStatus>("active");
     const [versao, setVersao] = useState(0);
     const [erros, setErros] = useState<Erros>({});
     const [erroGeral, setErroGeral] = useState<string | null>(null);
@@ -246,7 +246,7 @@ export function ModalProduto({
     }
 
     /** Põe o erro da API no campo que ele aponta; o que não tem campo vai para o aviso geral. */
-    function mostrarErroDaApi(falha: ErroApi) {
+    function mostrarErroDaApi(falha: ApiError) {
         const detalhes = falha.detalhes as Record<string, unknown> | null | undefined;
         const campo = typeof detalhes?.["field"] === "string" ? detalhes["field"] : undefined;
         const motivo =
@@ -284,7 +284,7 @@ export function ModalProduto({
         setEnviando(true);
         try {
             if (!produto) {
-                const criado = await criarProduto(org, {
+                const criado = await createProduct(org, {
                     ...comum,
                     price_text: textoEnvio ?? "",
                     slug: slug.trim() || undefined,
@@ -295,24 +295,24 @@ export function ModalProduto({
             }
 
             // O slug só vai no corpo se o operador mexeu nele: o original é válido e não precisa voltar.
-            const mudanca: MudancaProduto = { ...comum, status: situacao };
+            const mudanca: ProductChange = { ...comum, status: situacao };
             if (textoEnvio !== undefined) {
                 mudanca.price_text = textoEnvio;
             }
             if (slug.trim() !== produto.slug) {
                 mudanca.slug = slug.trim();
             }
-            const alterado = await atualizarProduto(org, produto.id, versao, mudanca);
+            const alterado = await updateProduct(org, produto.id, versao, mudanca);
             aoSalvar(alterado);
             aoFechar();
         } catch (falha) {
-            if (falha instanceof ErroApi && falha.status === 412 && produto) {
+            if (falha instanceof ApiError && falha.status === 412 && produto) {
                 // Relê para continuar de uma versão válida; o que foi digitado não é tocado.
                 // A releitura também vira a referência do preço: o valor que o operador digitou
                 // é comparado com o que está gravado agora, não com o de quando ele abriu a tela.
                 let versaoAtual: number | undefined;
                 try {
-                    const atual = await obterProduto(org, produto.id);
+                    const atual = await getProduct(org, produto.id);
                     versaoAtual = atual.version;
                     setBase(atual);
                 } catch {
@@ -326,7 +326,7 @@ export function ModalProduto({
                 setConflito(translate("products.conflictMessage", { version: versionText }));
                 return;
             }
-            if (falha instanceof ErroApi) {
+            if (falha instanceof ApiError) {
                 mostrarErroDaApi(falha);
                 return;
             }
@@ -628,7 +628,7 @@ export function ModalProduto({
                                 {...semDescribedBy(controle)}
                                 value={situacao}
                                 onChange={(evento) =>
-                                    setSituacao(evento.target.value as SituacaoProduto)
+                                    setSituacao(evento.target.value as ProductStatus)
                                 }
                             >
                                 {SITUACOES.map((opcao) => (

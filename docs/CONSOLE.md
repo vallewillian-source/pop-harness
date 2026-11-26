@@ -315,7 +315,7 @@ contagem e `force=true`, desvinculação, reindexação com relatório, o `503` 
 dois vazios (grupo sem trechos e org sem grupos) e o erro de carga com "tentar de novo".
 Total do Console: 49 testes.
 
-O helper `testes/modal.ts` passou a esperar o **estado** (diálogo aberto e foco dentro dele) em vez
+O helper `testing/modal.ts` passou a esperar o **estado** (diálogo aberto e foco dentro dele) em vez
 de 30 ms fixos: sob carga, o foco inicial do `FloatingFocusManager` atrasava e a digitação se perdia
 num campo ainda não focado — o teste `DialogoExclusao` reprovava de vez em quando sem haver defeito
 no produto (medido: 1 falha em 8 execuções da suíte antes; 0 em 6 execuções com 12 processos de CPU
@@ -324,7 +324,7 @@ mesmo motivo: dois testes que abriam banco no mesmo instante dividiam a pasta e 
 com "database is locked".
 
 O teto de espera das buscas assíncronas (`findBy*`/`waitFor`) subiu de 1 s para 5 s em
-`testes/preparo.ts`: as telas encadeiam buscas (agente → organização → grupos → detalhe do grupo →
+`testing/setup.ts`: as telas encadeiam buscas (agente → organização → grupos → detalhe do grupo →
 trechos) e, com a suíte inteira em paralelo e a máquina ocupada, 1 s estourava às vezes — foi o que
 o CI de outro agente viu uma vez em `AgenteConhecimento.test.tsx`. Eu não consegui reproduzir: 15
 execuções seguidas da suíte passaram (3 ociosas, 5 com 12 núcleos ocupados, 6 com 24 processos),
@@ -986,14 +986,14 @@ arquivo no rótulo (por exemplo "Ver laudo.png" e "Baixar laudo.png"):
   visualizador do navegador. Trocar de conversa fecha a prévia aberta e não deixa resposta de download
   antiga aparecer na conversa nova.
 
-**Arquivos.** `console/src/api/arquivoTeste.ts` (caminho, nome do cabeçalho e prévia),
+**Arquivos.** `console/src/api/testFile.ts` (caminho, nome do cabeçalho e prévia),
 `console/src/componentes/PreviaArquivoTeste.tsx` (a prévia) e `console/src/telas/AgenteChatTeste.tsx`
-(botões e liberação). Em `console/src/api/cliente.ts`, `pedirBytes` faz o `fetch` com o token e devolve
+(botões e liberação). Em `console/src/api/client.ts`, `requestBytes` faz o `fetch` com o token e devolve
 os bytes.
 
 **Provas da HR-46c.**
 
-- Testes do Console: `api/arquivoTeste.test.ts` (9) e 8 casos novos em `telas/AgenteChatTeste.test.tsx`
+- Testes do Console: `api/testFile.test.ts` (9) e 8 casos novos em `telas/AgenteChatTeste.test.tsx`
   (ver, baixar com nome do cabeçalho, 403 e 404 com "Tentar de novo", `Esc` e foco, resposta que chega
   depois de fechar a prévia, troca de conversa soltando a URL, sair da tela soltando a URL).
 - Navegador (Chrome do sistema, Playwright, servidor `poph serve` real, banco de teste): 19 de 19
@@ -1038,13 +1038,13 @@ cliente, com o nome, o tamanho e o estado do envio:
   acontece quando o arquivo saiu da biblioteca ou o conteúdo sumiu do disco; a conversa continua na tela e
   nada do conteúdo ou do caminho aparece em console ou mensagem.
 
-**Arquivos.** `console/src/api/arquivoTeste.ts` (origem do arquivo do cliente e do agente, rótulo do
+**Arquivos.** `console/src/api/testFile.ts` (origem do arquivo do cliente e do agente, rótulo do
 estado e download), `console/src/telas/AgenteChatTeste.tsx` (lista do agente no turno e no turno sem
-resposta). Os tipos de `files_out` estão em `console/src/api/testeChat.ts`.
+resposta). Os tipos de `files_out` estão em `console/src/api/testChat.ts`.
 
 **Provas da HR-46e.**
 
-- Testes do Console: `api/arquivoTeste.test.ts` ganhou casos de caminho, origem e rótulo do estado; e
+- Testes do Console: `api/testFile.test.ts` ganhou casos de caminho, origem e rótulo do estado; e
   `telas/AgenteChatTeste.test.tsx` ganhou 6 casos do arquivo do agente (baixar com o token e o nome do
   cabeçalho; imagem em prévia com "enviada pelo agente"; envio que falhou rotulado num turno sem texto;
   turno sem arquivos sem lista; 404 com "Tentar de novo" sem derrubar a conversa; troca de conversa
@@ -1079,11 +1079,11 @@ resposta). Os tipos de `files_out` estão em `console/src/api/testeChat.ts`.
   resposta da IA nessa situação, não é alterado.
 - A lista carrega a primeira página de 50 conversas; as demais entram com "Carregar mais".
 
-**Arquivos.** `console/src/api/testeChat.ts` (contrato da aba, leitor do fluxo e `pedirFluxo`),
+**Arquivos.** `console/src/api/testChat.ts` (contrato da aba, leitor do fluxo e `requestFlow`),
 `console/src/telas/AgenteChatTeste.tsx` (tela), `console/src/estilos/chat-teste.css`. Ajustes pontuais:
-`console/src/api/cliente.ts` (`pedirFluxo` e a tradução de erro compartilhada com `pedir`),
+`console/src/api/client.ts` (`requestFlow` e a tradução de erro compartilhada com `request`),
 `console/src/App.tsx` (rota), `console/src/componentes/AbasDoAgente.tsx` (aba), `navegacao.ts` (item do
-menu), `Trilha.tsx` (migalha). Testes: `api/testeChat.test.ts` (6) e `telas/AgenteChatTeste.test.tsx`
+menu), `Trilha.tsx` (migalha). Testes: `api/testChat.test.ts` (6) e `telas/AgenteChatTeste.test.tsx`
 (14); os de navegação e de abas (`navegacao.test.tsx`, `Agentes.test.tsx`) foram ajustados para a aba e o
 item novos.
 
@@ -1174,7 +1174,7 @@ de corte por trecho; o link para a fonte oficial; e o custo (o turno não calcul
 
 **Provas.**
 
-- Testes de camada de leitura (`api/porQue.test.ts`, 21), de componente do painel
+- Testes de camada de leitura (`api/turnWhy.test.ts`, 21), de componente do painel
   (`componentes/PainelPorQue.test.tsx`, 17) e da página com o "por quê" (`telas/AgenteChatTestePorQue.test.tsx`,
   5). Suíte do Console: 322 testes em 28 arquivos, todos verdes (`console/scripts/testar.sh`).
 - Mutações, com o arquivo restaurado e conferido com `cmp`: fazer aparecer "0 ms" quando o tempo não foi
@@ -1273,13 +1273,13 @@ bem-sucedida.
 - **Forçar nova leitura do manifesto:** nenhuma rota; reiniciar o servidor é o caminho (ver limites).
 - **Latência por etapa do turno:** é um histograma no `/metrics`; a tela ainda não desenha.
 
-**Testes de componente.** `console/src/api/operacao.test.ts` (leitura do `/metrics` em texto, `200` e `503` do
+**Testes de componente.** `console/src/api/operation.test.ts` (leitura do `/metrics` em texto, `200` e `503` do
 `/healthz`, erro de conexão, `500`; e a lista de plugins: ordem, plugin indisponível com e sem mensagem, item sem
 tipo descartado, lista vazia, `403`) e `console/src/telas/Operacao.test.tsx` (saúde OK e degradada, erro de uma
 seção sem derrubar a outra, "Tentar de novo" refazendo a consulta, métricas vazias sem zero inventado, botão
 Atualizar, atualização automática a cada 15 s só com a aba visível, lista com um no ar e um indisponível sem botão
 de detalhe, lista vazia, carregando, `403` na lista com "Tentar de novo" que recupera, detalhe aberto pela linha,
-detalhe com `503`). O fetch falso (`ServidorFalso`) ganhou resposta em texto puro para o `/metrics`.
+detalhe com `503`). O fetch falso (`FakeServer`) ganhou resposta em texto puro para o `/metrics`.
 
 **Provas (HR-48a).**
 
@@ -1507,6 +1507,49 @@ o foco. Carga e resultado são anunciados (região de status); erro é anunciado
   e importar" → relatório e o nome voltou ao do arquivo. Nenhuma resposta 5xx. Capturas em
   `/tmp/hr48e4-run/shots/` (`01-exportar-1280.png`, `02-recusa-1280.png`, `02-recusa-1024.png`,
   `03-relatorio-1280.png`, `03-relatorio-1024.png`).
+
+## Regras da camada de API, sessão e testes
+
+Regras que antes estavam nos comentários de `console/src/api`, `console/src/session`, `console/src/i18n`, `console/src/App.tsx` e `console/src/testing`. Valem para quem muda essas camadas.
+
+**Contrato e transporte**
+- Os tipos das rotas vêm do OpenAPI gerado (`console/src/api/schema.d.ts`, por `console/gen-api.sh`). Os tipos escritos à mão espelham só o que a tela lê; respostas que o contrato publica como `unknown` são lidas com checagem campo a campo.
+- Todo erro da API vira `ApiError` (status, código estável, mensagem e detalhes). Quem decide o que o operador vê é o código, nunca o texto da mensagem.
+- Um `401` numa sessão aberta dispara o aviso de expiração uma vez e volta ao login. Chamadas que validam um token recém-digitado desligam esse efeito, para o erro aparecer na tela de login.
+- Download de arquivo não usa `<img src>` nem `<a href>`: a rota exige o cabeçalho `Authorization`. Os bytes saem por `fetch` com o token. Prévia de imagem vai como `data:` porque a CSP libera `img-src 'self' data:`, não `blob:`.
+- Fluxo de eventos do chat de teste: um quadro partido entre dois pedaços de rede espera a linha em branco que o fecha; comentários e `ping` não viram evento do turno; abortar a leitura encerra o turno no servidor.
+
+**Concorrência e exclusão**
+- Alteração usa `If-Match` com a versão lida antes. `412` quer dizer que outra pessoa salvou primeiro: quem chama relê e mantém o que o operador digitou. Sem o cabeçalho, o servidor responde `428`.
+- `force` confirma a exclusão de algo com conteúdo (organização, categoria, produto). Sem ele a API responde `409` e a tela mostra a mensagem como veio. A exclusão de grupo de conhecimento exige `force=true` sempre.
+- Criação com descrição ou slug vazio não envia o campo; o servidor deriva o slug do nome.
+
+**Listagens e paginação**
+- As listagens paginam por cursor. Algumas rotas recusam `limit` (produtos e categorias em rotas específicas): nesses casos a tela pagina sem ele.
+- A primeira página das listas simples tem teto de 200 itens; a tela ainda não pagina essas listas.
+
+**Sessão e idioma**
+- O token vive na memória da aba e no `sessionStorage`; nunca vai para o `localStorage`. Fechar a aba encerra a sessão.
+- O prefixo do token diz o escopo: `pophg_` é global e `poph_` é de organização. Sem prefixo reconhecido, o escopo vem da resposta: uma organização só significa token de organização.
+- A última organização aberta vai na URL; a rota `/login` fica fora da casca autenticada e `/orgs/:orgId/agents/:agentId` abre a aba de Instruções.
+- O idioma fica no `localStorage` (chave `poph-console.locale`), com padrão `pt-BR`. Texto que vem do servidor não é traduzido.
+- Na entrada, a ordem do CSS importa: os estilos da SofaUI vêm primeiro e o CSS do app depois.
+
+**Regras por tela**
+- Backup: `409 importacao_sobrescreve` não grava nada; a tela mostra o que seria atualizado e oferece autorizar. Nomes de tabela técnicos ganham nome de operador só para as tabelas conhecidas.
+- Integrações: o segredo nunca sai da API (só se sabe se existe e quais nomes foram preenchidos). Os estados de conexão da Evolution (`open`, `connecting`, `close`) viram `connected`, `awaiting_scan` e `disconnected`. Sem QR a mostrar, a resposta traz `qrcode: null`.
+- Instruções: o formato gravado é o estruturado; o servidor compõe o markdown. Nome de ferramenta fora da lista da V1 é recusado (400). A normalização descarta chaves desconhecidas, porque o contrato é fechado.
+- Modelo e Jev: a gravação passa só pelo `PATCH` do agente com `If-Match`. O `jev_json` preserva as chaves que a tela não edita. Os gates de fábrica G3, G5 e G8 ficam ligados; a configuração do servidor pode mudar isso e a tela não a lê. Interruptor desligado (`ativo: false`) deixa todos os gates sem efeito. Temperatura e máximo de saída vazios herdam o padrão do servidor quando o agente ainda não tem valor.
+- Roteamento: `motivo-N` aponta a linha da lista (N começa em 0). Chaves do `jev_json` fora de `situacoes_de_handoff` voltam como foram lidas.
+- Por quê do turno: lê só o que o turno gravou; campo ausente vira `null` ou lista vazia, nunca número inventado. Custo zero não é custo medido: o turno ainda não calcula custo.
+- Matrix: repetir a criação de espaço não cria um segundo; desligar não apaga nada no Element.
+- Operação: `/healthz` com `503` e corpo quer dizer servidor no ar com banco com problema. A recarga do mapa de cluster exige token global; token de organização recebe `403`.
+
+**Testes**
+- A limpeza do DOM entre testes é explícita (`testing/setup.ts`), porque os globais do Vitest ficam desligados.
+- O teto de espera das buscas assíncronas é 5 s, porque as telas encadeiam buscas e a suíte roda em paralelo.
+- `scrollIntoView` não existe no jsdom; o setup o troca por um no-op.
+- O helper `testing/modal.ts` espera o estado do diálogo (aberto e com o foco dentro dele), não um tempo fixo.
 
 ## Cliente do OpenAPI
 

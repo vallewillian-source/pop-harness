@@ -34,20 +34,20 @@ import {
     SofaModal,
     type SofaFieldControlProps,
 } from "@sofacoding/sofa-ui";
-import { ErroApi } from "../api/cliente";
+import { ApiError } from "../api/client";
 import {
-    desconectarWhatsapp,
-    explicarFalhaDoWhatsapp,
-    fonteDoQr,
-    gerarQrDoWhatsapp,
-    lerEstadoDoWhatsapp,
-    obterIntegracao,
-    rotuloDaConexao,
-    type EstadoDoWhatsapp,
-    type FalhaDoWhatsapp,
+    disconnectWhatsapp,
+    explainWhatsappFailure,
+    qrSource,
+    generateWhatsappQr,
+    readWhatsappState,
+    getIntegration,
+    connectionLabel,
+    type WhatsappState,
+    type WhatsappFailure,
     type Integracao,
     type QrDoWhatsapp,
-} from "../api/integracoes";
+} from "../api/integrations";
 import { useI18n } from "../i18n";
 import "../estilos/whatsapp.css";
 
@@ -96,12 +96,12 @@ export function PainelWhatsApp({
 }: PainelWhatsAppProps) {
     const { translate: t } = useI18n();
     const [qr, setQr] = useState<QrDoWhatsapp | null>(null);
-    const [estadoAoVivo, setEstadoAoVivo] = useState<EstadoDoWhatsapp | null>(null);
+    const [estadoAoVivo, setEstadoAoVivo] = useState<WhatsappState | null>(null);
     const [carregandoQr, setCarregandoQr] = useState(false);
     const [consultando, setConsultando] = useState(false);
     const [desconectando, setDesconectando] = useState(false);
     const [confirmandoDesconexao, setConfirmandoDesconexao] = useState(false);
-    const [falha, setFalha] = useState<FalhaDoWhatsapp | null>(null);
+    const [falha, setFalha] = useState<WhatsappFailure | null>(null);
     const [aviso, setAviso] = useState<string | null>(null);
     const [lacoAtivo, setLacoAtivo] = useState(false);
     const [numero, setNumero] = useState("");
@@ -121,7 +121,7 @@ export function PainelWhatsApp({
     /** No `412`, relê a integração, adota a versão atual e mantém o painel usável. */
     const relerDepoisDoConflito = useCallback(async () => {
         try {
-            const atual = await obterIntegracao(org, agente, id);
+            const atual = await getIntegration(org, agente, id);
             aoAtualizarIntegracao(atual);
             setFalha({
                 texto: t("integrations.whatsappConflictText", { version: atual.version }),
@@ -147,7 +147,7 @@ export function PainelWhatsApp({
         setFalha(null);
         setAviso(null);
         try {
-            const resposta = await gerarQrDoWhatsapp(
+            const resposta = await generateWhatsappQr(
                 org,
                 agente,
                 id,
@@ -177,10 +177,10 @@ export function PainelWhatsApp({
             }
         } catch (erro) {
             setLacoAtivo(false);
-            if (erro instanceof ErroApi && erro.status === 412) {
+            if (erro instanceof ApiError && erro.status === 412) {
                 await relerDepoisDoConflito();
             } else {
-                setFalha(explicarFalhaDoWhatsapp(erro));
+                setFalha(explainWhatsappFailure(erro));
             }
         } finally {
             setCarregandoQr(false);
@@ -191,7 +191,7 @@ export function PainelWhatsApp({
         setConsultando(true);
         setFalha(null);
         try {
-            const resposta = await lerEstadoDoWhatsapp(org, agente, id);
+            const resposta = await readWhatsappState(org, agente, id);
             setEstadoAoVivo(resposta);
             aoAtualizarIntegracao({
                 ...integracaoRef.current,
@@ -201,12 +201,12 @@ export function PainelWhatsApp({
             if (resposta.connection_state !== "awaiting_scan") setQr(null);
             setAviso(
                 t("integrations.whatsappLiveStateNotice", {
-                    state: rotuloDaConexao(resposta.connection_state).toLowerCase(),
+                    state: connectionLabel(resposta.connection_state).toLowerCase(),
                 }),
             );
             return resposta;
         } catch (erro) {
-            setFalha(explicarFalhaDoWhatsapp(erro));
+            setFalha(explainWhatsappFailure(erro));
             return null;
         } finally {
             setConsultando(false);
@@ -226,7 +226,7 @@ export function PainelWhatsApp({
                 setAviso(t("integrations.whatsappPollingStoppedNotice"));
                 return;
             }
-            void lerEstadoDoWhatsapp(org, agente, id)
+            void readWhatsappState(org, agente, id)
                 .then((resposta) => {
                     if (!vivo) return;
                     setEstadoAoVivo(resposta);
@@ -241,7 +241,7 @@ export function PainelWhatsApp({
                             resposta.connection_state === "connected"
                                 ? t("integrations.whatsappConnectedNotice")
                                 : t("integrations.whatsappLiveStateNotice", {
-                                      state: rotuloDaConexao(resposta.connection_state).toLowerCase(),
+                                      state: connectionLabel(resposta.connection_state).toLowerCase(),
                                   }),
                         );
                     }
@@ -249,7 +249,7 @@ export function PainelWhatsApp({
                 .catch((erro) => {
                     if (!vivo) return;
                     setLacoAtivo(false);
-                    setFalha(explicarFalhaDoWhatsapp(erro));
+                    setFalha(explainWhatsappFailure(erro));
                 });
         }, INTERVALO_DE_CONSULTA_MS);
         return () => {
@@ -264,7 +264,7 @@ export function PainelWhatsApp({
         setFalha(null);
         setAviso(null);
         try {
-            const resposta = await desconectarWhatsapp(org, agente, id, versao);
+            const resposta = await disconnectWhatsapp(org, agente, id, versao);
             setLacoAtivo(false);
             setQr(null);
             setEstadoAoVivo({
@@ -278,10 +278,10 @@ export function PainelWhatsApp({
             });
             setAviso(t("integrations.whatsappDisconnectedNotice"));
         } catch (erro) {
-            if (erro instanceof ErroApi && erro.status === 412) {
+            if (erro instanceof ApiError && erro.status === 412) {
                 await relerDepoisDoConflito();
             } else {
-                setFalha(explicarFalhaDoWhatsapp(erro));
+                setFalha(explainWhatsappFailure(erro));
             }
         } finally {
             setDesconectando(false);
@@ -297,7 +297,7 @@ export function PainelWhatsApp({
                 <span className="poph-mono-mudo">{id}</span>
                 <span className={`poph-status ${classeDaConexao(estado)}`}>
                     <span className="poph-status__ponto" aria-hidden="true" />
-                    {rotuloDaConexao(estado)}
+                    {connectionLabel(estado)}
                 </span>
                 <span className="poph-mono-mudo">
                     {integracao.tem_segredo
@@ -392,7 +392,7 @@ export function PainelWhatsApp({
                 <div className="poph-whatsapp__qr-bloco">
                     <img
                         className="poph-whatsapp__qr-imagem"
-                        src={fonteDoQr(base64)}
+                        src={qrSource(base64)}
                         alt={t("integrations.whatsappQrAlt")}
                         width={220}
                         height={220}

@@ -35,23 +35,23 @@ import {
     type SofaFieldControlProps,
     type SofaStatusTone,
 } from "@sofacoding/sofa-ui";
-import { ErroApi } from "../api/cliente";
+import { ApiError } from "../api/client";
 import {
     KIND_WHATSAPP,
-    LIMITE_KIND,
-    SITUACOES_INTEGRACAO,
-    alterarIntegracao,
-    criarIntegracao,
-    obterIntegracao,
-    obterManifesto,
-    rotuloDaConexao,
-    semManifestoParaEsteTipo,
-    validarIntegracao,
-    type DadosDaIntegracao,
+    LIMIT_KIND,
+    INTEGRATION_STATUSES,
+    updateIntegration,
+    createIntegration,
+    getIntegration,
+    getManifest,
+    connectionLabel,
+    noManifestForType,
+    validateIntegration,
+    type IntegrationData,
     type Integracao,
-    type ManifestoDoPlugin,
-    type SituacaoIntegracao,
-} from "../api/integracoes";
+    type PluginManifest,
+    type IntegrationStatus,
+} from "../api/integrations";
 import {
     FormularioEsquema,
     camposDoEsquema,
@@ -124,7 +124,7 @@ function tomDaConexao(estado: string): SofaStatusTone {
 type EstadoDoManifesto =
     | { situacao: "ocioso" }
     | { situacao: "carregando" }
-    | { situacao: "pronto"; manifesto: ManifestoDoPlugin }
+    | { situacao: "pronto"; manifesto: PluginManifest }
     /** `404`: este tipo não tem plugin declarado, logo não tem formulário. */
     | { situacao: "sem_formulario" }
     /** `503` (ou falha de transporte): não há como configurar sem quebrar o contrato. */
@@ -142,7 +142,7 @@ const MANIFEST_TIP_KEYS: Record<string, TranslationKey> = {
  * que o operador deixou em branco.
  */
 export function configuracaoParaEnviar(
-    manifesto: ManifestoDoPlugin,
+    manifesto: PluginManifest,
     valores: ValoresDeEsquema,
     gravada: Record<string, unknown> | null | undefined,
 ): Record<string, unknown> {
@@ -188,7 +188,7 @@ export function ModalIntegracao({
     const { translate: t } = useI18n();
     const editando = integracao !== null;
     const [kind, setKind] = useState("");
-    const [situacao, setSituacao] = useState<SituacaoIntegracao>("active");
+    const [situacao, setSituacao] = useState<IntegrationStatus>("active");
     const [versao, setVersao] = useState(0);
     const [erros, setErros] = useState<Record<string, string>>({});
     const [erroGeral, setErroGeral] = useState<string | null>(null);
@@ -205,7 +205,7 @@ export function ModalIntegracao({
     useEffect(() => {
         if (!aberto) return;
         setKind(integracao?.kind ?? "");
-        setSituacao((integracao?.status as SituacaoIntegracao | undefined) ?? "active");
+        setSituacao((integracao?.status as IntegrationStatus | undefined) ?? "active");
         setVersao(integracao?.version ?? 0);
         setErros({});
         setErroGeral(null);
@@ -232,7 +232,7 @@ export function ModalIntegracao({
         const temporizador = setTimeout(
             () => {
                 setManifesto({ situacao: "carregando" });
-                obterManifesto(org, tipo)
+                getManifest(org, tipo)
                     .then((lido) => {
                         if (cancelado) return;
                         // Manifesto sem esquema de objeto não vira formulário: melhor dizer que a
@@ -265,11 +265,11 @@ export function ModalIntegracao({
                     })
                     .catch((falha: unknown) => {
                         if (cancelado) return;
-                        if (semManifestoParaEsteTipo(falha)) {
+                        if (noManifestForType(falha)) {
                             setManifesto({ situacao: "sem_formulario" });
                             return;
                         }
-                        if (falha instanceof ErroApi) {
+                        if (falha instanceof ApiError) {
                             setManifesto({
                                 situacao: "falha",
                                 mensagem: falha.message,
@@ -311,7 +311,7 @@ export function ModalIntegracao({
     }, [manifesto, tipoDosValores, editando, integracao, kind]);
 
     /** Põe o erro da API no campo que ele aponta; o resto vai para o aviso geral. */
-    function mostrarErroDaApi(falha: ErroApi) {
+    function mostrarErroDaApi(falha: ApiError) {
         const detalhes = falha.detalhes as Record<string, unknown> | null | undefined;
         const campo = typeof detalhes?.["field"] === "string" ? detalhes["field"] : undefined;
         const motivo =
@@ -332,7 +332,7 @@ export function ModalIntegracao({
 
     async function salvar(evento?: FormEvent) {
         evento?.preventDefault();
-        const novos = validarIntegracao({ kind, situacao, editando });
+        const novos = validateIntegration({ kind, situacao, editando });
 
         if (manifesto.situacao === "carregando") {
             setErroGeral(t("integrations.manifestLoadingSaveError"));
@@ -355,7 +355,7 @@ export function ModalIntegracao({
         setConflito(null);
         if (Object.keys(novos).length > 0) return;
 
-        const dados: DadosDaIntegracao = { status: situacao };
+        const dados: IntegrationData = { status: situacao };
         if (pronto) {
             dados.configuracao = configuracaoParaEnviar(
                 pronto,
@@ -373,12 +373,12 @@ export function ModalIntegracao({
         setEnviando(true);
         try {
             if (!integracao) {
-                const criada = await criarIntegracao(org, agente, kind.trim(), dados);
+                const criada = await createIntegration(org, agente, kind.trim(), dados);
                 aoSalvar(criada);
                 aoFechar();
                 return;
             }
-            const alterada = await alterarIntegracao(
+            const alterada = await updateIntegration(
                 org,
                 agente,
                 integracao.id,
@@ -388,10 +388,10 @@ export function ModalIntegracao({
             aoSalvar(alterada);
             aoFechar();
         } catch (falha) {
-            if (falha instanceof ErroApi && falha.status === 412 && integracao) {
+            if (falha instanceof ApiError && falha.status === 412 && integracao) {
                 let versaoAtual: number | undefined;
                 try {
-                    const atual = await obterIntegracao(org, agente, integracao.id);
+                    const atual = await getIntegration(org, agente, integracao.id);
                     versaoAtual = atual.version;
                     setSegredosPreenchidos(estadoInicialDosSegredos(atual));
                 } catch {
@@ -410,7 +410,7 @@ export function ModalIntegracao({
                 );
                 return;
             }
-            if (falha instanceof ErroApi) {
+            if (falha instanceof ApiError) {
                 mostrarErroDaApi(falha);
                 return;
             }
@@ -478,7 +478,7 @@ export function ModalIntegracao({
                     label={t("integrations.fieldKindLabel")}
                     hint={t("integrations.fieldKindHint", {
                         whatsapp: KIND_WHATSAPP,
-                        max: LIMITE_KIND,
+                        max: LIMIT_KIND,
                     })}
                     error={erros["kind"]}
                     required
@@ -502,7 +502,7 @@ export function ModalIntegracao({
                         </span>
                         <div>
                             <SofaStatusIndicator tone={tomDaConexao(integracao.connection_state)}>
-                                {rotuloDaConexao(integracao.connection_state)}
+                                {connectionLabel(integracao.connection_state)}
                             </SofaStatusIndicator>
                         </div>
                     </div>
@@ -573,10 +573,10 @@ export function ModalIntegracao({
                             {...semDescribedBy(controle)}
                             value={situacao}
                             onChange={(evento) =>
-                                setSituacao(evento.target.value as SituacaoIntegracao)
+                                setSituacao(evento.target.value as IntegrationStatus)
                             }
                         >
-                            {SITUACOES_INTEGRACAO.map((opcao) => (
+                            {INTEGRATION_STATUSES.map((opcao) => (
                                 <option key={opcao.valor} value={opcao.valor}>
                                     {opcao.rotulo}
                                 </option>

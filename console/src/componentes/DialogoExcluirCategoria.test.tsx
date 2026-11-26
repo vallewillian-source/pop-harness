@@ -9,8 +9,8 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { setLocale } from "../i18n";
 import { DialogoExcluirCategoria } from "./DialogoExcluirCategoria";
-import { esperarFocoDoModal } from "../testes/modal";
-import { ServidorFalso, erroApi } from "../testes/servidor";
+import { waitForModalFocus } from "../testing/modal";
+import { FakeServer, apiError } from "../testing/server";
 
 const ORG = "org_1";
 
@@ -49,7 +49,7 @@ function montar(aoExcluir = vi.fn(), aoFechar = vi.fn()) {
 function listaDeProdutos(produtos: Array<{ id: string; name: string; category_id: string }>) {
     return (chamada: { url: string }) => {
         if (chamada.url.includes("limit=")) {
-            return erroApi(400, "invalid_request", "parâmetros de paginação inválidos");
+            return apiError(400, "invalid_request", "parâmetros de paginação inválidos");
         }
         return { status: 200, corpo: { items: produtos, next_cursor: null } };
     };
@@ -66,7 +66,7 @@ function servidorComVinculos(usadoPor: Array<"ag_1" | "ag_2">, comProdutos: bool
         { id: "ag_1", name: "Atendente" },
         { id: "ag_2", name: "Triagem" },
     ];
-    return new ServidorFalso()
+    return new FakeServer()
         .responder("GET", "/products?all=true", listaDeProdutos(produtos))
         .responder("GET", "/agents?limit", {
             status: 200,
@@ -93,7 +93,7 @@ describe("DialogoExcluirCategoria", () => {
 
         montar(aoExcluir, aoFechar);
         const dialogo = await screen.findByRole("dialog", { name: "Excluir categoria?" });
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         expect(await within(dialogo).findByText(/Nenhum produto nem agente usa esta categoria/)).toBeInTheDocument();
         expect(within(dialogo).queryByRole("checkbox")).toBeNull();
@@ -113,7 +113,7 @@ describe("DialogoExcluirCategoria", () => {
         const servidor = servidorComVinculos(["ag_1"], true)
             .responder("DELETE", `/categories/cat_1`, (chamada) => {
                 if (chamada.url.includes("force=true")) return { status: 204 };
-                return erroApi(
+                return apiError(
                     409,
                     "conflict",
                     "a categoria tem 2 produto(s) e 1 agente(s) vinculados; excluir apaga os produtos dela e tira a categoria dos agentes. Para confirmar, repita com force=true",
@@ -124,7 +124,7 @@ describe("DialogoExcluirCategoria", () => {
 
         montar(aoExcluir);
         const dialogo = await screen.findByRole("dialog", { name: "Excluir categoria?" });
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         // Antes de confirmar, a consequência está escrita: produtos pelo nome e o agente que fica sem ela.
         expect(await within(dialogo).findByText(/Clareamento a laser, Clareamento caseiro/)).toBeInTheDocument();
@@ -161,10 +161,10 @@ describe("DialogoExcluirCategoria", () => {
 
 describe("DialogoExcluirCategoria · contagem dos produtos", () => {
     it("lê todas as páginas de produtos só com cursor, sem mandar limit, e conta as duas", async () => {
-        const servidor = new ServidorFalso()
+        const servidor = new FakeServer()
             .responder("GET", "/products?all=true", (chamada) => {
                 if (chamada.url.includes("limit=")) {
-                    return erroApi(400, "invalid_request", "parâmetros de paginação inválidos");
+                    return apiError(400, "invalid_request", "parâmetros de paginação inválidos");
                 }
                 if (chamada.url.includes("cursor=cur_1")) {
                     return {
@@ -215,7 +215,7 @@ describe("DialogoExcluirCategoria · contagem dos produtos", () => {
 
     it("renders consequences and force label in en-US", async () => {
         setLocale("en-US");
-        new ServidorFalso()
+        new FakeServer()
             .responder("GET", "/products?all=true", {
                 status: 200,
                 corpo: {

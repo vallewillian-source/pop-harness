@@ -1,12 +1,9 @@
-/**
- * Rotas do Console. A ordem é de propósito: `/login` fica fora da casca, tudo o mais exige sessão.
- */
 
 import { useEffect } from "react";
 import { Navigate, Outlet, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { GuardaAlteracoesProvider } from "./componentes/GuardaAlteracoes";
 import { Shell } from "./componentes/Shell";
-import { resolveDefaultOrgPath, useSessao, writeLastOrgId } from "./sessao/Sessao";
+import { resolveDefaultOrgPath, useSession, writeLastOrgId } from "./session/Session";
 import { AgenteConhecimento } from "./telas/AgenteConhecimento";
 import { AgenteArquivos } from "./telas/AgenteArquivos";
 import { AgenteChatTeste } from "./telas/AgenteChatTeste";
@@ -23,25 +20,20 @@ import { Produtos } from "./telas/Produtos";
 import { Operacao } from "./telas/Operacao";
 import { Matrix } from "./telas/Matrix";
 
-/**
- * Guarda a organização aberta na URL como a última do navegador, quando ela é uma das que o token
- * enxerga. Vive dentro da casca e não desenha nada.
- */
 function RememberLastOrg() {
-    const { sessao } = useSessao();
+    const { "sessao": session } = useSession();
     const { pathname } = useLocation();
     useEffect(() => {
         const [root, orgId] = pathname.split("/").filter(Boolean);
         if (root !== "orgs" || !orgId) return;
-        if (sessao?.orgs.some((org) => org.id === orgId)) writeLastOrgId(orgId);
-    }, [pathname, sessao]);
+        if (session?.orgs.some((org) => org.id === orgId)) writeLastOrgId(orgId);
+    }, [pathname, session]);
     return null;
 }
 
-/** Casca autenticada: sem sessão, volta para o login. A guarda de alterações vive dentro dela. */
 function Protegido() {
-    const { sessao } = useSessao();
-    if (!sessao) {
+    const { "sessao": session } = useSession();
+    if (!session) {
         return <Navigate to="/login" replace />;
     }
     return (
@@ -54,20 +46,17 @@ function Protegido() {
     );
 }
 
-/** Porta de entrada do Console: a última organização aberta, a primeira da sessão ou a lista. */
 function SessionHome() {
-    const { sessao } = useSessao();
-    return <Navigate to={resolveDefaultOrgPath(sessao?.orgs ?? [])} replace />;
+    const { "sessao": session } = useSession();
+    return <Navigate to={resolveDefaultOrgPath(session?.orgs ?? [])} replace />;
 }
 
-/** `/login` já autenticado não fica na tela de login. */
-function LoginOuEntrar() {
-    const { sessao } = useSessao();
-    return sessao ? <Navigate to={resolveDefaultOrgPath(sessao.orgs)} replace /> : <Login />;
+function LoginOrSignIn() {
+    const { "sessao": session } = useSession();
+    return session ? <Navigate to={resolveDefaultOrgPath(session.orgs)} replace /> : <Login />;
 }
 
-/** `/orgs/:orgId/agents/:agentId` abre a aba de Instruções (a primeira que existe). */
-function AgenteSemAba() {
+function AgentWithoutTab() {
     const { orgId = "", agentId = "" } = useParams();
     return <Navigate to={`/orgs/${orgId}/agents/${agentId}/instructions`} replace />;
 }
@@ -75,7 +64,7 @@ function AgenteSemAba() {
 export function App() {
     return (
         <Routes>
-            <Route path="/login" element={<LoginOuEntrar />} />
+            <Route path="/login" element={<LoginOrSignIn />} />
             <Route element={<Protegido />}>
                 <Route path="/" element={<SessionHome />} />
                 <Route path="/orgs" element={<Orgs />} />
@@ -85,7 +74,7 @@ export function App() {
                 <Route path="/orgs/:orgId/operacao" element={<Operacao />} />
                 <Route path="/orgs/:orgId/matrix" element={<Matrix />} />
                 <Route path="/orgs/:orgId/agents" element={<Agentes />} />
-                <Route path="/orgs/:orgId/agents/:agentId" element={<AgenteSemAba />} />
+                <Route path="/orgs/:orgId/agents/:agentId" element={<AgentWithoutTab />} />
                 <Route
                     path="/orgs/:orgId/agents/:agentId/instructions"
                     element={<AgenteInstrucoes />}

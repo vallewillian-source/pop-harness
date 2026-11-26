@@ -32,9 +32,9 @@ import {
     SofaButton,
     SofaIconButton,
 } from "@sofacoding/sofa-ui";
-import { listarAgentes, type Agente } from "../api/agentes";
-import type { Org } from "../api/cliente";
-import { lerEstadoMatrix, type EstadoMatrix } from "../api/matrix";
+import { listAgents, type Agente } from "../api/agents";
+import type { Org } from "../api/client";
+import { readMatrixState, type MatrixState } from "../api/matrix";
 import { translate, useI18n } from "../i18n";
 import { formatDate, formatTime } from "../i18n/format";
 import "../estilos/inspetor.css";
@@ -205,7 +205,7 @@ function textoDoNo(no: NoDaOrg | null | undefined): { chip: string; valor: strin
 }
 
 /** Estado do Espelho Matrix em valor e tooltip, sem inventar: cada ramo é um campo da rota. */
-function espelhoMatrix(estado: EstadoMatrix): { valor: string; detalhe: string } {
+function espelhoMatrix(estado: MatrixState): { valor: string; detalhe: string } {
     const pendentes = estado.backlog?.messages ?? 0;
     const idade = estado.backlog?.oldest_seconds ?? 0;
     const partes: string[] = [];
@@ -279,8 +279,8 @@ export function InspetorOrg({
     const relogioDoCopiado = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     // Uma consulta por recurso, independentes: a falha de uma não apaga a outra.
-    const agentes = useLeitura(`agentes:${org.id}`, useCallback(() => listarAgentes(org.id), [org.id]));
-    const matrix = useLeitura(`matrix:${org.id}`, useCallback(() => lerEstadoMatrix(org.id), [org.id]));
+    const agentes = useLeitura(`agentes:${org.id}`, useCallback(() => listAgents(org.id), [org.id]));
+    const matrix = useLeitura(`matrix:${org.id}`, useCallback(() => readMatrixState(org.id), [org.id]));
 
     // O foco entra na gaveta quando ela abre (a lista devolve ele para a linha ao fechar).
     useEffect(() => {

@@ -46,34 +46,34 @@ import {
     SofaErrorState,
     SofaSkeleton,
 } from "@sofacoding/sofa-ui";
-import { obterAgente, type Agente } from "../api/agentes";
-import { ErroApi } from "../api/cliente";
-import { obterOrg } from "../api/orgs";
+import { getAgent, type Agente } from "../api/agents";
+import { ApiError } from "../api/client";
+import { getOrg } from "../api/orgs";
 import {
-    LIMITE_ARQUIVO_BYTES,
-    criarConversaTeste,
-    enviarMensagemTeste,
-    listarConversasTeste,
-    obterHistoricoTeste,
-    reabrirConversaTeste,
-    type AnexoTeste,
-    type ArquivoEnviadoTeste,
-    type ConversaTeste,
-    type EventoDoTurno,
-    type HistoricoTeste,
-    type MensagemTeste,
-    type TurnoTeste,
-} from "../api/testeChat";
+    LIMIT_FILE_BYTES,
+    createTestConversation,
+    sendTestMessage,
+    listTestConversations,
+    getTestHistory,
+    reopenTestConversation,
+    type TestAttachment,
+    type TestSentFile,
+    type TestConversation,
+    type TurnEvent,
+    type TestHistory,
+    type TestMessage,
+    type TestTurn,
+} from "../api/testChat";
 import {
-    baixarConteudo,
-    lerComoDataUrl,
-    origemDoAnexoDoCliente,
-    origemDoArquivoDoAgente,
-    podeVerNaTela,
-    rotuloDoEnvio,
-    type OrigemDeArquivo,
-} from "../api/arquivoTeste";
-import { intercalarTurnos, frasePeloEstadoSemResposta, rotuloDoEstadoDoTurno } from "../api/porQue";
+    downloadContent,
+    readAsDataUrl,
+    clientAttachmentOrigin,
+    agentFileOrigin,
+    canSeeOnScreen,
+    sendLabel,
+    type FileOrigin,
+} from "../api/testFile";
+import { interleaveTurns, phraseForStateWithoutResponse, turnStateLabel } from "../api/turnWhy";
 import { CabecalhoDoAgente, AbasDoAgente } from "../componentes/AbasDoAgente";
 import { PainelPorQue } from "../componentes/PainelPorQue";
 import { PreviaArquivoTeste, type PreviaDeImagem } from "../componentes/PreviaArquivoTeste";
@@ -137,7 +137,7 @@ function tamanhoLegivel(bytes: number): string {
     return `${formatNumber(Math.max(1, Math.round(bytes / 1024)))} KB`;
 }
 
-function ehTransferida(conversa: ConversaTeste | undefined | null): boolean {
+function ehTransferida(conversa: TestConversation | undefined | null): boolean {
     return conversa?.status === "transferred";
 }
 
@@ -163,7 +163,7 @@ function numero(valor: unknown): number | null {
 }
 
 /** Os eventos do turno chegam com o JSON já lido; `dados` vazio vira objeto vazio. */
-function campos(evento: EventoDoTurno): Record<string, unknown> {
+function campos(evento: TurnEvent): Record<string, unknown> {
     return evento.dados && typeof evento.dados === "object"
         ? (evento.dados as Record<string, unknown>)
         : {};
@@ -178,14 +178,14 @@ export function AgenteChatTeste() {
     const [nomeDaOrg, setNomeDaOrg] = useState<string | null>(null);
     const [erroDeCarga, setErroDeCarga] = useState<string | null>(null);
 
-    const [conversas, setConversas] = useState<ConversaTeste[]>([]);
+    const [conversas, setConversas] = useState<TestConversation[]>([]);
     const [proximoCursor, setProximoCursor] = useState<string | null>(null);
     const [carregandoLista, setCarregandoLista] = useState(true);
     const [erroLista, setErroLista] = useState<string | null>(null);
     const [criando, setCriando] = useState(false);
 
     const [ativa, setAtiva] = useState<string | null>(null);
-    const [historico, setHistorico] = useState<HistoricoTeste | null>(null);
+    const [historico, setHistorico] = useState<TestHistory | null>(null);
     const [carregandoHistorico, setCarregandoHistorico] = useState(false);
     const [erroHistorico, setErroHistorico] = useState<string | null>(null);
 
@@ -224,7 +224,7 @@ export function AgenteChatTeste() {
     const carregarAgente = useCallback(async () => {
         setErroDeCarga(null);
         try {
-            setAgente(await obterAgente(orgId, agentId));
+            setAgente(await getAgent(orgId, agentId));
         } catch (falha) {
             setErroDeCarga(mensagemDe(falha));
         }
@@ -232,7 +232,7 @@ export function AgenteChatTeste() {
 
     /** Lê a primeira página. Mantém conversas de páginas seguintes que já estavam na lista. */
     const atualizarLista = useCallback(async () => {
-        const lista = await listarConversasTeste(orgId, agentId);
+        const lista = await listTestConversations(orgId, agentId);
         setConversas((atuais) => {
             const novas = new Set(lista.items.map((item) => item.id));
             return [...lista.items, ...atuais.filter((item) => !novas.has(item.id))];
@@ -246,7 +246,7 @@ export function AgenteChatTeste() {
             setCarregandoHistorico(true);
             setErroHistorico(null);
             try {
-                const lido = await obterHistoricoTeste(orgId, agentId, conversa);
+                const lido = await getTestHistory(orgId, agentId, conversa);
                 if (ativaRef.current !== conversa) return;
                 setHistorico(lido);
                 setConversas((atuais) =>
@@ -312,7 +312,7 @@ export function AgenteChatTeste() {
 
     useEffect(() => {
         void carregarAgente();
-        obterOrg(orgId)
+        getOrg(orgId)
             .then((org) => setNomeDaOrg(org.name))
             .catch(() => setNomeDaOrg(null));
     }, [carregarAgente, orgId]);
@@ -321,7 +321,7 @@ export function AgenteChatTeste() {
         let cancelado = false;
         setCarregandoLista(true);
         setErroLista(null);
-        listarConversasTeste(orgId, agentId)
+        listTestConversations(orgId, agentId)
             .then((lista) => {
                 if (cancelado) return;
                 setConversas(lista.items);
@@ -351,7 +351,7 @@ export function AgenteChatTeste() {
         if (!proximoCursor) return;
         setErroLista(null);
         try {
-            const lista = await listarConversasTeste(orgId, agentId, proximoCursor);
+            const lista = await listTestConversations(orgId, agentId, proximoCursor);
             setConversas((atuais) => [...atuais, ...lista.items]);
             setProximoCursor(lista.next_cursor);
         } catch (falha) {
@@ -363,7 +363,7 @@ export function AgenteChatTeste() {
         setCriando(true);
         setAviso(null);
         try {
-            const nova = await criarConversaTeste(orgId, agentId);
+            const nova = await createTestConversation(orgId, agentId);
             setConversas((atuais) => [nova, ...atuais]);
             abrirConversa(nova.id);
         } catch (falha) {
@@ -378,7 +378,7 @@ export function AgenteChatTeste() {
     }
 
     /** Aplica um evento do turno ao que a tela mostra. Só chamado para a conversa da tela. */
-    function tratarEvento(evento: EventoDoTurno) {
+    function tratarEvento(evento: TurnEvent) {
         const dados = campos(evento);
         switch (evento.tipo) {
             case "texto": {
@@ -447,7 +447,7 @@ export function AgenteChatTeste() {
 
     /** Traduz um erro antes do turno começar. Devolve o aviso, ou marca o campo que a API apontou. */
     function tratarFalhaDeEnvio(falha: unknown): Aviso {
-        if (falha instanceof ErroApi) {
+        if (falha instanceof ApiError) {
             if (falha.status === 409) {
                 return {
                     tom: "warn",
@@ -509,7 +509,7 @@ export function AgenteChatTeste() {
 
         let iniciou = false;
         try {
-            await enviarMensagemTeste(
+            await sendTestMessage(
                 orgId,
                 agentId,
                 conversa,
@@ -558,13 +558,13 @@ export function AgenteChatTeste() {
      * Abre a prévia de uma imagem do cliente. Busca o arquivo a cada abertura (a tela não guarda
      * conteúdo) e só mostra a imagem se a conversa e a prévia ainda forem as mesmas quando ela chega.
      */
-    async function abrirPrevia(origem: OrigemDeArquivo) {
+    async function abrirPrevia(origem: FileOrigin) {
         if (!ativaRef.current) return;
         const pedido = ++pedidoPreviaRef.current;
         setPrevia({ origem, estado: "carregando", src: null, erro: null });
         try {
-            const arquivo = await baixarConteudo(origem.caminho);
-            const src = await lerComoDataUrl(arquivo.blob, origem.mime);
+            const arquivo = await downloadContent(origem.caminho);
+            const src = await readAsDataUrl(arquivo.blob, origem.mime);
             if (pedido !== pedidoPreviaRef.current) return;
             setPrevia({ origem, estado: "pronta", src, erro: null });
         } catch (falha) {
@@ -583,13 +583,13 @@ export function AgenteChatTeste() {
      * do arquivo, clicado num link temporário. A URL é solta logo depois (um minuto, ou antes se a
      * conversa mudar).
      */
-    async function baixarArquivo(origem: OrigemDeArquivo) {
+    async function baixarArquivo(origem: FileOrigin) {
         const conversa = ativaRef.current;
         if (!conversa) return;
         setBaixandoAnexo(origem.chave);
         setErroDeDownload(null);
         try {
-            const arquivo = await baixarConteudo(origem.caminho);
+            const arquivo = await downloadContent(origem.caminho);
             if (ativaRef.current !== conversa) return;
             const url = URL.createObjectURL(arquivo.blob);
             urlsDeDownloadRef.current.add(url);
@@ -614,8 +614,8 @@ export function AgenteChatTeste() {
         ver: (origem) => void abrirPrevia(origem),
         baixar: (origem) => void baixarArquivo(origem),
         doAnexo: (mensagemId, anexo) =>
-            origemDoAnexoDoCliente(orgId, agentId, ativa ?? "", mensagemId, anexo),
-        doAgente: (arquivo) => origemDoArquivoDoAgente(orgId, agentId, arquivo),
+            clientAttachmentOrigin(orgId, agentId, ativa ?? "", mensagemId, anexo),
+        doAgente: (arquivo) => agentFileOrigin(orgId, agentId, arquivo),
     };
 
     function cancelarTurno() {
@@ -636,7 +636,7 @@ export function AgenteChatTeste() {
         evento.target.value = "";
         const aceitos: File[] = [];
         for (const arquivo of escolhidos) {
-            if (arquivo.size > LIMITE_ARQUIVO_BYTES) {
+            if (arquivo.size > LIMIT_FILE_BYTES) {
                 setErroDeCampo({
                     campo: "file",
                     mensagem: t("testChat.fileTooLarge", {
@@ -672,7 +672,7 @@ export function AgenteChatTeste() {
         setReabrindo(true);
         setAviso(null);
         try {
-            await reabrirConversaTeste(orgId, agentId, conversa, historico.conversation.version);
+            await reopenTestConversation(orgId, agentId, conversa, historico.conversation.version);
             if (ativaRef.current === conversa) {
                 setAviso({
                     tom: "info",
@@ -682,7 +682,7 @@ export function AgenteChatTeste() {
             }
         } catch (falha) {
             if (ativaRef.current === conversa) {
-                if (falha instanceof ErroApi && falha.status === 412) {
+                if (falha instanceof ApiError && falha.status === 412) {
                     setAviso({
                         tom: "warn",
                         titulo: t("testChat.conflictTitle"),
@@ -736,19 +736,19 @@ export function AgenteChatTeste() {
         );
     }
 
-    const mensagens: MensagemTeste[] = historico?.messages ?? [];
+    const mensagens: TestMessage[] = historico?.messages ?? [];
     /** Posição de cada turno na conversa (1 é o primeiro), como o painel e os botões a mostram. */
     const numeroDoTurno = new Map<string, number>(
         (historico?.turns ?? []).map((turnoDaLista, indice): [string, number] => [turnoDaLista.id, indice + 1]),
     );
     /** Turnos sem mensagem de resposta: falha, corte, "não respondeu" ou ainda em andamento. */
-    const turnosPorId = new Map<string, TurnoTeste>(
-        (historico?.turns ?? []).map((turnoDaLista): [string, TurnoTeste] => [turnoDaLista.id, turnoDaLista]),
+    const turnosPorId = new Map<string, TestTurn>(
+        (historico?.turns ?? []).map((turnoDaLista): [string, TestTurn] => [turnoDaLista.id, turnoDaLista]),
     );
     const turnosSemResposta = (historico?.turns ?? []).filter(
         (turnoDaLista) => !mensagens.some((mensagem) => mensagem.turn_id === turnoDaLista.id),
     );
-    const itensDoRegistro = intercalarTurnos(mensagens, turnosSemResposta);
+    const itensDoRegistro = interleaveTurns(mensagens, turnosSemResposta);
     const turnoDoPainel = turnoAberto
         ? (historico?.turns ?? []).find((turnoDaLista) => turnoDaLista.id === turnoAberto) ?? null
         : null;
@@ -1175,12 +1175,12 @@ type AcoesDeArquivo = {
     baixando: string | null;
     /** Falha do último download, com a chave do arquivo a que se refere. */
     erro: { chave: string; texto: string } | null;
-    ver: (origem: OrigemDeArquivo) => void;
-    baixar: (origem: OrigemDeArquivo) => void;
+    ver: (origem: FileOrigin) => void;
+    baixar: (origem: FileOrigin) => void;
     /** Monta a origem de um anexo que o cliente mandou numa mensagem da conversa. */
-    doAnexo: (mensagemId: string, anexo: AnexoTeste) => OrigemDeArquivo;
+    doAnexo: (mensagemId: string, anexo: TestAttachment) => FileOrigin;
     /** Monta a origem de um arquivo que o agente enviou (item de `files_out`). */
-    doAgente: (arquivo: ArquivoEnviadoTeste) => OrigemDeArquivo;
+    doAgente: (arquivo: TestSentFile) => FileOrigin;
 };
 
 /** Um balão do histórico. `in` é o cliente, `out` é o agente. */
@@ -1191,10 +1191,10 @@ function Balao({
     aoVerPorQue,
     acoesDeArquivo,
 }: {
-    mensagem: MensagemTeste;
+    mensagem: TestMessage;
     numeroDoTurno: number | null;
     /** Arquivos que o agente enviou no turno desta resposta (`files_out`). */
-    arquivosDoAgente: ArquivoEnviadoTeste[];
+    arquivosDoAgente: TestSentFile[];
     aoVerPorQue: (turnoId: string) => void;
     acoesDeArquivo: AcoesDeArquivo;
 }) {
@@ -1248,13 +1248,13 @@ function Balao({
  * visualizador do navegador. O rótulo de cada botão traz o nome do arquivo, para quem usa leitor de
  * tela. Baixar não depende do estado do envio (um arquivo "falhou" ainda pode ser baixado).
  */
-function AcoesDoArquivo({ origem, acoes }: { origem: OrigemDeArquivo; acoes: AcoesDeArquivo }) {
+function AcoesDoArquivo({ origem, acoes }: { origem: FileOrigin; acoes: AcoesDeArquivo }) {
     const { translate: t } = useI18n();
     const baixandoEste = acoes.baixando === origem.chave;
     const falhou = acoes.erro?.chave === origem.chave ? acoes.erro.texto : null;
     return (
         <span className="poph-chat-teste__anexo-acoes">
-            {podeVerNaTela(origem.mime) && (
+            {canSeeOnScreen(origem.mime) && (
                 <SofaButton
                     variant="subtle"
                     aria-label={t("testChat.viewFileLabel", { name: origem.nome })}
@@ -1296,7 +1296,7 @@ function ArquivosDoAgente({
     arquivos,
     acoes,
 }: {
-    arquivos: ArquivoEnviadoTeste[];
+    arquivos: TestSentFile[];
     acoes: AcoesDeArquivo;
 }) {
     const { translate: t } = useI18n();
@@ -1306,7 +1306,7 @@ function ArquivosDoAgente({
                 <li key={arquivo.id}>
                     {arquivo.name} · {tamanhoLegivel(arquivo.size_bytes)} ·{" "}
                     <span className={arquivo.state === "failed" ? "poph-chat-teste__erro" : undefined}>
-                        {rotuloDoEnvio(arquivo.state)}
+                        {sendLabel(arquivo.state)}
                     </span>
                     <AcoesDoArquivo origem={acoes.doAgente(arquivo)} acoes={acoes} />
                 </li>
@@ -1322,7 +1322,7 @@ function TurnoSemResposta({
     aoVerPorQue,
     acoesDeArquivo,
 }: {
-    turno: TurnoTeste;
+    turno: TestTurn;
     numero: number | null;
     aoVerPorQue: (turnoId: string) => void;
     acoesDeArquivo: AcoesDeArquivo;
@@ -1332,10 +1332,10 @@ function TurnoSemResposta({
         <div className="poph-chat-teste__balao poph-chat-teste__balao--agente poph-chat-teste__sem-resposta">
             <span className="poph-chat-teste__autor">
                 {numero !== null
-                    ? t("testChat.turnHeading", { number: numero, state: rotuloDoEstadoDoTurno(turno.state) })
-                    : t("testChat.turnHeadingNoNumber", { state: rotuloDoEstadoDoTurno(turno.state) })}
+                    ? t("testChat.turnHeading", { number: numero, state: turnStateLabel(turno.state) })
+                    : t("testChat.turnHeadingNoNumber", { state: turnStateLabel(turno.state) })}
             </span>
-            <p className="poph-chat-teste__evento">{frasePeloEstadoSemResposta(turno.state)}</p>
+            <p className="poph-chat-teste__evento">{phraseForStateWithoutResponse(turno.state)}</p>
             {turno.error && <p className="poph-chat-teste__erro">{turno.error}</p>}
             {(turno.files_out ?? []).length > 0 && (
                 <ArquivosDoAgente arquivos={turno.files_out ?? []} acoes={acoesDeArquivo} />

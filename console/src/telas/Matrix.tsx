@@ -28,19 +28,19 @@ import {
     SofaModal,
     SofaSkeleton,
 } from "@sofacoding/sofa-ui";
-import { ErroApi } from "../api/cliente";
+import { ApiError } from "../api/client";
 import { translate, useI18n } from "../i18n";
 import type { TranslationKey } from "../i18n/catalog";
 import { formatDateTime, formatNumber } from "../i18n/format";
-import { listarEstrutura, type Departamento } from "../api/estrutura";
+import { listStructure, type Departamento } from "../api/structure";
 import {
-    alterarModuloMatrix,
-    desligarEspacoMatrix,
-    lerEstadoMatrix,
-    ligarEspacoMatrix,
-    listarEspacosMatrix,
-    versaoDoEstado,
-    type EstadoMatrix,
+    updateMatrixModule,
+    unlinkMatrixSpace,
+    readMatrixState,
+    linkMatrixSpace,
+    listMatrixSpaces,
+    stateVersion,
+    type MatrixState,
     type Espaco,
 } from "../api/matrix";
 import { formatarTempoNoAr, mensagemDeFalha } from "./Operacao";
@@ -140,7 +140,7 @@ export function montarLinhas(departamentos: Departamento[] | null, espacos: Espa
  * tradução comum das telas.
  */
 export function mensagemDoEspaco(erro: unknown, oQue: string): string {
-    if (erro instanceof ErroApi && (erro.status === 400 || erro.status === 409) && erro.message) {
+    if (erro instanceof ApiError && (erro.status === 400 || erro.status === 409) && erro.message) {
         return erro.message;
     }
     return mensagemDeFalha(erro, oQue);
@@ -182,7 +182,7 @@ export function Matrix() {
     const { orgId = "" } = useParams();
     const { translate: t } = useI18n();
 
-    const [modulo, setModulo] = useState<Carga<EstadoMatrix>>(cargaInicial);
+    const [modulo, setModulo] = useState<Carga<MatrixState>>(cargaInicial);
     const [espacos, setEspacos] = useState<Carga<Espaco[]>>(cargaInicial);
     const [departamentos, setDepartamentos] = useState<Carga<Departamento[]>>(cargaInicial);
 
@@ -223,9 +223,9 @@ export function Matrix() {
         setDepartamentos((atual) => ({ ...atual, carregando: true }));
 
         const [resModulo, resEspacos, resDepartamentos] = await Promise.allSettled([
-            lerEstadoMatrix(orgId),
-            listarEspacosMatrix(orgId),
-            listarEstrutura("departamento", orgId),
+            readMatrixState(orgId),
+            listMatrixSpaces(orgId),
+            listStructure("departamento", orgId),
         ]);
         emCurso.current = false;
         if (!vivo.current) return;
@@ -272,7 +272,7 @@ export function Matrix() {
     /** Relê só a lista de espaços (depois de criar ou desligar), sem trocar a tela para carregando. */
     const recarregarEspacos = useCallback(async () => {
         try {
-            const lista = await listarEspacosMatrix(orgId);
+            const lista = await listMatrixSpaces(orgId);
             if (vivo.current) setEspacos({ carregando: false, dados: lista, erro: null });
         } catch (erro) {
             if (vivo.current) {
@@ -290,7 +290,7 @@ export function Matrix() {
         setEnviandoModulo(true);
         setAvisoModulo(null);
         try {
-            const novo = await alterarModuloMatrix(orgId, ligado, versaoDoEstado(atual));
+            const novo = await updateMatrixModule(orgId, ligado, stateVersion(atual));
             if (!vivo.current) return;
             setModulo({ carregando: false, dados: novo, erro: null });
             setAvisoModulo({
@@ -301,7 +301,7 @@ export function Matrix() {
             });
         } catch (erro) {
             if (!vivo.current) return;
-            if (erro instanceof ErroApi && erro.status === 412) {
+            if (erro instanceof ApiError && erro.status === 412) {
                 setAvisoModulo({ tom: "erro", fonte: { key: "matrix.conflict" } });
                 void carregar();
             } else {
@@ -320,7 +320,7 @@ export function Matrix() {
         setCriandoPara(linha.id);
         setAvisoEspaco(null);
         try {
-            await ligarEspacoMatrix(orgId, { department_id: linha.id, space: null });
+            await linkMatrixSpace(orgId, { department_id: linha.id, space: null });
             if (!vivo.current) return;
             setAvisoEspaco({ tom: "ok", fonte: { key: "matrix.spaceCreated" } });
             await recarregarEspacos();
@@ -356,7 +356,7 @@ export function Matrix() {
         setEnviandoLigacao(true);
         setErroDoDialogo(null);
         try {
-            await ligarEspacoMatrix(orgId, { department_id: ligandoA.id, space: espaco });
+            await linkMatrixSpace(orgId, { department_id: ligandoA.id, space: espaco });
             if (!vivo.current) return;
             setLigandoA(null);
             setEspacoDigitado("");
@@ -376,7 +376,7 @@ export function Matrix() {
         setDesligandoEspaco(true);
         setAvisoEspaco(null);
         try {
-            await desligarEspacoMatrix(orgId, espaco.department_id);
+            await unlinkMatrixSpace(orgId, espaco.department_id);
             if (!vivo.current) return;
             setEspacoParaDesligar(null);
             setAvisoEspaco({

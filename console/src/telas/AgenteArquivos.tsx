@@ -25,9 +25,9 @@ import {
     SofaSkeleton,
     SofaTable,
 } from "@sofacoding/sofa-ui";
-import { obterAgente, type Agente } from "../api/agentes";
-import { excluirArquivo, listarArquivos, tamanhoEmMb, type Arquivo } from "../api/arquivos";
-import { obterOrg } from "../api/orgs";
+import { getAgent, type Agente } from "../api/agents";
+import { deleteFile, listFiles, sizeInMb, type LibraryFile } from "../api/files";
+import { getOrg } from "../api/orgs";
 import {
     AbasDoAgente,
     CabecalhoDoAgente,
@@ -41,14 +41,14 @@ import { useI18n } from "../i18n";
 import type { TranslationKey } from "../i18n/catalog";
 import "../estilos/arquivos.css";
 
-const coluna = createColumnHelper<Arquivo>();
+const coluna = createColumnHelper<LibraryFile>();
 
 /** Tamanho legível: KB abaixo de 1 MB, MB acima. */
 function tamanhoLegivel(bytes: number): string {
     if (bytes < 1024 * 1024) {
         return `${formatNumber(Math.max(1, Math.round(bytes / 1024)))} KB`;
     }
-    return tamanhoEmMb(bytes);
+    return sizeInMb(bytes);
 }
 
 export function AgenteArquivos() {
@@ -60,19 +60,19 @@ export function AgenteArquivos() {
     const [nomeDaOrg, setNomeDaOrg] = useState<string | null>(null);
     const [erroDeCarga, setErroDeCarga] = useState<string | null>(null);
 
-    const [arquivos, setArquivos] = useState<Arquivo[]>([]);
+    const [arquivos, setArquivos] = useState<LibraryFile[]>([]);
     const [carregandoArquivos, setCarregandoArquivos] = useState(true);
     const [erroArquivos, setErroArquivos] = useState<string | null>(null);
 
     const [modalEnvio, setModalEnvio] = useState(false);
-    const [paraExcluir, setParaExcluir] = useState<Arquivo | null>(null);
+    const [paraExcluir, setParaExcluir] = useState<LibraryFile | null>(null);
     const [aviso, setAviso] = useState<{ key: TranslationKey; name: string } | null>(null);
 
     const carregarArquivos = useCallback(async () => {
         setCarregandoArquivos(true);
         setErroArquivos(null);
         try {
-            setArquivos(await listarArquivos(orgId, agentId));
+            setArquivos(await listFiles(orgId, agentId));
         } catch (falha) {
             setErroArquivos(
                 falha instanceof Error ? falha.message : t("files.libraryLoadFailed"),
@@ -86,7 +86,7 @@ export function AgenteArquivos() {
     const carregar = useCallback(async () => {
         setErroDeCarga(null);
         try {
-            setAgente(await obterAgente(orgId, agentId));
+            setAgente(await getAgent(orgId, agentId));
         } catch (falha) {
             setErroDeCarga(falha instanceof Error ? falha.message : t("files.agentLoadFailed"));
             return;
@@ -96,7 +96,7 @@ export function AgenteArquivos() {
 
     useEffect(() => {
         void carregar();
-        obterOrg(orgId)
+        getOrg(orgId)
             .then((org) => setNomeDaOrg(org.name))
             .catch(() => setNomeDaOrg(null));
     }, [carregar, orgId]);
@@ -304,7 +304,7 @@ export function AgenteArquivos() {
                 rotuloConfirmar={t("files.deleteConfirm")}
                 aoConfirmar={async () => {
                     if (!paraExcluir) return;
-                    await excluirArquivo(orgId, agentId, paraExcluir.id);
+                    await deleteFile(orgId, agentId, paraExcluir.id);
                 }}
                 aoExcluir={() => {
                     if (paraExcluir) {

@@ -16,13 +16,13 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { ErroApi } from "../api/cliente";
+import { ApiError } from "../api/client";
 import {
-    contagemDaRecusa,
-    excluirProduto,
-    type ContagemCarrinhos,
-    type Produto,
-} from "../api/produtos";
+    refusalCount,
+    deleteProduct,
+    type CartCount,
+    type Product,
+} from "../api/products";
 import { useI18n } from "../i18n";
 import { DialogoExclusao } from "./DialogoExclusao";
 
@@ -30,7 +30,7 @@ export type DialogoExcluirProdutoProps = {
     aberto: boolean;
     aoFechar: () => void;
     org: string;
-    produto: Produto | null;
+    produto: Product | null;
     /** Agentes que oferecem o produto hoje; `null` = a leitura dos agentes falhou. */
     agentesQueVeem: number | null;
     /** Chamado depois da exclusão, com o aviso do índice quando ele não atualizou. */
@@ -49,7 +49,7 @@ export function DialogoExcluirProduto({
     // Aviso do índice da exclusão em curso: vai de `aoConfirmar` até `aoExcluir`.
     const avisoRef = useRef<string | null>(null);
     // Contagem que a recusa 409 trouxe nesta abertura; some quando o diálogo fecha.
-    const [contagem, setContagem] = useState<ContagemCarrinhos | null>(null);
+    const [contagem, setContagem] = useState<CartCount | null>(null);
 
     useEffect(() => {
         if (aberto) {
@@ -128,12 +128,12 @@ export function DialogoExcluirProduto({
             descricaoForcar={translate("products.deleteForceDescription")}
             aoConfirmar={async (forcar) => {
                 try {
-                    const resultado = await excluirProduto(org, produto.id, forcar);
+                    const resultado = await deleteProduct(org, produto.id, forcar);
                     avisoRef.current = resultado.index_warning ?? null;
                 } catch (falha) {
                     // 409: a recusa traz a contagem; a tela mostra e a confirmação extra libera o envio.
-                    if (falha instanceof ErroApi && falha.status === 409) {
-                        setContagem(contagemDaRecusa(falha.detalhes));
+                    if (falha instanceof ApiError && falha.status === 409) {
+                        setContagem(refusalCount(falha.detalhes));
                     }
                     throw falha;
                 }

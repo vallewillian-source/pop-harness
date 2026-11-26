@@ -8,7 +8,7 @@
 
 import { useEffect, useState } from "react";
 import { SofaSkeleton } from "@sofacoding/sofa-ui";
-import { listarItens, excluirGrupo, type GrupoConhecimento, type ItemConhecimento } from "../api/conhecimento";
+import { listItems, deleteGroup, type KnowledgeGroup, type KnowledgeItem } from "../api/knowledge";
 import { useI18n } from "../i18n";
 import { DialogoExclusao } from "./DialogoExclusao";
 
@@ -16,7 +16,7 @@ export type DialogoExcluirGrupoProps = {
     aberto: boolean;
     aoFechar: () => void;
     org: string;
-    grupo: GrupoConhecimento | null;
+    grupo: KnowledgeGroup | null;
     /** Id do agente → nome, para escrever quem usa o grupo. */
     nomesDosAgentes: Record<string, string>;
     /** Chamado depois da exclusão, para a lista se atualizar. */
@@ -33,7 +33,7 @@ export function DialogoExcluirGrupo({
 }: DialogoExcluirGrupoProps) {
     const { translate: t } = useI18n();
     const [carregando, setCarregando] = useState(false);
-    const [itens, setItens] = useState<ItemConhecimento[] | null>(null);
+    const [itens, setItens] = useState<KnowledgeItem[] | null>(null);
     const [falhaAoContar, setFalhaAoContar] = useState(false);
 
     useEffect(() => {
@@ -42,7 +42,7 @@ export function DialogoExcluirGrupo({
         setCarregando(true);
         setItens(null);
         setFalhaAoContar(false);
-        listarItens(org, grupo.id)
+        listItems(org, grupo.id)
             .then((lista) => {
                 if (!cancelado) setItens(lista);
             })
@@ -124,7 +124,7 @@ export function DialogoExcluirGrupo({
             permiteForcar={false}
             aoConfirmar={async () => {
                 // A API exige `force=true` sempre; a trava aqui é a digitação do nome.
-                await excluirGrupo(org, grupo.id);
+                await deleteGroup(org, grupo.id);
             }}
             aoExcluir={aoExcluir}
         />

@@ -1,83 +1,58 @@
-/**
- * Módulo Matrix na organização (MX-22): estado, ligar/desligar e espaços por departamento.
- *
- * O contrato é o OpenAPI (`schema.d.ts`), gerado por `console/gen-api.sh`; os tipos daqui saem dele.
- * A concorrência do `PUT …/matrix` é o `If-Match` com o `updated_at` lido antes: o servidor manda
- * esse mesmo valor no cabeçalho `ETag` (entre aspas), e o corpo do `GET` traz o campo `updated_at`.
- * A tela usa o campo do corpo, que é o mesmo número, para não depender de ler cabeçalho.
- */
 
-import { pedir } from "./cliente";
+import { request } from "./client";
 import type { components } from "./schema";
 
-export type EstadoMatrix = components["schemas"]["EstadoMatrixJson"];
+export type MatrixState = components["schemas"]["EstadoMatrixJson"];
 export type Espaco = components["schemas"]["EspacoJson"];
-export type EspacoDesligado = components["schemas"]["EspacoDesligadoJson"];
-export type EntradaEspaco = components["schemas"]["LigarEspaco"];
+export type DisabledSpace = components["schemas"]["EspacoDesligadoJson"];
+export type SpaceInput = components["schemas"]["LigarEspaco"];
 
-/** Caminho base do módulo de uma organização. */
 function base(org: string): string {
     return `/admin/v1/orgs/${encodeURIComponent(org)}/matrix`;
 }
 
-/** Lê o estado do módulo na organização (ligado, atraso, falhas, conexão). */
-export async function lerEstadoMatrix(org: string): Promise<EstadoMatrix> {
-    return pedir<EstadoMatrix>(base(org));
+export async function readMatrixState(org: string): Promise<MatrixState> {
+    return request<MatrixState>(base(org));
 }
 
-/** Versão que vai no `If-Match` do próximo `PUT`: a lida no `GET` (`updated_at`). */
-export function versaoDoEstado(estado: EstadoMatrix): number {
+export function stateVersion(estado: MatrixState): number {
     return estado.updated_at;
 }
 
-/**
- * Liga ou desliga o módulo na org com o `If-Match` da versão lida antes.
- *
- * `412` quer dizer que o estado mudou depois dessa leitura; quem chama relê e avisa o operador.
- */
-export async function alterarModuloMatrix(
+export async function updateMatrixModule(
     org: string,
-    ligado: boolean,
+    enabled: boolean,
     versao: number,
-): Promise<EstadoMatrix> {
-    const corpo: components["schemas"]["LigarDesligar"] = { enabled: ligado };
-    return pedir<EstadoMatrix>(base(org), {
+): Promise<MatrixState> {
+    const body: components["schemas"]["LigarDesligar"] = { enabled: enabled };
+    return request<MatrixState>(base(org), {
         method: "PUT",
         headers: { "if-match": String(versao) },
-        body: JSON.stringify(corpo),
+        body: JSON.stringify(body),
     });
 }
 
-/** Lista os espaços por departamento da org. */
-export async function listarEspacosMatrix(org: string): Promise<Espaco[]> {
-    const resposta = await pedir<components["schemas"]["EspacosJson"]>(`${base(org)}/spaces`);
-    return resposta.items;
+export async function listMatrixSpaces(org: string): Promise<Espaco[]> {
+    const response = await request<components["schemas"]["EspacosJson"]>(`${base(org)}/spaces`);
+    return response.items;
 }
 
-/**
- * Cria o espaço do departamento (sem `space`) ou liga um que já existe no Element (`space` com
- * `!id` ou `#alias`). Repetir não cria segundo espaço: a API devolve o que já existe.
- */
-export async function ligarEspacoMatrix(org: string, entrada: EntradaEspaco): Promise<Espaco> {
-    const corpo: EntradaEspaco = { department_id: entrada.department_id };
-    if (entrada.space && entrada.space.trim()) {
-        corpo.space = entrada.space.trim();
+export async function linkMatrixSpace(org: string, input: SpaceInput): Promise<Espaco> {
+    const body: SpaceInput = { department_id: input.department_id };
+    if (input.space && input.space.trim()) {
+        body.space = input.space.trim();
     }
-    return pedir<Espaco>(`${base(org)}/spaces`, {
+    return request<Espaco>(`${base(org)}/spaces`, {
         method: "PUT",
-        body: JSON.stringify(corpo),
+        body: JSON.stringify(body),
     });
 }
 
-/**
- * Desliga o espaço do departamento. Não apaga nada no Element nem conversa: só o registro que o
- * módulo guarda deixa de ser usado (ver `docs/API.md`).
- */
-export async function desligarEspacoMatrix(
+export async function unlinkMatrixSpace(
     org: string,
     departamento: string,
-): Promise<EspacoDesligado> {
-    return pedir<EspacoDesligado>(`${base(org)}/spaces/${encodeURIComponent(departamento)}`, {
+): Promise<DisabledSpace> {
+    return request<DisabledSpace>(`${base(org)}/spaces/${encodeURIComponent(departamento)}`, {
         method: "DELETE",
     });
 }

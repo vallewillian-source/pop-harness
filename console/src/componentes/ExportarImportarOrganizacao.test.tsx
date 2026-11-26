@@ -12,9 +12,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ServidorFalso, erroApi } from "../testes/servidor";
+import { FakeServer, apiError } from "../testing/server";
 import { ExportarImportarOrganizacao } from "./ExportarImportarOrganizacao";
-import { LIMITE_IMPORTACAO_BYTES } from "../api/backup";
+import { LIMIT_IMPORT_BYTES } from "../api/backup";
 import { setLocale } from "../i18n";
 
 const ORG = "org_1";
@@ -92,7 +92,7 @@ describe("backup em en-US", () => {
 
     it("mostra a seção, o relatório e os conflitos em inglês", async () => {
         setLocale("en-US");
-        new ServidorFalso()
+        new FakeServer()
             .responder("GET", "/backup", {
                 status: 200,
                 texto: CONTEUDO_DO_ARQUIVO,
@@ -125,7 +125,7 @@ describe("backup em en-US", () => {
 
     it("traduz a recusa de sobrescrita e os nomes das tabelas", async () => {
         setLocale("en-US");
-        new ServidorFalso()
+        new FakeServer()
             .responder("POST", "/backup/import", {
                 status: 409,
                 corpo: {
@@ -161,7 +161,7 @@ describe("backup em en-US", () => {
 
 describe("exportar", () => {
     it("sem conversas: chama a rota sem query e baixa com o nome que o servidor mandou", async () => {
-        const servidor = new ServidorFalso()
+        const servidor = new FakeServer()
             .responder("GET", "/backup", { status: 200, texto: CONTEUDO_DO_ARQUIVO, cabecalhos: cabecalhoDeAnexo })
             .instalar();
         montar();
@@ -177,7 +177,7 @@ describe("exportar", () => {
     });
 
     it("com 'Incluir conversas' marcado: manda com_conversas=true", async () => {
-        const servidor = new ServidorFalso()
+        const servidor = new FakeServer()
             .responder("GET", "/backup", { status: 200, texto: CONTEUDO_DO_ARQUIVO, cabecalhos: cabecalhoDeAnexo })
             .instalar();
         montar();
@@ -195,8 +195,8 @@ describe("exportar", () => {
     });
 
     it("409 backup_incompleto explica o que fazer e não oferece tentar de novo", async () => {
-        new ServidorFalso()
-            .responder("GET", "/backup", erroApi(409, "backup_incompleto", "arquivo sem conteúdo", { name: "catalogo.png" }))
+        new FakeServer()
+            .responder("GET", "/backup", apiError(409, "backup_incompleto", "arquivo sem conteúdo", { name: "catalogo.png" }))
             .instalar();
         montar();
 
@@ -211,11 +211,11 @@ describe("exportar", () => {
 
     it("erro de servidor no download mostra 'Tentar de novo' e o botão refaz a exportação", async () => {
         let tentativa = 0;
-        const servidor = new ServidorFalso()
+        const servidor = new FakeServer()
             .responder("GET", "/backup", () => {
                 tentativa += 1;
                 return tentativa === 1
-                    ? erroApi(500, "interno", "falha")
+                    ? apiError(500, "interno", "falha")
                     : { status: 200, texto: CONTEUDO_DO_ARQUIVO, cabecalhos: cabecalhoDeAnexo };
             })
             .instalar();
@@ -230,7 +230,7 @@ describe("exportar", () => {
     });
 
     it("não dispara exportação nem importação ao montar a seção", () => {
-        const servidor = new ServidorFalso()
+        const servidor = new FakeServer()
             .responder("GET", "/backup", { status: 200, texto: CONTEUDO_DO_ARQUIVO, cabecalhos: cabecalhoDeAnexo })
             .responder("POST", "/backup/import", { status: 200, corpo: RELATORIO })
             .instalar();
@@ -242,7 +242,7 @@ describe("exportar", () => {
 
 describe("importar", () => {
     it("sucesso: envia o texto do arquivo como JSON cru e mostra o relatório com segredos e índice", async () => {
-        const servidor = new ServidorFalso().responder("POST", "/backup/import", { status: 200, corpo: RELATORIO }).instalar();
+        const servidor = new FakeServer().responder("POST", "/backup/import", { status: 200, corpo: RELATORIO }).instalar();
         montar();
 
         await escolher(arquivoJson());
@@ -268,7 +268,7 @@ describe("importar", () => {
     });
 
     it("índice sem o modelo: aparece como importado com índice pendente, não como erro", async () => {
-        new ServidorFalso()
+        new FakeServer()
             .responder("POST", "/backup/import", {
                 status: 200,
                 corpo: {
@@ -293,11 +293,11 @@ describe("importar", () => {
     });
 
     it("409 conflito: lista até 5 conflitos, diz 'e mais N' e que nada foi gravado", async () => {
-        new ServidorFalso()
+        new FakeServer()
             .responder(
                 "POST",
                 "/backup/import",
-                erroApi(409, "conflict", "conflito", {
+                apiError(409, "conflict", "conflito", {
                     conflicts: [
                         "agente bia (slug)",
                         "produto p1 (nome)",
@@ -327,11 +327,11 @@ describe("importar", () => {
     });
 
     it("400 arquivo de outra versão: mostra as duas versões", async () => {
-        new ServidorFalso()
+        new FakeServer()
             .responder(
                 "POST",
                 "/backup/import",
-                erroApi(400, "invalid_backup", "versão de formato desconhecida: 99", { version: 99, supported_version: 1 }),
+                apiError(400, "invalid_backup", "versão de formato desconhecida: 99", { version: 99, supported_version: 1 }),
             )
             .instalar();
         montar();
@@ -346,8 +346,8 @@ describe("importar", () => {
     });
 
     it("400 arquivo corrompido: mensagem clara, sem o texto cru da API", async () => {
-        new ServidorFalso()
-            .responder("POST", "/backup/import", erroApi(400, "invalid_backup", "JSON inválido: EOF at line 1 column 1200"))
+        new FakeServer()
+            .responder("POST", "/backup/import", apiError(400, "invalid_backup", "JSON inválido: EOF at line 1 column 1200"))
             .instalar();
         montar();
 
@@ -360,7 +360,7 @@ describe("importar", () => {
     });
 
     it("413 pelo servidor: diz o limite de 64 MB e que nada foi gravado", async () => {
-        new ServidorFalso().responder("POST", "/backup/import", erroApi(413, "payload_too_large", "grande")).instalar();
+        new FakeServer().responder("POST", "/backup/import", apiError(413, "payload_too_large", "grande")).instalar();
         montar();
 
         await escolher(arquivoJson());
@@ -373,10 +373,10 @@ describe("importar", () => {
 
     it("403 com 'Tentar de novo': o botão pede a confirmação de novo e o segundo envio funciona", async () => {
         let tentativa = 0;
-        const servidor = new ServidorFalso()
+        const servidor = new FakeServer()
             .responder("POST", "/backup/import", () => {
                 tentativa += 1;
-                return tentativa === 1 ? erroApi(403, "forbidden", "sem permissão") : { status: 200, corpo: RELATORIO };
+                return tentativa === 1 ? apiError(403, "forbidden", "sem permissão") : { status: 200, corpo: RELATORIO };
             })
             .instalar();
         montar();
@@ -396,10 +396,10 @@ describe("importar", () => {
     });
 
     it("arquivo acima de 64 MB é recusado na tela e nada é enviado", async () => {
-        const servidor = new ServidorFalso().responder("POST", "/backup/import", { status: 200, corpo: RELATORIO }).instalar();
+        const servidor = new FakeServer().responder("POST", "/backup/import", { status: 200, corpo: RELATORIO }).instalar();
         montar();
 
-        await escolher(arquivoJson(CONTEUDO_DO_ARQUIVO, "grande.json", LIMITE_IMPORTACAO_BYTES + 1));
+        await escolher(arquivoJson(CONTEUDO_DO_ARQUIVO, "grande.json", LIMIT_IMPORT_BYTES + 1));
 
         expect(await screen.findByText(/acima do limite de 64 MB/)).toBeInTheDocument();
         expect(screen.getByRole("button", { name: /Importar arquivo nesta organização/ })).toBeDisabled();
@@ -413,7 +413,7 @@ describe("importar", () => {
     });
 
     it("Esc e 'Cancelar' fecham a confirmação sem enviar nada", async () => {
-        const servidor = new ServidorFalso().responder("POST", "/backup/import", { status: 200, corpo: RELATORIO }).instalar();
+        const servidor = new FakeServer().responder("POST", "/backup/import", { status: 200, corpo: RELATORIO }).instalar();
         montar();
 
         await escolher(arquivoJson());
@@ -450,11 +450,11 @@ const DETALHE_SOBRESCREVE = {
 
 describe("recusa de sobrescrita (HR-48e-4)", () => {
     it("(a) recusa mostra o que seria sobrescrito, o total, os exemplos e o botão de autorizar, sem enviar de novo", async () => {
-        const servidor = new ServidorFalso()
+        const servidor = new FakeServer()
             .responder(
                 "POST",
                 "/backup/import",
-                erroApi(409, "importacao_sobrescreve", "a importação atualizaria 4 linha(s)", DETALHE_SOBRESCREVE),
+                apiError(409, "importacao_sobrescreve", "a importação atualizaria 4 linha(s)", DETALHE_SOBRESCREVE),
             )
             .instalar();
         montar();
@@ -486,11 +486,11 @@ describe("recusa de sobrescrita (HR-48e-4)", () => {
 
     it("(b) 'Sobrescrever e importar' reenvia com ?sobrescrever=true e mostra o relatório do 200", async () => {
         let tentativa = 0;
-        const servidor = new ServidorFalso()
+        const servidor = new FakeServer()
             .responder("POST", "/backup/import", () => {
                 tentativa += 1;
                 return tentativa === 1
-                    ? erroApi(409, "importacao_sobrescreve", "a importação atualizaria 4 linha(s)", DETALHE_SOBRESCREVE)
+                    ? apiError(409, "importacao_sobrescreve", "a importação atualizaria 4 linha(s)", DETALHE_SOBRESCREVE)
                     : { status: 200, corpo: RELATORIO };
             })
             .instalar();
@@ -511,8 +511,8 @@ describe("recusa de sobrescrita (HR-48e-4)", () => {
     });
 
     it("(c) conflito de nome (409 conflict) não oferece sobrescrever", async () => {
-        new ServidorFalso()
-            .responder("POST", "/backup/import", erroApi(409, "conflict", "conflito", { conflicts: ["agente bia (slug)"], conflicts_more: 0 }))
+        new FakeServer()
+            .responder("POST", "/backup/import", apiError(409, "conflict", "conflito", { conflicts: ["agente bia (slug)"], conflicts_more: 0 }))
             .instalar();
         montar();
 
@@ -525,8 +525,8 @@ describe("recusa de sobrescrita (HR-48e-4)", () => {
     });
 
     it("'Cancelar' tira a recusa da tela sem enviar nada de novo", async () => {
-        const servidor = new ServidorFalso()
-            .responder("POST", "/backup/import", erroApi(409, "importacao_sobrescreve", "x", DETALHE_SOBRESCREVE))
+        const servidor = new FakeServer()
+            .responder("POST", "/backup/import", apiError(409, "importacao_sobrescreve", "x", DETALHE_SOBRESCREVE))
             .instalar();
         montar();
 
@@ -540,8 +540,8 @@ describe("recusa de sobrescrita (HR-48e-4)", () => {
     });
 
     it("a recusa sem detalhes ainda aparece com o aviso e o botão, sem tabela", async () => {
-        new ServidorFalso()
-            .responder("POST", "/backup/import", erroApi(409, "importacao_sobrescreve", "x", null))
+        new FakeServer()
+            .responder("POST", "/backup/import", apiError(409, "importacao_sobrescreve", "x", null))
             .instalar();
         montar();
 

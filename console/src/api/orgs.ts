@@ -1,115 +1,87 @@
-/**
- * Operações de organização na API administrativa (HR-39a).
- *
- * O contrato continua sendo o OpenAPI (`schema.d.ts`), consumido por `cliente.ts`; aqui ficam as
- * quatro chamadas de escrita/leitura que as telas usam, com o `If-Match` da concorrência otimista
- * resolvido num só lugar (PRD §8 / docs/API.md: `PATCH` sem `If-Match` = 428, versão velha = 412).
- */
 
-import { ErroApi, pedir, type Org } from "./cliente";
+import { ApiError, request, type Org } from "./client";
 
-/** Retenção do histórico mora em `config`, que é JSON livre na API. */
-const CHAVE_RETENCAO = "retention_days";
+const RETENTION_KEY = "retention_days";
 
-/** Valores que o formulário grava. `slug` e `config` só são enviados quando fazem sentido. */
-export type EntradaOrg = {
+export type OrgInput = {
     name: string;
     slug?: string;
     config?: Record<string, unknown>;
 };
 
-/** Alteração de org: o servidor só muda o que vier. */
-export type MudancaOrg = {
+export type OrgChange = {
     name?: string;
     status?: string;
     config?: Record<string, unknown>;
 };
 
-/** Lê a retenção em dias da configuração da org (`undefined` = não definida). */
-export function retencaoEmDias(org: Pick<Org, "config">): number | undefined {
+export function retentionDays(org: Pick<Org, "config">): number | undefined {
     const config = org.config as Record<string, unknown> | undefined;
-    const valor = config?.[CHAVE_RETENCAO];
-    return typeof valor === "number" && Number.isFinite(valor) ? valor : undefined;
+    const value = config?.[RETENTION_KEY];
+    return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-/** Devolve a configuração atual com a retenção trocada, preservando as demais chaves. */
-export function comRetencao(
+export function withRetention(
     config: Record<string, unknown> | undefined,
     dias: number | null,
 ): Record<string, unknown> {
-    const nova: Record<string, unknown> = { ...(config ?? {}) };
+    const copy: Record<string, unknown> = { ...(config ?? {}) };
     if (dias === null) {
-        delete nova[CHAVE_RETENCAO];
+        delete copy[RETENTION_KEY];
     } else {
-        nova[CHAVE_RETENCAO] = dias;
+        copy[RETENTION_KEY] = dias;
     }
-    return nova;
+    return copy;
 }
 
-/** Cria a org (`POST /admin/v1/orgs`, só token global). */
-export async function criarOrg(entrada: EntradaOrg): Promise<Org> {
-    const corpo: Record<string, unknown> = { name: entrada.name };
-    if (entrada.slug) corpo["slug"] = entrada.slug;
-    if (entrada.config && Object.keys(entrada.config).length > 0) {
-        corpo["config"] = entrada.config;
+export async function createOrg(input: OrgInput): Promise<Org> {
+    const body: Record<string, unknown> = { name: input.name };
+    if (input.slug) body["slug"] = input.slug;
+    if (input.config && Object.keys(input.config).length > 0) {
+        body["config"] = input.config;
     }
-    return pedir<Org>("/admin/v1/orgs", { method: "POST", body: JSON.stringify(corpo) });
+    return request<Org>("/admin/v1/orgs", { method: "POST", body: JSON.stringify(body) });
 }
 
-/** Lê uma org (`GET /admin/v1/orgs/{id}`). */
-export async function obterOrg(id: string): Promise<Org> {
-    return pedir<Org>(`/admin/v1/orgs/${encodeURIComponent(id)}`);
+export async function getOrg(id: string): Promise<Org> {
+    return request<Org>(`/admin/v1/orgs/${encodeURIComponent(id)}`);
 }
 
-/**
- * Altera a org com o `If-Match` da versão lida antes.
- *
- * Um `412` significa que outra pessoa salvou primeiro: a chamada falha e quem chama decide o que
- * mostrar, sem perder o que o operador digitou.
- */
-export async function atualizarOrg(
+export async function updateOrg(
     id: string,
     versao: number,
-    mudanca: MudancaOrg,
+    change: OrgChange,
 ): Promise<Org> {
-    const corpo: Record<string, unknown> = {};
-    if (mudanca.name !== undefined) corpo["name"] = mudanca.name;
-    if (mudanca.status !== undefined) corpo["status"] = mudanca.status;
-    if (mudanca.config !== undefined) corpo["config"] = mudanca.config;
-    return pedir<Org>(`/admin/v1/orgs/${encodeURIComponent(id)}`, {
+    const body: Record<string, unknown> = {};
+    if (change.name !== undefined) body["name"] = change.name;
+    if (change.status !== undefined) body["status"] = change.status;
+    if (change.config !== undefined) body["config"] = change.config;
+    return request<Org>(`/admin/v1/orgs/${encodeURIComponent(id)}`, {
         method: "PATCH",
         headers: { "if-match": String(versao) },
-        body: JSON.stringify(corpo),
+        body: JSON.stringify(body),
     });
 }
 
-/**
- * Exclui a org (`DELETE /admin/v1/orgs/{id}`).
- *
- * `force` confirma a exclusão de uma org com conteúdo (agentes, categorias, departamentos, tokens);
- * sem ele a API responde `409 conflict`, que a tela mostra como veio.
- */
-export async function excluirOrg(id: string, force: boolean): Promise<void> {
-    const consulta = force ? "?force=true" : "";
-    await pedir<void>(`/admin/v1/orgs/${encodeURIComponent(id)}${consulta}`, {
+export async function deleteOrg(id: string, force: boolean): Promise<void> {
+    const query = force ? "?force=true" : "";
+    await request<void>(`/admin/v1/orgs/${encodeURIComponent(id)}${query}`, {
         method: "DELETE",
     });
 }
 
-/** Versões de uma disputa de concorrência (`details` do `412 version_conflict`). */
-export type ConflitoDeVersao = {
-    esperada?: number;
-    atual?: number;
+export type VersionConflict = {
+    "esperada"?: number;
+    "atual"?: number;
 };
 
-/** Extrai `details.expected_version`/`details.current_version` de um `412`, quando vierem. */
-export function conflitoDeVersao(erro: unknown): ConflitoDeVersao | null {
-    if (!(erro instanceof ErroApi) || erro.status !== 412) return null;
-    const detalhes = erro.detalhes as Record<string, unknown> | null | undefined;
-    const esperada = detalhes?.["expected_version"];
-    const atual = detalhes?.["current_version"];
+export function versionConflict(error: unknown): VersionConflict | null {
+    if (!(error instanceof ApiError) || error.status !== 412) return null;
+    const details = error["detalhes"] as Record<string, unknown> | null | undefined;
+    const expected = details?.["expected_version"];
+    const current = details?.["current_version"];
     return {
-        esperada: typeof esperada === "number" ? esperada : undefined,
-        atual: typeof atual === "number" ? atual : undefined,
+        "esperada": typeof expected === "number" ? expected : undefined,
+        "atual": typeof current === "number" ? current : undefined,
     };
 }

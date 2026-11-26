@@ -12,10 +12,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { ServidorFalso, erroApi, type Chamada } from "../testes/servidor";
-import { ErroApi, definirToken, quandoExpirar } from "../api/cliente";
+import { FakeServer, apiError, type Call } from "../testing/server";
+import { ApiError, setToken, whenExpired } from "../api/client";
 import { setLocale } from "../i18n";
-import { esperarFocoDoModal } from "../testes/modal";
+import { waitForModalFocus } from "../testing/modal";
 import {
     Matrix,
     conflictMessage,
@@ -91,7 +91,7 @@ function servidorPadrao(
         departamentos?: unknown;
     } = {},
 ) {
-    return new ServidorFalso()
+    return new FakeServer()
         .responder("GET", `${CAMINHO}/spaces`, {
             status: opcoes.espacosStatus ?? 200,
             corpo: opcoes.espacosStatus === 500
@@ -124,7 +124,7 @@ function servidorPadrao(
 }
 
 /** Primeira chamada da lista, ou falha com a mensagem do que não foi chamado. */
-function primeira(chamadas: Chamada[]): Chamada {
+function primeira(chamadas: Call[]): Call {
     const [primeiraChamada] = chamadas;
     if (!primeiraChamada) throw new Error("a chamada esperada não aconteceu");
     return primeiraChamada;
@@ -159,8 +159,8 @@ function secao(titulo: string): HTMLElement {
 afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
-    definirToken(null);
-    quandoExpirar(null);
+    setToken(null);
+    whenExpired(null);
 });
 
 describe("textos da tela", () => {
@@ -182,10 +182,10 @@ describe("textos da tela", () => {
     });
 
     it("erro 409 e 400 mostram a instrução da API; o resto passa pela tradução comum", () => {
-        expect(mensagemDoEspaco(new ErroApi(409, "x", "convide o bot e dê poder 50"), "o espaço")).toBe(
+        expect(mensagemDoEspaco(new ApiError(409, "x", "convide o bot e dê poder 50"), "o espaço")).toBe(
             "convide o bot e dê poder 50",
         );
-        expect(mensagemDoEspaco(new ErroApi(404, "x", "cru"), "o departamento")).toBe(
+        expect(mensagemDoEspaco(new ApiError(404, "x", "cru"), "o departamento")).toBe(
             "Não encontrei o departamento.",
         );
     });
@@ -297,10 +297,10 @@ describe("módulo nesta organização", () => {
     });
 
     it("erro 403 na leitura diz que o token não alcança a organização", async () => {
-        new ServidorFalso()
+        new FakeServer()
             .responder("GET", `${CAMINHO}/spaces`, { status: 200, corpo: { items: [] } })
             .responder("GET", "/departments", { status: 200, corpo: DEPARTAMENTOS })
-            .responder("GET", CAMINHO, erroApi(403, "forbidden", "token de outra org"))
+            .responder("GET", CAMINHO, apiError(403, "forbidden", "token de outra org"))
             .instalar();
 
         montar();
@@ -330,7 +330,7 @@ describe("módulo nesta organização", () => {
 
         await userEvent.click(await screen.findByRole("button", { name: "Desligar módulo" }));
         const dialogo = await dialogoAberto();
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         expect(servidor.chamadasPara("PUT", CAMINHO)).toHaveLength(0);
 
         await userEvent.click(within(dialogo).getByRole("button", { name: "Desligar módulo" }));
@@ -342,10 +342,10 @@ describe("módulo nesta organização", () => {
     });
 
     it("412 mostra a frase de conflito e relê o estado", async () => {
-        const servidor = new ServidorFalso()
+        const servidor = new FakeServer()
             .responder("GET", `${CAMINHO}/spaces`, { status: 200, corpo: { items: [] } })
             .responder("GET", "/departments", { status: 200, corpo: DEPARTAMENTOS })
-            .responder("PUT", CAMINHO, erroApi(412, "version_conflict", "mudou"))
+            .responder("PUT", CAMINHO, apiError(412, "version_conflict", "mudou"))
             .responder("GET", CAMINHO, { status: 200, corpo: MODULO_DESLIGADO })
             .instalar();
         montar();
@@ -396,12 +396,12 @@ describe("módulo nesta organização", () => {
 
     it("401 numa sessão aberta dispara o encerramento da sessão", async () => {
         const encerrar = vi.fn();
-        definirToken("poph_token_da_sessao");
-        quandoExpirar(encerrar);
-        new ServidorFalso()
+        setToken("poph_token_da_sessao");
+        whenExpired(encerrar);
+        new FakeServer()
             .responder("GET", `${CAMINHO}/spaces`, { status: 200, corpo: { items: [] } })
             .responder("GET", "/departments", { status: 200, corpo: DEPARTAMENTOS })
-            .responder("GET", CAMINHO, erroApi(401, "invalid_token", "sessão caiu"))
+            .responder("GET", CAMINHO, apiError(401, "invalid_token", "sessão caiu"))
             .instalar();
 
         montar();
@@ -536,10 +536,10 @@ describe("espaços por departamento", () => {
     });
 
     it("409 do servidor aparece dentro do diálogo com a instrução do que fazer no Element", async () => {
-        new ServidorFalso()
+        new FakeServer()
             .responder("GET", `${CAMINHO}/spaces`, { status: 200, corpo: { items: [] } })
             .responder("GET", "/departments", { status: 200, corpo: DEPARTAMENTOS })
-            .responder("PUT", `${CAMINHO}/spaces`, erroApi(409, "conflito", "convide o bot do módulo e dê a ele poder 50"))
+            .responder("PUT", `${CAMINHO}/spaces`, apiError(409, "conflito", "convide o bot do módulo e dê a ele poder 50"))
             .instalar();
         montar();
 
@@ -566,7 +566,7 @@ describe("espaços por departamento", () => {
             await screen.findByRole("button", { name: "Desligar espaço do departamento Suporte" }),
         );
         const dialogo = await dialogoAberto();
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         expect(servidor.chamadasPara("DELETE", `${CAMINHO}/spaces/dep_2`)).toHaveLength(0);
         expect(within(dialogo).getByText(/Nada é apagado no Element/)).toBeInTheDocument();
 
@@ -603,7 +603,7 @@ describe("Matrix em en-US", () => {
         expect(valorDasFalhas(2)).toBe("2 pending");
         expect(textoDaOrigem("linked")).toBe("Linked (Element)");
         expect(conflictMessage()).toBe("The state changed between reading and saving, try again.");
-        expect(mensagemDoEspaco(new ErroApi(404, "x", "cru"), "the department")).toBe(
+        expect(mensagemDoEspaco(new ApiError(404, "x", "cru"), "the department")).toBe(
             "Could not find the department.",
         );
     });
@@ -659,7 +659,7 @@ describe("Matrix em en-US", () => {
 
         await userEvent.click(await screen.findByRole("button", { name: "Disable module" }));
         const dialogo = await dialogoAberto();
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         expect(
             within(dialogo).getByText("Disable the Matrix module in this organization?"),
         ).toBeInTheDocument();
@@ -729,7 +729,7 @@ describe("Matrix em en-US", () => {
             within(linha).getByRole("button", { name: "Link an existing space to department Vendas" }),
         );
         const dialogo = await dialogoAberto();
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         expect(within(dialogo).getByText("Link a department to an existing space")).toBeInTheDocument();
         expect(
             within(dialogo).getByLabelText("Alias or room ID of the Matrix space"),

@@ -6,10 +6,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { excluirOrg } from "../api/orgs";
+import { deleteOrg } from "../api/orgs";
 import { DialogoExclusao } from "./DialogoExclusao";
-import { esperarFocoDoModal } from "../testes/modal";
-import { ServidorFalso, erroApi } from "../testes/servidor";
+import { waitForModalFocus } from "../testing/modal";
+import { FakeServer, apiError } from "../testing/server";
 import { setLocale } from "../i18n";
 
 function montar(aoConfirmar: (forcar: boolean) => Promise<void>, aoExcluir = vi.fn(), aoFechar = vi.fn()) {
@@ -34,7 +34,7 @@ describe("DialogoExclusao", () => {
     it("só habilita o botão quando o slug digitado é exato", async () => {
         const usuario = userEvent.setup();
         montar(vi.fn().mockResolvedValue(undefined));
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         const confirmar = screen.getByRole("button", { name: "Excluir organização" });
         expect(confirmar).toBeDisabled();
@@ -58,7 +58,7 @@ describe("DialogoExclusao", () => {
             )
             .mockResolvedValueOnce(undefined);
         montar(aoConfirmar);
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         await usuario.type(screen.getByLabelText(/Digite/i), "loja-antiga");
         await usuario.click(screen.getByRole("button", { name: "Excluir organização" }));
@@ -72,16 +72,16 @@ describe("DialogoExclusao", () => {
         const usuario = userEvent.setup();
         const aoExcluir = vi.fn();
         const aoFechar = vi.fn();
-        const servidor = new ServidorFalso()
+        const servidor = new FakeServer()
             .responder("DELETE", "/admin/v1/orgs/org_1", (chamada) =>
                 chamada.url.includes("force=true")
                     ? { status: 204 }
-                    : erroApi(409, "conflict", "a organização tem agentes; confirme com force"),
+                    : apiError(409, "conflict", "a organização tem agentes; confirme com force"),
             )
             .instalar();
 
-        montar((forcar) => excluirOrg("org_1", forcar), aoExcluir, aoFechar);
-        await esperarFocoDoModal();
+        montar((forcar) => deleteOrg("org_1", forcar), aoExcluir, aoFechar);
+        await waitForModalFocus();
         await usuario.type(screen.getByLabelText(/Digite/i), "loja-antiga");
         await usuario.click(screen.getByRole("button", { name: "Excluir organização" }));
 
@@ -122,7 +122,7 @@ describe("DialogoExclusao em en-US", () => {
                 aoConfirmar={aoConfirmar}
             />,
         );
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         expect(screen.getByRole("dialog")).toHaveAccessibleName("Delete organization?");
         expect(screen.getByText("organization slug", { exact: false })).toBeInTheDocument();

@@ -9,10 +9,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { Produto } from "../api/produtos";
+import type { Product } from "../api/products";
 import { setLocale } from "../i18n";
-import { esperarFocoDoModal } from "../testes/modal";
-import { ServidorFalso, erroApi } from "../testes/servidor";
+import { waitForModalFocus } from "../testing/modal";
+import { FakeServer, apiError } from "../testing/server";
 import { ModalProduto, centavosDe, formatarReais, listaDe, reaisDe } from "./ModalProduto";
 
 const ORG = "org_1";
@@ -21,7 +21,7 @@ const CATEGORIAS = [
     { id: "cat_2", org_id: ORG, name: "Implantes", description: "", status: "active", version: 1, created_at: 0, updated_at: 0 },
 ];
 
-function produtoBase(sobrescrito: Partial<Produto> = {}): Produto {
+function produtoBase(sobrescrito: Partial<Product> = {}): Product {
     return {
         id: "prod_1",
         org_id: ORG,
@@ -96,11 +96,11 @@ describe("ModalProduto", () => {
     it("cria produto com o corpo da API (centavos, listas, sem status e sem slug vazio)", async () => {
         const usuario = userEvent.setup();
         const criado = produtoBase({ id: "prod_9", name: "Implante unitário", price_cents: 320000 });
-        const servidor = new ServidorFalso()
+        const servidor = new FakeServer()
             .responder("POST", `/admin/v1/orgs/${ORG}/products`, { status: 201, corpo: criado })
             .instalar();
         const { aoSalvar, aoFechar } = montar();
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         await usuario.selectOptions(screen.getByRole("combobox", { name: "Categoria" }), "cat_2");
         await usuario.type(campo("Nome"), "Implante unitário");
@@ -130,7 +130,7 @@ describe("ModalProduto", () => {
     });
 
     it("na criação não existe o campo Situação, que a API recusa", async () => {
-        new ServidorFalso().instalar();
+        new FakeServer().instalar();
         montar();
         expect(await screen.findByRole("dialog", { name: "Novo produto" })).toBeInTheDocument();
         expect(screen.queryByRole("combobox", { name: "Situação" })).not.toBeInTheDocument();
@@ -138,9 +138,9 @@ describe("ModalProduto", () => {
 
     it("sem categoria, nome vazio e preço inválido não chamam a API e marcam os campos", async () => {
         const usuario = userEvent.setup();
-        const servidor = new ServidorFalso().instalar();
+        const servidor = new FakeServer().instalar();
         montar();
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         await usuario.type(campo("Preço (R$)"), "abc");
         await usuario.click(screen.getByRole("button", { name: "Criar produto" }));
@@ -153,18 +153,18 @@ describe("ModalProduto", () => {
 
     it("erro de campo vindo da API (slug repetido) aparece no campo Identificador", async () => {
         const usuario = userEvent.setup();
-        new ServidorFalso()
+        new FakeServer()
             .responder(
                 "POST",
                 `/admin/v1/orgs/${ORG}/products`,
-                erroApi(400, "validation_error", "campo `slug` inválido", {
+                apiError(400, "validation_error", "campo `slug` inválido", {
                     field: "slug",
                     reason: "já existe um produto com esse identificador nesta org",
                 }),
             )
             .instalar();
         montar();
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         await usuario.selectOptions(screen.getByRole("combobox", { name: "Categoria" }), "cat_1");
         await usuario.type(campo("Nome"), "Clareamento");
@@ -180,11 +180,11 @@ describe("ModalProduto", () => {
         const usuario = userEvent.setup();
         const aoSalvar = vi.fn();
         let tentativa = 0;
-        const servidor = new ServidorFalso()
+        const servidor = new FakeServer()
             .responder("PATCH", `/admin/v1/orgs/${ORG}/products/prod_1`, () => {
                 tentativa += 1;
                 if (tentativa === 1) {
-                    return erroApi(412, "version_conflict", "produto mudou desde a leitura", {
+                    return apiError(412, "version_conflict", "produto mudou desde a leitura", {
                         current_version: 3,
                         expected_version: 2,
                     });
@@ -197,7 +197,7 @@ describe("ModalProduto", () => {
             })
             .instalar();
         montar({ produto: produtoBase(), aoSalvar });
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         expect(screen.queryByRole("combobox", { name: "Situação" })).toBeInTheDocument();
         await usuario.clear(campo("Nome"));
@@ -232,11 +232,11 @@ describe("preço como o cliente vê", () => {
 
     it("editar sem mexer no preço não envia o texto e mostra o que o cliente vê", async () => {
         const usuario = userEvent.setup();
-        const servidor = new ServidorFalso()
+        const servidor = new FakeServer()
             .responder("PATCH", URL_PRODUTO, { status: 200, corpo: produtoBase({ version: 3 }) })
             .instalar();
         montar({ produto: produtoBase() });
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         expect(campo("Preço como o cliente vê")).toHaveValue("");
         expect(screen.getByText(/Como o cliente vê: R\$ 450,00\./)).toBeInTheDocument();
@@ -252,14 +252,14 @@ describe("preço como o cliente vê", () => {
     it("mudar só o valor em centavos envia o texto vazio, a prévia acompanha e a lista recebe o preço novo", async () => {
         const usuario = userEvent.setup();
         const aoSalvar = vi.fn();
-        const servidor = new ServidorFalso()
+        const servidor = new FakeServer()
             .responder("PATCH", URL_PRODUTO, {
                 status: 200,
                 corpo: produtoBase({ version: 3, price_cents: 50000, price_text: "R$ 500,00" }),
             })
             .instalar();
         montar({ produto: produtoBase(), aoSalvar });
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         await usuario.clear(campo("Preço (R$)"));
         await usuario.type(campo("Preço (R$)"), "500");
@@ -276,11 +276,11 @@ describe("preço como o cliente vê", () => {
 
     it("texto digitado pelo operador vai no corpo como foi digitado", async () => {
         const usuario = userEvent.setup();
-        const servidor = new ServidorFalso()
+        const servidor = new FakeServer()
             .responder("PATCH", URL_PRODUTO, { status: 200, corpo: produtoBase({ version: 3 }) })
             .instalar();
         montar({ produto: produtoBase({ price_cents: 32000, price_text: "R$ 320,00" }) });
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         await usuario.type(campo("Preço como o cliente vê"), "R$ 320,00 por visita");
         expect(screen.getByText(/Como o cliente vê: R\$ 320,00 por visita\./)).toBeInTheDocument();
@@ -294,11 +294,11 @@ describe("preço como o cliente vê", () => {
 
     it("apagar o texto digitado envia vazio e a prévia volta ao valor calculado", async () => {
         const usuario = userEvent.setup();
-        const servidor = new ServidorFalso()
+        const servidor = new FakeServer()
             .responder("PATCH", URL_PRODUTO, { status: 200, corpo: produtoBase({ version: 3 }) })
             .instalar();
         montar({ produto: produtoBase({ price_cents: 32000, price_text: "R$ 320,00" }) });
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         await usuario.type(campo("Preço como o cliente vê"), "x");
         await usuario.clear(campo("Preço como o cliente vê"));
@@ -313,11 +313,11 @@ describe("preço como o cliente vê", () => {
 
     it("com texto próprio gravado, o botão volta o texto a ser calculado pelo valor", async () => {
         const usuario = userEvent.setup();
-        const servidor = new ServidorFalso()
+        const servidor = new FakeServer()
             .responder("PATCH", URL_PRODUTO, { status: 200, corpo: produtoBase({ version: 3 }) })
             .instalar();
         montar({ produto: produtoBase({ price_cents: 32000, price_text: "R$ 320,00 por visita" }) });
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         expect(screen.getByText(/Como o cliente vê: R\$ 320,00 por visita\./)).toBeInTheDocument();
         await usuario.click(screen.getByRole("button", { name: "Voltar a calcular o texto pelo valor" }));
@@ -337,7 +337,7 @@ describe("preço como o cliente vê", () => {
         const usuario = userEvent.setup();
         setLocale("en-US");
         montar();
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         expect(screen.getByRole("heading", { name: "New product" })).toBeInTheDocument();
         expect(screen.getByRole("option", { name: "Choose a category" })).toBeInTheDocument();

@@ -8,10 +8,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { Registro } from "../api/estrutura";
+import type { Registro } from "../api/structure";
 import { setLocale } from "../i18n";
-import { esperarFocoDoModal } from "../testes/modal";
-import { ServidorFalso, erroApi } from "../testes/servidor";
+import { waitForModalFocus } from "../testing/modal";
+import { FakeServer, apiError } from "../testing/server";
 import { ModalEstrutura } from "./ModalEstrutura";
 
 const CATEGORIA: Registro = {
@@ -35,7 +35,7 @@ describe("ModalEstrutura", () => {
         const aoSalvar = vi.fn();
         const aoFechar = vi.fn();
         const criada: Registro = { ...CATEGORIA, id: "cat_9", name: "Implantes", description: "" };
-        const servidor = new ServidorFalso()
+        const servidor = new FakeServer()
             .responder("POST", "/admin/v1/orgs/org_1/categories", { status: 201, corpo: criada })
             .instalar();
 
@@ -49,7 +49,7 @@ describe("ModalEstrutura", () => {
                 aoSalvar={aoSalvar}
             />,
         );
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         await usuario.type(campoNome(), "Implantes");
         await usuario.click(screen.getByRole("button", { name: "Criar categoria" }));
@@ -61,7 +61,7 @@ describe("ModalEstrutura", () => {
     });
 
     it("o título de criar categoria é 'Nova categoria' (o feminino não vaza)", async () => {
-        new ServidorFalso().instalar();
+        new FakeServer().instalar();
         render(
             <ModalEstrutura
                 tipo="categoria"
@@ -77,7 +77,7 @@ describe("ModalEstrutura", () => {
 
     it("nome vazio não chama a API e mostra o erro no campo Nome", async () => {
         const usuario = userEvent.setup();
-        const servidor = new ServidorFalso().instalar();
+        const servidor = new FakeServer().instalar();
 
         render(
             <ModalEstrutura
@@ -89,7 +89,7 @@ describe("ModalEstrutura", () => {
                 aoSalvar={vi.fn()}
             />,
         );
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         await usuario.click(screen.getByRole("button", { name: "Criar departamento" }));
 
@@ -99,11 +99,11 @@ describe("ModalEstrutura", () => {
 
     it("nome repetido volta da API e aparece no campo Nome, com o motivo real", async () => {
         const usuario = userEvent.setup();
-        new ServidorFalso()
+        new FakeServer()
             .responder(
                 "POST",
                 "/departments",
-                erroApi(400, "validation_error", "campo `nome` inválido", {
+                apiError(400, "validation_error", "campo `nome` inválido", {
                     field: "nome",
                     reason: "já existe um registro com esse valor nesta org",
                 }),
@@ -120,7 +120,7 @@ describe("ModalEstrutura", () => {
                 aoSalvar={vi.fn()}
             />,
         );
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         await usuario.type(campoNome(), "Financeiro");
         await usuario.click(screen.getByRole("button", { name: "Criar departamento" }));
@@ -136,11 +136,11 @@ describe("ModalEstrutura", () => {
         const aoSalvar = vi.fn();
         const aoFechar = vi.fn();
         let tentativa = 0;
-        const servidor = new ServidorFalso()
+        const servidor = new FakeServer()
             .responder("PATCH", "/categories/cat_1", () => {
                 tentativa += 1;
                 if (tentativa === 1) {
-                    return erroApi(412, "version_conflict", "mudou desde a leitura", {
+                    return apiError(412, "version_conflict", "mudou desde a leitura", {
                         current_version: 4,
                         expected_version: 2,
                     });
@@ -166,7 +166,7 @@ describe("ModalEstrutura", () => {
                 aoSalvar={aoSalvar}
             />,
         );
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         await usuario.clear(campoNome());
         await usuario.type(campoNome(), "Ortodontia digitada");
@@ -204,7 +204,7 @@ describe("ModalEstrutura", () => {
                 aoSalvar={vi.fn()}
             />,
         );
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         expect(screen.getByRole("heading", { name: "Edit category" })).toBeInTheDocument();
         expect(screen.getByRole("option", { name: "Active" })).toBeInTheDocument();

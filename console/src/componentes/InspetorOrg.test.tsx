@@ -14,10 +14,10 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { InspetorOrg, type InspetorOrgProps } from "./InspetorOrg";
-import type { Agente } from "../api/agentes";
-import type { Org } from "../api/cliente";
-import { ServidorFalso } from "../testes/servidor";
-import "../testes/preparo";
+import type { Agente } from "../api/agents";
+import type { Org } from "../api/client";
+import { FakeServer } from "../testing/server";
+import "../testing/setup";
 import { setLocale } from "../i18n";
 
 const ORG: Org = {
@@ -70,7 +70,7 @@ type Cenario = {
 
 /** Servidor falso com as duas rotas da gaveta (a mais específica primeiro). */
 function servidor({ agentes = [AGENTE_MATRIX], matrix = estadoMatrix() }: Cenario = {}) {
-    const falso = new ServidorFalso();
+    const falso = new FakeServer();
     falso.responder("GET", "/agents", () =>
         agentes === "erro"
             ? { status: 500, corpo: { code: "internal", message: "falha ao listar agentes", details: null } }

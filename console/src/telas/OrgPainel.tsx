@@ -19,11 +19,11 @@ import {
     SofaIconButton,
     SofaSkeleton,
 } from "@sofacoding/sofa-ui";
-import { pedir, type Org } from "../api/cliente";
-import { excluirOrg } from "../api/orgs";
+import { request, type Org } from "../api/client";
+import { deleteOrg } from "../api/orgs";
 import { DialogoExclusao } from "../componentes/DialogoExclusao";
 import { ModalOrg } from "../componentes/ModalOrg";
-import { useSessao } from "../sessao/Sessao";
+import { useSession } from "../session/Session";
 import { translate, useI18n } from "../i18n";
 import type { TranslationKey } from "../i18n/catalog";
 import { formatDateTime } from "../i18n/format";
@@ -122,7 +122,7 @@ export function OrgPainel() {
     const [detalheErro, setDetalheErro] = useState<string | null>(null);
     const [editando, setEditando] = useState(false);
     const [excluindo, setExcluindo] = useState(false);
-    const { sessao } = useSessao();
+    const { sessao } = useSession();
     // Token de org não edita nem exclui organização (o servidor responde 403).
     const podeGerenciar = sessao?.escopo !== "org";
 
@@ -131,7 +131,7 @@ export function OrgPainel() {
         setErro(null);
         setDetalheErro(null);
         try {
-            const resposta = await pedir<Org>(
+            const resposta = await request<Org>(
                 `/admin/v1/orgs/${encodeURIComponent(orgId)}`,
             );
             setOrg(resposta);
@@ -370,7 +370,7 @@ export function OrgPainel() {
                         {t("orgs.deleteOrgConsequence")}
                     </p>
                 }
-                aoConfirmar={(forcar) => excluirOrg(org.id, forcar)}
+                aoConfirmar={(forcar) => deleteOrg(org.id, forcar)}
                 aoExcluir={() => navegar("/orgs")}
             />
         </>

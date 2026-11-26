@@ -21,8 +21,8 @@ import { I18nProvider, setLocale } from "../i18n";
 afterEach(() => {
     setLocale("pt-BR");
 });
-import { esperarFocoDoModal } from "../testes/modal";
-import { ServidorFalso, erroApi } from "../testes/servidor";
+import { waitForModalFocus } from "../testing/modal";
+import { FakeServer, apiError } from "../testing/server";
 import { AgenteIntegracoes } from "./AgenteIntegracoes";
 
 const ORG = "org_1";
@@ -180,7 +180,7 @@ async function escolherNoMenu(
 ) {
     const estado = { itens: [...inicial], aberto: opcoes.conectado ?? false, pareamentos: 0 };
     const idDoCaminho = (url: string) => url.split(`${LISTA}/`)[1]?.split("/")[0] ?? "";
-    const servidor = new ServidorFalso()
+    const servidor = new FakeServer()
         // Manifesto antes da rota da org: o caminho do manifesto contém `/admin/v1/orgs/<org>`.
         .responder("GET", "/manifests/", (chamada) => {
             const kind = chamada.url.split("/manifests/")[1] ?? "";
@@ -189,14 +189,14 @@ async function escolherNoMenu(
             const manifesto = MANIFESTOS[kind];
             return manifesto
                 ? { status: 200, corpo: manifesto }
-                : erroApi(404, "not_found", `manifesto \`${kind}\` não encontrado`);
+                : apiError(404, "not_found", `manifesto \`${kind}\` não encontrado`);
         })
         // Rotas de WhatsApp vêm primeiro: os caminhos contêm `${LISTA}` e casariam com as genéricas.
         .responder("POST", "/whatsapp/qrcode", (chamada) => {
             if (opcoes.aoQrcode) return opcoes.aoQrcode();
             const id = idDoCaminho(chamada.url);
             const atual = estado.itens.find((item) => item.id === id);
-            if (!atual) return erroApi(404, "not_found", "integração não encontrada");
+            if (!atual) return apiError(404, "not_found", "integração não encontrada");
             if (estado.aberto) {
                 estado.itens = estado.itens.map((item) =>
                     item.id === id ? { ...item, connection_state: "connected" } : item,
@@ -277,7 +277,7 @@ async function escolherNoMenu(
                 secrets?: Record<string, string>;
             };
             const atual = estado.itens.find((item) => item.id === id);
-            if (!atual) return erroApi(404, "not_found", "integração não encontrada");
+            if (!atual) return apiError(404, "not_found", "integração não encontrada");
             const preenchidos = corpo.secrets
                 ? [
                       ...new Set([
@@ -302,7 +302,7 @@ async function escolherNoMenu(
             const achada = estado.itens.find((item) => item.id === id);
             return achada
                 ? { status: 200, corpo: achada }
-                : erroApi(404, "not_found", "integração não encontrada");
+                : apiError(404, "not_found", "integração não encontrada");
         })
         .responder("DELETE", `${LISTA}/`, (chamada) => {
             const id = chamada.url.split(`${LISTA}/`)[1] ?? "";
@@ -386,7 +386,7 @@ describe("Aba Integrações", () => {
 
         await usuario.click(screen.getByRole("button", { name: "Criar primeira integração" }));
         const modal = await screen.findByRole("dialog");
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         await usuario.type(within(modal).getByLabelText(/Tipo da integração/), "whatsapp");
         await usuario.selectOptions(within(modal).getByLabelText(/Situação/), "inactive");
         await usuario.click(within(modal).getByRole("button", { name: "Criar integração" }));
@@ -405,7 +405,7 @@ describe("Aba Integrações", () => {
 
         await usuario.click(await screen.findByRole("button", { name: "Criar primeira integração" }));
         const modal = await screen.findByRole("dialog");
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         await usuario.click(within(modal).getByRole("button", { name: "Criar integração" }));
 
         expect(
@@ -418,7 +418,7 @@ describe("Aba Integrações", () => {
         const usuario = userEvent.setup();
         servidorCom([], {
             aoCriar: () =>
-                erroApi(422, "manifest_indisponivel", "configuração exige o manifesto", {
+                apiError(422, "manifest_indisponivel", "configuração exige o manifesto", {
                     field: "kind",
                     reason: "tipo recusado pelo servidor",
                 }),
@@ -427,7 +427,7 @@ describe("Aba Integrações", () => {
 
         await usuario.click(await screen.findByRole("button", { name: "Criar primeira integração" }));
         const modal = await screen.findByRole("dialog");
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         await usuario.type(within(modal).getByLabelText(/Tipo da integração/), "whatsapp");
         await usuario.click(within(modal).getByRole("button", { name: "Criar integração" }));
 
@@ -445,7 +445,7 @@ describe("Aba Integrações", () => {
                     estado.itens = estado.itens.map((item) =>
                         item.id === "int_1" ? { ...item, version: 5 } : item,
                     );
-                    return erroApi(412, "version_conflict", "conflito de versão", {
+                    return apiError(412, "version_conflict", "conflito de versão", {
                         current_version: 5,
                         expected_version: 1,
                     });
@@ -462,7 +462,7 @@ describe("Aba Integrações", () => {
 
         await escolherNoMenu(usuario, "Ações de whatsapp (int_1)", "Editar");
         const modal = await screen.findByRole("dialog");
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         await usuario.selectOptions(within(modal).getByLabelText(/Situação/), "inactive");
         await usuario.click(within(modal).getByRole("button", { name: "Salvar alterações" }));
 
@@ -488,7 +488,7 @@ describe("Aba Integrações", () => {
 
         await escolherNoMenu(usuario, "Ações de whatsapp (int_1)", "Excluir");
         const modal = await screen.findByRole("dialog");
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         const confirmar = within(modal).getByRole("button", { name: "Excluir integração" });
         expect(confirmar).toBeDisabled();
 
@@ -514,7 +514,7 @@ describe("Formulário do manifesto na integração (HR-44e)", () => {
 
         await usuario.click(await screen.findByRole("button", { name: "Criar primeira integração" }));
         const modal = await screen.findByRole("dialog");
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         await usuario.type(within(modal).getByLabelText(/Tipo da integração/), "eco");
 
         // O formulário vem do manifesto do plugin: nenhum campo é escrito à mão no Console.
@@ -536,7 +536,7 @@ describe("Formulário do manifesto na integração (HR-44e)", () => {
 
         await usuario.click(await screen.findByRole("button", { name: "Criar primeira integração" }));
         const modal = await screen.findByRole("dialog");
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         await usuario.type(within(modal).getByLabelText(/Tipo da integração/), "whatsapp");
 
         expect(await within(modal).findByText("Este tipo não tem formulário")).toBeInTheDocument();
@@ -556,7 +556,7 @@ describe("Formulário do manifesto na integração (HR-44e)", () => {
 
         await usuario.click(await screen.findByRole("button", { name: "Criar primeira integração" }));
         const modal = await screen.findByRole("dialog");
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         await usuario.type(within(modal).getByLabelText(/Tipo da integração/), "sms");
         await usuario.type(await within(modal).findByLabelText(/Remetente/), "5511999999999");
         await usuario.clear(within(modal).getByLabelText(/Tentativas/));
@@ -581,7 +581,7 @@ describe("Formulário do manifesto na integração (HR-44e)", () => {
 
         await usuario.click(await screen.findByRole("button", { name: "Criar primeira integração" }));
         const modal = await screen.findByRole("dialog");
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         await usuario.type(within(modal).getByLabelText(/Tipo da integração/), "eco");
         await usuario.type(await within(modal).findByLabelText(/Nome do remetente/), "Loja");
         await usuario.click(within(modal).getByRole("button", { name: "Criar integração" }));
@@ -609,7 +609,7 @@ describe("Formulário do manifesto na integração (HR-44e)", () => {
         const usuario = userEvent.setup();
         servidorCom([], {
             aoCriar: () =>
-                erroApi(400, "validation_error", "configuração inválida", {
+                apiError(400, "validation_error", "configuração inválida", {
                     field: "config_json.remetente",
                     reason: "precisa de pelo menos 3 caractere(s)",
                 }),
@@ -618,7 +618,7 @@ describe("Formulário do manifesto na integração (HR-44e)", () => {
 
         await usuario.click(await screen.findByRole("button", { name: "Criar primeira integração" }));
         const modal = await screen.findByRole("dialog");
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         await usuario.type(within(modal).getByLabelText(/Tipo da integração/), "eco");
         await usuario.type(await within(modal).findByLabelText(/Nome do remetente/), "Loja");
         await usuario.type(within(modal).getByLabelText(/Token do canal/), "chave");
@@ -652,7 +652,7 @@ describe("Formulário do manifesto na integração (HR-44e)", () => {
                         estado.itens = estado.itens.map((item) =>
                             item.id === "int_1" ? { ...item, version: 5 } : item,
                         );
-                        return erroApi(412, "version_conflict", "conflito de versão", {
+                        return apiError(412, "version_conflict", "conflito de versão", {
                             current_version: 5,
                             expected_version: 1,
                         });
@@ -670,7 +670,7 @@ describe("Formulário do manifesto na integração (HR-44e)", () => {
 
         await escolherNoMenu(usuario, "Ações de eco (int_1)", "Editar");
         const modal = await screen.findByRole("dialog");
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         const remetente = await within(modal).findByLabelText(/Nome do remetente/);
         // O formulário já vem preenchido com a configuração gravada.
         expect(remetente).toHaveValue("Antigo");
@@ -713,7 +713,7 @@ describe("Formulário do manifesto na integração (HR-44e)", () => {
 
         await escolherNoMenu(usuario, "Ações de eco (int_1)", "Editar");
         const modal = await screen.findByRole("dialog");
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         expect(
             await within(modal).findByText(/a chave de criptografia atual do servidor não consegue lê-lo/),
@@ -741,7 +741,7 @@ describe("Formulário do manifesto na integração (HR-44e)", () => {
 
         await usuario.click(await screen.findByRole("button", { name: "Criar primeira integração" }));
         const modal = await screen.findByRole("dialog");
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         await usuario.type(within(modal).getByLabelText(/Tipo da integração/), "eco");
 
         expect(
@@ -899,7 +899,7 @@ describe("Painel do WhatsApp (HR-44d)", () => {
         const disparador = await screen.findByRole("button", { name: "Desconectar aparelho" });
         await usuario.click(disparador);
         await screen.findByRole("dialog");
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         // Esc fecha e devolve o foco ao botão que abriu o diálogo.
         await usuario.keyboard("{Escape}");
@@ -908,7 +908,7 @@ describe("Painel do WhatsApp (HR-44d)", () => {
 
         await usuario.click(disparador);
         const confirmacao = await screen.findByRole("dialog");
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         await usuario.click(within(confirmacao).getByRole("button", { name: "Desconectar" }));
 
         expect(
@@ -965,7 +965,7 @@ describe("Painel do WhatsApp (HR-44d)", () => {
 
         await usuario.click(await screen.findByRole("button", { name: "Desconectar aparelho" }));
         const modal = await screen.findByRole("dialog");
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         await usuario.click(within(modal).getByRole("button", { name: "Desconectar" }));
 
         expect(await screen.findByText(/Outra pessoa alterou esta integração/)).toBeInTheDocument();
@@ -974,7 +974,7 @@ describe("Painel do WhatsApp (HR-44d)", () => {
         // O painel continua utilizável e a próxima tentativa usa a versão relida.
         await usuario.click(screen.getByRole("button", { name: "Desconectar aparelho" }));
         const segunda = await screen.findByRole("dialog");
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         await usuario.click(within(segunda).getByRole("button", { name: "Desconectar" }));
 
         await waitFor(() =>
@@ -1004,7 +1004,7 @@ describe("Painel do WhatsApp (HR-44d)", () => {
 
         await usuario.click(screen.getByRole("button", { name: "New integration" }));
         const modal = await screen.findByRole("dialog");
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         expect(within(modal).getByText("New integration")).toBeInTheDocument();
         expect(within(modal).getByRole("button", { name: "Create integration" })).toBeInTheDocument();
         setLocale("pt-BR");

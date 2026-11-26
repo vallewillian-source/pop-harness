@@ -24,24 +24,24 @@ import {
     SofaErrorState,
     SofaSkeleton,
 } from "@sofacoding/sofa-ui";
-import { ErroApi } from "../api/cliente";
+import { ApiError } from "../api/client";
 import { translate, useI18n } from "../i18n";
 import { formatNumber } from "../i18n/format";
 import type { TranslationKey } from "../i18n/catalog";
 import {
-    consultarMetricas,
-    consultarPlugin,
-    consultarSaude,
-    listarPlugins,
-    recarregarCluster,
-    resumoDoManifesto,
-    type ItemDePlugin,
-    type Medicoes,
-    type RelatorioRecarga,
-    type ResumoDoMapa,
-    type SaudeDaInstancia,
-} from "../api/operacao";
-import type { ManifestoDoPlugin } from "../api/integracoes";
+    fetchMetrics,
+    fetchPlugin,
+    fetchHealth,
+    listPlugins,
+    reloadCluster,
+    manifestSummary,
+    type PluginItem,
+    type Measurements,
+    type ReloadReport,
+    type ClusterMapSummary,
+    type InstanceHealth,
+} from "../api/operation";
+import type { PluginManifest } from "../api/integrations";
 import { ExportarImportarOrganizacao } from "../componentes/ExportarImportarOrganizacao";
 import "../estilos/operacao.css";
 
@@ -97,7 +97,7 @@ function memoria(valor: number | undefined): string {
 
 /** Frase para o operador a partir do erro da API (sem caminho, sem corpo cru). */
 export function mensagemDeFalha(erro: unknown, oQue: string): string {
-    if (erro instanceof ErroApi) {
+    if (erro instanceof ApiError) {
         if (erro.semServidor) return translate("operation.errorOffline");
         if (erro.status === 401) return translate("operation.errorSession");
         if (erro.status === 403) return translate("operation.errorForbidden");
@@ -123,13 +123,13 @@ const estadoInicial = <T,>(): Estado<T> => ({ carregando: true, dados: null, err
 type Consulta = {
     carregando: boolean;
     kind: string;
-    manifesto: ManifestoDoPlugin | null;
+    manifesto: PluginManifest | null;
     erro: unknown;
 };
 
 function mensagemDoPlugin(erro: unknown): string {
-    if (erro instanceof ErroApi && erro.status === 404) return translate("operation.pluginNotDeclared");
-    if (erro instanceof ErroApi && erro.status === 503) return translate("operation.pluginNotResponding");
+    if (erro instanceof ApiError && erro.status === 404) return translate("operation.pluginNotDeclared");
+    if (erro instanceof ApiError && erro.status === 503) return translate("operation.pluginNotResponding");
     return mensagemDeFalha(erro, translate("operation.whatPlugin"));
 }
 
@@ -153,7 +153,7 @@ function LinhaDePlugin({
     aberto,
     onAbrir,
 }: {
-    item: ItemDePlugin;
+    item: PluginItem;
     aberto: boolean;
     onAbrir: () => void;
 }) {
@@ -220,7 +220,7 @@ export type FalhaDaRecarga =
 
 /** Traduz o erro da recarga. Sem resposta da instância, a tela diz que não sabe se foi aplicada. */
 export function falhaDaRecarga(erro: unknown): FalhaDaRecarga {
-    if (erro instanceof ErroApi) {
+    if (erro instanceof ApiError) {
         if (erro.status === 400) {
             const bruto: unknown = erro.detalhes;
             const detalhes =
@@ -244,7 +244,7 @@ function listaOuNenhuma(itens: string[]): string {
     return itens.length > 0 ? itens.join(", ") : translate("operation.listNone");
 }
 
-function modoEmTexto(resumo: ResumoDoMapa): string {
+function modoEmTexto(resumo: ClusterMapSummary): string {
     return resumo.modo === "cluster"
         ? translate("operation.mapModeCluster")
         : translate("operation.mapModeSingle");
@@ -252,8 +252,8 @@ function modoEmTexto(resumo: ResumoDoMapa): string {
 
 /** Resumo de um mapa em duas colunas (antes e depois). Sem segredo: só se está configurado. */
 function TabelaDoMapa({ antes, depois, impressaoAntes, impressaoDepois }: {
-    antes: ResumoDoMapa;
-    depois: ResumoDoMapa;
+    antes: ClusterMapSummary;
+    depois: ClusterMapSummary;
     impressaoAntes: string;
     impressaoDepois: string;
 }) {
@@ -316,7 +316,7 @@ function TabelaDoMapa({ antes, depois, impressaoAntes, impressaoDepois }: {
 }
 
 /** Resultado de uma recarga que deu certo: mudou ou não, o que entrou e saiu, e as orgs que trocaram. */
-function RelatorioDaRecarga({ relatorio, titulo }: { relatorio: RelatorioRecarga; titulo: string }) {
+function RelatorioDaRecarga({ relatorio, titulo }: { relatorio: ReloadReport; titulo: string }) {
     const { translate: t } = useI18n();
     return (
         <div className="poph-operacao__relatorio">
@@ -433,7 +433,7 @@ function SecaoCluster() {
     const idSecao = useId();
     const [confirmando, setConfirmando] = useState(false);
     const [recarregando, setRecarregando] = useState(false);
-    const [ultimoSucesso, setUltimoSucesso] = useState<RelatorioRecarga | null>(null);
+    const [ultimoSucesso, setUltimoSucesso] = useState<ReloadReport | null>(null);
     const [falha, setFalha] = useState<FalhaDaRecarga | null>(null);
     const emCurso = useRef(false);
     const vivo = useRef(true);
@@ -452,7 +452,7 @@ function SecaoCluster() {
         setRecarregando(true);
         setFalha(null);
         try {
-            const relatorio = await recarregarCluster();
+            const relatorio = await reloadCluster();
             if (!vivo.current) return;
             setUltimoSucesso(relatorio);
         } catch (erro) {
@@ -525,9 +525,9 @@ function SecaoCluster() {
 export function Operacao() {
     const { orgId = "" } = useParams();
     const { translate: t, formatTime } = useI18n();
-    const [saude, setSaude] = useState<Estado<SaudeDaInstancia>>(estadoInicial);
-    const [metricas, setMetricas] = useState<Estado<Medicoes>>(estadoInicial);
-    const [plugins, setPlugins] = useState<Estado<ItemDePlugin[]>>(estadoInicial);
+    const [saude, setSaude] = useState<Estado<InstanceHealth>>(estadoInicial);
+    const [metricas, setMetricas] = useState<Estado<Measurements>>(estadoInicial);
+    const [plugins, setPlugins] = useState<Estado<PluginItem[]>>(estadoInicial);
     const [atualizadoEm, setAtualizadoEm] = useState<Date | null>(null);
     const [consulta, setConsulta] = useState<Consulta>({
         carregando: false,
@@ -555,9 +555,9 @@ export function Operacao() {
         setMetricas((atual) => ({ ...atual, carregando: true }));
         setPlugins((atual) => ({ ...atual, carregando: true }));
         const [resSaude, resMetricas, resPlugins] = await Promise.allSettled([
-            consultarSaude(),
-            consultarMetricas(),
-            listarPlugins(orgId),
+            fetchHealth(),
+            fetchMetrics(),
+            listPlugins(orgId),
         ]);
         emCurso.current = false;
         if (!vivo.current) return;
@@ -606,7 +606,7 @@ export function Operacao() {
         async (kind: string) => {
             setConsulta({ carregando: true, kind, manifesto: null, erro: null });
             try {
-                const manifesto = await consultarPlugin(orgId, kind);
+                const manifesto = await fetchPlugin(orgId, kind);
                 if (!vivo.current) return;
                 setConsulta({ carregando: false, kind, manifesto, erro: null });
             } catch (erro) {
@@ -854,11 +854,11 @@ export function Operacao() {
                             />
                             <Propriedade
                                 chave={t("operation.propertyConfigFields")}
-                                valor={formatNumber(resumoDoManifesto(consulta.manifesto).configuracao)}
+                                valor={formatNumber(manifestSummary(consulta.manifesto).configuracao)}
                             />
                             <Propriedade
                                 chave={t("operation.propertySecretFields")}
-                                valor={formatNumber(resumoDoManifesto(consulta.manifesto).segredos)}
+                                valor={formatNumber(manifestSummary(consulta.manifesto).segredos)}
                             />
                         </dl>
                     ) : null}

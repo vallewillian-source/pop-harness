@@ -10,7 +10,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { listarAgentes, type Agente } from "../api/agentes";
+import { listAgents, type Agente } from "../api/agents";
 
 /** Agentes da organização, ou `null` quando não há organização aberta, a consulta não voltou ou falhou. */
 export function useOrgAgents(orgId: string): Agente[] | null {
@@ -22,7 +22,7 @@ export function useOrgAgents(orgId: string): Agente[] | null {
         let alive = true;
         let query = queries.current.get(orgId);
         if (!query) {
-            query = listarAgentes(orgId);
+            query = listAgents(orgId);
             queries.current.set(orgId, query);
             query.catch(() => {
                 queries.current.delete(orgId);

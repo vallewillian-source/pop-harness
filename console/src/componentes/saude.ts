@@ -9,27 +9,27 @@
  */
 
 import { useEffect, useState } from "react";
-import { ErroApi, saude, type Saude } from "../api/cliente";
-import { consultarMetricas } from "../api/operacao";
+import { ApiError, health, type Health } from "../api/client";
+import { fetchMetrics } from "../api/operation";
 
 const INTERVALO_SAUDE_MS = 15_000;
 
 export type SituacaoDaSaude = {
-    saude: Saude | null;
+    saude: Health | null;
     semConexao: boolean;
     degradada: boolean;
 };
 
 /** Saúde da instância, consultada sem token enquanto o componente está montado. */
 export function useSaude(): SituacaoDaSaude {
-    const [dados, setDados] = useState<Saude | null>(null);
+    const [dados, setDados] = useState<Health | null>(null);
     const [semConexao, setSemConexao] = useState(false);
     const [degradada, setDegradada] = useState(false);
 
     useEffect(() => {
         let vivo = true;
         const consultar = () => {
-            saude()
+            health()
                 .then((resposta) => {
                     if (!vivo) return;
                     setDados(resposta);
@@ -38,7 +38,7 @@ export function useSaude(): SituacaoDaSaude {
                 })
                 .catch((erro: unknown) => {
                     if (!vivo) return;
-                    const respondeuComErro = erro instanceof ErroApi && erro.status === 503;
+                    const respondeuComErro = erro instanceof ApiError && erro.status === 503;
                     setSemConexao(!respondeuComErro);
                     setDegradada(respondeuComErro);
                 });
@@ -64,7 +64,7 @@ export function useMemoriaDoProcesso(): number | null {
     useEffect(() => {
         let vivo = true;
         const consultar = () => {
-            consultarMetricas()
+            fetchMetrics()
                 .then((medicoes) => {
                     if (!vivo) return;
                     setBytes(medicoes.memoriaProcesso ?? null);

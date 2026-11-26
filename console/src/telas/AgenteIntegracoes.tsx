@@ -40,15 +40,15 @@ import {
     SofaSkeleton,
     type SofaMenuItemSpec,
 } from "@sofacoding/sofa-ui";
-import { obterAgente, type Agente } from "../api/agentes";
+import { getAgent, type Agente } from "../api/agents";
 import {
     KIND_WHATSAPP,
-    excluirIntegracao,
-    listarIntegracoes,
-    rotuloDaConexao,
+    deleteIntegration,
+    listIntegrations,
+    connectionLabel,
     type Integracao,
-} from "../api/integracoes";
-import { obterOrg } from "../api/orgs";
+} from "../api/integrations";
+import { getOrg } from "../api/orgs";
 import { AbasDoAgente, CabecalhoDoAgente } from "../componentes/AbasDoAgente";
 import { DialogoExclusao } from "../componentes/DialogoExclusao";
 import { useGuardaDeAlteracoes } from "../componentes/GuardaAlteracoes";
@@ -117,7 +117,7 @@ export function AgenteIntegracoes() {
         setCarregando(true);
         setErro(null);
         try {
-            setIntegracoes(await listarIntegracoes(orgId, agentId));
+            setIntegracoes(await listIntegrations(orgId, agentId));
         } catch (falha) {
             setErro(
                 falha instanceof Error
@@ -140,7 +140,7 @@ export function AgenteIntegracoes() {
     const carregar = useCallback(async () => {
         setErroDeCarga(null);
         try {
-            setAgente(await obterAgente(orgId, agentId));
+            setAgente(await getAgent(orgId, agentId));
         } catch (falha) {
             setErroDeCarga(
                 falha instanceof Error ? falha.message : t("integrations.loadAgentFallbackError"),
@@ -152,7 +152,7 @@ export function AgenteIntegracoes() {
 
     useEffect(() => {
         void carregar();
-        obterOrg(orgId)
+        getOrg(orgId)
             .then((org) => setNomeDaOrg(org.name))
             .catch(() => setNomeDaOrg(null));
     }, [carregar, orgId]);
@@ -310,7 +310,7 @@ export function AgenteIntegracoes() {
                                     className={`poph-status ${classeDaConexao(integracao.connection_state)}`}
                                 >
                                     <span className="poph-status__ponto" aria-hidden="true" />
-                                    {rotuloDaConexao(integracao.connection_state)}
+                                    {connectionLabel(integracao.connection_state)}
                                 </span>
                             </div>
                             <div role="cell" className="poph-tabela__celula--mono">
@@ -527,7 +527,7 @@ export function AgenteIntegracoes() {
                 }
                 aoConfirmar={async () => {
                     if (!paraExcluir) return;
-                    await excluirIntegracao(orgId, agentId, paraExcluir.id);
+                    await deleteIntegration(orgId, agentId, paraExcluir.id);
                 }}
                 aoExcluir={() => {
                     if (paraExcluir) {

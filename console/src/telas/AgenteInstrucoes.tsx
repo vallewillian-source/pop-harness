@@ -22,16 +22,16 @@ import {
     SofaErrorState,
     SofaSkeleton,
 } from "@sofacoding/sofa-ui";
-import { ErroApi } from "../api/cliente";
-import { obterAgente, type Agente } from "../api/agentes";
-import { obterOrg } from "../api/orgs";
+import { ApiError } from "../api/client";
+import { getAgent, type Agente } from "../api/agents";
+import { getOrg } from "../api/orgs";
 import {
-    estruturadasPadrao,
-    lerInstrucoes,
-    mesmasInstrucoes,
-    salvarInstrucoes,
-    type Estruturadas,
-} from "../api/instrucoes";
+    defaultStructured,
+    readInstructions,
+    sameInstructions,
+    saveInstructions,
+    type Structured,
+} from "../api/instructions";
 import {
     AbasDoAgente,
     CabecalhoDoAgente,
@@ -46,7 +46,7 @@ import { translate, useI18n } from "../i18n";
 import "../estilos/instrucoes.css";
 
 /** Validação local: o que o formulário exige antes de chamar a API. */
-export function validarInstrucoes(valor: Estruturadas): ErrosDoFormulario {
+export function validarInstrucoes(valor: Structured): ErrosDoFormulario {
     const erros: ErrosDoFormulario = {};
     if (!valor.identity.name.trim()) {
         erros.nome = translate("instructions.validationNameRequired");
@@ -62,7 +62,7 @@ export function validarInstrucoes(valor: Estruturadas): ErrosDoFormulario {
  * `structured` é validação de ferramenta (aparece na seção de ferramentas) e o resto vai para o
  * aviso geral.
  */
-function campoDoErro(falha: ErroApi): "ferramentas" | "nome" | null {
+function campoDoErro(falha: ApiError): "ferramentas" | "nome" | null {
     const detalhes = falha.detalhes as Record<string, unknown> | null | undefined;
     const campo = typeof detalhes?.["field"] === "string" ? detalhes["field"] : "";
     if (campo.startsWith("tools")) return "ferramentas";
@@ -74,7 +74,7 @@ function campoDoErro(falha: ErroApi): "ferramentas" | "nome" | null {
     return null;
 }
 
-function motivoDoErro(falha: ErroApi): string {
+function motivoDoErro(falha: ApiError): string {
     const detalhes = falha.detalhes as Record<string, unknown> | null | undefined;
     return typeof detalhes?.["reason"] === "string" ? detalhes["reason"] : falha.message;
 }
@@ -89,8 +89,8 @@ export function AgenteInstrucoes() {
     const [carregando, setCarregando] = useState(true);
     const [erroDeCarga, setErroDeCarga] = useState<string | null>(null);
 
-    const [rascunho, setRascunho] = useState<Estruturadas | null>(null);
-    const [salvo, setSalvo] = useState<Estruturadas | null>(null);
+    const [rascunho, setRascunho] = useState<Structured | null>(null);
+    const [salvo, setSalvo] = useState<Structured | null>(null);
     const [versao, setVersao] = useState<number | null>(null);
     const [markdown, setMarkdown] = useState("");
     const [versaoDaPrevia, setVersaoDaPrevia] = useState<number | null>(null);
@@ -103,7 +103,7 @@ export function AgenteInstrucoes() {
     const [avisoPrevia, setAvisoPrevia] = useState<string | null>(null);
 
     const sujo = useMemo(
-        () => (rascunho && salvo ? !mesmasInstrucoes(rascunho, salvo) : false),
+        () => (rascunho && salvo ? !sameInstructions(rascunho, salvo) : false),
         [rascunho, salvo],
     );
 
@@ -116,11 +116,11 @@ export function AgenteInstrucoes() {
         setAvisoPrevia(null);
         try {
             const [dadosDoAgente, instrucoes] = await Promise.all([
-                obterAgente(orgId, agentId),
-                lerInstrucoes(orgId, agentId),
+                getAgent(orgId, agentId),
+                readInstructions(orgId, agentId),
             ]);
             setAgente(dadosDoAgente);
-            const base = instrucoes ? instrucoes.structured : estruturadasPadrao();
+            const base = instrucoes ? instrucoes.structured : defaultStructured();
             // Agente sem instruções: o nome dele já entra como nome do assistente.
             if (!instrucoes && !base.identity.name) {
                 base.identity.name = dadosDoAgente.name;
@@ -141,7 +141,7 @@ export function AgenteInstrucoes() {
 
     useEffect(() => {
         void carregar();
-        obterOrg(orgId)
+        getOrg(orgId)
             .then((org) => setNomeDaOrg(org.name))
             .catch(() => setNomeDaOrg(null));
     }, [carregar, orgId]);
@@ -157,7 +157,7 @@ export function AgenteInstrucoes() {
 
         setSalvando(true);
         try {
-            const resposta = await salvarInstrucoes(orgId, agentId, rascunho, versao);
+            const resposta = await saveInstructions(orgId, agentId, rascunho, versao);
             setRascunho(resposta.structured);
             setSalvo(resposta.structured);
             setVersao(resposta.version);
@@ -166,11 +166,11 @@ export function AgenteInstrucoes() {
             setAvisoPrevia(null);
             return true;
         } catch (falha) {
-            if (falha instanceof ErroApi && falha.status === 412) {
+            if (falha instanceof ApiError && falha.status === 412) {
                 // Relê para continuar de uma versão válida; o rascunho fica como está.
-                let atual: Awaited<ReturnType<typeof lerInstrucoes>> = null;
+                let atual: Awaited<ReturnType<typeof readInstructions>> = null;
                 try {
-                    atual = await lerInstrucoes(orgId, agentId);
+                    atual = await readInstructions(orgId, agentId);
                 } catch {
                     // Sem a releitura, a próxima tentativa devolve 412 de novo; nada se perde.
                 }
@@ -186,7 +186,7 @@ export function AgenteInstrucoes() {
                 );
                 return false;
             }
-            if (falha instanceof ErroApi) {
+            if (falha instanceof ApiError) {
                 const campo = campoDoErro(falha);
                 const motivo = motivoDoErro(falha);
                 if (campo === "ferramentas") {
@@ -238,7 +238,7 @@ export function AgenteInstrucoes() {
         setRecarregandoPrevia(true);
         setAvisoPrevia(null);
         try {
-            const atual = await lerInstrucoes(orgId, agentId);
+            const atual = await readInstructions(orgId, agentId);
             if (!atual) {
                 setMarkdown("");
                 setVersaoDaPrevia(null);

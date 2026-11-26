@@ -12,7 +12,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { GuardaAlteracoesProvider, useGuardaDeAlteracoes } from "../componentes/GuardaAlteracoes";
-import { ServidorFalso, erroApi } from "../testes/servidor";
+import { FakeServer, apiError } from "../testing/server";
 import { AbasDoAgente, CabecalhoDoAgente, type IdAbaDoAgente } from "../componentes/AbasDoAgente";
 import { Agentes } from "./Agentes";
 import { setLocale } from "../i18n";
@@ -46,7 +46,7 @@ function montar() {
 }
 
 function servidorCom(items: unknown[]) {
-    return new ServidorFalso()
+    return new FakeServer()
         .responder("GET", `/admin/v1/orgs/${ORG}/departments`, {
             status: 200,
             corpo: {
@@ -158,11 +158,11 @@ describe("Agentes", () => {
     it("falha da API mostra o estado de erro e o botão repete a consulta", async () => {
         const usuario = userEvent.setup();
         let falhar = true;
-        new ServidorFalso()
+        new FakeServer()
             .responder("GET", `/admin/v1/orgs/${ORG}/departments`, { status: 200, corpo: { items: [], next_cursor: null } })
             .responder("GET", `/admin/v1/orgs/${ORG}/agents`, () =>
                 falhar
-                    ? erroApi(500, "internal_error", "a instância falhou")
+                    ? apiError(500, "internal_error", "a instância falhou")
                     : { status: 200, corpo: { items: [agente()], next_cursor: null } },
             )
             .responder("GET", `/admin/v1/orgs/${ORG}`, { status: 200, corpo: { id: ORG, name: "Exemplo" } })
@@ -296,14 +296,14 @@ describe("I18N-04: tela de agentes e abas em en-US", () => {
     it("a falha da API mostra o estado de erro em inglês e o botão repete a consulta", async () => {
         const usuario = userEvent.setup();
         let falhar = true;
-        new ServidorFalso()
+        new FakeServer()
             .responder("GET", `/admin/v1/orgs/${ORG}/departments`, {
                 status: 200,
                 corpo: { items: [], next_cursor: null },
             })
             .responder("GET", `/admin/v1/orgs/${ORG}/agents`, () =>
                 falhar
-                    ? erroApi(500, "internal_error", "the instance failed")
+                    ? apiError(500, "internal_error", "the instance failed")
                     : { status: 200, corpo: { items: [agente()], next_cursor: null } },
             )
             .responder("GET", `/admin/v1/orgs/${ORG}`, {

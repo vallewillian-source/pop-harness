@@ -26,23 +26,23 @@ import {
     SofaSkeleton,
     SofaTable,
 } from "@sofacoding/sofa-ui";
-import type { Agente } from "../api/agentes";
-import type { Categoria } from "../api/estrutura";
-import { obterOrg } from "../api/orgs";
+import type { Agente } from "../api/agents";
+import type { Category } from "../api/structure";
+import { getOrg } from "../api/orgs";
 import {
-    agentesQueVeemProduto,
-    carregarAgentesComCategorias,
-    listarCategorias,
-    listarProdutos,
-    type Produto,
-    type SituacaoProduto,
-} from "../api/produtos";
+    agentsSeeingProduct,
+    loadAgentsWithCategories,
+    listCategories,
+    listProducts,
+    type Product,
+    type ProductStatus,
+} from "../api/products";
 import { DialogoExcluirProduto } from "../componentes/DialogoExcluirProduto";
 import { ModalProduto } from "../componentes/ModalProduto";
 import { useI18n } from "../i18n";
 import "../estilos/produtos.css";
 
-type Situacao = "todas" | SituacaoProduto;
+type Situacao = "todas" | ProductStatus;
 
 type Filtros = {
     busca: string;
@@ -78,7 +78,7 @@ function normalizar(texto: string): string {
     return texto.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 }
 
-function casaComBusca(produto: Produto, busca: string): boolean {
+function casaComBusca(produto: Product, busca: string): boolean {
     if (!busca) return true;
     const alvo = normalizar(
         [produto.name, produto.slug, ...(produto.aliases ?? [])].join(" "),
@@ -97,7 +97,7 @@ function textoDeAgentes(
         : translate("products.agentsCountMany", { count: total });
 }
 
-const coluna = createColumnHelper<Produto>();
+const coluna = createColumnHelper<Product>();
 
 export function Produtos() {
     const { translate } = useI18n();
@@ -108,24 +108,24 @@ export function Produtos() {
     const [nomeDaOrg, setNomeDaOrg] = useState<string | null>(null);
     const [carregando, setCarregando] = useState(true);
     const [erro, setErro] = useState<string | null>(null);
-    const [produtos, setProdutos] = useState<Produto[]>([]);
-    const [categorias, setCategorias] = useState<Categoria[]>([]);
+    const [produtos, setProdutos] = useState<Product[]>([]);
+    const [categorias, setCategorias] = useState<Category[]>([]);
     const [agentes, setAgentes] = useState<Agente[] | null>(null);
     const [filtros, setFiltros] = useState<Filtros>(FILTROS_INICIAIS);
     const [avisoDoIndice, setAvisoDoIndice] = useState<string | null>(null);
-    const [edicao, setEdicao] = useState<{ aberto: boolean; produto: Produto | null }>({
+    const [edicao, setEdicao] = useState<{ aberto: boolean; produto: Product | null }>({
         aberto: false,
         produto: null,
     });
-    const [paraExcluir, setParaExcluir] = useState<Produto | null>(null);
+    const [paraExcluir, setParaExcluir] = useState<Product | null>(null);
 
     const carregar = useCallback(async () => {
         setCarregando(true);
         setErro(null);
         try {
             const [lista, cats] = await Promise.all([
-                listarProdutos(orgId),
-                listarCategorias(orgId),
+                listProducts(orgId),
+                listCategories(orgId),
             ]);
             setProdutos(lista);
             setCategorias(cats);
@@ -138,7 +138,7 @@ export function Produtos() {
 
     const carregarAgentes = useCallback(async () => {
         try {
-            setAgentes(await carregarAgentesComCategorias(orgId));
+            setAgentes(await loadAgentsWithCategories(orgId));
         } catch {
             // Sem os agentes, a coluna mostra "—"; o catálogo segue normal.
             setAgentes(null);
@@ -147,7 +147,7 @@ export function Produtos() {
 
     useEffect(() => {
         setNomeDaOrg(null);
-        obterOrg(orgId)
+        getOrg(orgId)
             .then((org) => setNomeDaOrg(org.name))
             .catch(() => setNomeDaOrg(null));
         void carregar();
@@ -164,7 +164,7 @@ export function Produtos() {
         const mapa = new Map<string, number>();
         if (agentes === null) return mapa;
         for (const produto of produtos) {
-            mapa.set(produto.id, agentesQueVeemProduto(agentes, produto).length);
+            mapa.set(produto.id, agentsSeeingProduct(agentes, produto).length);
         }
         return mapa;
     }, [agentes, produtos]);
@@ -277,7 +277,7 @@ export function Produtos() {
         [agentes, contagemDeAgentes, nomeDaCategoria, translate],
     );
 
-    function aoSalvarProduto(salvo: Produto) {
+    function aoSalvarProduto(salvo: Product) {
         setProdutos((atual) => {
             const existe = atual.some((item) => item.id === salvo.id);
             return existe

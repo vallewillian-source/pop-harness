@@ -23,16 +23,16 @@ import {
     SofaSkeleton,
 } from "@sofacoding/sofa-ui";
 import {
-    agentesQueUsam,
-    listarAgentes,
-    listarEstrutura,
-    type AgenteResumo,
-    type Categoria,
+    agentsUsing,
+    listAgents,
+    listStructure,
+    type AgentSummary,
+    type Category,
     type Departamento,
     type Registro,
-    type TipoEstrutura,
-} from "../api/estrutura";
-import { obterOrg } from "../api/orgs";
+    type StructureType,
+} from "../api/structure";
+import { getOrg } from "../api/orgs";
 import { DialogoExcluirCategoria } from "../componentes/DialogoExcluirCategoria";
 import { DialogoExcluirDepartamento } from "../componentes/DialogoExcluirDepartamento";
 import { ModalEstrutura } from "../componentes/ModalEstrutura";
@@ -79,7 +79,7 @@ function textoDeAgentes(
 }
 
 type ColunaProps = {
-    tipo: TipoEstrutura;
+    tipo: StructureType;
     org: string;
     /** Só departamento: quantos agentes usam cada um (`null` = ainda não se sabe). */
     contagemAgentes?: (id: string) => number | null;
@@ -95,7 +95,7 @@ function SecaoEstrutura({ tipo, org, contagemAgentes, aoMudar }: ColunaProps) {
         registro: null,
     });
     const [paraExcluir, setParaExcluir] = useState<Departamento | null>(null);
-    const [categoriaParaExcluir, setCategoriaParaExcluir] = useState<Categoria | null>(null);
+    const [categoriaParaExcluir, setCategoriaParaExcluir] = useState<Category | null>(null);
     const idDoTitulo = useId();
 
     const eDepartamento = tipo === "departamento";
@@ -106,7 +106,7 @@ function SecaoEstrutura({ tipo, org, contagemAgentes, aoMudar }: ColunaProps) {
     const carregar = useCallback(async () => {
         setEstado((atual) => ({ ...atual, carregando: true, erro: null }));
         try {
-            const itens = await listarEstrutura(tipo, org);
+            const itens = await listStructure(tipo, org);
             setEstado({ carregando: false, erro: null, itens });
         } catch (falha) {
             const mensagem =
@@ -252,7 +252,7 @@ function SecaoEstrutura({ tipo, org, contagemAgentes, aoMudar }: ColunaProps) {
                                 onClick={() =>
                                     eDepartamento
                                         ? setParaExcluir(item as Departamento)
-                                        : setCategoriaParaExcluir(item as Categoria)
+                                        : setCategoriaParaExcluir(item as Category)
                                 }
                             >
                                 {translate("structure.delete")}
@@ -337,11 +337,11 @@ export function Estrutura() {
     const { translate } = useI18n();
     const { orgId = "" } = useParams();
     const [nomeDaOrg, setNomeDaOrg] = useState<string | null>(null);
-    const [agentes, setAgentes] = useState<AgenteResumo[] | null>(null);
+    const [agentes, setAgentes] = useState<AgentSummary[] | null>(null);
 
     const carregarAgentes = useCallback(async () => {
         try {
-            setAgentes(await listarAgentes(orgId));
+            setAgentes(await listAgents(orgId));
         } catch {
             // Sem a contagem, a linha mostra "—"; a lista de departamentos segue normal.
             setAgentes(null);
@@ -350,14 +350,14 @@ export function Estrutura() {
 
     useEffect(() => {
         setNomeDaOrg(null);
-        obterOrg(orgId)
+        getOrg(orgId)
             .then((org) => setNomeDaOrg(org.name))
             .catch(() => setNomeDaOrg(null));
         void carregarAgentes();
     }, [orgId, carregarAgentes]);
 
     const contagem = (id: string): number | null =>
-        agentes === null ? null : agentesQueUsam(agentes, id).length;
+        agentes === null ? null : agentsUsing(agentes, id).length;
 
     return (
         <div className="poph-pagina poph-estrutura">

@@ -21,26 +21,26 @@ import {
     type SofaFieldControlProps,
 } from "@sofacoding/sofa-ui";
 import {
-    baixarArquivo,
-    exportarOrganizacao,
-    falhaDeBackup,
-    importarOrganizacao,
-    lerTextoDoArquivo,
-    LIMITE_IMPORTACAO_BYTES,
-    nomeDaTabela,
-    passaDoLimite,
-    recusaDeSobrescrita,
-    tamanhoEmMb,
-    textoDeExemplo,
-    type FalhaDeBackup,
-    type RelatorioImportacao,
-    type RecusaSobrescrita,
+    downloadFile,
+    exportOrg,
+    backupFailure,
+    importOrg,
+    readFileText,
+    LIMIT_IMPORT_BYTES,
+    tableName,
+    exceedsLimit,
+    overwriteRefusal,
+    sizeInMb,
+    sampleText,
+    type BackupFailure,
+    type ImportReport,
+    type OverwriteRefusal,
 } from "../api/backup";
 import { useI18n } from "../i18n";
 import { formatNumber } from "../i18n/format";
 
 /** Teto da importação em MB inteiros, para as mensagens ("64 MB"). */
-const LIMITE_MB = LIMITE_IMPORTACAO_BYTES / (1024 * 1024);
+const LIMITE_MB = LIMIT_IMPORT_BYTES / (1024 * 1024);
 
 /** Campo de `SofaField` sem o `describedBy` (o `SofaInput` recebe o `aria-describedby` do controle). */
 function semDescribedBy(controle: SofaFieldControlProps) {
@@ -49,7 +49,7 @@ function semDescribedBy(controle: SofaFieldControlProps) {
 }
 
 /** Soma o que a importação inseriu e atualizou, em todas as tabelas. */
-function somas(relatorio: RelatorioImportacao): { inseridas: number; atualizadas: number } {
+function somas(relatorio: ImportReport): { inseridas: number; atualizadas: number } {
     let inseridas = 0;
     let atualizadas = 0;
     for (const linha of Object.values(relatorio.tabelas)) {
@@ -68,7 +68,7 @@ function AvisoDeFalha({
     falha,
     aoTentarDeNovo,
 }: {
-    falha: FalhaDeBackup;
+    falha: BackupFailure;
     aoTentarDeNovo?: () => void;
 }) {
     const { translate: t } = useI18n();
@@ -126,7 +126,7 @@ function RecusaDeSobrescrita({
     aoAutorizar,
     aoCancelar,
 }: {
-    recusa: RecusaSobrescrita;
+    recusa: OverwriteRefusal;
     importando: boolean;
     aoAutorizar: () => void;
     aoCancelar: () => void;
@@ -159,7 +159,7 @@ function RecusaDeSobrescrita({
                     <tbody>
                         {tabelas.map(([tabela, linhas]) => (
                             <tr key={tabela}>
-                                <td>{nomeDaTabela(tabela)}</td>
+                                <td>{tableName(tabela)}</td>
                                 <td>{numero(linhas)}</td>
                             </tr>
                         ))}
@@ -174,7 +174,7 @@ function RecusaDeSobrescrita({
                         aria-label={t("orgs.backupExamplesLabel")}
                     >
                         {recusa.exemplos.map((item, indice) => (
-                            <li key={`${indice}-${item}`}>{textoDeExemplo(item)}</li>
+                            <li key={`${indice}-${item}`}>{sampleText(item)}</li>
                         ))}
                     </ul>
                 </>
@@ -192,7 +192,7 @@ function RecusaDeSobrescrita({
 }
 
 /** Relatório da importação: o que entrou, segredos a digitar de novo e o estado do índice. */
-function RelatorioDaImportacao({ relatorio }: { relatorio: RelatorioImportacao }) {
+function RelatorioDaImportacao({ relatorio }: { relatorio: ImportReport }) {
     const { translate: t } = useI18n();
     const totais = somas(relatorio);
     const linhas = Object.entries(relatorio.tabelas).filter(
@@ -228,7 +228,7 @@ function RelatorioDaImportacao({ relatorio }: { relatorio: RelatorioImportacao }
                     <tbody>
                         {linhas.map(([tabela, linha]) => (
                             <tr key={tabela}>
-                                <td>{nomeDaTabela(tabela)}</td>
+                                <td>{tableName(tabela)}</td>
                                 <td>{numero(linha.inseridas)}</td>
                                 <td>{numero(linha.atualizadas)}</td>
                             </tr>
@@ -286,14 +286,14 @@ export function ExportarImportarOrganizacao({ org }: SecaoBackupProps) {
     const [comConversas, setComConversas] = useState(false);
     const [exportando, setExportando] = useState(false);
     const [avisoExportacao, setAvisoExportacao] = useState<string | null>(null);
-    const [falhaExportacao, setFalhaExportacao] = useState<FalhaDeBackup | null>(null);
+    const [falhaExportacao, setFalhaExportacao] = useState<BackupFailure | null>(null);
 
     const [arquivo, setArquivo] = useState<File | null>(null);
     const [confirmando, setConfirmando] = useState(false);
     const [importando, setImportando] = useState(false);
-    const [relatorio, setRelatorio] = useState<RelatorioImportacao | null>(null);
-    const [falhaImportacao, setFalhaImportacao] = useState<FalhaDeBackup | null>(null);
-    const [recusa, setRecusa] = useState<RecusaSobrescrita | null>(null);
+    const [relatorio, setRelatorio] = useState<ImportReport | null>(null);
+    const [falhaImportacao, setFalhaImportacao] = useState<BackupFailure | null>(null);
+    const [recusa, setRecusa] = useState<OverwriteRefusal | null>(null);
     const [arquivoRecusado, setArquivoRecusado] = useState(false);
     /** Trocado após importar, para o campo de arquivo começar vazio de novo. */
     const [versaoEntrada, setVersaoEntrada] = useState(0);
@@ -303,11 +303,11 @@ export function ExportarImportarOrganizacao({ org }: SecaoBackupProps) {
         setAvisoExportacao(null);
         setFalhaExportacao(null);
         try {
-            const exportado = await exportarOrganizacao(org, comConversas);
-            baixarArquivo(exportado);
+            const exportado = await exportOrg(org, comConversas);
+            downloadFile(exportado);
             setAvisoExportacao(t("orgs.backupDownloaded", { name: exportado.nome }));
         } catch (erro) {
-            setFalhaExportacao(falhaDeBackup(erro, "exportar"));
+            setFalhaExportacao(backupFailure(erro, "exportar"));
         } finally {
             setExportando(false);
         }
@@ -323,7 +323,7 @@ export function ExportarImportarOrganizacao({ org }: SecaoBackupProps) {
             return;
         }
         // Arquivo acima do teto nem vai para a fila: a tela mostra o tamanho e recusa.
-        const recusado = passaDoLimite(escolhido.size);
+        const recusado = exceedsLimit(escolhido.size);
         setArquivoRecusado(recusado);
         setArquivo(escolhido);
     }
@@ -340,18 +340,18 @@ export function ExportarImportarOrganizacao({ org }: SecaoBackupProps) {
         setFalhaImportacao(null);
         setRecusa(null);
         try {
-            const texto = await lerTextoDoArquivo(arquivo);
-            const resultado = await importarOrganizacao(org, texto, sobrescrever);
+            const texto = await readFileText(arquivo);
+            const resultado = await importOrg(org, texto, sobrescrever);
             setRelatorio(resultado);
             setArquivo(null);
             setArquivoRecusado(false);
             setVersaoEntrada((versao) => versao + 1);
         } catch (erro) {
-            const recusaDoServidor = recusaDeSobrescrita(erro);
+            const recusaDoServidor = overwriteRefusal(erro);
             if (recusaDoServidor) {
                 setRecusa(recusaDoServidor);
             } else {
-                setFalhaImportacao(falhaDeBackup(erro, "importar"));
+                setFalhaImportacao(backupFailure(erro, "importar"));
             }
         } finally {
             setImportando(false);
@@ -415,12 +415,12 @@ export function ExportarImportarOrganizacao({ org }: SecaoBackupProps) {
                 <SofaField
                     label={t("orgs.backupFileLabel")}
                     hint={t("orgs.backupFileHint", {
-                        limit: tamanhoEmMb(LIMITE_IMPORTACAO_BYTES),
+                        limit: sizeInMb(LIMIT_IMPORT_BYTES),
                     })}
                     error={
                         arquivoRecusado && arquivo
                             ? t("orgs.backupFileTooLarge", {
-                                  size: tamanhoEmMb(arquivo.size),
+                                  size: sizeInMb(arquivo.size),
                                   limit: LIMITE_MB,
                               })
                             : undefined
@@ -443,7 +443,7 @@ export function ExportarImportarOrganizacao({ org }: SecaoBackupProps) {
                     <p className="poph-mono-mudo" style={{ margin: 0 }}>
                         {t("orgs.backupFileChosen", {
                             name: arquivo.name,
-                            size: tamanhoEmMb(arquivo.size),
+                            size: sizeInMb(arquivo.size),
                         })}
                     </p>
                 ) : null}
@@ -492,7 +492,7 @@ export function ExportarImportarOrganizacao({ org }: SecaoBackupProps) {
                     arquivo
                         ? t("orgs.backupConfirmDescription", {
                               name: arquivo.name,
-                              size: tamanhoEmMb(arquivo.size),
+                              size: sizeInMb(arquivo.size),
                           })
                         : t("orgs.backupConfirmNoFile")
                 }

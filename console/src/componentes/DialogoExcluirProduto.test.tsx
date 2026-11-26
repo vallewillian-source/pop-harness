@@ -6,14 +6,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { Produto } from "../api/produtos";
+import type { Product } from "../api/products";
 import { setLocale } from "../i18n";
-import { esperarFocoDoModal } from "../testes/modal";
-import { ServidorFalso, erroApi } from "../testes/servidor";
+import { waitForModalFocus } from "../testing/modal";
+import { FakeServer, apiError } from "../testing/server";
 import { DialogoExcluirProduto } from "./DialogoExcluirProduto";
 
 const ORG = "org_1";
-const PRODUTO: Produto = {
+const PRODUTO: Product = {
     id: "prod_1",
     org_id: ORG,
     category_id: "cat_1",
@@ -50,7 +50,7 @@ function montar(agentesQueVeem: number | null, aoExcluir = vi.fn(), aoFechar = v
 
 /** Recusa `409` da API quando o produto está em itens de carrinho (HR-42f), com a contagem. */
 function recusaDeCarrinho(itens: number, carrinhos: number) {
-    return erroApi(
+    return apiError(
         409,
         "conflict",
         `o produto está em ${itens} item(ns) de ${carrinhos} carrinho(s); excluir faz esses itens ficarem como "produto removido do catálogo" (o preço gravado continua). Para confirmar, repita com force=true`,
@@ -62,7 +62,7 @@ describe("DialogoExcluirProduto", () => {
     it("diz quantos agentes deixam de oferecer o produto e só libera com o nome exato", async () => {
         const usuario = userEvent.setup();
         montar(2);
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         expect(screen.getByText(/2 agentes oferecem este produto/)).toBeInTheDocument();
         const confirmar = screen.getByRole("button", { name: "Excluir produto" });
@@ -88,7 +88,7 @@ describe("DialogoExcluirProduto", () => {
 
     it("manda o DELETE sem force, chama aoExcluir com o aviso do índice e fecha", async () => {
         const usuario = userEvent.setup();
-        const servidor = new ServidorFalso()
+        const servidor = new FakeServer()
             .responder("DELETE", `/admin/v1/orgs/${ORG}/products/prod_1`, {
                 status: 200,
                 corpo: {
@@ -98,7 +98,7 @@ describe("DialogoExcluirProduto", () => {
             })
             .instalar();
         const { aoExcluir } = montar(1);
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         await usuario.type(screen.getByLabelText(/Digite/i), "Clareamento dental");
         await usuario.click(screen.getByRole("button", { name: "Excluir produto" }));
@@ -114,15 +114,15 @@ describe("DialogoExcluirProduto", () => {
 
     it("quando a API recusa, mostra o motivo real e não fecha", async () => {
         const usuario = userEvent.setup();
-        new ServidorFalso()
+        new FakeServer()
             .responder(
                 "DELETE",
                 `/admin/v1/orgs/${ORG}/products/prod_1`,
-                erroApi(404, "not_found", "produto `prod_1` não encontrado"),
+                apiError(404, "not_found", "produto `prod_1` não encontrado"),
             )
             .instalar();
         const { aoExcluir } = montar(0);
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         await usuario.type(screen.getByLabelText(/Digite/i), "Clareamento dental");
         await usuario.click(screen.getByRole("button", { name: "Excluir produto" }));
@@ -134,7 +134,7 @@ describe("DialogoExcluirProduto", () => {
 
     it("com itens de carrinho, a 1ª tentativa sai sem force; o 409 mostra a contagem, não apaga e libera a confirmação extra", async () => {
         const usuario = userEvent.setup();
-        const servidor = new ServidorFalso()
+        const servidor = new FakeServer()
             .responder("DELETE", `/admin/v1/orgs/${ORG}/products/prod_1`, (chamada) =>
                 chamada.url.includes("force=true")
                     ? { status: 200, corpo: { deleted: true, index_warning: null } }
@@ -143,7 +143,7 @@ describe("DialogoExcluirProduto", () => {
             .instalar();
         const { aoExcluir, aoFechar } = montar(1);
         const dialogo = await screen.findByRole("dialog", { name: "Excluir produto?" });
-        await esperarFocoDoModal();
+        await waitForModalFocus();
         // Antes de qualquer recusa, a confirmação extra não aparece.
         expect(within(dialogo).queryByRole("checkbox")).toBeNull();
 
@@ -177,11 +177,11 @@ describe("DialogoExcluirProduto", () => {
 
     it("no segundo passo, Esc fecha sem excluir", async () => {
         const usuario = userEvent.setup();
-        const servidor = new ServidorFalso()
+        const servidor = new FakeServer()
             .responder("DELETE", `/admin/v1/orgs/${ORG}/products/prod_1`, recusaDeCarrinho(1, 1))
             .instalar();
         const { aoExcluir, aoFechar } = montar(0);
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         await usuario.type(screen.getByLabelText(/Digite/i), "Clareamento dental");
         await usuario.click(screen.getByRole("button", { name: "Excluir produto" }));
@@ -197,11 +197,11 @@ describe("DialogoExcluirProduto", () => {
     it("renders consequences and 409 cart count in en-US", async () => {
         const usuario = userEvent.setup();
         setLocale("en-US");
-        new ServidorFalso()
+        new FakeServer()
             .responder("DELETE", `/admin/v1/orgs/${ORG}/products/prod_1`, recusaDeCarrinho(3, 2))
             .instalar();
         montar(2);
-        await esperarFocoDoModal();
+        await waitForModalFocus();
 
         expect(screen.getByRole("dialog", { name: "Delete product?" })).toBeInTheDocument();
         expect(screen.getByText(/2 agents offer this product/)).toBeInTheDocument();
