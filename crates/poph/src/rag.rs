@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use poph_agent::{BaseConhecimento, CatalogoProdutos};
-use poph_rag::{ConfigFila, ConfigIndice, ConfigModelo, Embedder, EmbedderOrt, Indice};
+use poph_rag::{ConfigIndice, ConfigModelo, Embedder, EmbedderOrt, Indice, QueueConfig};
 use poph_store::Store;
 use poph_types::HarnessConfig;
 
@@ -115,11 +115,11 @@ pub fn abrir_base_com_fila(
     let fila = {
         let _guard = runtime.enter();
         Arc::new(
-            poph_rag::FilaEmbedding::iniciar(Arc::clone(&embedder), ConfigFila::default(), None)
+            poph_rag::EmbeddingQueue::start(Arc::clone(&embedder), QueueConfig::default(), None)
                 .map_err(|erro| format!("não consegui iniciar a fila de embedding: {erro}"))?,
         )
     };
-    let da_org = poph_rag::EmbedderDaFila::com_runtime(fila, org, identidade, runtime);
+    let da_org = poph_rag::QueuedEmbedder::with_runtime(fila, org, identidade, runtime);
     let (indice, abertura) =
         Indice::abrir(store.rag_path(), Arc::new(da_org), ConfigIndice::default())
             .map_err(|erro| format!("não consegui abrir o índice: {erro}"))?;

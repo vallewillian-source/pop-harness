@@ -1,13 +1,13 @@
+pub mod chunks;
 pub mod embedder;
 pub mod erro;
 pub mod fake;
-pub mod fila;
 pub mod indice;
-pub mod instalacao;
+pub mod installation;
 pub mod memory;
 pub mod metrics;
 pub mod onnx;
-pub mod trechos;
+pub mod queue;
 pub mod vector;
 
 mod database;
@@ -18,10 +18,10 @@ pub use embedder::{
 };
 pub use erro::RagError;
 pub use fake::FakeEmbedder;
-pub use fila::{ConfigFila, EmbedderDaFila, FilaEmbedding};
 pub use indice::{
     Achado, AchadoProduto, ConfigBusca, ConfigIndice, Encontrado, Indice, ItemRag, ProdutoRag,
     RelatorioAbertura, RelatorioIndexacao, Trecho,
 };
 pub use metrics::RagMetrics;
 pub use onnx::{CargaModelo, ConfigModelo, EmbedderOrt};
+pub use queue::{EmbeddingQueue, QueueConfig, QueuedEmbedder};

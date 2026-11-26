@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Args, Subcommand};
-use poph_rag::instalacao::{RelatorioInstalacao, instalar};
+use poph_rag::installation::{InstallReport, install};
 
 use crate::config;
 
@@ -49,7 +49,7 @@ fn executar_install(
     };
 
     let diretorio = config.models();
-    match instalar(&diretorio) {
+    match install(&diretorio) {
         Ok(relatorio) => {
             if args.json {
                 println!("{}", json_instalacao(&relatorio));
@@ -72,17 +72,17 @@ fn executar_install(
     }
 }
 
-fn texto_instalacao(relatorio: &RelatorioInstalacao) -> String {
+fn texto_instalacao(relatorio: &InstallReport) -> String {
     let mut texto = String::from("POP Harness: instalação do modelo de embedding\n\n");
-    texto.push_str(&format!("Pasta: {}\n", relatorio.diretorio.display()));
-    for arquivo in &relatorio.arquivos {
-        let situacao = match arquivo.situacao {
-            poph_rag::instalacao::Situacao::Baixado => "baixado",
-            poph_rag::instalacao::Situacao::JaEstava => "já estava instalado",
+    texto.push_str(&format!("Pasta: {}\n", relatorio.directory.display()));
+    for arquivo in &relatorio.files {
+        let situacao = match arquivo.status {
+            poph_rag::installation::InstallStatus::Downloaded => "baixado",
+            poph_rag::installation::InstallStatus::AlreadyInstalled => "já estava instalado",
         };
         texto.push_str(&format!(
             "  {}: {} ({:.1} MB, sha256 conferido)\n",
-            arquivo.nome,
+            arquivo.name,
             situacao,
             arquivo.bytes as f64 / 1_000_000.0
         ));
@@ -91,15 +91,15 @@ fn texto_instalacao(relatorio: &RelatorioInstalacao) -> String {
     texto
 }
 
-fn json_instalacao(relatorio: &RelatorioInstalacao) -> String {
+fn json_instalacao(relatorio: &InstallReport) -> String {
     let valor = serde_json::json!({
         "versao_relatorio": 1,
-        "diretorio": relatorio.diretorio.display().to_string(),
-        "arquivos": relatorio.arquivos.iter().map(|arquivo| serde_json::json!({
-            "nome": arquivo.nome,
+        "diretorio": relatorio.directory.display().to_string(),
+        "arquivos": relatorio.files.iter().map(|arquivo| serde_json::json!({
+            "nome": arquivo.name,
             "bytes": arquivo.bytes,
             "sha256": arquivo.sha256,
-            "situacao": arquivo.situacao.como_texto(),
+            "situacao": arquivo.status.as_str(),
         })).collect::<Vec<_>>(),
     });
     serde_json::to_string_pretty(&valor).unwrap_or_else(|_| valor.to_string())

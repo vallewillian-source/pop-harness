@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use clap::{Args, Subcommand};
 use poph_agent::BaseConhecimento;
-use poph_rag::trechos::hash_origem;
+use poph_rag::chunks::source_hash;
 use poph_store::{
     KnowledgeGroup, KnowledgeGroupChange, KnowledgeItem, KnowledgeItemChange, NewKnowledgeGroup,
     NewKnowledgeItem, Page, Status, Store,
@@ -1082,7 +1082,7 @@ impl Contexto {
         if agentes.is_empty() {
             return EstadoIndice::NaoVinculado;
         }
-        let esperado = hash_origem(base.indice().identidade(), &item.title, &item.content);
+        let esperado = source_hash(base.indice().identidade(), &item.title, &item.content);
         for agente in agentes {
             let Ok(mapa) = base.indice().itens_indexados(self.org, agente) else {
                 return EstadoIndice::Erro;

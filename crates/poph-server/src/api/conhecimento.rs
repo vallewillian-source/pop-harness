@@ -490,8 +490,8 @@ async fn sincronizar(
     agente: poph_types::AgentId,
 ) -> Result<poph_rag::RelatorioIndexacao, ApiError> {
     use poph_rag::{
-        ConfigFila, ConfigIndice, ConfigModelo, Embedder, EmbedderDaFila, EmbedderOrt,
-        FilaEmbedding, Indice,
+        ConfigIndice, ConfigModelo, Embedder, EmbedderOrt, EmbeddingQueue, Indice, QueueConfig,
+        QueuedEmbedder,
     };
     use std::sync::Arc;
     // O índice e a sessão de embedding são compartilhados pelo processo; serializar evita
@@ -515,10 +515,10 @@ async fn sincronizar(
     let identidade = modelo.identity().clone();
     let modelo: Arc<dyn Embedder> = Arc::new(modelo);
     let fila = Arc::new(
-        FilaEmbedding::iniciar(modelo, ConfigFila::default(), None)
+        EmbeddingQueue::start(modelo, QueueConfig::default(), None)
             .map_err(|_| ApiError::interno())?,
     );
-    let adaptador = Arc::new(EmbedderDaFila::novo(fila, org, identidade));
+    let adaptador = Arc::new(QueuedEmbedder::new(fila, org, identidade));
     let (indice, _) = Indice::abrir(e.store.rag_path(), adaptador, ConfigIndice::default())
         .map_err(|_| ApiError::interno())?;
     let base = poph_agent::BaseConhecimento::nova(Arc::clone(&e.store), Arc::new(indice));

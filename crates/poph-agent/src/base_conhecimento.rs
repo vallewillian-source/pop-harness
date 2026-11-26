@@ -204,7 +204,7 @@ impl BuscadorBase for BaseConhecimento {
                 .agent_items(org, agente)?
                 .into_iter()
                 .filter(|item| {
-                    let atual = poph_rag::trechos::hash_origem(
+                    let atual = poph_rag::chunks::source_hash(
                         self.indice.identidade(),
                         &item.title,
                         &item.content,

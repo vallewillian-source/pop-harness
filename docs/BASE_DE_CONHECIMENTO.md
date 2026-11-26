@@ -20,6 +20,28 @@ The derived `rag.db` is rebuilt from `harness.db`. When stored model or chunker 
 the derived vectors and related FTS data are cleared before recording the new identity. Schema changes
 require a migration.
 
+### Embedding queue, chunking and model installation
+
+- A request acquires its organization's slot before a global slot. An organization already at its
+  limit waits without holding global capacity. The defaults are 4 concurrent requests per organization
+  and 32 per instance, with up to 32 chunks per batch and a 10 ms window to fill the batch. Batch
+  size and concurrency limits must be positive.
+- A single worker processes one batch at a time. It takes one pending chunk per organization in
+  rotation, skipping chunks whose callers have already dropped their requests. On shutdown or worker
+  panic, pending callers receive an error. The CLI's organization-bound embedder keeps the worker's
+  Tokio runtime alive during reindexing. A single search query goes straight to the model, avoiding
+  the batch window.
+- The chunker prefers paragraph and sentence boundaries. It splits an oversized sentence at word
+  boundaries and splits a word only if that word exceeds the chunk limit. Overlap uses complete
+  trailing units that also leave space for the next unit. When a new paragraph starts and the
+  current chunk is at least half full, it closes the chunk and starts the next one without overlap.
+  The embedding and the text index both receive the trimmed title on the first line when it is
+  present, followed by the chunk.
+- The source hash includes the title, text, chunker version and model identity so reindexing can skip
+  unchanged items. Only `poph model install` downloads model files. It reuses files whose SHA-256
+  matches and checks each new download before renaming the temporary file to its final path. A
+  failed download or checksum mismatch removes the temporary file.
+
 ## 1. Hybrid search design
 
 ```

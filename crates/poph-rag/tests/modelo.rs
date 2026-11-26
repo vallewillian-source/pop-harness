@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use poph_rag::instalacao::{conferir_arquivo, sha256_de_arquivo};
+use poph_rag::installation::{file_sha256, verify_file};
 use poph_rag::{ConfigModelo, EmbedderOrt, RagError};
 
 /// Pasta temporária única para o teste; apagada ao sair.
@@ -107,13 +107,13 @@ fn conferir_arquivo_aceita_o_sha_certo_e_recusa_o_errado() {
     // sha256("abc"), vetor de teste publicado (FIPS 180-2).
     let esperado = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
 
-    assert_eq!(sha256_de_arquivo(&arquivo).expect("lê"), esperado);
+    assert_eq!(file_sha256(&arquivo).expect("lê"), esperado);
     assert_eq!(
-        conferir_arquivo(pasta.caminho(), "abc.txt", esperado).expect("confere"),
+        verify_file(pasta.caminho(), "abc.txt", esperado).expect("confere"),
         esperado
     );
 
-    let erro = conferir_arquivo(pasta.caminho(), "abc.txt", &"0".repeat(64))
+    let erro = verify_file(pasta.caminho(), "abc.txt", &"0".repeat(64))
         .expect_err("sha errado é recusado");
     assert!(matches!(erro, RagError::ChecksumMismatch { ref file, .. } if file == "abc.txt"));
 }

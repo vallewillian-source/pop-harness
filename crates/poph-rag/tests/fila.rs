@@ -5,13 +5,13 @@ use std::time::{Duration, Instant};
 
 use poph_rag::fake::fake_vector;
 use poph_rag::{
-    BatchFuture, ConfigFila, Embedder, FakeEmbedder, FilaEmbedding, ModelIdentity, RagError,
+    BatchFuture, Embedder, EmbeddingQueue, FakeEmbedder, ModelIdentity, QueueConfig, RagError,
 };
 use poph_types::{OrgId, Registry};
 
-fn fila_com(embedder: Arc<FakeEmbedder>, config: ConfigFila) -> Arc<FilaEmbedding> {
+fn fila_com(embedder: Arc<FakeEmbedder>, config: QueueConfig) -> Arc<EmbeddingQueue> {
     let dyn_embedder: Arc<dyn Embedder> = embedder;
-    Arc::new(FilaEmbedding::iniciar(dyn_embedder, config, None).expect("fila sobe"))
+    Arc::new(EmbeddingQueue::start(dyn_embedder, config, None).expect("fila sobe"))
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -19,11 +19,11 @@ async fn cem_pedidos_de_tres_orgs_respeitam_os_limites_e_voltam_certos() {
     let embedder = Arc::new(FakeEmbedder::new());
     let fila = fila_com(
         Arc::clone(&embedder),
-        ConfigFila {
-            tamanho_lote: 32,
-            janela: Duration::from_millis(2),
-            simultaneos_por_org: 3,
-            simultaneos_total: 8,
+        QueueConfig {
+            batch_size: 32,
+            batch_window: Duration::from_millis(2),
+            per_org_concurrency: 3,
+            total_concurrency: 8,
         },
     );
     let orgs = [OrgId::generate(), OrgId::generate(), OrgId::generate()];
@@ -38,7 +38,7 @@ async fn cem_pedidos_de_tres_orgs_respeitam_os_limites_e_voltam_certos() {
                 format!("pedido {i} segundo"),
             ];
             let esperado: Vec<Vec<f32>> = textos.iter().map(|t| fake_vector(t)).collect();
-            let obtido = fila.embedir(org, textos).await.expect("embedding");
+            let obtido = fila.embed(org, textos).await.expect("embedding");
             obtido == esperado
         }));
     }
@@ -50,23 +50,19 @@ async fn cem_pedidos_de_tres_orgs_respeitam_os_limites_e_voltam_certos() {
     }
 
     assert!(
-        fila.pico_pedidos() <= 8,
+        fila.peak_requests() <= 8,
         "passou do limite total: {}",
-        fila.pico_pedidos()
+        fila.peak_requests()
     );
-    assert!(fila.pico_pedidos() >= 2, "a concorrência não aconteceu");
+    assert!(fila.peak_requests() >= 2, "a concorrência não aconteceu");
     for org in orgs {
         assert!(
-            fila.pico_pedidos_da_org(org) <= 3,
+            fila.peak_org_requests(org) <= 3,
             "org passou do próprio limite"
         );
     }
-    assert_eq!(
-        fila.trechos_pendentes(),
-        0,
-        "nada pode ficar parado na fila"
-    );
-    assert_eq!(fila.pedidos_em_andamento(), 0, "vagas devolvidas ao fim");
+    assert_eq!(fila.pending_chunks(), 0, "nada pode ficar parado na fila");
+    assert_eq!(fila.active_requests(), 0, "vagas devolvidas ao fim");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -74,11 +70,11 @@ async fn org_saturada_nao_atrasa_outra_org() {
     let embedder = Arc::new(FakeEmbedder::new().with_delay(Duration::from_millis(15)));
     let fila = fila_com(
         Arc::clone(&embedder),
-        ConfigFila {
-            tamanho_lote: 32,
-            janela: Duration::from_millis(1),
-            simultaneos_por_org: 2,
-            simultaneos_total: 8,
+        QueueConfig {
+            batch_size: 32,
+            batch_window: Duration::from_millis(1),
+            per_org_concurrency: 2,
+            total_concurrency: 8,
         },
     );
     let saturada = OrgId::generate();
@@ -90,7 +86,7 @@ async fn org_saturada_nao_atrasa_outra_org() {
         let fila = Arc::clone(&fila);
         let concluidos = Arc::clone(&concluidos_da_saturada);
         tarefas.push(tokio::spawn(async move {
-            fila.embedir(saturada, vec![format!("org saturada {i}")])
+            fila.embed(saturada, vec![format!("org saturada {i}")])
                 .await
                 .expect("embedding");
             *concluidos.lock().expect("trava") += 1;
@@ -101,7 +97,7 @@ async fn org_saturada_nao_atrasa_outra_org() {
 
     let inicio = Instant::now();
     let vetores = fila
-        .embedir(outra, vec!["org livre".to_owned()])
+        .embed(outra, vec!["org livre".to_owned()])
         .await
         .expect("a outra org é atendida");
     let tempo_outra = inicio.elapsed();
@@ -119,7 +115,7 @@ async fn org_saturada_nao_atrasa_outra_org() {
     for tarefa in tarefas {
         tarefa.await.expect("tarefa da saturada");
     }
-    assert!(fila.pico_pedidos_da_org(saturada) <= 2);
+    assert!(fila.peak_org_requests(saturada) <= 2);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -127,17 +123,17 @@ async fn lote_nunca_passa_do_tamanho_configurado() {
     let embedder = Arc::new(FakeEmbedder::new());
     let fila = fila_com(
         Arc::clone(&embedder),
-        ConfigFila {
-            tamanho_lote: 4,
-            janela: Duration::from_millis(50),
-            simultaneos_por_org: 4,
-            simultaneos_total: 4,
+        QueueConfig {
+            batch_size: 4,
+            batch_window: Duration::from_millis(50),
+            per_org_concurrency: 4,
+            total_concurrency: 4,
         },
     );
     let textos: Vec<String> = (0..10).map(|i| format!("trecho {i}")).collect();
 
     let vetores = fila
-        .embedir(OrgId::generate(), textos.clone())
+        .embed(OrgId::generate(), textos.clone())
         .await
         .expect("embedding");
 
@@ -156,10 +152,10 @@ async fn lote_nunca_passa_do_tamanho_configurado() {
 #[tokio::test]
 async fn lista_vazia_volta_vazia_sem_tocar_o_embedder() {
     let embedder = Arc::new(FakeEmbedder::new());
-    let fila = fila_com(Arc::clone(&embedder), ConfigFila::default());
+    let fila = fila_com(Arc::clone(&embedder), QueueConfig::default());
 
     let vetores = fila
-        .embedir(OrgId::generate(), Vec::new())
+        .embed(OrgId::generate(), Vec::new())
         .await
         .expect("vazio");
 
@@ -188,10 +184,10 @@ async fn falha_do_modelo_chega_a_quem_pediu() {
     let embedder: Arc<dyn Embedder> = Arc::new(EmbedderQueFalha {
         identidade: FakeEmbedder::new().identity().clone(),
     });
-    let fila = FilaEmbedding::iniciar(embedder, ConfigFila::default(), None).expect("fila sobe");
+    let fila = EmbeddingQueue::start(embedder, QueueConfig::default(), None).expect("fila sobe");
 
     let erro = fila
-        .embedir(OrgId::generate(), vec!["a".to_owned(), "b".to_owned()])
+        .embed(OrgId::generate(), vec!["a".to_owned(), "b".to_owned()])
         .await
         .expect_err("a falha precisa aparecer");
 
@@ -204,9 +200,9 @@ async fn metricas_contam_trechos_lotes_e_erros() {
     let metricas = poph_rag::RagMetrics::register(&registro).expect("registra");
     let embedder: Arc<dyn Embedder> = Arc::new(FakeEmbedder::new());
     let fila =
-        FilaEmbedding::iniciar(embedder, ConfigFila::default(), Some(metricas)).expect("fila sobe");
+        EmbeddingQueue::start(embedder, QueueConfig::default(), Some(metricas)).expect("fila sobe");
 
-    fila.embedir(
+    fila.embed(
         OrgId::generate(),
         vec!["um".to_owned(), "dois".to_owned(), "três".to_owned()],
     )
@@ -229,11 +225,11 @@ async fn metricas_contam_trechos_lotes_e_erros() {
 #[tokio::test]
 async fn configuracao_com_zero_e_recusada() {
     let embedder: Arc<dyn Embedder> = Arc::new(FakeEmbedder::new());
-    let recusada = FilaEmbedding::iniciar(
+    let recusada = EmbeddingQueue::start(
         embedder,
-        ConfigFila {
-            tamanho_lote: 0,
-            ..ConfigFila::default()
+        QueueConfig {
+            batch_size: 0,
+            ..QueueConfig::default()
         },
         None,
     );

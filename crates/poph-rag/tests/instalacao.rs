@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::thread;
 
 use poph_rag::RagError;
-use poph_rag::instalacao::{ArquivoModelo, Situacao, instalar_arquivos};
+use poph_rag::installation::{InstallStatus, ModelFile, install_files};
 use sha2::{Digest, Sha256};
 
 struct Pasta(PathBuf);
@@ -67,9 +67,9 @@ fn servir(respostas: Vec<(u16, Vec<u8>)>) -> String {
     origem
 }
 
-fn arquivo(nome: &str, origem: &str, sha: &str) -> ArquivoModelo {
-    ArquivoModelo {
-        nome: nome.to_owned(),
+fn arquivo(nome: &str, origem: &str, sha: &str) -> ModelFile {
+    ModelFile {
+        name: nome.to_owned(),
         url: format!("{origem}/{nome}"),
         sha256: sha.to_owned(),
     }
@@ -83,10 +83,10 @@ fn baixa_confere_publica_e_na_segunda_vez_nao_baixa() {
     let origem = servir(vec![(200, corpo.clone())]);
     let itens = [arquivo("modelo.bin", &origem, &sha_hex(&corpo))];
 
-    let primeira = instalar_arquivos(pasta.caminho(), &itens).expect("instala");
-    assert_eq!(primeira.arquivos.len(), 1);
-    assert_eq!(primeira.arquivos[0].situacao, Situacao::Baixado);
-    assert_eq!(primeira.arquivos[0].bytes, corpo.len() as u64);
+    let primeira = install_files(pasta.caminho(), &itens).expect("instala");
+    assert_eq!(primeira.files.len(), 1);
+    assert_eq!(primeira.files[0].status, InstallStatus::Downloaded);
+    assert_eq!(primeira.files[0].bytes, corpo.len() as u64);
     assert_eq!(
         fs::read(pasta.caminho().join("modelo.bin")).expect("lê"),
         corpo
@@ -96,8 +96,8 @@ fn baixa_confere_publica_e_na_segunda_vez_nao_baixa() {
         "temporário deve sumir"
     );
 
-    let segunda = instalar_arquivos(pasta.caminho(), &itens).expect("segunda vez");
-    assert_eq!(segunda.arquivos[0].situacao, Situacao::JaEstava);
+    let segunda = install_files(pasta.caminho(), &itens).expect("segunda vez");
+    assert_eq!(segunda.files[0].status, InstallStatus::AlreadyInstalled);
 }
 
 #[test]
@@ -108,8 +108,7 @@ fn sha_errado_nao_publica_o_arquivo() {
     let esperado = sha_hex(b"outro conteudo");
     let itens = [arquivo("modelo.bin", &origem, &esperado)];
 
-    let erro =
-        instalar_arquivos(pasta.caminho(), &itens).expect_err("hash errado não pode ser aceito");
+    let erro = install_files(pasta.caminho(), &itens).expect_err("hash errado não pode ser aceito");
 
     match &erro {
         RagError::ChecksumMismatch {
@@ -143,9 +142,9 @@ fn arquivo_existente_com_conteudo_errado_e_substituido() {
     let origem = servir(vec![(200, corpo.clone())]);
     let itens = [arquivo("modelo.bin", &origem, &sha_hex(&corpo))];
 
-    let relatorio = instalar_arquivos(pasta.caminho(), &itens).expect("substitui");
+    let relatorio = install_files(pasta.caminho(), &itens).expect("substitui");
 
-    assert_eq!(relatorio.arquivos[0].situacao, Situacao::Baixado);
+    assert_eq!(relatorio.files[0].status, InstallStatus::Downloaded);
     assert_eq!(
         fs::read(pasta.caminho().join("modelo.bin")).expect("lê"),
         corpo
@@ -158,7 +157,7 @@ fn resposta_de_erro_do_servidor_da_mensagem_clara() {
     let origem = servir(vec![(404, b"nao achei".to_vec())]);
     let itens = [arquivo("modelo.bin", &origem, &sha_hex(b"qualquer"))];
 
-    let erro = instalar_arquivos(pasta.caminho(), &itens).expect_err("404 é erro");
+    let erro = install_files(pasta.caminho(), &itens).expect_err("404 é erro");
 
     match &erro {
         RagError::Download {

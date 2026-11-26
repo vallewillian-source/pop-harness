@@ -20,10 +20,10 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use poph_types::{AgentId, KnowledgeItemId, OrgId, ProductId};
 use rusqlite::{Connection, OptionalExtension, params};
 
+use crate::chunks::{embedding_text, source_hash, split};
 use crate::database::{self, database_error};
 use crate::embedder::{DIMENSION, Embedder, ModelIdentity};
 use crate::erro::RagError;
-use crate::trechos::{dividir, hash_origem, texto_embutido};
 use crate::vector::{cosine, dot_product, norm, quantize};
 
 /// Quantos trechos vão de uma vez ao modelo na indexação. Só limita a memória transitória.
@@ -296,7 +296,7 @@ impl Indice {
         let mut para_gravar: Vec<Preparado> = Vec::new();
         let mut para_apagar: Vec<String> = Vec::new();
         for (posicao, item) in itens.iter().enumerate() {
-            let hash = hash_origem(&identidade, &item.titulo, &item.texto);
+            let hash = source_hash(&identidade, &item.titulo, &item.texto);
             let id = item.id.to_string();
             match atuais.get(&id) {
                 Some(anterior) if *anterior == hash => {
@@ -312,7 +312,7 @@ impl Indice {
             para_gravar.push(Preparado {
                 posicao,
                 hash,
-                trechos: dividir(&item.texto),
+                trechos: split(&item.texto),
                 vetores: Vec::new(),
             });
         }
@@ -334,7 +334,7 @@ impl Indice {
                 preparado
                     .trechos
                     .iter()
-                    .map(|trecho| texto_embutido(&item.titulo, trecho)),
+                    .map(|trecho| embedding_text(&item.titulo, trecho)),
             );
         }
         relatorio.embeddings_gerados = textos.len();
@@ -417,7 +417,7 @@ impl Indice {
                          VALUES (?1, ?2, ?3, ?4)",
                         params![
                             rowid,
-                            texto_embutido(&item.titulo, texto),
+                            embedding_text(&item.titulo, texto),
                             org.to_string(),
                             agente.to_string(),
                         ],
@@ -741,7 +741,7 @@ impl Indice {
         let mut para_gravar: Vec<ProdutoPreparado> = Vec::new();
         let mut para_apagar: Vec<String> = Vec::new();
         for (posicao, produto) in produtos.iter().enumerate() {
-            let hash = hash_origem(&identidade, &produto.nome, &produto.texto);
+            let hash = source_hash(&identidade, &produto.nome, &produto.texto);
             let id = produto.id.to_string();
             match atuais.get(&id) {
                 Some(anterior) if *anterior == hash => {
@@ -754,7 +754,7 @@ impl Indice {
                 }
                 None => relatorio.itens_novos += 1,
             }
-            para_gravar.push((posicao, hash, dividir(&produto.texto), Vec::new()));
+            para_gravar.push((posicao, hash, split(&produto.texto), Vec::new()));
         }
         for id in atuais.keys() {
             if !produtos.iter().any(|produto| produto.id.to_string() == *id) {
@@ -772,7 +772,7 @@ impl Indice {
             textos.extend(
                 trechos
                     .iter()
-                    .map(|trecho| texto_embutido(&produto.nome, trecho)),
+                    .map(|trecho| embedding_text(&produto.nome, trecho)),
             );
         }
         relatorio.embeddings_gerados = textos.len();
@@ -833,7 +833,7 @@ impl Indice {
                          VALUES (?1, ?2, ?3, ?4)",
                         params![
                             rowid,
-                            texto_embutido(&produto.nome, texto),
+                            embedding_text(&produto.nome, texto),
                             org.to_string(),
                             agente.to_string(),
                         ],

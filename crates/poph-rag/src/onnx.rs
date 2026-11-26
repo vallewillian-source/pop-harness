@@ -23,9 +23,7 @@ use crate::embedder::{
     TOKEN_WINDOW,
 };
 use crate::erro::RagError;
-use crate::instalacao::{
-    self, ARQUIVO_MODELO, ARQUIVO_TOKENIZADOR, SHA256_MODELO, SHA256_TOKENIZADOR,
-};
+use crate::installation::{self, MODEL_FILE, MODEL_SHA256, TOKENIZER_FILE, TOKENIZER_SHA256};
 use crate::memory;
 use crate::metrics::RagMetrics;
 
@@ -95,13 +93,9 @@ impl EmbedderOrt {
                 "o número de threads do modelo deve ser maior que zero".to_owned(),
             ));
         }
-        let sha_modelo =
-            instalacao::conferir_arquivo(&config.diretorio, ARQUIVO_MODELO, SHA256_MODELO)?;
-        let sha_tokenizador = instalacao::conferir_arquivo(
-            &config.diretorio,
-            ARQUIVO_TOKENIZADOR,
-            SHA256_TOKENIZADOR,
-        )?;
+        let sha_modelo = installation::verify_file(&config.diretorio, MODEL_FILE, MODEL_SHA256)?;
+        let sha_tokenizador =
+            installation::verify_file(&config.diretorio, TOKENIZER_FILE, TOKENIZER_SHA256)?;
         Ok(Self {
             identidade: ModelIdentity {
                 name: MODEL_NAME,
@@ -112,8 +106,8 @@ impl EmbedderOrt {
                 tokenizer_sha256: sha_tokenizador,
                 chunker_version: CHUNKER_VERSION,
             },
-            caminho_modelo: config.diretorio.join(ARQUIVO_MODELO),
-            caminho_tokenizador: config.diretorio.join(ARQUIVO_TOKENIZADOR),
+            caminho_modelo: config.diretorio.join(MODEL_FILE),
+            caminho_tokenizador: config.diretorio.join(TOKENIZER_FILE),
             threads: config.threads,
             sessao: tokio::sync::Mutex::new(None),
             carga: Mutex::new(None),
