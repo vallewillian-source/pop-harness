@@ -227,13 +227,13 @@ function TableMap({ before, after, printBefore, printAfter }: {
         { rotulo: t("operation.mapMode"), antes: modeText(before), depois: modeText(after) },
         {
             rotulo: t("operation.mapThisInstance"),
-            antes: before.instanciaLocal || t("operation.mapNotDefined"),
-            depois: after.instanciaLocal || t("operation.mapNotDefined"),
+            antes: before.localInstance || t("operation.mapNotDefined"),
+            depois: after.localInstance || t("operation.mapNotDefined"),
         },
         {
             rotulo: t("operation.mapDefaultInstance"),
-            antes: before.instanciaPadrao ?? t("operation.mapNone"),
-            depois: after.instanciaPadrao ?? t("operation.mapNone"),
+            antes: before.instanceDefault ?? t("operation.mapNone"),
+            depois: after.instanceDefault ?? t("operation.mapNone"),
         },
         {
             rotulo: t("operation.mapDeclaredInstances"),
@@ -242,13 +242,13 @@ function TableMap({ before, after, printBefore, printAfter }: {
         },
         {
             rotulo: t("operation.mapRoutedOrgs"),
-            antes: formatNumber(before.quantidadeDeOrgs),
-            depois: formatNumber(after.quantidadeDeOrgs),
+            antes: formatNumber(before.quantityOrgs),
+            depois: formatNumber(after.quantityOrgs),
         },
         {
             rotulo: t("operation.mapSharedSecret"),
-            antes: before.segredoConfigurado ? t("operation.mapConfigured") : t("operation.mapNotConfigured"),
-            depois: after.segredoConfigurado
+            antes: before.secretConfigured ? t("operation.mapConfigured") : t("operation.mapNotConfigured"),
+            depois: after.secretConfigured
                 ? t("operation.mapConfigured")
                 : t("operation.mapNotConfigured"),
         },
@@ -303,27 +303,27 @@ function ReportReload({ report, title }: { report: ReloadReport; title: string }
             <TableMap
                 before={report.antes}
                 after={report.depois}
-                printBefore={report.impressaoAntes}
-                printAfter={report.impressaoDepois}
+                printBefore={report.printBefore}
+                printAfter={report.printAfter}
             />
             <p className="poph-operation__help">
                 {t("operation.clusterInstancesAdded", {
-                    list: listOrNone(report.instanciasAdicionadas),
+                    list: listOrNone(report.instancesAdded),
                 })}
             </p>
             <p className="poph-operation__help">
                 {t("operation.clusterInstancesRemoved", {
-                    list: listOrNone(report.instanciasRemovidas),
+                    list: listOrNone(report.instancesRemoved),
                 })}
             </p>
-            {report.orgsQueTrocaram.length > 0 ? (
+            {report.orgsChanged.length > 0 ? (
                 <>
                     <p className="poph-operation__help">{t("operation.clusterOrgsChanged")}</p>
                     <ul
                         className="poph-operation__conflicts"
                         aria-label={t("operation.clusterOrgsChangedLabel")}
                     >
-                        {report.orgsQueTrocaram.map((troca) => (
+                        {report.orgsChanged.map((troca) => (
                             <li key={troca.org}>
                                 {t("operation.clusterOrgChange", {
                                     org: troca.org,
@@ -634,20 +634,20 @@ export function Operation() {
                             />
                             <Property
                                 chave={t("operation.propertyServerVersion")}
-                                value={s.saude.version}
+                                value={s.health.version}
                                 mono
                             />
                             <Property
                                 chave={t("operation.propertyUptime")}
-                                value={formatUptime(s.saude.uptime_seconds)}
+                                value={formatUptime(s.health.uptime_seconds)}
                             />
                             <Property
                                 chave={t("operation.propertyChatDatabase")}
-                                value={formatDatabaseVersion(s.saude.databases.harness)}
+                                value={formatDatabaseVersion(s.health.databases.harness)}
                             />
                             <Property
                                 chave={t("operation.propertySearchDatabase")}
-                                value={formatDatabaseVersion(s.saude.databases.rag)}
+                                value={formatDatabaseVersion(s.health.databases.rag)}
                             />
                         </dl>
                     </>
@@ -675,31 +675,31 @@ export function Operation() {
                         <dl className="poph-properties">
                             <Property
                                 chave={t("operation.metricQueueTurns")}
-                                value={numero(m.filaTurnos)}
+                                value={numero(m.queueTurns)}
                             />
                             <Property
                                 chave={t("operation.metricOutbox")}
-                                value={numero(m.filaSaida)}
+                                value={numero(m.queueOutput)}
                             />
                             <Property
                                 chave={t("operation.metricActiveConversations")}
-                                value={numero(m.conversasAtivas)}
+                                value={numero(m.activeConversations)}
                             />
                             <Property
                                 chave={t("operation.metricLoadedAgents")}
-                                value={numero(m.agentesCarregados)}
+                                value={numero(m.agentsLoaded)}
                             />
                             <Property
                                 chave={t("operation.metricProcessMemory")}
-                                value={memory(m.memoriaProcesso)}
+                                value={memory(m.processMemory)}
                             />
                             <Property
                                 chave={t("operation.metricChatDatabaseSize")}
-                                value={memory(m.bancoPrincipal)}
+                                value={memory(m.mainDatabase)}
                             />
                             <Property
                                 chave={t("operation.metricSearchDatabaseSize")}
-                                value={memory(m.bancoBusca)}
+                                value={memory(m.databaseSearch)}
                             />
                         </dl>
                         <h3 className="poph-operation__subtitle">{t("operation.subtitleSinceBoot")}</h3>
@@ -707,22 +707,22 @@ export function Operation() {
                             <Property
                                 chave={t("operation.metricLlmCalls")}
                                 value={t("operation.valueWithErrors", {
-                                    value: numero(m.chamadasLlm),
-                                    errors: numero(m.errosLlm),
+                                    value: numero(m.callsLlm),
+                                    errors: numero(m.errorsLlm),
                                 })}
                             />
                             <Property
                                 chave={t("operation.metricJevCalls")}
                                 value={t("operation.valueWithErrors", {
-                                    value: numero(m.chamadasJev),
-                                    errors: numero(m.errosJev),
+                                    value: numero(m.callsJev),
+                                    errors: numero(m.errorsJev),
                                 })}
                             />
                             <Property
                                 chave={t("operation.metricEvolutionCalls")}
                                 value={t("operation.valueWithErrors", {
-                                    value: numero(m.chamadasEvolution),
-                                    errors: numero(m.errosEvolution),
+                                    value: numero(m.callsEvolution),
+                                    errors: numero(m.errorsEvolution),
                                 })}
                             />
                             <Property

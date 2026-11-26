@@ -23,14 +23,14 @@ export type ClusterOrgList = {
 
 export class ApiError extends Error {
     readonly status: number;
-    readonly "codigo": string;
+    readonly "code": string;
     readonly "detalhes"?: unknown;
 
     constructor(status: number, code: string, mensagem: string, details?: unknown) {
         super(mensagem);
         this.name = "ErroApi";
         this.status = status;
-        this["codigo"] = code;
+        this["code"] = code;
         this["detalhes"] = details;
     }
 
@@ -155,7 +155,7 @@ export async function requestFlow(
 
 export type BinaryResponse = {
     blob: Blob;
-    "cabecalhos": Headers;
+    headers: Headers;
 };
 
 export async function requestBytes(
@@ -179,7 +179,7 @@ export async function requestBytes(
         throw responseError(response, body, options["encerraSessao"] ?? true);
     }
 
-    return { blob: await response.blob(), "cabecalhos": response.headers };
+    return { blob: await response.blob(), headers: response.headers };
 }
 
 export type Health = {

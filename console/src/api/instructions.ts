@@ -56,35 +56,35 @@ export type Instructions = {
     updated_at: number;
 };
 
-export const CONTINGENCY_ACTIONS: { "valor": string; labelKey: TranslationKey }[] = [
-    { "valor": "say_dont_know", labelKey: "instructions.fallbackSayDontKnow" },
-    { "valor": "transfer", labelKey: "instructions.fallbackTransfer" },
-    { "valor": "escalate", labelKey: "instructions.fallbackEscalate" },
+export const CONTINGENCY_ACTIONS: { "value": string; labelKey: TranslationKey }[] = [
+    { "value": "say_dont_know", labelKey: "instructions.fallbackSayDontKnow" },
+    { "value": "transfer", labelKey: "instructions.fallbackTransfer" },
+    { "value": "escalate", labelKey: "instructions.fallbackEscalate" },
 ] as const;
 
 export const IDIOMAS = [
-    { "valor": "pt-BR", labelKey: "instructions.languagePortuguese" },
-    { "valor": "en", labelKey: "instructions.languageEnglish" },
-    { "valor": "es", labelKey: "instructions.languageSpanish" },
+    { "value": "pt-BR", labelKey: "instructions.languagePortuguese" },
+    { "value": "en", labelKey: "instructions.languageEnglish" },
+    { "value": "es", labelKey: "instructions.languageSpanish" },
 ] as const;
 
 export const ESTILOS = [
-    { "valor": "professional", labelKey: "instructions.styleProfessional" },
-    { "valor": "casual", labelKey: "instructions.styleCasual" },
-    { "valor": "technical", labelKey: "instructions.styleTechnical" },
-    { "valor": "friendly", labelKey: "instructions.styleFriendly" },
+    { "value": "professional", labelKey: "instructions.styleProfessional" },
+    { "value": "casual", labelKey: "instructions.styleCasual" },
+    { "value": "technical", labelKey: "instructions.styleTechnical" },
+    { "value": "friendly", labelKey: "instructions.styleFriendly" },
 ] as const;
 
 export const EMOJIS = [
-    { "valor": "moderate", labelKey: "instructions.emojiModerate" },
-    { "valor": "none", labelKey: "instructions.emojiNone" },
-    { "valor": "free", labelKey: "instructions.emojiFree" },
+    { "value": "moderate", labelKey: "instructions.emojiModerate" },
+    { "value": "none", labelKey: "instructions.emojiNone" },
+    { "value": "free", labelKey: "instructions.emojiFree" },
 ] as const;
 
 export const FORMATS = [
-    { "valor": "simple_lists", labelKey: "instructions.formatSimpleLists" },
-    { "valor": "free_text", labelKey: "instructions.formatFreeText" },
-    { "valor": "tables", labelKey: "instructions.formatTables" },
+    { "value": "simple_lists", labelKey: "instructions.formatSimpleLists" },
+    { "value": "free_text", labelKey: "instructions.formatFreeText" },
+    { "value": "tables", labelKey: "instructions.formatTables" },
 ] as const;
 
 export const TOOLS: { nome: string; labelKey: TranslationKey; descriptionKey: TranslationKey }[] = [

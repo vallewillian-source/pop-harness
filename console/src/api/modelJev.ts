@@ -19,77 +19,77 @@ export const FACTORY_DEFAULTS: Record<IdGate, boolean> = {
     g8: true,
 };
 
-export const GATE_DESCRIPTION: Record<IdGate, { "titulo": string; "explicacao": string }> = {
+export const GATE_DESCRIPTION: Record<IdGate, { "title": string; "explanation": string }> = {
     g1: {
-        get "titulo"() {
+        get "title"() {
             return translate("modelJev.gateG1Title");
         },
-        get "explicacao"() {
+        get "explanation"() {
             return translate("modelJev.gateG1Description");
         },
     },
     g2: {
-        get "titulo"() {
+        get "title"() {
             return translate("modelJev.gateG2Title");
         },
-        get "explicacao"() {
+        get "explanation"() {
             return translate("modelJev.gateG2Description");
         },
     },
     g3: {
-        get "titulo"() {
+        get "title"() {
             return translate("modelJev.gateG3Title");
         },
-        get "explicacao"() {
+        get "explanation"() {
             return translate("modelJev.gateG3Description");
         },
     },
     g4: {
-        get "titulo"() {
+        get "title"() {
             return translate("modelJev.gateG4Title");
         },
-        get "explicacao"() {
+        get "explanation"() {
             return translate("modelJev.gateG4Description");
         },
     },
     g5: {
-        get "titulo"() {
+        get "title"() {
             return translate("modelJev.gateG5Title");
         },
-        get "explicacao"() {
+        get "explanation"() {
             return translate("modelJev.gateG5Description");
         },
     },
     g6: {
-        get "titulo"() {
+        get "title"() {
             return translate("modelJev.gateG6Title");
         },
-        get "explicacao"() {
+        get "explanation"() {
             return translate("modelJev.gateG6Description");
         },
     },
     g7: {
-        get "titulo"() {
+        get "title"() {
             return translate("modelJev.gateG7Title");
         },
-        get "explicacao"() {
+        get "explanation"() {
             return translate("modelJev.gateG7Description");
         },
     },
     g8: {
-        get "titulo"() {
+        get "title"() {
             return translate("modelJev.gateG8Title");
         },
-        get "explicacao"() {
+        get "explanation"() {
             return translate("modelJev.gateG8Description");
         },
     },
 };
 
-export const PRESERVED_KEYS: ReadonlyArray<{ chave: string; "explicacao": string; "ondeEdita"?: string }> = [
+export const PRESERVED_KEYS: ReadonlyArray<{ chave: string; "explanation": string; "ondeEdita"?: string }> = [
     {
         chave: "situacoes_de_handoff",
-        get "explicacao"() {
+        get "explanation"() {
             return translate("modelJev.preservedHandoffDescription");
         },
         get "ondeEdita"() {
@@ -98,25 +98,25 @@ export const PRESERVED_KEYS: ReadonlyArray<{ chave: string; "explicacao": string
     },
     {
         chave: "despedida",
-        get "explicacao"() {
+        get "explanation"() {
             return translate("modelJev.preservedFarewellDescription");
         },
     },
     {
         chave: "resposta_segura",
-        get "explicacao"() {
+        get "explanation"() {
             return translate("modelJev.preservedSafeReplyDescription");
         },
     },
     {
         chave: "g7_acao",
-        get "explicacao"() {
+        get "explanation"() {
             return translate("modelJev.preservedG7ActionDescription");
         },
     },
     {
         chave: "g7_resposta",
-        get "explicacao"() {
+        get "explanation"() {
             return translate("modelJev.preservedG7ReplyDescription");
         },
     },
@@ -162,7 +162,7 @@ export type ModelChange = Partial<{
 }>;
 
 export type JevValues = {
-    "jevDesligado": boolean;
+    "jevOff": boolean;
     gates: Record<IdGate, GateState>;
 };
 
@@ -206,13 +206,13 @@ function gatesDoJev(jev: Record<string, unknown>): Record<IdGate, GateState> {
 export function agentJev(jev: Record<string, unknown> | undefined): JevValues {
     const current = jev ?? {};
     return {
-        "jevDesligado": current["ativo"] === false,
+        "jevOff": current["ativo"] === false,
         gates: gatesDoJev(current),
     };
 }
 
 export function gateEffect(values: JevValues, gate: IdGate): boolean {
-    if (values["jevDesligado"]) return false;
+    if (values["jevOff"]) return false;
     const estado = values.gates[gate];
     if (estado === "ligado") return true;
     if (estado === "desligado") return false;
@@ -229,13 +229,13 @@ export function jevChange(
     draft: JevValues,
 ): string | undefined {
     const gatesChanged = GATES.filter((gate) => base.gates[gate] !== draft.gates[gate]);
-    const switchChanged = base["jevDesligado"] !== draft["jevDesligado"];
+    const switchChanged = base["jevOff"] !== draft["jevOff"];
     if (gatesChanged.length === 0 && !switchChanged) return undefined;
 
     const updated: Record<string, unknown> = { ...(currentJev ?? {}) };
 
     if (switchChanged) {
-        if (draft["jevDesligado"]) updated["ativo"] = false;
+        if (draft["jevOff"]) updated["ativo"] = false;
         else delete updated["ativo"];
     }
 

@@ -94,13 +94,13 @@ export function PanelWhatsApp({
             onUpdateIntegration(current);
             setFailure({
                 texto: t("integrations.whatsappConflictText", { version: current.version }),
-                codigo: "version_conflict",
-                dica: t("integrations.whatsappConflictTip"),
+                code: "version_conflict",
+                hint: t("integrations.whatsappConflictTip"),
             });
         } catch {
             setFailure({
                 texto: t("integrations.whatsappConflictRereadFailed"),
-                codigo: "version_conflict",
+                code: "version_conflict",
             });
         }
     }, [org, agente, id, onUpdateIntegration, t]);
@@ -346,10 +346,10 @@ export function PanelWhatsApp({
             {failure && (
                 <SofaBanner tone="danger" title={t("integrations.whatsappOperationErrorTitle")}>
                     <span>{failure.texto}</span>
-                    {failure.dica && <div className="poph-whatsapp__hint">{failure.dica}</div>}
-                    {failure.codigo && (
+                    {failure.hint && <div className="poph-whatsapp__hint">{failure.hint}</div>}
+                    {failure.code && (
                         <div className="poph-mono-muted poph-whatsapp__hint">
-                            {t("integrations.whatsappErrorCode", { code: failure.codigo })}
+                            {t("integrations.whatsappErrorCode", { code: failure.code })}
                         </div>
                     )}
                 </SofaBanner>

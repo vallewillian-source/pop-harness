@@ -103,7 +103,7 @@ export function ModalOrg({ opened: isOpen, onClose, org, onSave }: ModalOrgProps
     function showErrorApi(failure: ApiError, criar: boolean) {
         const details = failure.detalhes as Record<string, unknown> | null | undefined;
         const campo = typeof details?.["field"] === "string" ? details["field"] : undefined;
-        if (failure.status === 409 || failure.codigo === "conflict") {
+        if (failure.status === 409 || failure.code === "conflict") {
             if (criar) {
                 setErrors({ slug: t("orgs.formSlugTaken") });
             } else {
@@ -153,7 +153,7 @@ export function ModalOrg({ opened: isOpen, onClose, org, onSave }: ModalOrgProps
         } catch (failure) {
             const disputa = versionConflict(failure);
             if (disputa && org) {
-                let versionCurrent = disputa.atual;
+                let versionCurrent = disputa.current;
                 try {
                     const current = await getOrg(org.id);
                     versionCurrent = current.version;

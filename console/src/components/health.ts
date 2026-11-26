@@ -53,7 +53,7 @@ export function useMemoryProcess(): number | null {
             fetchMetrics()
                 .then((measurements) => {
                     if (!live) return;
-                    setBytes(measurements.memoriaProcesso ?? null);
+                    setBytes(measurements.processMemory ?? null);
                 })
                 .catch(() => {
                     if (!live) return;

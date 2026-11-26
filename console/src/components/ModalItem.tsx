@@ -125,7 +125,7 @@ export function ModalItem({ org, group, opened: isOpen, onClose, item, onSave }:
         }
         setErrorGeneral(t("knowledge.apiErrorWithCode", {
             message: failure.message,
-            code: failure.codigo,
+            code: failure.code,
         }));
     }
 

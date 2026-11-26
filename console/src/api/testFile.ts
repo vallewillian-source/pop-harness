@@ -108,7 +108,7 @@ export async function downloadContent(path: string): Promise<DownloadedFile> {
     const response = await requestBytes(path);
     return {
         blob: response.blob,
-        nome: headerName(response["cabecalhos"].get("content-disposition")),
+        nome: headerName(response.headers.get("content-disposition")),
     };
 }
 

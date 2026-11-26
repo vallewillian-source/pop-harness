@@ -174,7 +174,7 @@ export function AgentInstructions() {
                     setGeneralError(
                         t("instructions.errorWithCode", {
                             message: failure.message,
-                            code: failure.codigo,
+                            code: failure.code,
                         }),
                     );
                 }

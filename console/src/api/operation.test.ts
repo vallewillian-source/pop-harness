@@ -40,8 +40,8 @@ describe("interpretarMetricas", () => {
         ].join("\n");
 
         expect(parseMetrics(texto)).toEqual({
-            "filaTurnos": 4,
-            "filaSaida": 0,
+            "queueTurns": 4,
+            "queueOutput": 0,
             tokens: 1500,
         });
     });
@@ -58,7 +58,7 @@ describe("consultarSaude", () => {
         const response = await fetchHealth();
 
         expect(response.situacao).toBe("ok");
-        expect(response["saude"].version).toBe("0.9.1");
+        expect(response["health"].version).toBe("0.9.1");
         expect(servidor["callsFor"]("GET", "/healthz")).toHaveLength(1);
     });
 
@@ -71,7 +71,7 @@ describe("consultarSaude", () => {
         const response = await fetchHealth();
 
         expect(response.situacao).toBe("degradada");
-        expect(response["saude"].databases.harness).toBe(12);
+        expect(response["health"].databases.harness).toBe(12);
     });
 
     it("500 sem resumo vira erro com o status", async () => {
@@ -97,7 +97,7 @@ describe("consultarMetricas", () => {
                 texto: "poph_fila_turnos 2\npoph_agentes_carregados 1\n",
             })["install"]();
 
-        expect(await fetchMetrics()).toEqual({ "filaTurnos": 2, "agentesCarregados": 1 });
+        expect(await fetchMetrics()).toEqual({ "queueTurns": 2, "agentsLoaded": 1 });
     });
 
     it("status diferente de 200 vira erro", async () => {
@@ -215,23 +215,23 @@ describe("recarregarCluster (HR-48f)", () => {
         expect(call?.["method"]).toBe("POST");
         expect(call?.["raw"]).toBeUndefined();
         expect(report["mudou"]).toBe(true);
-        expect(report["impressaoAntes"]).toBe("aaaa1111bbbb2222");
-        expect(report["impressaoDepois"]).toBe("cccc3333dddd4444");
+        expect(report["printBefore"]).toBe("aaaa1111bbbb2222");
+        expect(report["printAfter"]).toBe("cccc3333dddd4444");
         expect(report["antes"]["modo"]).toBe("instancia_unica");
         expect(report["depois"]).toMatchObject({
             "modo": "cluster",
-            "instanciaLocal": "a",
-            "instanciaPadrao": "a",
-            "segredoConfigurado": true,
-            "quantidadeDeOrgs": 2,
+            "localInstance": "a",
+            "instanceDefault": "a",
+            "secretConfigured": true,
+            "quantityOrgs": 2,
             "instancias": [
                 { id: "a", local: true },
                 { id: "b", local: false },
             ],
         });
-        expect(report["orgsQueTrocaram"]).toEqual([{ org: "org_2", de: null, para: "b" }]);
-        expect(report["instanciasAdicionadas"]).toEqual(["b"]);
-        expect(report["instanciasRemovidas"]).toEqual([]);
+        expect(report["orgsChanged"]).toEqual([{ org: "org_2", de: null, para: "b" }]);
+        expect(report["instancesAdded"]).toEqual(["b"]);
+        expect(report["instancesRemoved"]).toEqual([]);
     });
 
     it("não leva o endereço das instâncias para o resultado", async () => {
@@ -259,7 +259,7 @@ describe("recarregarCluster (HR-48f)", () => {
 
         expect(error).toBeInstanceOf(ApiError);
         expect((error as ApiError).status).toBe(400);
-        expect((error as ApiError)["codigo"]).toBe("cluster_invalido");
+        expect((error as ApiError)["code"]).toBe("cluster_invalido");
         expect((error as ApiError)["detalhes"]).toMatchObject({
             "problemas": ["instância 'b' sem endereço", "org 'org_9' aponta para instância inexistente"],
         });
@@ -279,7 +279,7 @@ describe("recarregarCluster (HR-48f)", () => {
         const error = await reloadCluster().catch((e: unknown) => e);
 
         expect(error).toBeInstanceOf(ApiError);
-        expect((error as ApiError)["codigo"]).toBe("formato");
+        expect((error as ApiError)["code"]).toBe("formato");
     });
 });
 
@@ -298,13 +298,13 @@ describe("interpretarRelatorio (HR-48f)", () => {
 
         expect(report["depois"]).toEqual({
             "modo": "instancia_unica",
-            "instanciaLocal": "",
-            "instanciaPadrao": null,
-            "segredoConfigurado": false,
+            "localInstance": "",
+            "instanceDefault": null,
+            "secretConfigured": false,
             "instancias": [],
-            "quantidadeDeOrgs": 0,
+            "quantityOrgs": 0,
         });
-        expect(report["orgsQueTrocaram"]).toEqual([]);
+        expect(report["orgsChanged"]).toEqual([]);
     });
 
     it("itens malformados em listas são descartados sem derrubar a leitura", () => {
@@ -320,10 +320,10 @@ describe("interpretarRelatorio (HR-48f)", () => {
         });
 
         expect(report["antes"]["instancias"]).toEqual([{ id: "a", local: true }]);
-        expect(report["antes"]["quantidadeDeOrgs"]).toBe(0);
-        expect(report["orgsQueTrocaram"]).toEqual([{ org: "org_1", de: "b", para: null }]);
-        expect(report["instanciasAdicionadas"]).toEqual(["c"]);
-        expect(report["instanciasRemovidas"]).toEqual([]);
+        expect(report["antes"]["quantityOrgs"]).toBe(0);
+        expect(report["orgsChanged"]).toEqual([{ org: "org_1", de: "b", para: null }]);
+        expect(report["instancesAdded"]).toEqual(["c"]);
+        expect(report["instancesRemoved"]).toEqual([]);
     });
 
     it("corpo que não é objeto lança erro de formato", () => {

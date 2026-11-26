@@ -59,35 +59,35 @@ function NoticeFailure({
     const { translate: t } = useI18n();
     return (
         <div>
-            <SofaBanner tone="danger" title={failure.titulo}>
+            <SofaBanner tone="danger" title={failure.title}>
                 <p style={{ margin: 0 }}>{failure.texto}</p>
-                {failure.versoes ? (
+                {failure.versions ? (
                     <p style={{ margin: "6px 0 0" }}>
                         {t("orgs.failureVersionLine", {
-                            file: failure.versoes.arquivo,
-                            instance: failure.versoes.instalacao,
+                            file: failure.versions.file,
+                            instance: failure.versions.installation,
                         })}
                     </p>
                 ) : null}
-                {failure.conflitos && failure.conflitos.itens.length > 0 ? (
+                {failure.conflicts && failure.conflicts.items.length > 0 ? (
                     <>
                         <p style={{ margin: "6px 0 0" }}>{t("orgs.failureConflictsFound")}</p>
                         <ul
                             className="poph-operation__conflicts"
                             aria-label={t("orgs.failureConflictsLabel")}
                         >
-                            {failure.conflitos.itens.map((item) => (
+                            {failure.conflicts.items.map((item) => (
                                 <li key={item}>{item}</li>
                             ))}
-                            {failure.conflitos.mais > 0 ? (
+                            {failure.conflicts.more > 0 ? (
                                 <li>
-                                    {t("orgs.failureAndMore", { count: numero(failure.conflitos.mais) })}
+                                    {t("orgs.failureAndMore", { count: numero(failure.conflicts.more) })}
                                 </li>
                             ) : null}
                         </ul>
                     </>
                 ) : null}
-                {failure.podeTentarDeNovo && onTryNew ? (
+                {failure.canRetry && onTryNew ? (
                     <div style={{ marginTop: 8 }}>
                         <SofaButton variant="secondary" onClick={onTryNew}>
                             {t("orgs.failureTryAgain")}
@@ -432,7 +432,7 @@ export function ExportImportOrganization({ org }: SectionBackupProps) {
                     {failureImport ? (
                         <NoticeFailure
                             failure={failureImport}
-                            onTryNew={failureImport.podeTentarDeNovo && file ? () => setConfirming(true) : undefined}
+                            onTryNew={failureImport.canRetry && file ? () => setConfirming(true) : undefined}
                         />
                     ) : null}
                     {refusal ? (

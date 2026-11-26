@@ -202,7 +202,7 @@ function SectionJev({ jev }: { jev: TurnJev | null }) {
                                         ? t("testChat.notRecorded")
                                         : t("testChat.jevCallSummary", {
                                               questions: jev.chamada.perguntas,
-                                              cached: jev.chamada.decididasPorCache ?? 0,
+                                              cached: jev.chamada.decidedByCache ?? 0,
                                           })}
                                 </dd>
                             </div>
@@ -257,15 +257,15 @@ function SectionJev({ jev }: { jev: TurnJev | null }) {
                                     <dt>{t("testChat.fieldRewrote")}</dt>
                                     <dd>{jev.revisao.regenerou ? t("testChat.yes") : t("testChat.no")}</dd>
                                 </div>
-                                {jev.revisao.segundaEscolha && (
+                                {jev.revisao.secondChoice && (
                                     <div>
                                         <dt>{t("testChat.fieldSecondChoice")}</dt>
-                                        <dd>{jev.revisao.segundaEscolha}</dd>
+                                        <dd>{jev.revisao.secondChoice}</dd>
                                     </div>
                                 )}
                                 <div>
                                     <dt>{t("testChat.fieldSafeResponse")}</dt>
-                                    <dd>{jev.revisao.respostaSegura ? t("testChat.yes") : t("testChat.no")}</dd>
+                                    <dd>{jev.revisao.responseSafe ? t("testChat.yes") : t("testChat.no")}</dd>
                                 </div>
                             </dl>
                         </article>
@@ -293,7 +293,7 @@ function CardGate({ decisao }: { decisao: GateDecision }) {
                 </div>
                 <div>
                     <dt>{t("testChat.fieldJevChoice")}</dt>
-                    <dd>{decisao.escolhaDoJev ?? t("testChat.notRecorded")}</dd>
+                    <dd>{decisao.jevChoice ?? t("testChat.notRecorded")}</dd>
                 </div>
                 <div>
                     <dt>{t("testChat.fieldOrigin")}</dt>
@@ -376,7 +376,7 @@ function SectionRecovered({ recovered }: { recovered: TurnRetrieved }) {
                                 {recovered.produtos.map((product, index) => {
                                     const price =
                                         product.precoTexto ??
-                                        formatPriceCents(product.precoCentavos) ??
+                                        formatPriceCents(product.priceCents) ??
                                         t("testChat.priceNotRecorded");
                                     return (
                                         <li key={`${product.produto ?? "produto"}-${index}`} className="poph-why__item">
@@ -432,9 +432,9 @@ function SectionTools({
                             <li key={item.nome} className="poph-why__item">
                                 <strong>{item.nome}</strong>
                                 <span className="poph-why__meta">
-                                    {item.vezes === 1
+                                    {item.times === 1
                                         ? t("testChat.toolCalledOnce")
-                                        : t("testChat.toolCalledMany", { count: item.vezes })}
+                                        : t("testChat.toolCalledMany", { count: item.times })}
                                 </span>
                             </li>
                         ))}
@@ -482,7 +482,7 @@ function CallTool({ call }: { call: ToolCall }) {
             <dl className="poph-why__lines">
                 <div>
                     <dt>{t("testChat.fieldDuration")}</dt>
-                    <dd>{formatToolDuration(call.duracaoMs)}</dd>
+                    <dd>{formatToolDuration(call.durationMs)}</dd>
                 </div>
                 <div>
                     <dt>{t("testChat.fieldArguments")}</dt>
@@ -535,9 +535,9 @@ function SectionTimes({ timings: times }: { timings: TurnTimings | null }) {
     }
     const total = times.totalMs;
     const steps: Array<{ rotulo: string; ms: number | null }> = [
-        { rotulo: t("testChat.timeQueue"), ms: times.filaMs },
-        { rotulo: t("testChat.timeAssembly"), ms: times.montagemMs },
-        { rotulo: t("testChat.timeFirstText"), ms: times.primeiroTextoMs },
+        { rotulo: t("testChat.timeQueue"), ms: times.queueMs },
+        { rotulo: t("testChat.timeAssembly"), ms: times.buildMs },
+        { rotulo: t("testChat.timeFirstText"), ms: times.firstTextMs },
         { rotulo: t("testChat.timeTotal"), ms: total },
     ];
     return (
@@ -568,7 +568,7 @@ function SectionTimes({ timings: times }: { timings: TurnTimings | null }) {
             <dl className="poph-why__lines">
                 <div>
                     <dt>{t("testChat.fieldToolRounds")}</dt>
-                    <dd>{times.rodadasFerramenta ?? t("testChat.notRecorded")}</dd>
+                    <dd>{times.roundsTool ?? t("testChat.notRecorded")}</dd>
                 </div>
                 <div>
                     <dt>{t("testChat.fieldModel")}</dt>
@@ -576,7 +576,7 @@ function SectionTimes({ timings: times }: { timings: TurnTimings | null }) {
                 </div>
                 <div>
                     <dt>{t("testChat.fieldEndReason")}</dt>
-                    <dd>{endReasonLabel(times.motivoFim)}</dd>
+                    <dd>{endReasonLabel(times.reasonEnd)}</dd>
                 </div>
             </dl>
             <p className="poph-why__not-stored">{t("testChat.timesNotRecorded")}</p>

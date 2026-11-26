@@ -148,8 +148,8 @@ async function readTelemetry(): Promise<Telemetry> {
     return {
         situacao: healthRead.status === "fulfilled" ? healthRead.value.situacao : "sem_resposta",
         uptimeSeconds:
-            healthRead.status === "fulfilled" ? healthRead.value.saude.uptime_seconds : undefined,
-        memoryBytes: metricsRead.status === "fulfilled" ? metricsRead.value.memoriaProcesso : undefined,
+            healthRead.status === "fulfilled" ? healthRead.value.health.uptime_seconds : undefined,
+        memoryBytes: metricsRead.status === "fulfilled" ? metricsRead.value.processMemory : undefined,
     };
 }
 
@@ -314,7 +314,7 @@ export function Orgs() {
             downloadFile(await exportOrg(org.id, false));
         } catch (failure) {
             const detail = backupFailure(failure, "exportar");
-            setNotice({ tom: "danger", titulo: detail.titulo, texto: detail.texto });
+            setNotice({ tom: "danger", titulo: detail.title, texto: detail.texto });
         }
     }
 
@@ -331,10 +331,10 @@ export function Orgs() {
                     tom: "warn",
                     titulo: t("orgs.formConflictTitle"),
                     texto:
-                        typeof disputa.atual === "number"
+                        typeof disputa.current === "number"
                             ? t("orgs.noticeConflictWithVersion", {
                                   name: org.name,
-                                  version: disputa.atual,
+                                  version: disputa.current,
                               })
                             : t("orgs.noticeConflictPlain", { name: org.name }),
                 });

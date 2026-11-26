@@ -304,7 +304,7 @@ export function AgentKnowledge() {
                 relatorio: resultado.indexed,
             });
         } catch (failure) {
-            if (failure instanceof ApiError && failure.codigo === "embedding_unavailable") {
+            if (failure instanceof ApiError && failure.code === "embedding_unavailable") {
                 setReindexError(
                     t("knowledge.embeddingUnavailable", { message: failure.message }),
                 );

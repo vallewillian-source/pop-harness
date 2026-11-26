@@ -88,7 +88,7 @@ describe("I18N-10: erro do turno sem eventos no idioma ativo", () => {
             vi.fn(async () => new Response(null, { status: 200 })),
         );
         const send = (texto: string) =>
-            sendTestMessage("org_1", "ag_1", "conv_1", { texto, "arquivos": [] }, { "aoEvento": () => undefined });
+            sendTestMessage("org_1", "ag_1", "conv_1", { texto, "arquivos": [] }, { "onEvent": () => undefined });
 
         await expect(send("oi")).rejects.toThrow("a resposta do turno não trouxe eventos");
         setLocale("en-US");

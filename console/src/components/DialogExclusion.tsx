@@ -36,7 +36,7 @@ export type DialogExclusionProps = {
 
 function messageError(error: unknown): { texto: string; codigo?: string } {
     if (error instanceof ApiError) {
-        return { texto: error.message, codigo: error.codigo };
+        return { texto: error.message, codigo: error.code };
     }
     if (error instanceof Error) {
         return { texto: error.message };

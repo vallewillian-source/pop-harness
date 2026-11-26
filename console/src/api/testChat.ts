@@ -162,7 +162,7 @@ export async function sendTestMessage(
     agente: string,
     conversa: string,
     mensagem: ClientMessage,
-    options: { "sinal"?: AbortSignal; "aoEvento": (evento: TurnEvent) => void },
+    options: { "sinal"?: AbortSignal; "onEvent": (evento: TurnEvent) => void },
 ): Promise<void> {
     const body = new FormData();
     const texto = mensagem.texto.trim();
@@ -180,7 +180,7 @@ export async function sendTestMessage(
     if (!response.body) {
         throw new ApiError(response.status, "sem_fluxo", translate("testChat.streamWithoutEvents"));
     }
-    await readFlow(response.body, options["aoEvento"], options["sinal"]);
+    await readFlow(response.body, options["onEvent"], options["sinal"]);
 }
 
 export function parseFrame(frame: string): TurnEvent | null {

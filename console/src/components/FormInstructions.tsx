@@ -228,7 +228,7 @@ export function FormInstructions({
                                             }
                                         >
                                             {CONTINGENCY_ACTIONS.map((acao) => (
-                                                <option key={acao.valor} value={acao.valor}>
+                                                <option key={acao.value} value={acao.value}>
                                                     {t(acao.labelKey)}
                                                 </option>
                                             ))}
@@ -303,7 +303,7 @@ export function FormInstructions({
                                 onChange={(evento) => changeTone("language", evento.target.value)}
                             >
                                 {IDIOMAS.map((idioma) => (
-                                    <option key={idioma.valor} value={idioma.valor}>
+                                    <option key={idioma.value} value={idioma.value}>
                                         {t(idioma.labelKey)}
                                     </option>
                                 ))}
@@ -319,7 +319,7 @@ export function FormInstructions({
                                 onChange={(evento) => changeTone("style", evento.target.value)}
                             >
                                 {ESTILOS.map((estilo) => (
-                                    <option key={estilo.valor} value={estilo.valor}>
+                                    <option key={estilo.value} value={estilo.value}>
                                         {t(estilo.labelKey)}
                                     </option>
                                 ))}
@@ -335,7 +335,7 @@ export function FormInstructions({
                                 onChange={(evento) => changeTone("emoji_policy", evento.target.value)}
                             >
                                 {EMOJIS.map((emoji) => (
-                                    <option key={emoji.valor} value={emoji.valor}>
+                                    <option key={emoji.value} value={emoji.value}>
                                         {t(emoji.labelKey)}
                                     </option>
                                 ))}
@@ -351,7 +351,7 @@ export function FormInstructions({
                                 onChange={(evento) => changeTone("format", evento.target.value)}
                             >
                                 {FORMATS.map((formato) => (
-                                    <option key={formato.valor} value={formato.valor}>
+                                    <option key={formato.value} value={formato.value}>
                                         {t(formato.labelKey)}
                                     </option>
                                 ))}

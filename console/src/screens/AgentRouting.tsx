@@ -208,11 +208,11 @@ export function AgentRouting() {
                         ? t("routing.errorWithDetails", {
                               message: failure.message,
                               reason: motivo,
-                              code: failure.codigo,
+                              code: failure.code,
                           })
                         : t("routing.errorWithCode", {
                               message: failure.message,
-                              code: failure.codigo,
+                              code: failure.code,
                           }),
                 );
                 return false;

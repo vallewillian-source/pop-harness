@@ -95,7 +95,7 @@ export function ModalGroup({ org, opened: isOpen, onClose, group, onSave }: Moda
         }
         setErrorGeneral(t("knowledge.apiErrorWithCode", {
             message: failure.message,
-            code: failure.codigo,
+            code: failure.code,
         }));
     }
 

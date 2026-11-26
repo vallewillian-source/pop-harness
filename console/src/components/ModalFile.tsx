@@ -125,7 +125,7 @@ export function ModalFile({ org, agente, opened: isOpen, onClose, onSend }: Moda
                 }
                 setErrorGeneral(t("files.apiErrorWithCode", {
                     message: failure.message,
-                    code: failure.codigo,
+                    code: failure.code,
                 }));
                 return;
             }

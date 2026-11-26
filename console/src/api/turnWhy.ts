@@ -6,7 +6,7 @@ import { GATE_DESCRIPTION, type IdGate } from "./modelJev";
 export type GateDecision = {
     gate: string;
     "escolha": string | null;
-    "escolhaDoJev": string | null;
+    "jevChoice": string | null;
     "origem": string | null;
     "confianca": number | null;
     "margem": number | null;
@@ -17,7 +17,7 @@ export type GateDecision = {
 
 export type JevCall = {
     "perguntas": number | null;
-    "decididasPorCache": number | null;
+    "decidedByCache": number | null;
     ms: number | null;
     tokens: number | null;
     "entrada": number | null;
@@ -30,8 +30,8 @@ export type ReviewG6 = {
     "escolha": string | null;
     "confianca": number | null;
     regenerou: boolean;
-    "segundaEscolha": string | null;
-    "respostaSegura": boolean;
+    "secondChoice": string | null;
+    "responseSafe": boolean;
 };
 
 export type TurnJev = {
@@ -53,7 +53,7 @@ export type TurnProduct = {
     "produto": string | null;
     nome: string;
     "precoTexto": string | null;
-    "precoCentavos": number | null;
+    "priceCents": number | null;
     "unidade": string;
     "condicoes": string;
 };
@@ -64,13 +64,13 @@ export type TurnRetrieved = {
 };
 
 export type TurnTimings = {
-    "filaMs": number | null;
-    "montagemMs": number | null;
-    "primeiroTextoMs": number | null;
+    "queueMs": number | null;
+    "buildMs": number | null;
+    "firstTextMs": number | null;
     totalMs: number | null;
-    "rodadasFerramenta": number | null;
+    "roundsTool": number | null;
     modelo: string | null;
-    "motivoFim": string | null;
+    "reasonEnd": string | null;
 };
 
 type JsonObject = Record<string, unknown>;
@@ -103,7 +103,7 @@ export function readTurnJev(value: unknown): TurnJev | null {
     const call: JevCall | null = rawCall
         ? {
               "perguntas": numero(rawCall["perguntas"]),
-              "decididasPorCache": numero(rawCall["decididas_por_cache"]),
+              "decidedByCache": numero(rawCall["decididas_por_cache"]),
               ms: numero(rawCall.ms),
               tokens: numero(rawCall.tokens),
               "entrada": usage ? numero(usage["entrada"]) : null,
@@ -118,7 +118,7 @@ export function readTurnJev(value: unknown): TurnJev | null {
         .map((item) => ({
             gate: texto(item.gate) ?? translate("testChat.unknownGate"),
             "escolha": texto(item["escolha"]),
-            "escolhaDoJev": texto(item["escolha_do_jev"]),
+            "jevChoice": texto(item["escolha_do_jev"]),
             "origem": texto(item["origem"]),
             "confianca": numero(item["confianca"]),
             "margem": numero(item["margem"]),
@@ -133,8 +133,8 @@ export function readTurnJev(value: unknown): TurnJev | null {
               "escolha": texto(rawReview["escolha"]),
               "confianca": numero(rawReview["confianca"]),
               regenerou: logico(rawReview.regenerou),
-              "segundaEscolha": texto(rawReview["segunda_escolha"]),
-              "respostaSegura": logico(rawReview["resposta_segura"]),
+              "secondChoice": texto(rawReview["segunda_escolha"]),
+              "responseSafe": logico(rawReview["resposta_segura"]),
           }
         : null;
 
@@ -152,7 +152,7 @@ export function readTurnRetrieved(value: unknown): TurnRetrieved {
                 "produto": texto(item["produto"]),
                 nome: texto(item.nome) ?? translate("testChat.productWithoutName"),
                 "precoTexto": texto(item["preco_texto"]),
-                "precoCentavos": numero(item["preco_centavos"]),
+                "priceCents": numero(item["preco_centavos"]),
                 "unidade": texto(item["unidade"]) ?? "",
                 "condicoes": texto(item["condicoes"]) ?? "",
             });
@@ -180,7 +180,7 @@ export type ToolCall = {
     ordem: number | null;
     estado: "executada" | "recusada" | "nao_registrado";
     motivo: string | null;
-    "duracaoMs": number | null;
+    "durationMs": number | null;
     "argumentos": string | null;
     resultado: string | null;
 };
@@ -199,7 +199,7 @@ export function readToolCalls(value: unknown): ToolCall[] {
             ordem: numero(item.ordem),
             estado,
             motivo: estado === "recusada" ? texto(item.motivo) : null,
-            "duracaoMs": numero(item["duracao_ms"]),
+            "durationMs": numero(item["duracao_ms"]),
             "argumentos": texto(item["argumentos"]),
             resultado: texto(item.resultado),
         });
@@ -303,28 +303,28 @@ function tokensJson(texto: string): string[] {
     return items;
 }
 
-export function countTools(names: string[]): Array<{ nome: string; "vezes": number }> {
+export function countTools(names: string[]): Array<{ nome: string; "times": number }> {
     const count = new Map<string, number>();
     for (const nome of names) count.set(nome, (count.get(nome) ?? 0) + 1);
-    return [...count.entries()].map(([nome, times]) => ({ nome, "vezes": times }));
+    return [...count.entries()].map(([nome, times]) => ({ nome, "times": times }));
 }
 
 export function readTurnTimings(value: unknown): TurnTimings | null {
     if (!isObject(value)) return null;
     return {
-        "filaMs": numero(value["fila_ms"]),
-        "montagemMs": numero(value["montagem_ms"]),
-        "primeiroTextoMs": numero(value["primeiro_texto_ms"]),
+        "queueMs": numero(value["fila_ms"]),
+        "buildMs": numero(value["montagem_ms"]),
+        "firstTextMs": numero(value["primeiro_texto_ms"]),
         totalMs: numero(value.total_ms),
-        "rodadasFerramenta": numero(value["rodadas_ferramenta"]),
+        "roundsTool": numero(value["rodadas_ferramenta"]),
         modelo: texto(value.modelo),
-        "motivoFim": texto(value.motivo_fim),
+        "reasonEnd": texto(value.motivo_fim),
     };
 }
 
 export function gateTitle(gate: string): string {
     const chave = gate as IdGate;
-    return GATE_DESCRIPTION[chave]?.["titulo"] ?? gate.toUpperCase();
+    return GATE_DESCRIPTION[chave]?.["title"] ?? gate.toUpperCase();
 }
 
 export function originLabel(origin: string | null): string {

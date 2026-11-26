@@ -71,8 +71,8 @@ export async function deleteOrg(id: string, force: boolean): Promise<void> {
 }
 
 export type VersionConflict = {
-    "esperada"?: number;
-    "atual"?: number;
+    "expected"?: number;
+    "current"?: number;
 };
 
 export function versionConflict(error: unknown): VersionConflict | null {
@@ -81,7 +81,7 @@ export function versionConflict(error: unknown): VersionConflict | null {
     const expected = details?.["expected_version"];
     const current = details?.["current_version"];
     return {
-        "esperada": typeof expected === "number" ? expected : undefined,
-        "atual": typeof current === "number" ? current : undefined,
+        "expected": typeof expected === "number" ? expected : undefined,
+        "current": typeof current === "number" ? current : undefined,
     };
 }

@@ -220,8 +220,8 @@ export function ModalIntegration({
                             setManifest({
                                 situacao: "falha",
                                 mensagem: failure.message,
-                                codigo: failure.codigo,
-                                tipKey: MANIFEST_TIP_KEYS[failure.codigo],
+                                codigo: failure.code,
+                                tipKey: MANIFEST_TIP_KEYS[failure.code],
                             });
                             return;
                         }
@@ -276,7 +276,7 @@ export function ModalIntegration({
 
     async function save(evento?: FormEvent) {
         evento?.preventDefault();
-        const freshItems = validateIntegration({ kind, situacao, editando: editing });
+        const freshItems = validateIntegration({ kind, situacao, editing: editing });
 
         if (manifesto.situacao === "carregando") {
             setErrorGeneral(t("integrations.manifestLoadingSaveError"));
@@ -519,7 +519,7 @@ export function ModalIntegration({
                             }
                         >
                             {INTEGRATION_STATUSES.map((option) => (
-                                <option key={option.valor} value={option.valor}>
+                                <option key={option.value} value={option.value}>
                                     {option.rotulo}
                                 </option>
                             ))}

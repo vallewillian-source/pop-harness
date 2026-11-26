@@ -24,7 +24,7 @@ export function importPath(org: string, sobrescrever = false): string {
 export type ExportedFile = { blob: Blob; nome: string };
 
 export async function exportOrg(org: string, withConversations: boolean): Promise<ExportedFile> {
-    const { blob, "cabecalhos": headers } = await requestBytes(exportPath(org, withConversations));
+    const { blob, headers } = await requestBytes(exportPath(org, withConversations));
     const nome = headerName(headers.get("content-disposition")) ?? `organizacao-${org}-backup.json`;
     return { blob, nome };
 }
@@ -119,11 +119,11 @@ export function conflictText(item: string): string {
 }
 
 export type BackupFailure = {
-    "titulo": string;
+    "title": string;
     texto: string;
-    "conflitos"?: { "itens": string[]; "mais": number };
-    "versoes"?: { "arquivo": number; "instalacao": number };
-    "podeTentarDeNovo": boolean;
+    "conflicts"?: { "items": string[]; "more": number };
+    "versions"?: { "file": number; "installation": number };
+    "canRetry": boolean;
 };
 
 function detailNumber(details: unknown, campo: string): number | undefined {
@@ -148,7 +148,7 @@ export const SHOWN_EXAMPLES = 5;
 
 export function overwriteRefusal(error: unknown): OverwriteRefusal | null {
     if (!(error instanceof ApiError)) return null;
-    if (error.status !== 409 || error["codigo"] !== "importacao_sobrescreve") return null;
+    if (error.status !== 409 || error["code"] !== "importacao_sobrescreve") return null;
 
     const details = error["detalhes"] && typeof error["detalhes"] === "object"
         ? (error["detalhes"] as Record<string, unknown>)
@@ -179,107 +179,107 @@ export function sampleText(item: string): string {
 export function backupFailure(error: unknown, operation: "exportar" | "importar"): BackupFailure {
     if (!(error instanceof ApiError)) {
         return {
-            "titulo": translate(operation === "exportar" ? "orgs.backupExportFailed" : "orgs.backupImportFailed"),
+            "title": translate(operation === "exportar" ? "orgs.backupExportFailed" : "orgs.backupImportFailed"),
             texto: translate("orgs.backupGeneric"),
-            "podeTentarDeNovo": true,
+            "canRetry": true,
         };
     }
 
     if (error["semServidor"]) {
         return {
-            "titulo": translate(operation === "exportar" ? "orgs.backupExportFailed" : "orgs.backupImportFailed"),
+            "title": translate(operation === "exportar" ? "orgs.backupExportFailed" : "orgs.backupImportFailed"),
             texto: translate("orgs.backupOffline"),
-            "podeTentarDeNovo": true,
+            "canRetry": true,
         };
     }
 
     if (error.status === 401) {
         return {
-            "titulo": translate("orgs.backupSessionTitle"),
+            "title": translate("orgs.backupSessionTitle"),
             texto: translate("orgs.backupSessionText"),
-            "podeTentarDeNovo": false,
+            "canRetry": false,
         };
     }
 
     if (error.status === 403) {
         return {
-            "titulo": translate(operation === "exportar" ? "orgs.backupExportFailed" : "orgs.backupImportFailed"),
+            "title": translate(operation === "exportar" ? "orgs.backupExportFailed" : "orgs.backupImportFailed"),
             texto: translate("orgs.backupForbiddenText"),
-            "podeTentarDeNovo": true,
+            "canRetry": true,
         };
     }
 
     if (error.status === 404) {
         return {
-            "titulo": translate("orgs.backupNotFoundTitle"),
+            "title": translate("orgs.backupNotFoundTitle"),
             texto: translate("orgs.backupNotFoundText"),
-            "podeTentarDeNovo": false,
+            "canRetry": false,
         };
     }
 
-    if (error.status === 413 || error["codigo"] === "payload_too_large") {
+    if (error.status === 413 || error["code"] === "payload_too_large") {
         return {
-            "titulo": translate("orgs.backupTooLargeTitle"),
+            "title": translate("orgs.backupTooLargeTitle"),
             texto: translate("orgs.backupTooLargeText"),
-            "podeTentarDeNovo": false,
+            "canRetry": false,
         };
     }
 
-    if (error["codigo"] === "backup_incompleto") {
+    if (error["code"] === "backup_incompleto") {
         return {
-            "titulo": translate("orgs.backupExportFailed"),
+            "title": translate("orgs.backupExportFailed"),
             texto: translate("orgs.backupIncompleteText"),
-            "podeTentarDeNovo": false,
+            "canRetry": false,
         };
     }
 
-    if (error.status === 409 && error["codigo"] === "importacao_sobrescreve") {
+    if (error.status === 409 && error["code"] === "importacao_sobrescreve") {
         return {
-            "titulo": translate("orgs.backupOverwriteTitle"),
+            "title": translate("orgs.backupOverwriteTitle"),
             texto: translate("orgs.backupOverwriteText"),
-            "podeTentarDeNovo": false,
+            "canRetry": false,
         };
     }
 
-    if (error.status === 409 && error["codigo"] === "conflict") {
+    if (error.status === 409 && error["code"] === "conflict") {
         const conflicts = detailList(error["detalhes"], "conflicts");
         const more = detailNumber(error["detalhes"], "conflicts_more") ?? 0;
         return {
-            "titulo": translate("orgs.backupConflictTitle"),
+            "title": translate("orgs.backupConflictTitle"),
             texto: translate("orgs.backupConflictText"),
-            "conflitos": {
-                "itens": conflicts.slice(0, SHOWN_CONFLICTS).map(conflictText),
-                "mais": more + Math.max(0, conflicts.length - SHOWN_CONFLICTS),
+            "conflicts": {
+                "items": conflicts.slice(0, SHOWN_CONFLICTS).map(conflictText),
+                "more": more + Math.max(0, conflicts.length - SHOWN_CONFLICTS),
             },
-            "podeTentarDeNovo": false,
+            "canRetry": false,
         };
     }
 
-    if (error.status === 400 && error["codigo"] === "invalid_backup") {
+    if (error.status === 400 && error["code"] === "invalid_backup") {
         const file = detailNumber(error["detalhes"], "version");
         const installation = detailNumber(error["detalhes"], "supported_version");
         return {
-            "titulo": translate("orgs.backupInvalidTitle"),
+            "title": translate("orgs.backupInvalidTitle"),
             texto: translate("orgs.backupInvalidText"),
-            "versoes":
+            "versions":
                 file !== undefined && installation !== undefined
-                    ? { "arquivo": file, "instalacao": installation }
+                    ? { "file": file, "installation": installation }
                     : undefined,
-            "podeTentarDeNovo": false,
+            "canRetry": false,
         };
     }
 
     if (error.status >= 500) {
         return {
-            "titulo": translate(operation === "exportar" ? "orgs.backupExportFailed" : "orgs.backupImportFailed"),
+            "title": translate(operation === "exportar" ? "orgs.backupExportFailed" : "orgs.backupImportFailed"),
             texto: translate("orgs.backupServerError", { status: error.status }),
-            "podeTentarDeNovo": true,
+            "canRetry": true,
         };
     }
 
     return {
-        "titulo": translate(operation === "exportar" ? "orgs.backupExportFailed" : "orgs.backupImportFailed"),
+        "title": translate(operation === "exportar" ? "orgs.backupExportFailed" : "orgs.backupImportFailed"),
         texto: translate("orgs.backupGeneric"),
-        "podeTentarDeNovo": true,
+        "canRetry": true,
     };
 }

@@ -4,19 +4,19 @@ import { ApiError, request, type Health } from "./client";
 import { getManifest, type PluginManifest } from "./integrations";
 
 export const METRIC_NAMES = {
-    "filaTurnos": "poph_fila_turnos",
-    "filaSaida": "poph_fila_saida",
-    "conversasAtivas": "poph_conversas_ativas",
-    "agentesCarregados": "poph_agentes_carregados",
-    "memoriaProcesso": "poph_memoria_processo_bytes",
-    "bancoPrincipal": "poph_harness_db_bytes",
-    "bancoBusca": "poph_rag_db_bytes",
-    "chamadasLlm": "poph_chamadas_llm_total",
-    "errosLlm": "poph_erros_llm_total",
-    "chamadasJev": "poph_chamadas_jev_total",
-    "errosJev": "poph_erros_jev_total",
-    "chamadasEvolution": "poph_chamadas_evolution_total",
-    "errosEvolution": "poph_erros_evolution_total",
+    "queueTurns": "poph_fila_turnos",
+    "queueOutput": "poph_fila_saida",
+    "activeConversations": "poph_conversas_ativas",
+    "agentsLoaded": "poph_agentes_carregados",
+    "processMemory": "poph_memoria_processo_bytes",
+    "mainDatabase": "poph_harness_db_bytes",
+    "databaseSearch": "poph_rag_db_bytes",
+    "callsLlm": "poph_chamadas_llm_total",
+    "errorsLlm": "poph_erros_llm_total",
+    "callsJev": "poph_chamadas_jev_total",
+    "errorsJev": "poph_erros_jev_total",
+    "callsEvolution": "poph_chamadas_evolution_total",
+    "errorsEvolution": "poph_erros_evolution_total",
     tokens: "poph_tokens_total",
 } as const;
 
@@ -24,7 +24,7 @@ export type Measurements = Partial<Record<keyof typeof METRIC_NAMES, number>>;
 
 export type InstanceHealth = {
     situacao: "ok" | "degradada";
-    "saude": Health;
+    "health": Health;
 };
 
 async function searchText(path: string, accepts: string): Promise<{ status: number; texto: string }> {
@@ -53,7 +53,7 @@ export async function fetchHealth(): Promise<InstanceHealth> {
         if (body && typeof body.version === "string") {
             return {
                 situacao: status === 200 ? "ok" : "degradada",
-                "saude": body as Health,
+                "health": body as Health,
             };
         }
         throw new ApiError(
@@ -155,11 +155,11 @@ export function manifestSummary(manifesto: PluginManifest): {
 
 export type ClusterMapSummary = {
     "modo": "cluster" | "instancia_unica";
-    "instanciaLocal": string;
-    "instanciaPadrao": string | null;
-    "segredoConfigurado": boolean;
+    "localInstance": string;
+    "instanceDefault": string | null;
+    "secretConfigured": boolean;
     "instancias": { id: string; local: boolean }[];
-    "quantidadeDeOrgs": number;
+    "quantityOrgs": number;
 };
 
 export type OrgSwitch = {
@@ -170,13 +170,13 @@ export type OrgSwitch = {
 
 export type ReloadReport = {
     "mudou": boolean;
-    "impressaoAntes": string;
-    "impressaoDepois": string;
+    "printBefore": string;
+    "printAfter": string;
     "antes": ClusterMapSummary;
     "depois": ClusterMapSummary;
-    "orgsQueTrocaram": OrgSwitch[];
-    "instanciasAdicionadas": string[];
-    "instanciasRemovidas": string[];
+    "orgsChanged": OrgSwitch[];
+    "instancesAdded": string[];
+    "instancesRemoved": string[];
 };
 
 function asObject(value: unknown): Record<string, unknown> | null {
@@ -199,9 +199,9 @@ function readSummary(raw: unknown): ClusterMapSummary {
     const orgs = asObject(registro.orgs);
     return {
         "modo": registro["modo"] === "cluster" ? "cluster" : "instancia_unica",
-        "instanciaLocal": typeof registro.instance_id === "string" ? registro.instance_id : "",
-        "instanciaPadrao": textOrNull(registro.default_instance),
-        "segredoConfigurado": registro["segredo_configurado"] === true,
+        "localInstance": typeof registro.instance_id === "string" ? registro.instance_id : "",
+        "instanceDefault": textOrNull(registro.default_instance),
+        "secretConfigured": registro["segredo_configurado"] === true,
         "instancias": instances
             .map((item) => asObject(item))
             .filter((item): item is Record<string, unknown> => item !== null)
@@ -209,7 +209,7 @@ function readSummary(raw: unknown): ClusterMapSummary {
                 id: typeof item.id === "string" ? item.id : "",
                 local: item.local === true,
             })),
-        "quantidadeDeOrgs": orgs ? Object.keys(orgs).length : 0,
+        "quantityOrgs": orgs ? Object.keys(orgs).length : 0,
     };
 }
 
@@ -221,11 +221,11 @@ export function parseReport(body: unknown): ReloadReport {
     const trocas = Array.isArray(registro["orgs_que_trocaram"]) ? registro["orgs_que_trocaram"] : [];
     return {
         "mudou": registro["mudou"],
-        "impressaoAntes": typeof registro["fingerprint_antes"] === "string" ? registro["fingerprint_antes"] : "",
-        "impressaoDepois": typeof registro["fingerprint_depois"] === "string" ? registro["fingerprint_depois"] : "",
+        "printBefore": typeof registro["fingerprint_antes"] === "string" ? registro["fingerprint_antes"] : "",
+        "printAfter": typeof registro["fingerprint_depois"] === "string" ? registro["fingerprint_depois"] : "",
         "antes": readSummary(registro["antes"]),
         "depois": readSummary(registro["depois"]),
-        "orgsQueTrocaram": trocas
+        "orgsChanged": trocas
             .map((item) => asObject(item))
             .filter((item): item is Record<string, unknown> => item !== null)
             .map((item) => ({
@@ -233,8 +233,8 @@ export function parseReport(body: unknown): ReloadReport {
                 de: textOrNull(item.de),
                 para: textOrNull(item.para),
             })),
-        "instanciasAdicionadas": textList(registro["instancias_adicionadas"]),
-        "instanciasRemovidas": textList(registro["instancias_removidas"]),
+        "instancesAdded": textList(registro["instancias_adicionadas"]),
+        "instancesRemoved": textList(registro["instancias_removidas"]),
     };
 }
 

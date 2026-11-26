@@ -17,26 +17,26 @@ export type Integracao = {
 
 export const INTEGRATION_STATUSES = [
     {
-        "valor": "active",
+        "value": "active",
         get "rotulo"() {
             return translate("integrations.statusActive");
         },
     },
     {
-        "valor": "inactive",
+        "value": "inactive",
         get "rotulo"() {
             return translate("integrations.statusInactive");
         },
     },
     {
-        "valor": "archived",
+        "value": "archived",
         get "rotulo"() {
             return translate("integrations.statusArchived");
         },
     },
 ] as const;
 
-export type IntegrationStatus = (typeof INTEGRATION_STATUSES)[number]["valor"];
+export type IntegrationStatus = (typeof INTEGRATION_STATUSES)[number]["value"];
 
 const CONNECTION_LABEL_KEYS: Record<string, TranslationKey> = {
     connected: "integrations.connectionConnected",
@@ -219,7 +219,7 @@ export function qrSource(base64: string): string {
     return base64.startsWith("data:") ? base64 : `data:image/png;base64,${base64}`;
 }
 
-export type WhatsappFailure = { texto: string; "codigo"?: string; "dica"?: string };
+export type WhatsappFailure = { texto: string; "code"?: string; "hint"?: string };
 
 const WHATSAPP_TIP_KEYS: Record<string, TranslationKey> = {
     "whatsapp_nao_configurado": "integrations.whatsappTipNotConfigured",
@@ -233,11 +233,11 @@ const WHATSAPP_TIP_KEYS: Record<string, TranslationKey> = {
 
 export function explainWhatsappFailure(failure: unknown): WhatsappFailure {
     if (failure instanceof ApiError) {
-        const tipKey = WHATSAPP_TIP_KEYS[failure["codigo"]];
+        const tipKey = WHATSAPP_TIP_KEYS[failure["code"]];
         return {
             texto: failure.message,
-            "codigo": failure["codigo"],
-            "dica": tipKey ? translate(tipKey) : undefined,
+            "code": failure["code"],
+            "hint": tipKey ? translate(tipKey) : undefined,
         };
     }
     if (failure instanceof Error) {
@@ -249,10 +249,10 @@ export function explainWhatsappFailure(failure: unknown): WhatsappFailure {
 export function validateIntegration(campos: {
     kind: string;
     situacao: string;
-    "editando": boolean;
+    "editing": boolean;
 }): Record<string, string> {
     const errors: Record<string, string> = {};
-    if (!campos["editando"]) {
+    if (!campos["editing"]) {
         const kind = campos.kind.trim();
         if (kind === "") {
             errors["kind"] = translate("integrations.validationKindRequired");
@@ -260,7 +260,7 @@ export function validateIntegration(campos: {
             errors["kind"] = translate("integrations.validationKindMaxLength", { max: LIMIT_KIND });
         }
     }
-    if (!INTEGRATION_STATUSES.some((situacao) => situacao["valor"] === campos.situacao)) {
+    if (!INTEGRATION_STATUSES.some((situacao) => situacao["value"] === campos.situacao)) {
         errors["situacao"] = translate("integrations.validationStatusRequired");
     }
     return errors;

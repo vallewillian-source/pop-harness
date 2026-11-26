@@ -65,7 +65,7 @@ describe("lerJevDoTurno", () => {
 
         expect(jev?.["chamada"]).toEqual({
             "perguntas": 2,
-            "decididasPorCache": 1,
+            "decidedByCache": 1,
             ms: 310,
             tokens: 480,
             "entrada": 400,
@@ -77,7 +77,7 @@ describe("lerJevDoTurno", () => {
         expect(jev?.["decisoes"][0]).toEqual({
             gate: "g3",
             "escolha": "base",
-            "escolhaDoJev": "base",
+            "jevChoice": "base",
             "origem": "jev",
             "confianca": 0.92,
             "margem": 0.61,
@@ -85,7 +85,7 @@ describe("lerJevDoTurno", () => {
             ms: 310,
             tokens: 240,
         });
-        expect(jev?.["decisoes"][1]?.["escolhaDoJev"]).toBeNull();
+        expect(jev?.["decisoes"][1]?.["jevChoice"]).toBeNull();
         expect(jev?.["decisoes"][1]?.motivo).toBe("o Jev não respondeu a tempo");
         expect(jev?.["revisao"]).toBeNull();
     });
@@ -114,8 +114,8 @@ describe("lerJevDoTurno", () => {
             "escolha": "revisar_tom",
             "confianca": 0.81,
             regenerou: true,
-            "segundaEscolha": "aprovada",
-            "respostaSegura": false,
+            "secondChoice": "aprovada",
+            "responseSafe": false,
         });
     });
 
@@ -173,7 +173,7 @@ describe("lerRecuperadosDoTurno", () => {
                 "produto": "prod-1",
                 nome: "Dedetização",
                 "precoTexto": "R$ 450,00 por visita",
-                "precoCentavos": 45000,
+                "priceCents": 45000,
                 "unidade": "por visita",
                 "condicoes": "Até 50 m²",
             },
@@ -193,8 +193,8 @@ describe("ferramentas e tempos", () => {
         const names = readTurnTools(["consultar_base", "buscar_produto", "consultar_base"]);
         expect(names).toEqual(["consultar_base", "buscar_produto", "consultar_base"]);
         expect(countTools(names)).toEqual([
-            { nome: "consultar_base", "vezes": 2 },
-            { nome: "buscar_produto", "vezes": 1 },
+            { nome: "consultar_base", "times": 2 },
+            { nome: "buscar_produto", "times": 1 },
         ]);
         expect(readTurnTools(null)).toEqual([]);
     });
@@ -211,19 +211,19 @@ describe("ferramentas e tempos", () => {
                 motivo_fim: "concluido",
             }),
         ).toEqual({
-            "filaMs": 3,
-            "montagemMs": 40,
-            "primeiroTextoMs": 480,
+            "queueMs": 3,
+            "buildMs": 40,
+            "firstTextMs": 480,
             totalMs: 920,
-            "rodadasFerramenta": 1,
+            "roundsTool": 1,
             modelo: "gemini-3.8-flash-tiered",
-            "motivoFim": "concluido",
+            "reasonEnd": "concluido",
         });
         expect(readTurnTimings(null)).toBeNull();
     });
 
     it("duração: o total medido pelo turno; sem ele, início e fim; em andamento, nada", () => {
-        expect(turnDuration(1000, 1500, { "filaMs": null, "montagemMs": null, "primeiroTextoMs": null, totalMs: 920, "rodadasFerramenta": null, modelo: null, "motivoFim": null })).toBe(920);
+        expect(turnDuration(1000, 1500, { "queueMs": null, "buildMs": null, "firstTextMs": null, totalMs: 920, "roundsTool": null, modelo: null, "reasonEnd": null })).toBe(920);
         expect(turnDuration(1000, 1500, null)).toBe(500);
         expect(turnDuration(1000, null, null)).toBeNull();
     });
@@ -295,15 +295,15 @@ describe("chamadas de ferramenta (HR-47c)", () => {
             { nome: "buscar_produto", "rodada": 0, ordem: 1, estado: "executada", motivo: null, "duracao_ms": 3, "argumentos": "{}", resultado: "ok" },
         ]);
         expect(readCalls.map((c) => c.nome)).toEqual(["buscar_produto", "enviar_arquivo", "cart_add_item"]);
-        expect(readCalls[2]).toMatchObject({ estado: "recusada", motivo: "nao_habilitada", "duracaoMs": 0 });
-        expect(readCalls[0]).toMatchObject({ estado: "executada", motivo: null, "duracaoMs": 3 });
+        expect(readCalls[2]).toMatchObject({ estado: "recusada", motivo: "nao_habilitada", "durationMs": 0 });
+        expect(readCalls[0]).toMatchObject({ estado: "executada", motivo: null, "durationMs": 3 });
     });
 
     it("turno antigo, ausente, nulo ou com outro formato vira lista vazia, sem erro", () => {
         expect(readToolCalls(undefined)).toEqual([]);
         expect(readToolCalls(null)).toEqual([]);
         expect(readToolCalls({ "nomes": ["x"] })).toEqual([]);
-        expect(readToolCalls([null, 3, "texto", { "sem_nome": true }])).toEqual([]);
+        expect(readToolCalls([null, 3, "texto", { "no_name": true }])).toEqual([]);
     });
 
     it("estado desconhecido não vira executada nem recusada; motivo só existe quando recusada", () => {
@@ -315,7 +315,7 @@ describe("chamadas de ferramenta (HR-47c)", () => {
                 estado: "nao_registrado",
                 motivo: null,
                 "rodada": null,
-                "duracaoMs": null,
+                "durationMs": null,
             }),
         ]);
 
@@ -328,7 +328,7 @@ describe("chamadas de ferramenta (HR-47c)", () => {
             { nome: "z", estado: "executada", "rodada": "1", "duracao_ms": "9", "argumentos": "  ", resultado: 4 },
         ]);
         expect(readCalls).toEqual([
-            expect.objectContaining({ "rodada": null, "duracaoMs": null, "argumentos": null, resultado: null }),
+            expect.objectContaining({ "rodada": null, "durationMs": null, "argumentos": null, resultado: null }),
         ]);
     });
 

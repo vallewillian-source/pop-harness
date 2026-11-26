@@ -60,12 +60,12 @@ function sameModel(a: TextModel, b: TextModel): boolean {
 }
 
 function sameJev(a: JevValues, b: JevValues): boolean {
-    return a.jevDesligado === b.jevDesligado && GATES.every((gate) => a.gates[gate] === b.gates[gate]);
+    return a.jevOff === b.jevOff && GATES.every((gate) => a.gates[gate] === b.gates[gate]);
 }
 
 function statusGate(values: JevValues, gate: IdGate): string {
     const on = gateEffect(values, gate);
-    if (values.jevDesligado) return translate("modelJev.gateStatusDisabledBySwitch");
+    if (values.jevOff) return translate("modelJev.gateStatusDisabledBySwitch");
     if (values.gates[gate] === "herdar") {
         return translate("modelJev.gateStatusInherit", {
             state: on ? translate("modelJev.gateStateOnLower") : translate("modelJev.gateStateOffLower"),
@@ -197,11 +197,11 @@ export function AgentModelJev() {
                         ? t("modelJev.apiErrorWithReason", {
                               message: failure.message,
                               reason: motivo,
-                              code: failure.codigo,
+                              code: failure.code,
                           })
                         : t("modelJev.apiErrorWithoutReason", {
                               message: failure.message,
-                              code: failure.codigo,
+                              code: failure.code,
                           }),
                 );
                 return false;
@@ -247,7 +247,7 @@ export function AgentModelJev() {
     }
 
     function changeSwitch(off: boolean) {
-        setDraftJev((current) => (current ? { ...current, jevDesligado: off } : current));
+        setDraftJev((current) => (current ? { ...current, jevOff: off } : current));
         setNotice(null);
     }
 
@@ -452,7 +452,7 @@ export function AgentModelJev() {
                         <SofaSwitch
                             label={t("modelJev.switchDisableJevLabel")}
                             description={t("modelJev.switchDisableJevDescription")}
-                            checked={draftJev.jevDesligado}
+                            checked={draftJev.jevOff}
                             onChange={(evento) => changeSwitch(evento.target.checked)}
                         />
 
@@ -462,9 +462,9 @@ export function AgentModelJev() {
                                 return (
                                     <SofaField
                                         key={gate}
-                                        label={descricao.titulo}
+                                        label={descricao.title}
                                         hint={t("modelJev.gateHintToday", {
-                                            explanation: descricao.explicacao,
+                                            explanation: descricao.explanation,
                                             status: statusGate(draftJev, gate),
                                         })}
                                         htmlFor={`poph-gate-${gate}`}
@@ -506,7 +506,7 @@ export function AgentModelJev() {
                                         ? t("modelJev.keyDefined")
                                         : t("modelJev.keyUndefined")}
                                     <div className="poph-mono-muted">
-                                        {item.explicacao}
+                                        {item.explanation}
                                         {item.ondeEdita
                                             ? t("modelJev.keyEditIn", { where: item.ondeEdita })
                                             : ""}
