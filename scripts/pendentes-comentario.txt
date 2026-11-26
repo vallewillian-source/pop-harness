@@ -17,12 +17,6 @@ M02	8	crates/poph-core/tests/llm_logs.rs
 M02	7	crates/poph-core/tests/llm_real.rs
 M02	7	crates/poph-core/tests/llm_servidor_falso.rs
 M02	14	crates/poph-core/tests/llm_tls.rs
-M02	6	crates/poph-plugin-eco/Cargo.toml
-M02	22	crates/poph-plugin-eco/src/demo.rs
-M02	33	crates/poph-plugin-eco/src/main.rs
-M02	15	crates/poph-plugin-eco/tests/comum/mod.rs
-M02	20	crates/poph-plugin-eco/tests/conversa.rs
-M02	15	crates/poph-plugin-eco/tests/queda.rs
 M02	3	crates/poph-plugins/Cargo.toml
 M02	11	crates/poph-plugins/src/coletor.rs
 M02	17	crates/poph-plugins/src/leitor.rs
@@ -366,9 +360,6 @@ M12b	9	crates/poph/tests/serve.rs
 M12b	18	crates/poph/tests/serve_logs.rs
 M12b	13	crates/poph/tests/token_api.rs
 M14	16	scripts/Dockerfile.build-arm
-M14	26	scripts/aceite-matrix-aux.py
-M14	28	scripts/aceite-matrix-element.mjs
-M14	79	scripts/aceite-matrix.sh
 M14	8	scripts/medicao-memoria/synapse_falso.py
 M14	11	scripts/medir-memoria-roteiro.sh
 M14	29	scripts/medir-memoria.sh

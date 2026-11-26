@@ -16,11 +16,10 @@ M02	39	crates/poph-core/tests/llm_logs.rs
 M02	55	crates/poph-core/tests/llm_real.rs
 M02	267	crates/poph-core/tests/llm_servidor_falso.rs
 M02	120	crates/poph-core/tests/llm_tls.rs
-M02	112	crates/poph-plugin-eco/src/demo.rs
-M02	40	crates/poph-plugin-eco/src/main.rs
-M02	103	crates/poph-plugin-eco/tests/comum/mod.rs
-M02	172	crates/poph-plugin-eco/tests/conversa.rs
-M02	86	crates/poph-plugin-eco/tests/queda.rs
+M02	47	crates/poph-plugin-eco/src/demo.rs
+M02	52	crates/poph-plugin-eco/tests/common/mod.rs
+M02	28	crates/poph-plugin-eco/tests/conversation.rs
+M02	13	crates/poph-plugin-eco/tests/crash.rs
 M02	33	crates/poph-plugins/src/coletor.rs
 M02	85	crates/poph-plugins/src/leitor.rs
 M02	11	crates/poph-plugins/src/lib.rs
@@ -437,9 +436,8 @@ M13d	4	console/src/App.tsx
 M13d	1	console/src/i18n/i18n.test.ts
 M13d	6	console/src/session/Session.tsx
 M13d	3	console/src/styles/navigation.css
-M14	365	scripts/aceite-matrix-aux.py
-M14	138	scripts/aceite-matrix-element.mjs
-M14	96	scripts/aceite-matrix.sh
+M14	1	scripts/aceite-matrix-element.mjs
+M14	39	scripts/aceite-matrix.sh
 M14	1	scripts/ci.sh
 M14	1	scripts/contracts.sh
 M14	5	scripts/jev-relatorio.py

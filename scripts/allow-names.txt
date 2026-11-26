@@ -510,6 +510,7 @@ name	peer_externo	published coluna: peer_externo
 name	pending_failures	published campo json: pending_failures
 name	plugin	published binario: plugin
 name	poph	published binario: poph
+name	POPH_ACEITE_DIR	published variavel ambiente: POPH_ACEITE_DIR
 name	poph_agentes_carregados	published metrica: poph_agentes_carregados
 name	poph_chamadas_evolution_total	published metrica: poph_chamadas_evolution_total
 name	poph_chamadas_jev_total	published metrica: poph_chamadas_jev_total
