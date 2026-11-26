@@ -1,10 +1,3 @@
-//! Segunda pergunta do G1 (orientação ao cliente antes da transferência) — HR-29.
-//!
-//! O que se prova aqui: os textos padrão são **exatamente** os aprovados em
-//! `HUMAN_HANDOFF_GUIDANCE_PRPD` §5.3; a pergunta de risco sai numa chamada própria (fora do lote
-//! do turno); prazo e erro viram "sem orientação" sem derrubar nada; e a composição da mensagem ao
-//! cliente é a do POP Atende (orientação + linha em branco + mensagem automática).
-
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,18 +9,16 @@ use poph_jev::{
 };
 use poph_types::JevGates;
 
-/// Textos aprovados em 19/11/2026 (`HUMAN_HANDOFF_GUIDANCE_PRD.md` §5.3), copiados do documento.
-const APROVADO_INGESTAO: &str = "⚠️ Se alguém engoliu ou teve contato com o produto, procure \
+const APPROVED_INGESTION: &str = "⚠️ Se alguém engoliu ou teve contato com o produto, procure \
 atendimento médico agora ou ligue para o SAMU (192) ou para o Disque-Intoxicação \
 (0800 722 6001). Leve a embalagem do produto. Não provoque vômito e não dê nada para beber ou \
 comer sem orientação médica.";
-const APROVADO_ANIMAL: &str = "⚠️ Não toque nem tente pegar o animal. Mantenha crianças e outras \
+const APPROVED_ANIMAL: &str = "⚠️ Não toque nem tente pegar o animal. Mantenha crianças e outras \
 pessoas longe dele e, se puder, feche a porta do cômodo. Se alguém foi picado, vá agora a um \
 pronto-socorro ou ligue para o SAMU (192).";
-const APROVADO_OUTRO: &str = "⚠️ Se alguém corre risco de saúde agora, ligue para o SAMU (192) ou \
+const APPROVED_OTHER: &str = "⚠️ Se alguém corre risco de saúde agora, ligue para o SAMU (192) ou \
 vá a um pronto-socorro sem esperar a nossa resposta.";
-/// Mensagem automática de hoje do POP Atende (`HUMAN_HANDOFF_AUTO_MESSAGE`).
-const APROVADA_AUTOMATICA: &str = "Sua conversa foi transferida para um atendente humano da nossa \
+const APPROVED_AUTO_MESSAGE: &str = "Sua conversa foi transferida para um atendente humano da nossa \
 equipe, que já irá respondê-la por aqui. 🙋";
 
 fn estado() -> JevState {
@@ -38,7 +29,7 @@ fn estado() -> JevState {
         .with_handoff(Vec::new(), true)
 }
 
-fn motor(jev: Arc<FakeJev>) -> JevEngine {
+fn engine(jev: Arc<FakeJev>) -> JevEngine {
     JevEngine::new(
         jev,
         JevGates {
@@ -49,118 +40,108 @@ fn motor(jev: Arc<FakeJev>) -> JevEngine {
     )
 }
 
-fn resposta(escolha: &str, confianca: f64) -> JevResponse {
+fn answer_of(choice: &str, certainty: f64) -> JevResponse {
     let mut item = JevResponse {
-        choice: Some(escolha.to_owned()),
-        confidence: confianca,
+        choice: Some(choice.to_owned()),
+        confidence: certainty,
         ..JevResponse::default()
     };
-    item.probabilities.insert(escolha.to_owned(), confianca);
+    item.probabilities.insert(choice.to_owned(), certainty);
     item
 }
 
-/// Jev falso que responde a pergunta de risco com a escolha e a confiança dadas.
-fn jev_do_risco(escolha: &'static str, confianca: f64) -> Arc<FakeJev> {
-    Arc::new(FakeJev::new(move |pedido: &poph_jev::JevRequest| {
-        let mut respostas = BTreeMap::new();
-        if pedido.questions.contains_key(RISK_QUESTION_ID) {
-            respostas.insert(RISK_QUESTION_ID.to_owned(), resposta(escolha, confianca));
+fn risk_jev(choice: &'static str, certainty: f64) -> Arc<FakeJev> {
+    Arc::new(FakeJev::new(move |request: &poph_jev::JevRequest| {
+        let mut answer_map = BTreeMap::new();
+        if request.questions.contains_key(RISK_QUESTION_ID) {
+            answer_map.insert(RISK_QUESTION_ID.to_owned(), answer_of(choice, certainty));
         }
         Ok(BatchResponse {
-            answers: respostas,
+            answers: answer_map,
             tokens: 7,
             ..BatchResponse::default()
         })
     }))
 }
 
-// ───────────────────────────── Textos aprovados ─────────────────────────────
-
-/// Aceite 2: os três textos e a mensagem automática são, byte a byte, os aprovados.
 #[test]
-fn textos_padrao_sao_exatamente_os_aprovados() {
-    let orientacao = HandoffGuidance::default();
-    assert_eq!(orientacao.texto(INGESTION_RISK), APROVADO_INGESTAO);
-    assert_eq!(orientacao.texto(ANIMAL_RISK), APROVADO_ANIMAL);
-    assert_eq!(orientacao.texto(OTHER_RISK), APROVADO_OUTRO);
-    assert_eq!(orientacao.mensagem_automatica, APROVADA_AUTOMATICA);
-    // Padrão do POP Atende: orientação ligada, limiar 0,5 e 4 s só nesta pergunta.
-    assert!(orientacao.ativo);
-    assert!((orientacao.confidence - 0.5).abs() < f64::EPSILON);
-    assert_eq!(orientacao.timeout, Duration::from_secs(4));
+fn default_texts_are_exactly_the_approved_ones() {
+    let guidance = HandoffGuidance::default();
+    assert_eq!(guidance.texto(INGESTION_RISK), APPROVED_INGESTION);
+    assert_eq!(guidance.texto(ANIMAL_RISK), APPROVED_ANIMAL);
+    assert_eq!(guidance.texto(OTHER_RISK), APPROVED_OTHER);
+    assert_eq!(guidance.mensagem_automatica, APPROVED_AUTO_MESSAGE);
+    assert!(guidance.ativo);
+    assert!((guidance.confidence - 0.5).abs() < f64::EPSILON);
+    assert_eq!(guidance.timeout, Duration::from_secs(4));
 }
 
-/// A mensagem ao cliente é orientação + linha em branco + automática; sem orientação, só a
-/// automática (comportamento de hoje, byte a byte).
 #[test]
-fn compoe_orientacao_e_mensagem_automatica() {
-    let orientacao = HandoffGuidance::default();
+fn composes_guidance_and_auto_message() {
+    let guidance = HandoffGuidance::default();
     assert_eq!(
-        orientacao.compose(Some(ANIMAL_RISK)),
-        format!("{APROVADO_ANIMAL}\n\n{APROVADA_AUTOMATICA}")
+        guidance.compose(Some(ANIMAL_RISK)),
+        format!("{APPROVED_ANIMAL}\n\n{APPROVED_AUTO_MESSAGE}")
     );
-    assert_eq!(orientacao.compose(None), APROVADA_AUTOMATICA);
-    assert_eq!(orientacao.compose(Some(NO_RISK)), APROVADA_AUTOMATICA);
+    assert_eq!(guidance.compose(None), APPROVED_AUTO_MESSAGE);
+    assert_eq!(guidance.compose(Some(NO_RISK)), APPROVED_AUTO_MESSAGE);
     assert_eq!(
-        orientacao.compose(Some("tipo-desconhecido")),
-        APROVADA_AUTOMATICA
+        guidance.compose(Some("tipo-desconhecido")),
+        APPROVED_AUTO_MESSAGE
     );
-    // Texto vazio conta como vazio (§5.3): o tipo não orienta.
-    let sem_texto = HandoffGuidance::default().with_text(OTHER_RISK, "   ");
-    assert_eq!(sem_texto.compose(Some(OTHER_RISK)), APROVADA_AUTOMATICA);
+    let without_text = HandoffGuidance::default().with_text(OTHER_RISK, "   ");
+    assert_eq!(
+        without_text.compose(Some(OTHER_RISK)),
+        APPROVED_AUTO_MESSAGE
+    );
 }
 
-// ───────────────────────────── Pergunta e distribuição ─────────────────────────────
-
-/// A pergunta de risco é própria ("risco_imediato") e não entra no lote dos gates.
 #[tokio::test]
-async fn pergunta_de_risco_nao_entra_no_lote() {
-    let jev = jev_do_risco(INGESTION_RISK, 0.92);
-    let avaliador = motor(Arc::clone(&jev));
+async fn risk_question_stays_out_of_the_batch() {
+    let jev = risk_jev(INGESTION_RISK, 0.92);
+    let evaluator = engine(Arc::clone(&jev));
 
-    let lote = avaliador.evaluate(estado(), None).await;
-    let pedidos = jev.requests();
-    assert_eq!(pedidos.len(), 1, "o lote é uma chamada só");
-    assert!(pedidos[0].questions.contains_key("g1_transferir"));
+    let batch = evaluator.evaluate(estado(), None).await;
+    let requests = jev.requests();
+    assert_eq!(requests.len(), 1, "o lote é uma chamada só");
+    assert!(requests[0].questions.contains_key("g1_transferir"));
     assert!(
-        !pedidos[0].questions.contains_key(RISK_QUESTION_ID),
+        !requests[0].questions.contains_key(RISK_QUESTION_ID),
         "a pergunta de risco não pode ir no lote do turno"
     );
-    // Só G1 ligado e sem resposta roteirizada para ele: o gate absteve.
-    assert!(lote.failed() || lote.decision(poph_jev::IdGate::G1).is_some());
+    assert!(batch.failed() || batch.decision(poph_jev::IdGate::G1).is_some());
 
-    let risco = avaliador.orientar(estado(), Duration::from_secs(1)).await;
-    assert!(risco.queried);
-    assert_eq!(risco.tipo.as_deref(), Some(INGESTION_RISK));
-    assert!((risco.confidence - 0.92).abs() < 1e-9);
-    assert_eq!(risco.tokens, 7);
-    let pedidos = jev.requests();
-    assert_eq!(pedidos.len(), 2, "a segunda pergunta é uma chamada própria");
+    let risk = evaluator.orientar(estado(), Duration::from_secs(1)).await;
+    assert!(risk.queried);
+    assert_eq!(risk.tipo.as_deref(), Some(INGESTION_RISK));
+    assert!((risk.confidence - 0.92).abs() < 1e-9);
+    assert_eq!(risk.tokens, 7);
+    let requests = jev.requests();
     assert_eq!(
-        pedidos[1].questions.keys().collect::<Vec<_>>(),
+        requests.len(),
+        2,
+        "a segunda pergunta é uma chamada própria"
+    );
+    assert_eq!(
+        requests[1].questions.keys().collect::<Vec<_>>(),
         vec![RISK_QUESTION_ID]
     );
 }
 
-/// A pergunta carrega as quatro opções do contrato do POP Atende.
 #[test]
-fn pergunta_tem_as_quatro_opcoes() {
-    let pergunta = poph_jev::risk_question();
-    let opcoes: Vec<&String> = pergunta.rubric.keys().collect();
-    assert_eq!(opcoes.len(), 4);
+fn question_has_the_four_options() {
+    let question = poph_jev::risk_question();
+    let options: Vec<&String> = question.rubric.keys().collect();
+    assert_eq!(options.len(), 4);
     for tipo in [NO_RISK, INGESTION_RISK, ANIMAL_RISK, OTHER_RISK] {
-        assert!(pergunta.rubric.contains_key(tipo), "falta a opção {tipo}");
+        assert!(question.rubric.contains_key(tipo), "falta a opção {tipo}");
     }
-    assert!(!pergunta.rubric[NO_RISK].trim().is_empty());
+    assert!(!question.rubric[NO_RISK].trim().is_empty());
     assert_eq!(RISK_TYPES.len(), 3);
 }
 
-// ───────────────────────────── Fail-safe ─────────────────────────────
-
-/// Prazo: a pergunta é abortada e o resultado volta como falha — a transferência não espera.
 #[tokio::test]
-async fn prazo_da_segunda_pergunta_vira_falha() {
-    // O atraso atinge as duas chamadas; o prazo da segunda (40 ms) é o que se mede aqui.
+async fn second_question_deadline_becomes_failure() {
     let jev = Arc::new(
         FakeJev::with_choices(BTreeMap::from([(
             RISK_QUESTION_ID.to_owned(),
@@ -168,80 +149,72 @@ async fn prazo_da_segunda_pergunta_vira_falha() {
         )]))
         .with_delay(Duration::from_millis(300)),
     );
-    let avaliador = motor(Arc::clone(&jev));
-    let inicio = std::time::Instant::now();
-    let risco = avaliador
+    let evaluator = engine(Arc::clone(&jev));
+    let start = std::time::Instant::now();
+    let risk = evaluator
         .orientar(estado(), Duration::from_millis(40))
         .await;
-    let decorrido = inicio.elapsed();
+    let elapsed = start.elapsed();
 
-    assert!(risco.queried);
-    assert!(risco.failed(), "prazo estourado é falha, não tipo");
-    assert!(risco.tipo.is_none());
+    assert!(risk.queried);
+    assert!(risk.failed(), "prazo estourado é falha, não tipo");
+    assert!(risk.tipo.is_none());
     assert!(
-        decorrido < Duration::from_millis(250),
-        "a pergunta tem de desistir no próprio prazo, levou {decorrido:?}"
+        elapsed < Duration::from_millis(250),
+        "a pergunta tem de desistir no próprio prazo, levou {elapsed:?}"
     );
 }
 
-/// Erro do provedor também vira falha, nunca pânico nem tipo inventado.
 #[tokio::test]
-async fn erro_do_provedor_vira_falha() {
+async fn provider_error_becomes_failure() {
     let jev = Arc::new(FakeJev::failing(JevError::Status {
         code: 503,
         motivo: "Service Unavailable".to_owned(),
     }));
-    let avaliador = motor(jev);
-    let risco = avaliador.orientar(estado(), Duration::from_secs(1)).await;
-    assert!(risco.failed());
-    assert!(risco.tipo.is_none());
+    let evaluator = engine(jev);
+    let risk = evaluator.orientar(estado(), Duration::from_secs(1)).await;
+    assert!(risk.failed());
+    assert!(risk.tipo.is_none());
 }
 
-/// Toda forma de "sem decisão confiável" suprime a orientação.
 #[tokio::test]
-async fn sem_decisao_confiavel_nao_orienta() {
-    let orientacao = HandoffGuidance::default();
+async fn without_reliable_decision_gives_no_guidance() {
+    let guidance = HandoffGuidance::default();
 
-    // `nenhum`: a conversa não tem risco imediato.
-    let nenhum = jev_do_risco(NO_RISK, 0.99);
-    let risco = motor(Arc::clone(&nenhum))
+    let none = risk_jev(NO_RISK, 0.99);
+    let risk = engine(Arc::clone(&none))
         .orientar(estado(), Duration::from_secs(1))
         .await;
-    assert_eq!(orientacao.reliable_type(&risco), None);
+    assert_eq!(guidance.reliable_type(&risk), None);
 
-    // Escolha fora do contrato.
-    let fora = jev_do_risco("risco_qualquer", 0.99);
-    let risco = motor(Arc::clone(&fora))
+    let outside = risk_jev("risco_qualquer", 0.99);
+    let risk = engine(Arc::clone(&outside))
         .orientar(estado(), Duration::from_secs(1))
         .await;
-    assert_eq!(orientacao.reliable_type(&risco), None);
+    assert_eq!(guidance.reliable_type(&risk), None);
 
-    // Confiança abaixo do limiar (0,5).
-    let baixa = jev_do_risco(INGESTION_RISK, 0.49);
-    let risco = motor(Arc::clone(&baixa))
+    let low = risk_jev(INGESTION_RISK, 0.49);
+    let risk = engine(Arc::clone(&low))
         .orientar(estado(), Duration::from_secs(1))
         .await;
-    assert_eq!(orientacao.reliable_type(&risco), None);
+    assert_eq!(guidance.reliable_type(&risk), None);
 
-    // Passa do limiar: orienta.
-    let confiavel = jev_do_risco(INGESTION_RISK, 0.5);
-    let risco = motor(Arc::clone(&confiavel))
+    let reliable = risk_jev(INGESTION_RISK, 0.5);
+    let risk = engine(Arc::clone(&reliable))
         .orientar(estado(), Duration::from_secs(1))
         .await;
     assert_eq!(
-        orientacao.reliable_type(&risco),
+        guidance.reliable_type(&risk),
         Some(INGESTION_RISK.to_owned())
     );
 
-    // Orientação desligada não orienta nem com risco confiável.
-    let desligada = HandoffGuidance::default();
-    let desligada = HandoffGuidance {
+    let disabled = HandoffGuidance::default();
+    let disabled = HandoffGuidance {
         ativo: false,
-        ..desligada
+        ..disabled
     };
-    assert_eq!(desligada.reliable_type(&risco), None);
+    assert_eq!(disabled.reliable_type(&risk), None);
 
-    // Resultado não consultado (Jev desligado) nunca orienta.
-    let nao_consultado = GuidanceResult::not_queried("Jev desligado");
-    assert_eq!(orientacao.reliable_type(&nao_consultado), None);
+    let not_queried = GuidanceResult::not_queried("Jev desligado");
+    assert_eq!(guidance.reliable_type(&not_queried), None);
 }

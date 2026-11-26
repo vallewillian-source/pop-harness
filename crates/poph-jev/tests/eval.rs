@@ -1,5 +1,3 @@
-//! Testes do conjunto rotulado e da medição (`poph jev eval` usa este mesmo caminho).
-
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -10,52 +8,51 @@ use poph_jev::{
 };
 use poph_types::JevGates;
 
-fn globais(g1: bool) -> JevGates {
+fn globals(g1: bool) -> JevGates {
     JevGates {
         g1,
         ..JevGates::default()
     }
 }
 
-fn caso(texto: &str, esperado: &str) -> CasoRotulado {
+fn labeled_case(texto: &str, expected: &str) -> CasoRotulado {
     CasoRotulado {
         estado: JevState::new("whatsapp")
             .with_messages([JevMessage::from_customer(texto)])
             .with_handoff(Vec::new(), true),
-        esperado: esperado.to_owned(),
+        esperado: expected.to_owned(),
         categoria: None,
         justificativa: None,
     }
 }
 
-/// Jev falso que acerta "pedido de humano", erra o resto e se abstém quando a resposta é fraca.
-fn jev_de_teste() -> Arc<FakeJev> {
-    Arc::new(FakeJev::new(|pedido| {
-        let texto = pedido.estado["conversa"]["mensagens"][0]["texto"]
+fn test_jev() -> Arc<FakeJev> {
+    Arc::new(FakeJev::new(|request| {
+        let texto = request.estado["conversa"]["mensagens"][0]["texto"]
             .as_str()
             .unwrap_or_default()
             .to_owned();
-        let (escolha, confianca) = if texto.contains("atendente") {
+        let (choice, certainty) = if texto.contains("atendente") {
             (G1_TRANSFER, 0.95)
         } else if texto.contains("talvez") {
             (G1_CONTINUE, 0.2)
         } else {
             (G1_CONTINUE, 0.9)
         };
-        let mut respostas = BTreeMap::new();
-        for id in pedido.questions.keys() {
-            respostas.insert(
+        let mut answer_map = BTreeMap::new();
+        for id in request.questions.keys() {
+            answer_map.insert(
                 id.clone(),
                 poph_jev::JevResponse {
-                    choice: Some(escolha.to_owned()),
-                    confidence: confianca,
-                    probabilities: BTreeMap::from([(escolha.to_owned(), confianca)]),
+                    choice: Some(choice.to_owned()),
+                    confidence: certainty,
+                    probabilities: BTreeMap::from([(choice.to_owned(), certainty)]),
                     ..poph_jev::JevResponse::default()
                 },
             );
         }
         Ok(poph_jev::BatchResponse {
-            answers: respostas,
+            answers: answer_map,
             tokens: 7,
             ..poph_jev::BatchResponse::default()
         })
@@ -63,74 +60,71 @@ fn jev_de_teste() -> Arc<FakeJev> {
 }
 
 #[tokio::test]
-async fn mede_acerto_abstencao_e_latencia() {
-    let jev = jev_de_teste();
-    let motor = Arc::new(JevEngine::new(jev, globais(true), "jev-latest"));
-    let casos = vec![
-        caso("quero falar com um atendente", G1_TRANSFER),
-        caso("qual o prazo de entrega?", G1_CONTINUE),
-        caso("isso sim, talvez eu precise", G1_CONTINUE),
+async fn measures_hits_abstentions_and_latency() {
+    let jev = test_jev();
+    let engine = Arc::new(JevEngine::new(jev, globals(true), "jev-latest"));
+    let cases = vec![
+        labeled_case("quero falar com um atendente", G1_TRANSFER),
+        labeled_case("qual o prazo de entrega?", G1_CONTINUE),
+        labeled_case("isso sim, talvez eu precise", G1_CONTINUE),
     ];
 
-    let relatorio = avaliar_conjunto(motor.as_ref(), IdGate::G1, &casos).await;
+    let report = avaliar_conjunto(engine.as_ref(), IdGate::G1, &cases).await;
 
-    assert_eq!(relatorio.gate, "g1");
-    assert_eq!(relatorio.casos, 3);
-    assert_eq!(relatorio.acertos, 2, "o terceiro é abstenção, não acerto");
-    assert_eq!(relatorio.erros, 0);
-    assert_eq!(relatorio.abstencoes, 1);
-    assert!((relatorio.taxa_acerto() - 2.0 / 3.0).abs() < 1e-9);
-    assert!((relatorio.taxa_abstencao() - 1.0 / 3.0).abs() < 1e-9);
-    assert_eq!(relatorio.latencias_ms.len(), 3);
-    assert_eq!(relatorio.detalhes[2].resultado, "abstencao");
-    assert!(!relatorio.texto("conjunto.jsonl").is_empty());
+    assert_eq!(report.gate, "g1");
+    assert_eq!(report.casos, 3);
+    assert_eq!(report.acertos, 2, "o terceiro é abstenção, não acerto");
+    assert_eq!(report.erros, 0);
+    assert_eq!(report.abstencoes, 1);
+    assert!((report.taxa_acerto() - 2.0 / 3.0).abs() < 1e-9);
+    assert!((report.taxa_abstencao() - 1.0 / 3.0).abs() < 1e-9);
+    assert_eq!(report.latencias_ms.len(), 3);
+    assert_eq!(report.detalhes[2].resultado, "abstencao");
+    assert!(!report.texto("conjunto.jsonl").is_empty());
 }
 
-/// Gate que não se aplica ao estado (agente sem transferência): nada é perguntado e o caso conta
-/// como não aplicável, não como erro.
 #[tokio::test]
-async fn gate_que_nao_se_aplica_conta_como_nao_aplicavel() {
-    let jev = jev_de_teste();
-    let motor = Arc::new(JevEngine::new(
+async fn gate_that_does_not_apply_counts_as_not_applicable() {
+    let jev = test_jev();
+    let engine = Arc::new(JevEngine::new(
         Arc::clone(&jev) as Arc<dyn poph_jev::JevTransport>,
-        globais(false),
+        globals(false),
         "jev-latest",
     ));
-    let mut caso = caso("quero falar com um atendente", G1_TRANSFER);
-    caso.estado = caso.estado.with_handoff(Vec::new(), false);
-    let casos = vec![caso];
+    let mut case = labeled_case("quero falar com um atendente", G1_TRANSFER);
+    case.estado = case.estado.with_handoff(Vec::new(), false);
+    let cases = vec![case];
 
-    let relatorio = avaliar_conjunto(motor.as_ref(), IdGate::G1, &casos).await;
+    let report = avaliar_conjunto(engine.as_ref(), IdGate::G1, &cases).await;
 
-    assert_eq!(relatorio.abstencoes, 1);
-    assert_eq!(relatorio.acertos, 0);
-    assert_eq!(relatorio.detalhes[0].resultado, "nao_aplicavel");
+    assert_eq!(report.abstencoes, 1);
+    assert_eq!(report.acertos, 0);
+    assert_eq!(report.detalhes[0].resultado, "nao_aplicavel");
 }
 
-/// Falha do Jev conta como abstenção e aparece no relatório.
 #[tokio::test]
-async fn falha_da_chamada_conta_como_abstencao() {
+async fn call_failure_counts_as_abstention() {
     let jev = Arc::new(FakeJev::failing(poph_jev::JevError::Status {
         code: 500,
         motivo: "Internal Server Error".to_owned(),
     }));
-    let motor = Arc::new(JevEngine::new(jev, globais(true), "jev-latest"));
-    let casos = vec![caso("quero falar com um atendente", G1_TRANSFER)];
+    let engine = Arc::new(JevEngine::new(jev, globals(true), "jev-latest"));
+    let cases = vec![labeled_case("quero falar com um atendente", G1_TRANSFER)];
 
-    let relatorio = avaliar_conjunto(motor.as_ref(), IdGate::G1, &casos).await;
+    let report = avaliar_conjunto(engine.as_ref(), IdGate::G1, &cases).await;
 
-    assert_eq!(relatorio.falhas_de_chamada, 1);
-    assert_eq!(relatorio.abstencoes, 1);
-    assert_eq!(relatorio.acertos, 0);
+    assert_eq!(report.falhas_de_chamada, 1);
+    assert_eq!(report.abstencoes, 1);
+    assert_eq!(report.acertos, 0);
 }
 
 #[tokio::test]
-async fn cache_do_motor_aparece_como_zero_de_latencia() {
-    let jev = jev_de_teste();
-    let motor = Arc::new(
+async fn engine_cache_shows_as_zero_latency() {
+    let jev = test_jev();
+    let engine = Arc::new(
         JevEngine::new(
             Arc::clone(&jev) as Arc<dyn poph_jev::JevTransport>,
-            globais(true),
+            globals(true),
             "jev-latest",
         )
         .with_options(poph_jev::JevOptions {
@@ -138,25 +132,23 @@ async fn cache_do_motor_aparece_como_zero_de_latencia() {
             ..poph_jev::JevOptions::default()
         }),
     );
-    let casos = vec![
-        caso("qual o prazo?", G1_CONTINUE),
-        caso("qual o prazo?", G1_CONTINUE),
+    let cases = vec![
+        labeled_case("qual o prazo?", G1_CONTINUE),
+        labeled_case("qual o prazo?", G1_CONTINUE),
     ];
 
-    let relatorio = avaliar_conjunto(motor.as_ref(), IdGate::G1, &casos).await;
+    let report = avaliar_conjunto(engine.as_ref(), IdGate::G1, &cases).await;
 
-    assert_eq!(relatorio.acertos, 2);
+    assert_eq!(report.acertos, 2);
     assert_eq!(jev.calls(), 1, "o segundo caso veio do cache");
 }
 
-/// Abstenção mostra a escolha que o modelo devolveu e o motivo do fallback (aceite da calibração).
 #[tokio::test]
-async fn abstencao_mostra_a_escolha_do_jev_e_o_motivo() {
-    // O Jev responde "transferir_agora" com confiança 0,55: abaixo do limiar 0,70 do G1.
-    let jev = Arc::new(FakeJev::new(|pedido: &poph_jev::JevRequest| {
-        let mut respostas = BTreeMap::new();
-        for id in pedido.questions.keys() {
-            respostas.insert(
+async fn abstention_shows_the_jev_choice_and_reason() {
+    let jev = Arc::new(FakeJev::new(|request: &poph_jev::JevRequest| {
+        let mut answer_map = BTreeMap::new();
+        for id in request.questions.keys() {
+            answer_map.insert(
                 id.clone(),
                 poph_jev::JevResponse {
                     choice: Some(G1_TRANSFER.to_owned()),
@@ -170,63 +162,61 @@ async fn abstencao_mostra_a_escolha_do_jev_e_o_motivo() {
             );
         }
         Ok(poph_jev::BatchResponse {
-            answers: respostas,
+            answers: answer_map,
             tokens: 4,
             ..poph_jev::BatchResponse::default()
         })
     }));
-    let motor = Arc::new(JevEngine::new(jev, globais(true), "jev-latest"));
-    let casos = vec![caso("quero falar com um atendente", G1_TRANSFER)];
+    let engine = Arc::new(JevEngine::new(jev, globals(true), "jev-latest"));
+    let cases = vec![labeled_case("quero falar com um atendente", G1_TRANSFER)];
 
-    let relatorio = avaliar_conjunto(motor.as_ref(), IdGate::G1, &casos).await;
+    let report = avaliar_conjunto(engine.as_ref(), IdGate::G1, &cases).await;
 
-    assert_eq!(relatorio.abstencoes, 1);
-    assert_eq!(relatorio.erros, 0, "abstenção não é erro");
-    let detalhe = &relatorio.detalhes[0];
+    assert_eq!(report.abstencoes, 1);
+    assert_eq!(report.erros, 0, "abstenção não é erro");
+    let detail = &report.detalhes[0];
     assert_eq!(
-        detalhe.obtido, None,
+        detail.obtido, None,
         "no fallback o turno não recebe a escolha"
     );
     assert_eq!(
-        detalhe.escolha.as_deref(),
+        detail.escolha.as_deref(),
         Some(G1_TRANSFER),
         "a escolha do modelo aparece mesmo no fallback"
     );
-    assert_eq!(detalhe.confianca, "0.55");
+    assert_eq!(detail.confianca, "0.55");
     assert!(
-        detalhe
+        detail
             .motivo
             .as_deref()
             .unwrap_or_default()
             .contains("abaixo do limiar"),
         "motivo: {:?}",
-        detalhe.motivo
+        detail.motivo
     );
 
-    let texto = relatorio.texto("conjunto.jsonl");
+    let texto = report.texto("conjunto.jsonl");
     assert!(texto.contains("detalhe por caso"), "saída: {texto}");
     assert!(texto.contains("jev transferir_agora"), "saída: {texto}");
     assert!(texto.contains("motivo:"), "saída: {texto}");
 
-    // E o JSON do relatório leva os mesmos campos.
-    let valor = serde_json::to_value(&relatorio).expect("serializa");
-    assert_eq!(valor["detalhes"][0]["escolha"], G1_TRANSFER);
-    assert_eq!(valor["detalhes"][0]["obtido"], serde_json::Value::Null);
+    let value = serde_json::to_value(&report).expect("serializa");
+    assert_eq!(value["detalhes"][0]["escolha"], G1_TRANSFER);
+    assert_eq!(value["detalhes"][0]["obtido"], serde_json::Value::Null);
     assert!(
-        valor["detalhes"][0]["motivo"]
+        value["detalhes"][0]["motivo"]
             .as_str()
             .unwrap_or_default()
             .contains("abaixo do limiar")
     );
 }
 
-/// `usage` do lote aparece no relatório, somado por execução, quando o Jev informa.
 #[tokio::test]
-async fn usage_da_chamada_aparece_no_relatorio() {
-    let jev = Arc::new(FakeJev::new(|pedido: &poph_jev::JevRequest| {
-        let mut respostas = BTreeMap::new();
-        for id in pedido.questions.keys() {
-            respostas.insert(
+async fn call_usage_appears_in_the_report() {
+    let jev = Arc::new(FakeJev::new(|request: &poph_jev::JevRequest| {
+        let mut answer_map = BTreeMap::new();
+        for id in request.questions.keys() {
+            answer_map.insert(
                 id.clone(),
                 poph_jev::JevResponse {
                     choice: Some(G1_CONTINUE.to_owned()),
@@ -236,7 +226,7 @@ async fn usage_da_chamada_aparece_no_relatorio() {
             );
         }
         Ok(poph_jev::BatchResponse {
-            answers: respostas,
+            answers: answer_map,
             tokens: 34,
             usage: poph_jev::UsageTokens {
                 input: Some(30),
@@ -245,100 +235,96 @@ async fn usage_da_chamada_aparece_no_relatorio() {
             },
         })
     }));
-    let motor = Arc::new(JevEngine::new(jev, globais(true), "jev-latest"));
-    let casos = vec![
-        caso("qual o prazo?", G1_CONTINUE),
-        caso("e o frete?", G1_CONTINUE),
+    let engine = Arc::new(JevEngine::new(jev, globals(true), "jev-latest"));
+    let cases = vec![
+        labeled_case("qual o prazo?", G1_CONTINUE),
+        labeled_case("e o frete?", G1_CONTINUE),
     ];
 
-    let relatorio = avaliar_conjunto(motor.as_ref(), IdGate::G1, &casos).await;
+    let report = avaliar_conjunto(engine.as_ref(), IdGate::G1, &cases).await;
 
-    assert_eq!(relatorio.usage.input, Some(60), "duas chamadas de 30");
-    assert_eq!(relatorio.usage.output, Some(8));
-    assert_eq!(relatorio.usage.total, Some(68));
-    let texto = relatorio.texto("conjunto.jsonl");
+    assert_eq!(report.usage.input, Some(60), "duas chamadas de 30");
+    assert_eq!(report.usage.output, Some(8));
+    assert_eq!(report.usage.total, Some(68));
+    let texto = report.texto("conjunto.jsonl");
     assert!(
         texto.contains("tokens: entrada 60 · saída 8 · total 68"),
         "saída: {texto}"
     );
-    let valor = serde_json::to_value(&relatorio).expect("serializa");
-    assert_eq!(valor["usage"]["entrada"], 60);
-    assert_eq!(valor["usage"]["saida"], 8);
-    assert_eq!(valor["usage"]["total"], 68);
-    assert_eq!(valor["usage"]["informado"], true);
+    let value = serde_json::to_value(&report).expect("serializa");
+    assert_eq!(value["usage"]["entrada"], 60);
+    assert_eq!(value["usage"]["saida"], 8);
+    assert_eq!(value["usage"]["total"], 68);
+    assert_eq!(value["usage"]["informado"], true);
 }
 
-/// Sem `usage` no corpo, o relatório diz "não informado" em vez de inventar número.
 #[tokio::test]
-async fn sem_usage_o_relatorio_diz_nao_informado() {
-    let jev = jev_de_teste();
-    let motor = Arc::new(JevEngine::new(jev, globais(true), "jev-latest"));
-    let casos = vec![caso("qual o prazo?", G1_CONTINUE)];
+async fn without_usage_the_report_says_not_reported() {
+    let jev = test_jev();
+    let engine = Arc::new(JevEngine::new(jev, globals(true), "jev-latest"));
+    let cases = vec![labeled_case("qual o prazo?", G1_CONTINUE)];
 
-    let relatorio = avaliar_conjunto(motor.as_ref(), IdGate::G1, &casos).await;
+    let report = avaliar_conjunto(engine.as_ref(), IdGate::G1, &cases).await;
 
-    assert!(!relatorio.usage.reported());
-    let texto = relatorio.texto("conjunto.jsonl");
+    assert!(!report.usage.reported());
+    let texto = report.texto("conjunto.jsonl");
     assert!(texto.contains("tokens: não informado"), "saída: {texto}");
-    let valor = serde_json::to_value(&relatorio).expect("serializa");
-    assert_eq!(valor["usage"]["informado"], false);
-    assert_eq!(valor["usage"]["entrada"], serde_json::Value::Null);
-}
-
-// ───────────────────────────── Leitura do conjunto ─────────────────────────────
-
-#[test]
-fn le_conjunto_com_comentarios_e_linhas_em_branco() {
-    let pasta = std::env::temp_dir().join(format!("poph-jev-eval-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&pasta);
-    std::fs::create_dir_all(&pasta).expect("pasta");
-    let caminho = pasta.join("g1.jsonl");
-    let conteudo = "\n# comentário\n{\"estado\": {\"canal\": \"cli\", \"mensagens\": [{\"papel\": \"cliente\", \"texto\": \"oi\"}]}, \"esperado\": \"continuar_agente\"}\n\n";
-    std::fs::write(&caminho, conteudo).expect("grava");
-
-    let casos = ler_conjunto(&caminho).expect("lê o conjunto");
-    assert_eq!(casos.len(), 1);
-    assert_eq!(casos[0].esperado, "continuar_agente");
-    assert_eq!(casos[0].estado.messages.len(), 1);
-
-    let _ = std::fs::remove_dir_all(&pasta);
+    let value = serde_json::to_value(&report).expect("serializa");
+    assert_eq!(value["usage"]["informado"], false);
+    assert_eq!(value["usage"]["entrada"], serde_json::Value::Null);
 }
 
 #[test]
-fn conjunto_invalido_diz_a_linha() {
-    let pasta = std::env::temp_dir().join(format!("poph-jev-eval-erro-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&pasta);
-    std::fs::create_dir_all(&pasta).expect("pasta");
-    let caminho = pasta.join("ruim.jsonl");
+fn reads_set_with_comments_and_blank_lines() {
+    let folder = std::env::temp_dir().join(format!("poph-jev-eval-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&folder);
+    std::fs::create_dir_all(&folder).expect("pasta");
+    let path = folder.join("g1.jsonl");
+    let content = "\n# comentário\n{\"estado\": {\"canal\": \"cli\", \"mensagens\": [{\"papel\": \"cliente\", \"texto\": \"oi\"}]}, \"esperado\": \"continuar_agente\"}\n\n";
+    std::fs::write(&path, content).expect("grava");
+
+    let cases = ler_conjunto(&path).expect("lê o conjunto");
+    assert_eq!(cases.len(), 1);
+    assert_eq!(cases[0].esperado, "continuar_agente");
+    assert_eq!(cases[0].estado.messages.len(), 1);
+
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+#[test]
+fn invalid_set_reports_the_line() {
+    let folder = std::env::temp_dir().join(format!("poph-jev-eval-erro-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&folder);
+    std::fs::create_dir_all(&folder).expect("pasta");
+    let path = folder.join("ruim.jsonl");
     std::fs::write(
-        &caminho,
+        &path,
         "{\"estado\": {}, \"esperado\": \"x\"}\n{ isto não é json }\n",
     )
     .expect("grava");
 
-    let erro = ler_conjunto(&caminho).expect_err("recusa a segunda linha");
-    match erro {
-        ErroConjunto::Caso { linha, .. } => assert_eq!(linha, 2),
-        outro => panic!("erro inesperado: {outro:?}"),
+    let error = ler_conjunto(&path).expect_err("recusa a segunda linha");
+    match error {
+        ErroConjunto::Caso { linha: line, .. } => assert_eq!(line, 2),
+        other => panic!("erro inesperado: {other:?}"),
     }
 
-    let vazio = pasta.join("vazio.jsonl");
+    let vazio = folder.join("vazio.jsonl");
     std::fs::write(&vazio, "# só comentário\n").expect("grava");
     assert!(matches!(
         ler_conjunto(&vazio).expect_err("conjunto vazio"),
         ErroConjunto::Vazio { .. }
     ));
 
-    let _ = std::fs::remove_dir_all(&pasta);
+    let _ = std::fs::remove_dir_all(&folder);
 }
 
-/// Categoria e justificativa do conjunto: carregam do arquivo, saem no detalhe e no resumo.
 #[tokio::test]
-async fn categoria_e_justificativa_do_conjunto_aparecem_no_relatorio() {
-    let caminho =
+async fn category_and_justification_appear_in_the_report() {
+    let path =
         std::env::temp_dir().join(format!("poph-jev-categoria-{}.jsonl", std::process::id()));
     std::fs::write(
-        &caminho,
+        &path,
         concat!(
             r#"{"estado": {"canal": "whatsapp", "mensagens": [{"papel": "cliente", "texto": "quero falar com um atendente"}], "transferencia_habilitada": true}, "esperado": "transferir_agora", "categoria": "pedido_explicito", "justificativa": "o cliente pede explicitamente uma pessoa"}"#,
             "\n",
@@ -348,32 +334,30 @@ async fn categoria_e_justificativa_do_conjunto_aparecem_no_relatorio() {
     )
     .unwrap();
 
-    let casos = ler_conjunto(&caminho).unwrap();
-    std::fs::remove_file(&caminho).ok();
-    assert_eq!(casos.len(), 2);
-    assert_eq!(casos[0].categoria.as_deref(), Some("pedido_explicito"));
+    let cases = ler_conjunto(&path).unwrap();
+    std::fs::remove_file(&path).ok();
+    assert_eq!(cases.len(), 2);
+    assert_eq!(cases[0].categoria.as_deref(), Some("pedido_explicito"));
     assert_eq!(
-        casos[0].justificativa.as_deref(),
+        cases[0].justificativa.as_deref(),
         Some("o cliente pede explicitamente uma pessoa")
     );
-    // Conjunto antigo, sem categoria, continua valendo.
-    assert_eq!(casos[1].categoria, None);
+    assert_eq!(cases[1].categoria, None);
 
-    let motor = Arc::new(JevEngine::new(jev_de_teste(), globais(true), "jev-latest"));
-    let relatorio = avaliar_conjunto(motor.as_ref(), IdGate::G1, &casos).await;
-    assert_eq!(relatorio.acertos, 2);
+    let engine = Arc::new(JevEngine::new(test_jev(), globals(true), "jev-latest"));
+    let report = avaliar_conjunto(engine.as_ref(), IdGate::G1, &cases).await;
+    assert_eq!(report.acertos, 2);
     assert_eq!(
-        relatorio.detalhes[0].categoria.as_deref(),
+        report.detalhes[0].categoria.as_deref(),
         Some("pedido_explicito")
     );
-    let resumo = relatorio.resumo_por_categoria().expect("há categoria");
+    let summary = report.resumo_por_categoria().expect("há categoria");
     assert!(
-        resumo.contains("pedido_explicito: 1 casos · 1 acerto"),
-        "{resumo}"
+        summary.contains("pedido_explicito: 1 casos · 1 acerto"),
+        "{summary}"
     );
-    // O detalhe por caso mostra a categoria junto do resultado.
     assert!(
-        relatorio
+        report
             .texto("conjunto.jsonl")
             .contains("· pedido_explicito")
     );

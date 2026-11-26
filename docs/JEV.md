@@ -1415,7 +1415,7 @@ No `--json`, cada caso leva `esperado`, `obtido` (o que vale para o turno; `null
 `escolha` (o que o modelo respondeu), `confianca`, `motivo`, `falha` e `resultado`. A execução leva
 `usage` com `entrada`, `saida`, `total` e `informado`. **Nada é estimado**: quando o provedor não
 manda `usage`, o texto diz `tokens: não informado` e o JSON traz `informado: false` com os números
-em `null`. `total` vem de `total_tokens`; sem ele, é entrada + saída quando as duas vierem.
+em `null`. `total` vem de `total_tokens`; sem ele, é entrada + saída quando as duas vierem. O lote também lê os nomes de outros provedores, `prompt_tokens` e `completion_tokens`, e um `total_tokens` informado tem precedência sobre a soma.
 
 Conjuntos em `apps/pop-harness/tests/jev/`:
 
