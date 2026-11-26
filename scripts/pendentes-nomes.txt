@@ -7,9 +7,8 @@ M02	26	crates/poph-plugin-eco/tests/conversation.rs
 M02	12	crates/poph-plugin-eco/tests/crash.rs
 M05	188	crates/poph-jev/src/cliente.rs
 M05	216	crates/poph-jev/src/eval.rs
-M05	80	crates/poph-jev/src/handoff.rs
-M05	25	crates/poph-jev/src/lib.rs
-M05	29	crates/poph-jev/src/motor.rs
+M05	15	crates/poph-jev/src/lib.rs
+M05	9	crates/poph-jev/src/motor.rs
 M05	196	crates/poph-jev/tests/cliente.rs
 M05	133	crates/poph-jev/tests/cliente_tls.rs
 M05	263	crates/poph-jev/tests/eval.rs
@@ -20,7 +19,7 @@ M05	64	crates/poph-jev/tests/g7_injecao.rs
 M05	75	crates/poph-jev/tests/g8_encerrada.rs
 M05	188	crates/poph-jev/tests/g9_fluxo.rs
 M05	100	crates/poph-jev/tests/g9_medicao.rs
-M05	207	crates/poph-jev/tests/handoff.rs
+M05	146	crates/poph-jev/tests/handoff.rs
 M05	54	crates/poph-jev/tests/instrucao_g1.rs
 M05	142	crates/poph-jev/tests/lote.rs
 M05	35	crates/poph-jev/tests/padrao_gates.rs
@@ -99,7 +98,7 @@ M10a	154	crates/poph-agent/src/turno/departamento.rs
 M10a	259	crates/poph-agent/src/turno/ferramentas.rs
 M10a	682	crates/poph-agent/src/turno/fluxo.rs
 M10a	434	crates/poph-agent/src/turno/fluxo_ferramentas.rs
-M10a	2250	crates/poph-agent/src/turno/mod.rs
+M10a	2232	crates/poph-agent/src/turno/mod.rs
 M10a	13	crates/poph-agent/src/turno/pausa.rs
 M10a	202	crates/poph-agent/src/turno/prompt.rs
 M10a	55	crates/poph-agent/src/turno/site_chat.rs
@@ -116,7 +115,7 @@ M10b	535	crates/poph-agent/tests/fluxo_ferramentas.rs
 M10b	630	crates/poph-agent/tests/fluxo_turno.rs
 M10b	636	crates/poph-agent/tests/g2_janela.rs
 M10b	727	crates/poph-agent/tests/g3_base.rs
-M10b	440	crates/poph-agent/tests/g4_departamento.rs
+M10b	437	crates/poph-agent/tests/g4_departamento.rs
 M10b	658	crates/poph-agent/tests/g5_produto.rs
 M10b	503	crates/poph-agent/tests/g6_revisao.rs
 M10b	363	crates/poph-agent/tests/g7_injecao.rs
@@ -130,7 +129,7 @@ M10b	151	crates/poph-agent/tests/provedores_por_agente.rs
 M10b	273	crates/poph-agent/tests/registro_ferramentas.rs
 M10b	430	crates/poph-agent/tests/resumo.rs
 M10b	128	crates/poph-agent/tests/saida_do_console.rs
-M10b	572	crates/poph-agent/tests/transferencia.rs
+M10b	524	crates/poph-agent/tests/transferencia.rs
 M10b	1292	crates/poph-agent/tests/turno.rs
 M10b	258	crates/poph-agent/tests/turno_base.rs
 M10b	155	crates/poph-agent/tests/turno_produto.rs
@@ -261,7 +260,7 @@ M12a	188	crates/poph/src/main.rs
 M12a	421	crates/poph/src/matrix.rs
 M12a	308	crates/poph/src/matrix_admin.rs
 M12a	48	crates/poph/src/modelo.rs
-M12a	373	crates/poph/src/montagem.rs
+M12a	371	crates/poph/src/montagem.rs
 M12a	214	crates/poph/src/org.rs
 M12a	324	crates/poph/src/produto.rs
 M12a	50	crates/poph/src/rag.rs

@@ -3,7 +3,6 @@
 M05	4	crates/poph-jev/Cargo.toml
 M05	59	crates/poph-jev/src/cliente.rs
 M05	75	crates/poph-jev/src/eval.rs
-M05	61	crates/poph-jev/src/handoff.rs
 M05	21	crates/poph-jev/src/lib.rs
 M05	11	crates/poph-jev/tests/cliente.rs
 M05	14	crates/poph-jev/tests/cliente_tls.rs
