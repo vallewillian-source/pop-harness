@@ -23,9 +23,13 @@ keys and certificates (`*.pem`, `*.key`), `cluster.toml` and the local registrat
 ## Build
 
 ```bash
-cargo build --workspace                 # development: target/debug/poph
-cargo build --release --workspace       # release: target/release/poph and target/release/poph-extrator
+cargo build --workspace                 # development: <target>/debug/poph
+cargo build --release --workspace       # release: <target>/release/poph and <target>/release/poph-extrator
 ```
+
+`<target>` is the Cargo target directory of the checkout, which a local `.cargo/config.toml` may move to a
+shared folder; `cargo metadata --format-version 1 --no-deps | jq -r .target_directory` prints it. Scripts
+that need the binary must ask Cargo for it instead of assuming `target/`.
 
 `poph` looks for `poph-extrator` in its own executable's folder, so the two must sit side by side. Without
 it, receiving PDF and Office files refuses with a clear message; images do not depend on it.
@@ -113,6 +117,9 @@ bash scripts/check-comments.sh crates/poph-jev              # one module: prints
 bash scripts/check-comments.sh --atualizar-pendentes        # regenerate scripts/pendentes-comentario.txt
 ```
 
+The `--atualizar-pendentes` runs belong to the commit that closes a wave of cleaned modules, not to a
+module pull request: an author leaves both pending lists alone.
+
 `scripts/pendentes-comentario.txt` is the whitelist of modules not cleaned yet: one line per file, with the module
 and the number of comments. It is generated, never edited by hand, and it shrinks to nothing as the modules are
 cleaned. The gate fails in four cases: a comment outside the allowlist in a file that is not listed, a listed file
@@ -141,8 +148,8 @@ flag, environment variable, metric, plugin protocol term, backup key), the words
 and the example flow scripts, which are frozen byte by byte. The file is written by `--atualizar-allowlist` from the
 published inventory, so a hand edit fails the gate; a whole file is excepted with the `path` kind, never a
 directory. `scripts/pendentes-nomes.txt` is the same ceiling per file as the comment list: an extra identifier in a
-listed file fails, a listed file that became clean fails, and the module task regenerates the list on the same
-commit. Identifier extraction and term splitting come from `scripts/glossary-terms.py`, which already skips string
+listed file fails, a listed file that became clean fails, and only the commit that closes a wave regenerates the
+list. Identifier extraction and term splitting come from `scripts/glossary-terms.py`, which already skips string
 and comment by the syntax of `scripts/strip-comments.py`, so product text never trips the gate. Only files the
 repository publishes are scanned. It runs on Python and `git` (no toolchain) and takes about 5 s on the whole tree.
 
@@ -163,8 +170,9 @@ code 3, a published name (table, column, index, trigger, route, `operationId`, J
 command or flag, environment variable, metric, plugin protocol term, backup key, flow language word), a new name
 that still carries a Portuguese term, and an identifier no language tool can rename safely; the edit of a pair
 that fails is undone, so a refused rename leaves the tree as it was. Exit code 4 means a leftover of the old
-name, 5 means a language tool is missing. After a rename run `bash scripts/check-names.sh --atualizar-pendentes`
-and `python3 scripts/glossary-terms.py --gerar` in the same commit.
+name, 5 means a language tool is missing. After the renames of a module, `bash scripts/check-names.sh <paths>` has
+to print nothing; `--atualizar-pendentes` and `python3 scripts/glossary-terms.py --gerar` run in the commit that
+closes the wave, not in the module pull request.
 
 The language tools are not part of the CI: `scripts/tests/test-rename.py` (about a second, `python3` only)
 stubs the tool and proves the map parsing, the refusals, the edit applier and the leftover decision.
