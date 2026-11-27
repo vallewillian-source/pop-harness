@@ -45,7 +45,7 @@ use std::time::Duration;
 
 use tokio::sync::watch;
 
-use poph_matrix::{ClienteMatrix, ErroChamada, IdsFantasmas, erro::Classificacao};
+use poph_matrix::{CallError, GhostIds, MatrixClient, error::Classification};
 use poph_store::{HumanResponseFailure, OutcomeNotice, Store, StoreError};
 use poph_types::{ConversationId, OrgId, OutboxId};
 use serde_json::json;
@@ -54,7 +54,7 @@ use crate::matrix_metricas::MetricasMatrix;
 use crate::saida_whatsapp::MOTIVO_TENTATIVAS_ESGOTADAS;
 
 /// Começo do aviso na sala. O motivo curto vem depois.
-pub const PREFIXO_AVISO: &str = "Não consegui entregar sua mensagem ao cliente: ";
+pub const PREFIX_NOTICE: &str = "Não consegui entregar sua mensagem ao cliente: ";
 
 /// Quantas falhas uma passagem olha no máximo (todas as orgs somadas).
 pub const LOTE_PADRAO: u32 = 50;
@@ -78,16 +78,16 @@ impl MotivoFalha {
     /// Classifica pelo texto que a fila gravou. Só a comparação com a constante da fila é exata;
     /// qualquer outro texto de erro definitivo vira [`MotivoFalha::RecusadoPeloCanal`], sem que o
     /// texto em si saia daqui.
-    pub fn classificar(ultimo_erro: Option<&str>) -> Self {
+    pub fn classify(ultimo_erro: Option<&str>) -> Self {
         match ultimo_erro {
-            Some(texto) if texto == MOTIVO_TENTATIVAS_ESGOTADAS => Self::TentativasEsgotadas,
+            Some(text) if text == MOTIVO_TENTATIVAS_ESGOTADAS => Self::TentativasEsgotadas,
             Some(_) => Self::RecusadoPeloCanal,
             None => Self::NaoInformado,
         }
     }
 
     /// Código curto para log e para a coluna `motivo` de `matrix_avisos_falha`.
-    pub fn codigo(self) -> &'static str {
+    pub fn code(self) -> &'static str {
         match self {
             Self::TentativasEsgotadas => "tentativas_esgotadas",
             Self::RecusadoPeloCanal => "recusado_pelo_canal",
@@ -96,7 +96,7 @@ impl MotivoFalha {
     }
 
     /// Texto que vai à sala, depois do prefixo.
-    pub fn texto(self) -> &'static str {
+    pub fn text(self) -> &'static str {
         match self {
             Self::TentativasEsgotadas => "o WhatsApp não respondeu depois de várias tentativas",
             Self::RecusadoPeloCanal => "o WhatsApp recusou o envio",
@@ -106,13 +106,13 @@ impl MotivoFalha {
 }
 
 /// Corpo do aviso na sala para um motivo.
-pub fn texto_do_aviso(motivo: MotivoFalha) -> String {
-    format!("{PREFIXO_AVISO}{}", motivo.texto())
+pub fn texto_do_aviso(reason: MotivoFalha) -> String {
+    format!("{PREFIX_NOTICE}{}", reason.text())
 }
 
 /// `txnId` do aviso de um item de saída: sempre o mesmo para o mesmo item, para o reenvio não
 /// duplicar o aviso.
-pub fn txn_do_aviso(item: OutboxId) -> String {
+pub fn notice_txn(item: OutboxId) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for byte in item.to_string().as_bytes() {
         hash ^= u64::from(*byte);
@@ -125,9 +125,9 @@ pub fn txn_do_aviso(item: OutboxId) -> String {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextoDaFalha {
     /// Id da sala no Synapse (`!…:servidor`).
-    pub sala: String,
+    pub room: String,
     /// Id do agente da conversa (para achar o fantasma que escreve o aviso).
-    pub agente: String,
+    pub agent: String,
 }
 
 /// O que o aviso precisa do banco. Porta para o teste injetar falha.
@@ -140,7 +140,7 @@ pub trait PortaFalhasDeResposta: Send + Sync {
     fn contexto(
         &self,
         org: OrgId,
-        conversa: ConversationId,
+        conversation: ConversationId,
     ) -> Result<Option<ContextoDaFalha>, StoreError>;
 
     /// Grava o desfecho do aviso. Repetir a mesma gravação não muda nada.
@@ -149,7 +149,7 @@ pub trait PortaFalhasDeResposta: Send + Sync {
         org: OrgId,
         falha: OutboxId,
         desfecho: OutcomeNotice,
-        motivo: MotivoFalha,
+        reason: MotivoFalha,
     ) -> Result<(), StoreError>;
 }
 
@@ -161,7 +161,7 @@ pub struct PortaFalhasDoHarness {
 
 impl PortaFalhasDoHarness {
     /// Monta a porta sobre o banco.
-    pub fn nova(store: Arc<Store>) -> Self {
+    pub fn fresh(store: Arc<Store>) -> Self {
         Self { store }
     }
 }
@@ -169,7 +169,7 @@ impl PortaFalhasDoHarness {
 impl PortaFalhasDeResposta for PortaFalhasDoHarness {
     fn pendentes(&self, limite: u32) -> Result<Vec<HumanResponseFailure>, StoreError> {
         let mut falhas = Vec::new();
-        for estado in self.store.matrix().linked_orgs()? {
+        for state in self.store.matrix().linked_orgs()? {
             let faltam = limite.saturating_sub(falhas.len() as u32);
             if faltam == 0 {
                 break;
@@ -177,7 +177,7 @@ impl PortaFalhasDeResposta for PortaFalhasDoHarness {
             falhas.extend(
                 self.store
                     .matrix()
-                    .human_response_failures(estado.org_id, faltam)?,
+                    .human_response_failures(state.org_id, faltam)?,
             );
         }
         Ok(falhas)
@@ -186,15 +186,15 @@ impl PortaFalhasDeResposta for PortaFalhasDoHarness {
     fn contexto(
         &self,
         org: OrgId,
-        conversa: ConversationId,
+        conversation: ConversationId,
     ) -> Result<Option<ContextoDaFalha>, StoreError> {
-        let Some(sala) = self.store.matrix().room(org, conversa)? else {
+        let Some(room) = self.store.matrix().room(org, conversation)? else {
             return Ok(None);
         };
-        let agente = self.store.conversations().get(org, conversa)?.agent_id;
+        let agent = self.store.conversations().get(org, conversation)?.agent_id;
         Ok(Some(ContextoDaFalha {
-            sala: sala.room_id,
-            agente: agente.to_string(),
+            room: room.room_id,
+            agent: agent.to_string(),
         }))
     }
 
@@ -203,11 +203,11 @@ impl PortaFalhasDeResposta for PortaFalhasDoHarness {
         org: OrgId,
         falha: OutboxId,
         desfecho: OutcomeNotice,
-        motivo: MotivoFalha,
+        reason: MotivoFalha,
     ) -> Result<(), StoreError> {
         self.store
             .matrix()
-            .record_notice_outcome(org, falha, desfecho, motivo.codigo())
+            .record_notice_outcome(org, falha, desfecho, reason.code())
             .map(|_| ())
     }
 }
@@ -218,33 +218,33 @@ impl PortaFalhasDeResposta for PortaFalhasDoHarness {
 /// (MX-15): é o dono da sala e está dentro dela. O bot do AS não é membro das salas de atendimento
 /// hoje, então não entra aqui.
 pub struct AvisoNoSynapse {
-    cliente: ClienteMatrix,
-    ids: IdsFantasmas,
+    client: MatrixClient,
+    ids: GhostIds,
 }
 
 impl AvisoNoSynapse {
     /// Monta a partir do cliente da MX-09 e dos ids da instância.
-    pub fn novo(cliente: ClienteMatrix, ids: IdsFantasmas) -> Self {
-        Self { cliente, ids }
+    pub fn new(client: MatrixClient, ids: GhostIds) -> Self {
+        Self { client, ids }
     }
 
     async fn escrever(
         &self,
         contexto: &ContextoDaFalha,
         txn: &str,
-        corpo: &str,
-    ) -> Result<(), ErroChamada> {
-        let fantasma = self.ids.agente(&contexto.agente).map_err(|_| {
-            ErroChamada::Configuracao("id de agente fora do padrão do módulo Matrix".to_owned())
+        body: &str,
+    ) -> Result<(), CallError> {
+        let fantasma = self.ids.agent(&contexto.agent).map_err(|_| {
+            CallError::Configuration("id de agente fora do padrão do módulo Matrix".to_owned())
         })?;
         // `m.notice`: o classificador da MX-17 ignora avisos, então o aviso não volta como resposta.
-        self.cliente
-            .enviar_evento(
+        self.client
+            .send_event(
                 fantasma.user_id(),
-                &contexto.sala,
+                &contexto.room,
                 "m.room.message",
                 txn,
-                &json!({ "msgtype": "m.notice", "body": corpo }),
+                &json!({ "msgtype": "m.notice", "body": body }),
             )
             .await
             .map(|_| ())
@@ -270,7 +270,7 @@ pub struct RelatoAviso {
 pub struct AvisoDeFalhas {
     porta: Arc<dyn PortaFalhasDeResposta>,
     aviso: AvisoNoSynapse,
-    lote: u32,
+    batch: u32,
     /// Números do módulo (MX-26). Sem injeção, cai num registro descartável.
     metricas: Arc<MetricasMatrix>,
     /// Pedido de parada do laço de fundo (`executar`).
@@ -279,12 +279,12 @@ pub struct AvisoDeFalhas {
 
 impl AvisoDeFalhas {
     /// Monta o serviço com o lote padrão e métricas descartáveis.
-    pub fn novo(porta: Arc<dyn PortaFalhasDeResposta>, aviso: AvisoNoSynapse) -> Self {
+    pub fn new(porta: Arc<dyn PortaFalhasDeResposta>, aviso: AvisoNoSynapse) -> Self {
         let (parar, _) = watch::channel(false);
         Self {
             porta,
             aviso,
-            lote: LOTE_PADRAO,
+            batch: LOTE_PADRAO,
             metricas: MetricasMatrix::descartaveis(),
             parar,
         }
@@ -297,20 +297,20 @@ impl AvisoDeFalhas {
     }
 
     /// Falhas por passagem (teto de trabalho). Zero vale um.
-    pub fn com_lote(mut self, lote: u32) -> Self {
-        self.lote = lote.max(1);
+    pub fn com_lote(mut self, batch: u32) -> Self {
+        self.batch = batch.max(1);
         self
     }
 
     /// Uma passagem: avisa as falhas definitivas que ainda não têm desfecho.
     pub async fn passar(&self) -> RelatoAviso {
         let mut relato = RelatoAviso::default();
-        let falhas = match self.porta.pendentes(self.lote) {
+        let falhas = match self.porta.pendentes(self.batch) {
             Ok(falhas) => falhas,
             Err(_) => {
                 tracing::warn!(
                     target: "poph_server::matrix_falhas_aviso",
-                    motivo = "banco_indisponivel",
+                    reason = "banco_indisponivel",
                     "não consegui listar as falhas de resposta humana; tenta na próxima passagem"
                 );
                 relato.erros_de_banco += 1;
@@ -351,30 +351,30 @@ impl AvisoDeFalhas {
         falha: &HumanResponseFailure,
         relato: &mut RelatoAviso,
     ) -> Result<(), StoreError> {
-        let motivo = MotivoFalha::classificar(falha.ultimo_erro.as_deref());
+        let reason = MotivoFalha::classify(falha.ultimo_erro.as_deref());
         let Some(contexto) = self.porta.contexto(falha.org_id, falha.conversation)? else {
             self.porta.registrar(
                 falha.org_id,
                 falha.outbox_id,
                 OutcomeNotice::WithoutRoom,
-                motivo,
+                reason,
             )?;
             relato.sem_sala += 1;
             tracing::info!(
                 target: "poph_server::matrix_falhas_aviso",
                 org = %falha.org_id,
-                conversa = %falha.conversation,
+                conversation = %falha.conversation,
                 saida = %falha.outbox_id,
-                motivo = motivo.codigo(),
+                reason = reason.code(),
                 "falha de resposta humana sem sala: nada a avisar"
             );
             return Ok(());
         };
 
-        let txn = txn_do_aviso(falha.outbox_id);
+        let txn = notice_txn(falha.outbox_id);
         match self
             .aviso
-            .escrever(&contexto, &txn, &texto_do_aviso(motivo))
+            .escrever(&contexto, &txn, &texto_do_aviso(reason))
             .await
         {
             Ok(()) => {
@@ -382,44 +382,44 @@ impl AvisoDeFalhas {
                     falha.org_id,
                     falha.outbox_id,
                     OutcomeNotice::Notify,
-                    motivo,
+                    reason,
                 )?;
                 relato.avisados += 1;
                 tracing::info!(
                     target: "poph_server::matrix_falhas_aviso",
                     org = %falha.org_id,
-                    conversa = %falha.conversation,
+                    conversation = %falha.conversation,
                     saida = %falha.outbox_id,
-                    motivo = motivo.codigo(),
+                    reason = reason.code(),
                     "aviso de falha de resposta humana escrito na sala"
                 );
             }
-            Err(erro) if erro.classificacao() == Classificacao::Transitoria => {
-                self.contar_erro(&erro);
+            Err(error) if error.classification() == Classification::Transient => {
+                self.contar_erro(&error);
                 relato.adiados += 1;
                 tracing::warn!(
                     target: "poph_server::matrix_falhas_aviso",
                     org = %falha.org_id,
                     saida = %falha.outbox_id,
-                    motivo = motivo.codigo(),
+                    reason = reason.code(),
                     classe = "transitoria",
                     "aviso de falha não escrito agora; tenta na próxima passagem"
                 );
             }
-            Err(erro) => {
-                self.contar_erro(&erro);
+            Err(error) => {
+                self.contar_erro(&error);
                 self.porta.registrar(
                     falha.org_id,
                     falha.outbox_id,
                     OutcomeNotice::Refused,
-                    motivo,
+                    reason,
                 )?;
                 relato.recusados += 1;
                 tracing::warn!(
                     target: "poph_server::matrix_falhas_aviso",
                     org = %falha.org_id,
                     saida = %falha.outbox_id,
-                    motivo = motivo.codigo(),
+                    reason = reason.code(),
                     classe = "definitiva",
                     "o Synapse recusou o aviso de falha de resposta humana: não será repetido"
                 );
@@ -429,12 +429,12 @@ impl AvisoDeFalhas {
     }
 
     /// Conta a falha por classe (e o `429`), como o restante do módulo.
-    fn contar_erro(&self, erro: &ErroChamada) {
-        match erro.classificacao() {
-            Classificacao::Transitoria => self.metricas.erros_transitorios.increment(1),
-            Classificacao::Definitiva => self.metricas.erros_definitivos.increment(1),
+    fn contar_erro(&self, error: &CallError) {
+        match error.classification() {
+            Classification::Transient => self.metricas.erros_transitorios.increment(1),
+            Classification::Definitive => self.metricas.erros_definitivos.increment(1),
         }
-        if matches!(erro, ErroChamada::Resposta { status: 429, .. }) {
+        if matches!(error, CallError::Response { status: 429, .. }) {
             self.metricas.respostas_429.increment(1);
         }
     }
@@ -447,15 +447,15 @@ mod testes {
     #[test]
     fn so_o_texto_exato_da_fila_vira_tentativas_esgotadas() {
         assert_eq!(
-            MotivoFalha::classificar(Some(MOTIVO_TENTATIVAS_ESGOTADAS)),
+            MotivoFalha::classify(Some(MOTIVO_TENTATIVAS_ESGOTADAS)),
             MotivoFalha::TentativasEsgotadas
         );
         assert_eq!(
-            MotivoFalha::classificar(Some("a Evolution recusou o número 5511999990000")),
+            MotivoFalha::classify(Some("a Evolution recusou o número 5511999990000")),
             MotivoFalha::RecusadoPeloCanal,
             "qualquer outro erro definitivo vira o motivo genérico, sem o texto"
         );
-        assert_eq!(MotivoFalha::classificar(None), MotivoFalha::NaoInformado);
+        assert_eq!(MotivoFalha::classify(None), MotivoFalha::NaoInformado);
     }
 
     #[test]
@@ -464,28 +464,28 @@ mod testes {
             texto_do_aviso(MotivoFalha::RecusadoPeloCanal),
             "Não consegui entregar sua mensagem ao cliente: o WhatsApp recusou o envio"
         );
-        for motivo in [
+        for reason in [
             MotivoFalha::TentativasEsgotadas,
             MotivoFalha::RecusadoPeloCanal,
             MotivoFalha::NaoInformado,
         ] {
-            let texto = texto_do_aviso(motivo);
-            assert!(texto.starts_with(PREFIXO_AVISO));
-            assert!(!texto.contains('@'), "nada de id de usuário no aviso");
-            assert!(!texto.contains("5511"), "nada de telefone no aviso");
+            let text = texto_do_aviso(reason);
+            assert!(text.starts_with(PREFIX_NOTICE));
+            assert!(!text.contains('@'), "nada de id de usuário no aviso");
+            assert!(!text.contains("5511"), "nada de telefone no aviso");
         }
     }
 
     #[test]
     fn codigos_de_motivo_sao_curtos_e_distintos() {
         let codigos = [
-            MotivoFalha::TentativasEsgotadas.codigo(),
-            MotivoFalha::RecusadoPeloCanal.codigo(),
-            MotivoFalha::NaoInformado.codigo(),
+            MotivoFalha::TentativasEsgotadas.code(),
+            MotivoFalha::RecusadoPeloCanal.code(),
+            MotivoFalha::NaoInformado.code(),
         ];
-        for codigo in codigos {
-            assert!(codigo.len() <= 64, "cabe na coluna `motivo`");
-            assert!(codigo.chars().all(|c| c.is_ascii_lowercase() || c == '_'));
+        for code in codigos {
+            assert!(code.len() <= 64, "cabe na coluna `motivo`");
+            assert!(code.chars().all(|c| c.is_ascii_lowercase() || c == '_'));
         }
         assert_ne!(codigos[0], codigos[1]);
         assert_ne!(codigos[1], codigos[2]);
@@ -495,8 +495,8 @@ mod testes {
     fn txn_do_aviso_e_estavel_por_item_e_distinto_entre_itens() {
         let um = OutboxId::generate();
         let outro = OutboxId::generate();
-        assert_eq!(txn_do_aviso(um), txn_do_aviso(um));
-        assert_ne!(txn_do_aviso(um), txn_do_aviso(outro));
-        assert!(txn_do_aviso(um).starts_with("ph_falha_"));
+        assert_eq!(notice_txn(um), notice_txn(um));
+        assert_ne!(notice_txn(um), notice_txn(outro));
+        assert!(notice_txn(um).starts_with("ph_falha_"));
     }
 }

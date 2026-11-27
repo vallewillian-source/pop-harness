@@ -30,7 +30,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{post, put};
 use poph_agent::Backoff;
 use poph_evolution::{ATTACHMENT_CAP, ConfigEvolution, EvolutionClient};
-use poph_matrix::{ClienteMatrix, ConfigCliente, IdsFantasmas};
+use poph_matrix::{ClientConfig, GhostIds, MatrixClient};
 use poph_server::evolution::CanalEvolution;
 use poph_server::matrix_falhas_aviso::{AvisoDeFalhas, AvisoNoSynapse, PortaFalhasDoHarness};
 use poph_server::saida_whatsapp::{OpcoesSaidaWhatsApp, SaidaWhatsApp};
@@ -109,12 +109,12 @@ fn logs_capturados() -> Arc<Mutex<Vec<u8>>> {
 /// Um evento que o Harness conseguiu escrever na sala.
 #[derive(Clone, Debug)]
 struct Escrita {
-    sala: String,
+    room: String,
     tipo: String,
     txn: String,
     /// Fantasma em nome de quem foi escrito (`?user_id=`).
     como: Option<String>,
-    corpo: Value,
+    body: Value,
 }
 
 #[derive(Clone, Default)]
@@ -128,10 +128,10 @@ struct SynapseFalso {
 
 async fn enviar_falso(
     State(falso): State<SynapseFalso>,
-    Path((sala, tipo, txn)): Path<(String, String, String)>,
+    Path((room, tipo, txn)): Path<(String, String, String)>,
     Query(consulta): Query<HashMap<String, String>>,
     _cabecalhos: HeaderMap,
-    Json(corpo): Json<Value>,
+    Json(body): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
     falso.chamadas.fetch_add(1, Ordering::SeqCst);
     let mut falhar = falso.falhar.lock().unwrap();
@@ -145,11 +145,11 @@ async fn enviar_falso(
     }
     let mut escritas = falso.escritas.lock().unwrap();
     escritas.push(Escrita {
-        sala,
+        room,
         tipo,
         txn,
         como: consulta.get("user_id").cloned(),
-        corpo,
+        body,
     });
     let posicao = escritas.len();
     (
@@ -162,7 +162,7 @@ async fn subir_synapse_falso() -> (String, SynapseFalso) {
     let falso = SynapseFalso::default();
     let roteador = Router::new()
         .route(
-            "/_matrix/client/v3/rooms/{sala}/send/{tipo}/{txn}",
+            "/_matrix/client/v3/rooms/{room}/send/{kind}/{txn}",
             put(enviar_falso),
         )
         .with_state(falso.clone());
@@ -205,7 +205,7 @@ async fn subir_evolution_falsa() -> (String, EvolucaoFalsa) {
         roteiro: Arc::new(Mutex::new(VecDeque::new())),
     };
     let roteador = Router::new()
-        .route("/message/sendText/{instancia}", post(enviar_pelo_whatsapp))
+        .route("/message/sendText/{instance}", post(enviar_pelo_whatsapp))
         .with_state(falsa.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -223,10 +223,10 @@ struct Cenario {
     pasta: PathBuf,
     store: Arc<Store>,
     org: OrgId,
-    agente: AgentId,
+    agent: AgentId,
     integracao: IntegrationId,
     /// Conversa de WhatsApp com sala pronta no Synapse.
-    conversa: ConversationId,
+    conversation: ConversationId,
     synapse: SynapseFalso,
     url_synapse: String,
     evo: EvolucaoFalsa,
@@ -234,7 +234,7 @@ struct Cenario {
 }
 
 impl Cenario {
-    async fn novo(rotulo: &str) -> Self {
+    async fn new(rotulo: &str) -> Self {
         Self::novo_com_tentativas(rotulo, OpcoesSaidaWhatsApp::default().max_tentativas).await
     }
 
@@ -255,7 +255,7 @@ impl Cenario {
         );
 
         let org = criar_org(&store, "loja-falhas", "Loja Falhas");
-        let agente = store
+        let agent = store
             .agents()
             .create(
                 org,
@@ -267,27 +267,27 @@ impl Cenario {
             )
             .expect("cria o agente")
             .id;
-        let agente_id: AgentId = agente;
+        let agent_id: AgentId = agent;
         let integracao: IntegrationId = store
-            .create_integration(org, agente_id, "whatsapp".to_owned(), "active".to_owned())
+            .create_integration(org, agent_id, "whatsapp".to_owned(), "active".to_owned())
             .expect("cria a integração")
             .id
             .parse()
             .expect("id da integração");
         store.matrix().enable(org).expect("liga o módulo");
-        let conversa = conversa_whatsapp(&store, org, agente_id, integracao, TELEFONE);
+        let conversation = conversa_whatsapp(&store, org, agent_id, integracao, TELEFONE);
         store
             .matrix()
-            .ensure_room(org, conversa, SALA, None)
+            .ensure_room(org, conversation, SALA, None)
             .expect("grava a sala");
         store
             .matrix()
-            .mark_room_ready(org, conversa)
+            .mark_room_ready(org, conversation)
             .expect("sala pronta");
 
         let (url_synapse, synapse) = subir_synapse_falso().await;
         let (url_evo, evo) = subir_evolution_falsa().await;
-        let cliente = EvolutionClient::new(
+        let client = EvolutionClient::new(
             ConfigEvolution::new(url_evo, INSTANCIA, Secret::new(CHAVE_EVO.to_owned()))
                 .expect("config da Evolution falsa"),
         )
@@ -297,7 +297,7 @@ impl Cenario {
             instancia: INSTANCIA.to_owned(),
             integracao,
             segredo: None,
-            cliente: Some(cliente),
+            cliente: Some(client),
             teto_midia: ATTACHMENT_CAP,
         }];
         let opcoes = OpcoesSaidaWhatsApp {
@@ -316,9 +316,9 @@ impl Cenario {
             pasta,
             store,
             org,
-            agente: agente_id,
+            agent: agent_id,
             integracao,
-            conversa,
+            conversation,
             synapse,
             url_synapse,
             evo,
@@ -328,30 +328,30 @@ impl Cenario {
 
     /// Uma conversa nova de WhatsApp na org do cenário, com ou sem sala.
     fn outra_conversa(&self, com_sala: bool) -> ConversationId {
-        let conversa = conversa_whatsapp(
+        let conversation = conversa_whatsapp(
             &self.store,
             self.org,
-            self.agente,
+            self.agent,
             self.integracao,
             "5511888880000",
         );
         if com_sala {
             self.store
                 .matrix()
-                .ensure_room(self.org, conversa, "!outra-mx19:matrix-dev.local", None)
+                .ensure_room(self.org, conversation, "!outra-mx19:matrix-dev.local", None)
                 .expect("grava a sala");
             self.store
                 .matrix()
-                .mark_room_ready(self.org, conversa)
+                .mark_room_ready(self.org, conversation)
                 .expect("sala pronta");
         }
-        conversa
+        conversation
     }
 
     /// O atendente escreve na sala: a resposta entra na fila de saída.
-    fn resposta_humana(&self, conversa: ConversationId) {
-        let nova = NewHumanResponse {
-            event_id: &format!("{EVENTO}-{conversa}"),
+    fn resposta_humana(&self, conversation: ConversationId) {
+        let fresh = NewHumanResponse {
+            event_id: &format!("{EVENTO}-{conversation}"),
             raw_text: TEXTO_ATENDENTE,
             sent_text: &format!("**[{NOME_ATENDENTE}]**:\n{TEXTO_ATENDENTE}"),
             author_id: ATENDENTE,
@@ -360,7 +360,7 @@ impl Cenario {
         match self
             .store
             .messages()
-            .register_response_human(self.org, conversa, nova)
+            .register_response_human(self.org, conversation, fresh)
             .expect("grava a resposta humana")
         {
             HumanResponse::Stored(_) => {}
@@ -369,14 +369,14 @@ impl Cenario {
     }
 
     /// Item de saída de agente (não humano) para o teste de "não é resposta humana".
-    fn saida_do_agente(&self, conversa: ConversationId) -> OutboxItem {
+    fn saida_do_agente(&self, conversation: ConversationId) -> OutboxItem {
         let (_, item) = self
             .store
             .outbox()
             .enqueue(
                 self.org,
                 NewOutboxItem {
-                    conversation_id: conversa,
+                    conversation_id: conversation,
                     turn_id: TurnId::generate(),
                     seq: 0,
                     tipo: "text".to_owned(),
@@ -398,8 +398,8 @@ impl Cenario {
 
     /// O serviço de aviso, como um processo novo o montaria (sem nada na memória).
     fn aviso(&self, store: Arc<Store>) -> AvisoDeFalhas {
-        let cliente = ClienteMatrix::novo(
-            ConfigCliente::novo(
+        let client = MatrixClient::new(
+            ClientConfig::new(
                 self.url_synapse.clone(),
                 SERVER_NAME.to_owned(),
                 Secret::new(AS_TOKEN.to_owned()),
@@ -407,10 +407,10 @@ impl Cenario {
             .expect("config do cliente do Matrix"),
         )
         .expect("cliente do Matrix");
-        let ids = IdsFantasmas::novo(PREFIXO, SERVER_NAME).expect("ids dos fantasmas");
-        AvisoDeFalhas::novo(
-            Arc::new(PortaFalhasDoHarness::nova(store)),
-            AvisoNoSynapse::novo(cliente, ids),
+        let ids = GhostIds::new(PREFIXO, SERVER_NAME).expect("ids dos fantasmas");
+        AvisoDeFalhas::new(
+            Arc::new(PortaFalhasDoHarness::fresh(store)),
+            AvisoNoSynapse::new(client, ids),
         )
     }
 
@@ -418,17 +418,17 @@ impl Cenario {
         self.synapse.escritas.lock().unwrap().clone()
     }
 
-    fn estado(&self, estado: OutboxState) -> u64 {
+    fn state(&self, state: OutboxState) -> u64 {
         self.store
             .outbox()
-            .count_by_state(self.org, estado)
+            .count_by_state(self.org, state)
             .expect("conta a fila")
     }
 
-    fn fantasma_do_agente(&self) -> String {
-        IdsFantasmas::novo(PREFIXO, SERVER_NAME)
+    fn agent_ghost(&self) -> String {
+        GhostIds::new(PREFIXO, SERVER_NAME)
             .expect("ids")
-            .agente(&self.agente.to_string())
+            .agent(&self.agent.to_string())
             .expect("fantasma do agente")
             .user_id()
             .to_owned()
@@ -441,11 +441,11 @@ impl Drop for Cenario {
     }
 }
 
-fn criar_org(store: &Store, slug: &str, nome: &str) -> OrgId {
+fn criar_org(store: &Store, slug: &str, name: &str) -> OrgId {
     store
         .orgs()
         .create(NewOrg {
-            name: nome.to_owned(),
+            name: name.to_owned(),
             slug: slug.to_owned(),
             config_json: String::new(),
         })
@@ -456,7 +456,7 @@ fn criar_org(store: &Store, slug: &str, nome: &str) -> OrgId {
 fn conversa_whatsapp(
     store: &Store,
     org: OrgId,
-    agente: AgentId,
+    agent: AgentId,
     integracao: IntegrationId,
     telefone: &str,
 ) -> ConversationId {
@@ -465,7 +465,7 @@ fn conversa_whatsapp(
         .create(
             org,
             NewConversation {
-                agent_id: agente,
+                agent_id: agent,
                 integration_id: Some(integracao),
                 canal: "whatsapp".to_owned(),
                 peer_externo: Some(telefone.to_owned()),
@@ -478,7 +478,7 @@ fn conversa_whatsapp(
 
 fn texto_do_aviso(escrita: &Escrita) -> String {
     escrita
-        .corpo
+        .body
         .get("body")
         .and_then(Value::as_str)
         .unwrap_or_default()
@@ -489,15 +489,15 @@ fn texto_do_aviso(escrita: &Escrita) -> String {
 
 #[tokio::test]
 async fn falha_definitiva_da_resposta_humana_avisa_a_sala_uma_vez() {
-    let cenario = Cenario::novo("aviso-uma-vez").await;
-    cenario.resposta_humana(cenario.conversa);
+    let cenario = Cenario::new("aviso-uma-vez").await;
+    cenario.resposta_humana(cenario.conversation);
 
     // O canal recusa de vez (4xx): a fila grava `failed`.
     cenario
         .ciclo(vec![(400, json!({ "message": "número inválido" }))])
         .await;
     assert_eq!(
-        cenario.estado(OutboxState::Failed),
+        cenario.state(OutboxState::Failed),
         1,
         "a fila marcou a falha"
     );
@@ -508,16 +508,16 @@ async fn falha_definitiva_da_resposta_humana_avisa_a_sala_uma_vez() {
     let escritas = cenario.escritas();
     assert_eq!(escritas.len(), 1, "uma escrita na sala");
     let aviso = &escritas[0];
-    assert_eq!(aviso.sala, SALA, "o aviso vai para a sala da conversa");
+    assert_eq!(aviso.room, SALA, "o aviso vai para a sala da conversa");
     assert_eq!(aviso.tipo, "m.room.message");
     assert_eq!(
-        aviso.corpo["msgtype"], "m.notice",
+        aviso.body["msgtype"], "m.notice",
         "aviso é m.notice, para não voltar como resposta"
     );
     assert_eq!(texto_do_aviso(aviso), AVISO_RECUSADO);
     assert_eq!(
         aviso.como.as_deref(),
-        Some(cenario.fantasma_do_agente().as_str()),
+        Some(cenario.agent_ghost().as_str()),
         "escrito em nome do fantasma do agente, que está na sala"
     );
     assert!(aviso.txn.starts_with("ph_falha_"));
@@ -539,8 +539,8 @@ async fn falha_definitiva_da_resposta_humana_avisa_a_sala_uma_vez() {
 
 #[tokio::test]
 async fn reinicio_do_processo_nao_repete_o_aviso() {
-    let cenario = Cenario::novo("reinicio").await;
-    cenario.resposta_humana(cenario.conversa);
+    let cenario = Cenario::new("reinicio").await;
+    cenario.resposta_humana(cenario.conversation);
     cenario
         .ciclo(vec![(400, json!({ "message": "recusado" }))])
         .await;
@@ -574,8 +574,8 @@ async fn reinicio_do_processo_nao_repete_o_aviso() {
 
 #[tokio::test]
 async fn laco_de_fundo_avisa_sozinho_e_para_no_pedido() {
-    let cenario = Cenario::novo("laco").await;
-    cenario.resposta_humana(cenario.conversa);
+    let cenario = Cenario::new("laco").await;
+    cenario.resposta_humana(cenario.conversation);
     cenario
         .ciclo(vec![(400, json!({ "message": "recusado" }))])
         .await;
@@ -605,19 +605,19 @@ async fn laco_de_fundo_avisa_sozinho_e_para_no_pedido() {
 
 #[tokio::test]
 async fn falha_transitoria_seguida_de_sucesso_nao_gera_aviso() {
-    let cenario = Cenario::novo("transitoria").await;
-    cenario.resposta_humana(cenario.conversa);
+    let cenario = Cenario::new("transitoria").await;
+    cenario.resposta_humana(cenario.conversation);
 
     // Primeira tentativa: 5xx, que é transitório. O item volta para a fila (`sending`).
     cenario
         .ciclo(vec![(500, json!({ "message": "erro interno" }))])
         .await;
     assert_eq!(
-        cenario.estado(OutboxState::Sending),
+        cenario.state(OutboxState::Sending),
         1,
         "a falha ainda não é definitiva"
     );
-    assert_eq!(cenario.estado(OutboxState::Failed), 0);
+    assert_eq!(cenario.state(OutboxState::Failed), 0);
 
     let no_meio = cenario.aviso(Arc::clone(&cenario.store)).passar().await;
     assert_eq!(no_meio, Default::default(), "falha transitória não avisa");
@@ -628,7 +628,7 @@ async fn falha_transitoria_seguida_de_sucesso_nao_gera_aviso() {
     cenario
         .ciclo(vec![(200, json!({ "key": { "id": "MSG-OK" } }))])
         .await;
-    assert_eq!(cenario.estado(OutboxState::Sent), 1, "o cliente recebeu");
+    assert_eq!(cenario.state(OutboxState::Sent), 1, "o cliente recebeu");
 
     let depois = cenario.aviso(Arc::clone(&cenario.store)).passar().await;
     assert_eq!(depois, Default::default());
@@ -642,14 +642,14 @@ async fn falha_transitoria_seguida_de_sucesso_nao_gera_aviso() {
 async fn tentativas_esgotadas_avisam_com_o_motivo_proprio() {
     // Uma tentativa só: a primeira falha transitória já esgota e vira `failed`.
     let cenario = Cenario::novo_com_tentativas("esgotado", 1).await;
-    cenario.resposta_humana(cenario.conversa);
+    cenario.resposta_humana(cenario.conversation);
     cenario
         .ciclo(vec![(500, json!({ "message": "erro interno" }))])
         .await;
     tokio::time::sleep(Duration::from_millis(20)).await;
     cenario.ciclo(vec![]).await;
     assert_eq!(
-        cenario.estado(OutboxState::Failed),
+        cenario.state(OutboxState::Failed),
         1,
         "esgotou as tentativas"
     );
@@ -662,8 +662,8 @@ async fn tentativas_esgotadas_avisam_com_o_motivo_proprio() {
 
 #[tokio::test]
 async fn synapse_fora_do_ar_adia_e_a_passagem_seguinte_avisa() {
-    let cenario = Cenario::novo("synapse-fora").await;
-    cenario.resposta_humana(cenario.conversa);
+    let cenario = Cenario::new("synapse-fora").await;
+    cenario.resposta_humana(cenario.conversation);
     cenario
         .ciclo(vec![(400, json!({ "message": "recusado" }))])
         .await;
@@ -686,9 +686,9 @@ async fn synapse_fora_do_ar_adia_e_a_passagem_seguinte_avisa() {
 
 #[tokio::test]
 async fn conversa_sem_sala_e_marcada_e_nao_tenta_nada() {
-    let cenario = Cenario::novo("sem-sala").await;
-    let conversa = cenario.outra_conversa(false);
-    cenario.resposta_humana(conversa);
+    let cenario = Cenario::new("sem-sala").await;
+    let conversation = cenario.outra_conversa(false);
+    cenario.resposta_humana(conversation);
     cenario
         .ciclo(vec![(400, json!({ "message": "recusado" }))])
         .await;
@@ -711,13 +711,13 @@ async fn conversa_sem_sala_e_marcada_e_nao_tenta_nada() {
 
 #[tokio::test]
 async fn saida_que_nao_e_resposta_humana_nao_gera_aviso() {
-    let cenario = Cenario::novo("nao-humana").await;
+    let cenario = Cenario::new("nao-humana").await;
     // Um item de saída do agente (não é mensagem do atendente) que falha de vez.
-    let _ = cenario.saida_do_agente(cenario.conversa);
+    let _ = cenario.saida_do_agente(cenario.conversation);
     cenario
         .ciclo(vec![(400, json!({ "message": "recusado" }))])
         .await;
-    assert_eq!(cenario.estado(OutboxState::Failed), 1);
+    assert_eq!(cenario.state(OutboxState::Failed), 1);
 
     let relato = cenario.aviso(Arc::clone(&cenario.store)).passar().await;
     assert_eq!(relato, Default::default(), "só resposta humana é avisada");
@@ -726,8 +726,8 @@ async fn saida_que_nao_e_resposta_humana_nao_gera_aviso() {
 
 #[tokio::test]
 async fn org_com_o_modulo_desligado_nao_recebe_aviso() {
-    let cenario = Cenario::novo("desligado").await;
-    cenario.resposta_humana(cenario.conversa);
+    let cenario = Cenario::new("desligado").await;
+    cenario.resposta_humana(cenario.conversation);
     cenario
         .ciclo(vec![(400, json!({ "message": "recusado" }))])
         .await;
@@ -748,8 +748,8 @@ async fn org_com_o_modulo_desligado_nao_recebe_aviso() {
 
 #[tokio::test]
 async fn texto_do_cliente_telefone_e_token_nao_aparecem_no_aviso_nem_no_log() {
-    let cenario = Cenario::novo("canario").await;
-    cenario.resposta_humana(cenario.conversa);
+    let cenario = Cenario::new("canario").await;
+    cenario.resposta_humana(cenario.conversation);
     cenario
         .ciclo(vec![(
             400,
@@ -794,7 +794,7 @@ fn desfecho_do_aviso_e_idempotente_e_isolado_por_org() {
     fs::create_dir_all(&pasta).expect("pasta");
     let store = Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("banco");
     let org = criar_org(&store, "loja-desfecho", "Loja Desfecho");
-    let agente = store
+    let agent = store
         .agents()
         .create(
             org,
@@ -807,18 +807,18 @@ fn desfecho_do_aviso_e_idempotente_e_isolado_por_org() {
         .expect("agente")
         .id;
     let integracao: IntegrationId = store
-        .create_integration(org, agente, "whatsapp".to_owned(), "active".to_owned())
+        .create_integration(org, agent, "whatsapp".to_owned(), "active".to_owned())
         .expect("integração")
         .id
         .parse()
         .expect("id da integração");
-    let conversa = conversa_whatsapp(&store, org, agente, integracao, TELEFONE);
+    let conversation = conversa_whatsapp(&store, org, agent, integracao, TELEFONE);
     let (_, item) = store
         .outbox()
         .enqueue(
             org,
             NewOutboxItem {
-                conversation_id: conversa,
+                conversation_id: conversation,
                 turn_id: TurnId::generate(),
                 seq: 0,
                 tipo: "text".to_owned(),

@@ -123,19 +123,19 @@ summary shows the median and p95 of each scenario.
 
 **A failed invite in a space's batch was not retried.** Found by the test `convite_falho_no_lote_e_refeito_na_passagem_seguinte`
 (the test name is an identifier; it means "failed invite in the batch is redone on the next pass"), which was marked
-`#[ignore]` until the fix. The fix is in `crates/poph-matrix/src/espacos.rs` (commit `869664d4`) and the test runs active.
+`#[ignore]` until the fix. The fix is in `crates/poph-matrix/src/spaces.rs` (commit `869664d4`) and the test runs active.
 
 - **Reproduction (before the fix):** `cargo test -p poph-server --test matrix_resiliencia -- --ignored convite_falho`
 - **Result:** fails with `@humano1:matrix-dev.local não foi convidado: a passagem seguinte não refez o convite falho`
   (test assertion message emitted by the code, in Portuguese; in English: "was not invited: the next pass did not redo
   the failed invite"). The first invite failed (Synapse answered 503 once), the first pass recorded a failed invite and
   saved the room in the space, and the second pass returned "already positioned" and did not try the invite again.
-- **Cause (read in the code, `crates/poph-matrix/src/espacos.rs`):** `posicionar` saves the room's space in the database
+- **Cause (read in the code, `crates/poph-matrix/src/spaces.rs`):** `place` saves the room's space in the database
   at the end, after the invites, even when some invite failed. The next pass compares with the database, sees the room
   in the space and leaves with `JaPosicionada` (already positioned) before inviting. The number of failed invites comes
   back in the result, but is not stored anywhere.
 - **Impact:** the space member who did not receive the invite does not join the conversation. From the code of
-  `matrix_estado.rs`, `posicionar` runs for each conversation changed, so the customer's next message also does not fix
+  `matrix_estado.rs`, `place` runs for each conversation changed, so the customer's next message also does not fix
   this. I read this last part in the code; I did not test it end to end.
 - **What the MX-12 report said:** "the invite is repeated on the next pass". The test shows this does not happen.
 - **Owner:** `espacos.rs` belongs to MX-12. I did not fix it, as per this task's rule.

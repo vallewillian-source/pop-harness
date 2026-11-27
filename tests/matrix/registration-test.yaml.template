@@ -1,0 +1,16 @@
+id: poph-matrix-dev
+url: "__AS_URL__"
+as_token: "__AS_TOKEN__"
+hs_token: "__HS_TOKEN__"
+rate_limited: false
+sender_localpart: ph_as_bot
+namespaces:
+  users:
+    - exclusive: true
+      regex: "@ph_.*"
+  aliases:
+    - exclusive: true
+      regex: "#ph_.*"
+    - exclusive: false
+      regex: "#dep_.*"
+  rooms: []

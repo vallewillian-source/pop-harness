@@ -22,14 +22,14 @@ fn pasta_de_teste(rotulo: &str) -> PathBuf {
 }
 
 /// Configuração mínima com a seção `[matrix]` ligada e válida.
-fn config(pasta: &Path, prefixo: &str) -> PathBuf {
+fn config(pasta: &Path, prefix: &str) -> PathBuf {
     let arquivo = pasta.join("poph.toml");
     fs::write(
         &arquivo,
         format!(
             "[dados]\ndiretorio = \"{}\"\n\n[matrix]\nhabilitado = true\n\
              homeserver_url = \"http://127.0.0.1:18008\"\nserver_name = \"matrix-dev.local\"\n\
-             prefixo = \"{prefixo}\"\n",
+             prefixo = \"{prefix}\"\n",
             pasta.join("dados").display()
         ),
     )
@@ -53,7 +53,7 @@ fn poph(pasta: &Path, args: &[&str], variaveis: &[(&str, &str)]) -> Output {
     comando.output().expect("executa o poph")
 }
 
-fn texto(saida: &[u8]) -> String {
+fn text(saida: &[u8]) -> String {
     String::from_utf8_lossy(saida).into_owned()
 }
 
@@ -96,10 +96,10 @@ fn gera_com_0600_sem_token_na_saida_e_o_verificar_aceita() {
         ],
         &ambiente,
     );
-    let stdout = texto(&saida.stdout);
+    let stdout = text(&saida.stdout);
     assert_eq!(saida.status.code(), Some(0), "stdout: {stdout}");
     sem_tokens(&stdout);
-    sem_tokens(&texto(&saida.stderr));
+    sem_tokens(&text(&saida.stderr));
 
     assert_eq!(modo(&registro), 0o600, "o registro tem que ser 0600");
 
@@ -121,11 +121,11 @@ fn gera_com_0600_sem_token_na_saida_e_o_verificar_aceita() {
         ],
         &ambiente,
     );
-    let stdout = texto(&conferido.stdout);
+    let stdout = text(&conferido.stdout);
     assert_eq!(conferido.status.code(), Some(0), "stdout: {stdout}");
     assert!(stdout.contains("registro em dia"), "stdout: {stdout}");
     sem_tokens(&stdout);
-    sem_tokens(&texto(&conferido.stderr));
+    sem_tokens(&text(&conferido.stderr));
 }
 
 #[test]
@@ -161,7 +161,7 @@ fn recusa_sobrescrever_sem_forcar_e_sobrescreve_com_forcar() {
 
     let recusado = poph(&pasta, &args(""), &ambiente);
     assert_eq!(recusado.status.code(), Some(1));
-    let stderr = texto(&recusado.stderr);
+    let stderr = text(&recusado.stderr);
     assert!(stderr.contains("já existe"), "stderr: {stderr}");
     assert!(stderr.contains("--forcar"), "stderr: {stderr}");
     assert_eq!(
@@ -175,7 +175,7 @@ fn recusa_sobrescrever_sem_forcar_e_sobrescreve_com_forcar() {
         forçado.status.code(),
         Some(0),
         "stdout: {}",
-        texto(&forçado.stdout)
+        text(&forçado.stdout)
     );
     assert_eq!(modo(&registro), 0o600);
     assert!(
@@ -205,10 +205,10 @@ fn token_ausente_nomeia_a_variavel_sem_mostrar_o_outro() {
         &ambiente,
     );
     assert_eq!(saida.status.code(), Some(1));
-    let stderr = texto(&saida.stderr);
+    let stderr = text(&saida.stderr);
     assert!(stderr.contains("POPH_MATRIX_HS_TOKEN"), "stderr: {stderr}");
     sem_tokens(&stderr);
-    sem_tokens(&texto(&saida.stdout));
+    sem_tokens(&text(&saida.stdout));
     assert!(
         !registro.exists(),
         "nada pode ser gravado sem os dois tokens"
@@ -237,7 +237,7 @@ fn sem_url_o_erro_explica_o_que_falta() {
         &ambiente,
     );
     assert_eq!(saida.status.code(), Some(1));
-    let stderr = texto(&saida.stderr);
+    let stderr = text(&saida.stderr);
     assert!(stderr.contains("--url"), "stderr: {stderr}");
     assert!(stderr.contains("POPH_MATRIX_URL_AS"), "stderr: {stderr}");
     sem_tokens(&stderr);
@@ -270,7 +270,7 @@ fn url_pela_variavel_de_ambiente_funciona() {
         saida.status.code(),
         Some(0),
         "stderr: {}",
-        texto(&saida.stderr)
+        text(&saida.stderr)
     );
     assert!(
         fs::read_to_string(&registro)
@@ -318,14 +318,14 @@ fn verificar_recusa_url_trocada_nomeando_o_campo() {
         &ambiente,
     );
     assert_eq!(conferido.status.code(), Some(1));
-    let stderr = texto(&conferido.stderr);
+    let stderr = text(&conferido.stderr);
     assert!(stderr.contains("campo url"), "stderr: {stderr}");
     assert!(
         stderr.contains("http://outro-endereco:9000"),
         "stderr: {stderr}"
     );
     sem_tokens(&stderr);
-    sem_tokens(&texto(&conferido.stdout));
+    sem_tokens(&text(&conferido.stdout));
 }
 
 #[test]
@@ -376,7 +376,7 @@ fn verificar_recusa_prefixo_trocado_nomeando_os_namespaces() {
         &ambiente_wa,
     );
     assert_eq!(conferido.status.code(), Some(1));
-    let stderr = texto(&conferido.stderr);
+    let stderr = text(&conferido.stderr);
     assert!(
         stderr.contains("campo sender_localpart"),
         "stderr: {stderr}"
@@ -436,7 +436,7 @@ fn verificar_recusa_token_diferente_do_ambiente_sem_mostrar_valor() {
         ),
     );
     assert_eq!(conferido.status.code(), Some(1));
-    let stderr = texto(&conferido.stderr);
+    let stderr = text(&conferido.stderr);
     assert!(stderr.contains("campo as_token"), "stderr: {stderr}");
     assert!(stderr.contains("POPH_MATRIX_AS_TOKEN"), "stderr: {stderr}");
     sem_tokens(&stderr);
@@ -471,7 +471,7 @@ fn sem_secao_matrix_o_erro_diz_o_que_falta() {
         &ambiente,
     );
     assert_eq!(saida.status.code(), Some(1));
-    let stderr = texto(&saida.stderr);
+    let stderr = text(&saida.stderr);
     assert!(stderr.contains("[matrix]"), "stderr: {stderr}");
     sem_tokens(&stderr);
 }
@@ -500,7 +500,7 @@ fn verificar_arquivo_inexistente_nao_passa_em_silencio() {
         &ambiente,
     );
     assert_eq!(saida.status.code(), Some(1));
-    assert!(texto(&saida.stderr).contains("não consegui ler"));
+    assert!(text(&saida.stderr).contains("não consegui ler"));
 }
 
 #[test]
@@ -521,5 +521,5 @@ fn saida_e_verificar_juntos_sao_recusados() {
         &ambiente,
     );
     assert_eq!(saida.status.code(), Some(1));
-    assert!(texto(&saida.stderr).contains("não os dois"));
+    assert!(text(&saida.stderr).contains("não os dois"));
 }

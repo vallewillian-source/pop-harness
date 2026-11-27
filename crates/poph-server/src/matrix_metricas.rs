@@ -144,8 +144,8 @@ impl MetricasMatrix {
     pub fn descartaveis() -> Arc<Self> {
         // Registro novo e vazio: o catálogo não tem nomes repetidos, então não pode falhar.
         let registro = Registry::new();
-        let metricas = Self::registrar(&registro).unwrap_or_else(|erro| {
-            unreachable!("o catálogo do módulo Matrix registra em registro vazio: {erro}")
+        let metricas = Self::registrar(&registro).unwrap_or_else(|error| {
+            unreachable!("o catálogo do módulo Matrix registra em registro vazio: {error}")
         });
         Arc::new(metricas)
     }
@@ -167,18 +167,18 @@ mod testes {
         let registro = Registry::new();
         let metricas = MetricasMatrix::registrar(&registro).expect("registra");
         metricas.mensagens_espelhadas.increment(2);
-        let texto = registro.render();
-        for nome in [
+        let text = registro.render();
+        for name in [
             "poph_matrix_atraso_cursor_segundos",
             "poph_matrix_mensagens_espelhadas_total",
             "poph_matrix_latencia_synapse_segundos",
         ] {
             assert_eq!(
-                texto.matches(&format!("# HELP {nome} ")).count(),
+                text.matches(&format!("# HELP {name} ")).count(),
                 1,
-                "{nome} deve aparecer uma vez"
+                "{name} deve aparecer uma vez"
             );
         }
-        assert!(texto.contains("poph_matrix_mensagens_espelhadas_total 2\n"));
+        assert!(text.contains("poph_matrix_mensagens_espelhadas_total 2\n"));
     }
 }

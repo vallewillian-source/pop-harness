@@ -30,9 +30,9 @@ use axum::extract::State;
 use axum::http::header::AUTHORIZATION;
 use axum::http::{HeaderMap, Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
-use poph_matrix::config::ModuloMatrix;
-use poph_matrix::config::SegredosMatrix;
-use poph_matrix::espacos::Espacos;
+use poph_matrix::config::MatrixModule;
+use poph_matrix::config::MatrixSecrets;
+use poph_matrix::spaces::Spaces;
 use poph_server::Estado;
 use poph_server::matrix_inicio::{self, AjustesDeInicio, EspacosDoModulo, PortaEspacosStore};
 use poph_store::{
@@ -60,28 +60,28 @@ const TOKEN_GLOBAL: &str = "pophg_teste-global-mx22";
 
 #[derive(Default, Clone)]
 struct SalaFalsa {
-    nome: Option<String>,
+    name: Option<String>,
     tipo: Option<String>,
-    membros: Vec<String>,
-    convidados: Vec<String>,
-    estado: BTreeMap<(String, String), Value>,
+    members: Vec<String>,
+    guests: Vec<String>,
+    state: BTreeMap<(String, String), Value>,
     mensagens: Vec<(String, String, Value)>,
 }
 
 #[derive(Default)]
 struct EstadoFalso {
-    usuarios: BTreeMap<String, Option<String>>,
-    salas: BTreeMap<String, SalaFalsa>,
+    users: BTreeMap<String, Option<String>>,
+    rooms: BTreeMap<String, SalaFalsa>,
     aliases: BTreeMap<String, String>,
     proxima_sala: u32,
     versoes: u32,
 }
 
-fn responder(status: u16, corpo: Value) -> Response {
+fn responder(status: u16, body: Value) -> Response {
     (
         StatusCode::from_u16(status).expect("status válido"),
         [("content-type", "application/json")],
-        corpo.to_string(),
+        body.to_string(),
     )
         .into_response()
 }
@@ -117,22 +117,22 @@ fn urlencoding(valor: &str) -> String {
         .collect()
 }
 
-fn consulta(bruta: &str, nome: &str) -> Option<String> {
+fn consulta(bruta: &str, name: &str) -> Option<String> {
     bruta.split('&').find_map(|par| {
         let (chave, valor) = par.split_once('=')?;
-        (chave == nome).then(|| decodificar(valor))
+        (chave == name).then(|| decodificar(valor))
     })
 }
 
 async fn atender(
-    State(estado): State<Arc<Mutex<EstadoFalso>>>,
+    State(state): State<Arc<Mutex<EstadoFalso>>>,
     metodo: Method,
     uri: Uri,
     cabecalhos: HeaderMap,
-    corpo: String,
+    body: String,
 ) -> Response {
-    let corpo: Value = serde_json::from_str(&corpo).unwrap_or(Value::Null);
-    let mut guarda = estado.lock().expect("trava do Synapse falso");
+    let body: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+    let mut guarda = state.lock().expect("trava do Synapse falso");
 
     let autorizacao = cabecalhos
         .get(AUTHORIZATION)
@@ -161,22 +161,22 @@ async fn atender(
 
     match (metodo.as_str(), partes.as_slice()) {
         ("POST", [registro]) if registro == "register" => {
-            let localpart = corpo["username"].as_str().unwrap_or_default();
+            let localpart = body["username"].as_str().unwrap_or_default();
             let id = format!("@{localpart}:{SERVIDOR}");
-            if guarda.usuarios.contains_key(&id) {
+            if guarda.users.contains_key(&id) {
                 return responder(
                     400,
                     json!({ "errcode": "M_USER_IN_USE", "error": "User ID already taken." }),
                 );
             }
-            guarda.usuarios.insert(id.clone(), None);
+            guarda.users.insert(id.clone(), None);
             responder(200, json!({ "user_id": id }))
         }
-        ("GET", [perfil, id]) if perfil == "profile" => match guarda.usuarios.get(id) {
-            Some(nome) => {
+        ("GET", [profile, id]) if profile == "profile" => match guarda.users.get(id) {
+            Some(name) => {
                 let mut resposta = json!({});
-                if let Some(nome) = nome {
-                    resposta["displayname"] = Value::String(nome.clone());
+                if let Some(name) = name {
+                    resposta["displayname"] = Value::String(name.clone());
                 }
                 responder(200, resposta)
             }
@@ -185,14 +185,14 @@ async fn atender(
                 json!({ "errcode": "M_NOT_FOUND", "error": "Usuário não existe" }),
             ),
         },
-        ("PUT", [perfil, id, campo]) if perfil == "profile" && campo == "displayname" => {
+        ("PUT", [profile, id, campo]) if profile == "profile" && campo == "displayname" => {
             guarda
-                .usuarios
-                .insert(id.clone(), corpo["displayname"].as_str().map(str::to_owned));
+                .users
+                .insert(id.clone(), body["displayname"].as_str().map(str::to_owned));
             responder(200, json!({}))
         }
         ("POST", [criacao]) if criacao == "createRoom" => {
-            let alias = corpo["room_alias_name"]
+            let alias = body["room_alias_name"]
                 .as_str()
                 .map(|localpart| format!("#{localpart}:{SERVIDOR}"));
             if let Some(alias) = &alias
@@ -204,42 +204,40 @@ async fn atender(
                 );
             }
             guarda.proxima_sala += 1;
-            let sala = format!("!{}:{SERVIDOR}", guarda.proxima_sala);
-            let mut membros = Vec::new();
+            let room = format!("!{}:{SERVIDOR}", guarda.proxima_sala);
+            let mut members = Vec::new();
             if !quem.is_empty() {
-                membros.push(quem.clone());
+                members.push(quem.clone());
             }
-            guarda.salas.insert(
-                sala.clone(),
+            guarda.rooms.insert(
+                room.clone(),
                 SalaFalsa {
-                    nome: corpo["name"].as_str().map(str::to_owned),
-                    tipo: corpo["creation_content"]["type"]
-                        .as_str()
-                        .map(str::to_owned),
-                    membros,
+                    name: body["name"].as_str().map(str::to_owned),
+                    tipo: body["creation_content"]["type"].as_str().map(str::to_owned),
+                    members,
                     ..SalaFalsa::default()
                 },
             );
             if let Some(alias) = alias {
-                guarda.aliases.insert(alias, sala.clone());
+                guarda.aliases.insert(alias, room.clone());
             }
-            responder(200, json!({ "room_id": sala }))
+            responder(200, json!({ "room_id": room }))
         }
-        ("GET", [diretorio, sala, alias]) if diretorio == "directory" && sala == "room" => {
+        ("GET", [diretorio, room, alias]) if diretorio == "directory" && room == "room" => {
             match guarda.aliases.get(alias) {
-                Some(sala) => responder(200, json!({ "room_id": sala })),
+                Some(room) => responder(200, json!({ "room_id": room })),
                 None => responder(
                     404,
                     json!({ "errcode": "M_NOT_FOUND", "error": "Alias não encontrado" }),
                 ),
             }
         }
-        ("POST", [salas, sala, convite]) if salas == "rooms" && convite == "invite" => {
-            match guarda.salas.get_mut(sala) {
+        ("POST", [rooms, room, convite]) if rooms == "rooms" && convite == "invite" => {
+            match guarda.rooms.get_mut(room) {
                 Some(alvo) => {
-                    let convidado = corpo["user_id"].as_str().unwrap_or_default().to_owned();
-                    if !alvo.convidados.contains(&convidado) {
-                        alvo.convidados.push(convidado);
+                    let convidado = body["user_id"].as_str().unwrap_or_default().to_owned();
+                    if !alvo.guests.contains(&convidado) {
+                        alvo.guests.push(convidado);
                     }
                     responder(200, json!({}))
                 }
@@ -249,18 +247,18 @@ async fn atender(
                 ),
             }
         }
-        ("POST", [entrar, alvo]) if entrar == "join" => {
-            let sala = if alvo.starts_with('#') {
+        ("POST", [enter, alvo]) if enter == "join" => {
+            let room = if alvo.starts_with('#') {
                 guarda.aliases.get(alvo).cloned()
             } else {
                 Some(alvo.clone())
             };
-            match sala.and_then(|sala| guarda.salas.get_mut(&sala).map(|alvo| (sala, alvo))) {
-                Some((sala, alvo)) => {
-                    if !alvo.membros.contains(&quem) {
-                        alvo.membros.push(quem.clone());
+            match room.and_then(|room| guarda.rooms.get_mut(&room).map(|alvo| (room, alvo))) {
+                Some((room, alvo)) => {
+                    if !alvo.members.contains(&quem) {
+                        alvo.members.push(quem.clone());
                     }
-                    responder(200, json!({ "room_id": sala }))
+                    responder(200, json!({ "room_id": room }))
                 }
                 None => responder(
                     404,
@@ -268,11 +266,11 @@ async fn atender(
                 ),
             }
         }
-        ("GET", [salas, sala, membros]) if salas == "rooms" && membros == "joined_members" => {
-            match guarda.salas.get(sala) {
+        ("GET", [rooms, room, members]) if rooms == "rooms" && members == "joined_members" => {
+            match guarda.rooms.get(room) {
                 Some(alvo) => {
                     let juntos: BTreeMap<String, Value> = alvo
-                        .membros
+                        .members
                         .iter()
                         .map(|id| (id.clone(), json!({})))
                         .collect();
@@ -284,13 +282,11 @@ async fn atender(
                 ),
             }
         }
-        ("PUT", [salas, sala, estado, tipo, chave @ ..])
-            if salas == "rooms" && estado == "state" =>
-        {
+        ("PUT", [rooms, room, state, tipo, chave @ ..]) if rooms == "rooms" && state == "state" => {
             let chave = chave.join("/");
-            match guarda.salas.get_mut(sala) {
+            match guarda.rooms.get_mut(room) {
                 Some(alvo) => {
-                    alvo.estado.insert((tipo.clone(), chave), corpo);
+                    alvo.state.insert((tipo.clone(), chave), body);
                     responder(200, json!({ "event_id": "$estado" }))
                 }
                 None => responder(
@@ -299,13 +295,11 @@ async fn atender(
                 ),
             }
         }
-        ("GET", [salas, sala, estado, tipo, chave @ ..])
-            if salas == "rooms" && estado == "state" =>
-        {
+        ("GET", [rooms, room, state, tipo, chave @ ..]) if rooms == "rooms" && state == "state" => {
             let chave = chave.join("/");
-            match guarda.salas.get(sala) {
-                Some(alvo) => match alvo.estado.get(&(tipo.clone(), chave)) {
-                    Some(corpo) => responder(200, corpo.clone()),
+            match guarda.rooms.get(room) {
+                Some(alvo) => match alvo.state.get(&(tipo.clone(), chave)) {
+                    Some(body) => responder(200, body.clone()),
                     None => responder(
                         404,
                         json!({ "errcode": "M_NOT_FOUND", "error": "Evento não existe" }),
@@ -317,11 +311,11 @@ async fn atender(
                 ),
             }
         }
-        ("PUT", [salas, sala, envio, tipo, txn]) if salas == "rooms" && envio == "send" => {
-            match guarda.salas.get_mut(sala) {
+        ("PUT", [rooms, room, send, tipo, txn]) if rooms == "rooms" && send == "send" => {
+            match guarda.rooms.get_mut(room) {
                 Some(alvo) => {
                     if !alvo.mensagens.iter().any(|(ja, _, _)| ja == txn) {
-                        alvo.mensagens.push((txn.clone(), tipo.clone(), corpo));
+                        alvo.mensagens.push((txn.clone(), tipo.clone(), body));
                     }
                     responder(200, json!({ "event_id": format!("$msg_{txn}") }))
                 }
@@ -341,16 +335,16 @@ async fn atender(
 /// Synapse falso no ar, numa porta efêmera. O `Drop` desliga.
 struct Synapse {
     endereco: String,
-    estado: Arc<Mutex<EstadoFalso>>,
+    state: Arc<Mutex<EstadoFalso>>,
     desligar: Option<oneshot::Sender<()>>,
 }
 
 impl Synapse {
     async fn subir() -> Self {
-        let estado = Arc::new(Mutex::new(EstadoFalso::default()));
+        let state = Arc::new(Mutex::new(EstadoFalso::default()));
         let app = Router::new()
             .fallback(atender)
-            .with_state(Arc::clone(&estado));
+            .with_state(Arc::clone(&state));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("porta efêmera");
@@ -365,26 +359,26 @@ impl Synapse {
         });
         Self {
             endereco,
-            estado,
+            state,
             desligar: Some(desligar),
         }
     }
 
-    fn salas(&self) -> Vec<(String, SalaFalsa)> {
-        self.estado
+    fn rooms(&self) -> Vec<(String, SalaFalsa)> {
+        self.state
             .lock()
             .expect("trava")
-            .salas
+            .rooms
             .iter()
-            .map(|(id, sala)| (id.clone(), sala.clone()))
+            .map(|(id, room)| (id.clone(), room.clone()))
             .collect()
     }
 
     /// Cria uma sala no Synapse falso como outro usuário (um espaço que já existe no Element, com
     /// dono e sem o bot dentro).
-    async fn criar_sala(&self, como: &str) -> String {
-        let cliente = Client::new();
-        let resposta = cliente
+    async fn create_room(&self, como: &str) -> String {
+        let client = Client::new();
+        let resposta = client
             .post(format!(
                 "{}/_matrix/client/v3/createRoom?user_id={}",
                 self.endereco,
@@ -395,14 +389,14 @@ impl Synapse {
             .send()
             .await
             .expect("createRoom no Synapse falso");
-        let corpo: Value = resposta.json().await.expect("corpo do createRoom");
-        corpo["room_id"].as_str().expect("room_id").to_owned()
+        let body: Value = resposta.json().await.expect("corpo do createRoom");
+        body["room_id"].as_str().expect("room_id").to_owned()
     }
 
     fn quantidade_de_espacos(&self) -> usize {
-        self.salas()
+        self.rooms()
             .iter()
-            .filter(|(_, sala)| sala.tipo.as_deref() == Some("m.space"))
+            .filter(|(_, room)| room.tipo.as_deref() == Some("m.space"))
             .count()
     }
 }
@@ -433,7 +427,7 @@ struct Cenario {
 }
 
 impl Cenario {
-    fn novo(rotulo: &str, homeserver_url: String) -> Self {
+    fn new(rotulo: &str, homeserver_url: String) -> Self {
         let carimbo = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|duracao| duracao.as_nanos())
@@ -477,14 +471,14 @@ impl Cenario {
         }
     }
 
-    fn estado(&self) -> Estado {
+    fn state(&self) -> Estado {
         Estado::novo(Arc::clone(&self.store), self.config.clone()).expect("estado do servidor")
     }
 
-    fn modulo(&self) -> ModuloMatrix {
-        ModuloMatrix {
+    fn modulo(&self) -> MatrixModule {
+        MatrixModule {
             config: self.config.matrix.clone().expect("seção [matrix]"),
-            segredos: SegredosMatrix {
+            secrets: MatrixSecrets {
                 as_token: Secret::new(AS_TOKEN.to_owned()),
                 hs_token: Secret::new(HS_TOKEN.to_owned()),
             },
@@ -514,7 +508,7 @@ impl Cenario {
         format!("poph_{}_{segredo}", criado.id)
     }
 
-    fn agente(&self, org: OrgId) -> AgentId {
+    fn agent(&self, org: OrgId) -> AgentId {
         self.store
             .agents()
             .create(
@@ -529,13 +523,13 @@ impl Cenario {
             .id
     }
 
-    fn conversa(&self, org: OrgId, agente: AgentId) -> poph_types::ConversationId {
+    fn conversation(&self, org: OrgId, agent: AgentId) -> poph_types::ConversationId {
         self.store
             .conversations()
             .create(
                 org,
                 NewConversation {
-                    agent_id: agente,
+                    agent_id: agent,
                     integration_id: None,
                     canal: "whatsapp".to_owned(),
                     peer_externo: Some("5511999999999".to_owned()),
@@ -546,19 +540,19 @@ impl Cenario {
             .id
     }
 
-    fn mensagem(&self, org: OrgId, conversa: poph_types::ConversationId, texto: &str) -> u64 {
-        let mensagem = self
+    fn message(&self, org: OrgId, conversation: poph_types::ConversationId, text: &str) -> u64 {
+        let message = self
             .store
             .messages()
             .write(
                 org,
                 NewMessage {
-                    conversation_id: conversa,
+                    conversation_id: conversation,
                     direction: Direction::Inbound,
                     role: Role::User,
                     origin: Origin::Agente,
                     author_name: None,
-                    texto: texto.to_owned(),
+                    texto: text.to_owned(),
                     attachments_json: "[]".to_owned(),
                     external_id: None,
                     turn_id: None,
@@ -570,18 +564,18 @@ impl Cenario {
             .since(0, 1000)
             .expect("lê as mensagens")
             .into_iter()
-            .find(|lida| lida.id == mensagem.id)
+            .find(|lida| lida.id == message.id)
             .expect("mensagem recém-gravada")
             .rowid
     }
 
-    fn departamento(&self, org: OrgId, nome: &str) -> DepartmentId {
+    fn department(&self, org: OrgId, name: &str) -> DepartmentId {
         self.store
             .departments()
             .create(
                 org,
                 NewDepartment {
-                    name: nome.to_owned(),
+                    name: name.to_owned(),
                     description: String::new(),
                 },
             )
@@ -590,9 +584,9 @@ impl Cenario {
     }
 
     /// Serviço de espaços com a porta real sobre o banco, como a raiz de composição monta.
-    fn espacos(&self) -> EspacosDoModulo {
-        Espacos::da_config(
-            poph_matrix::ClienteMatrix::das_partes(&self.modulo().config, &self.modulo().segredos)
+    fn spaces(&self) -> EspacosDoModulo {
+        Spaces::of_config(
+            poph_matrix::MatrixClient::from_parts(&self.modulo().config, &self.modulo().secrets)
                 .expect("cliente do Matrix"),
             PortaEspacosStore(Arc::clone(&self.store)),
             &self.modulo().config,
@@ -610,8 +604,8 @@ impl Drop for Cenario {
 // ───────────────────────────── HTTP ─────────────────────────────
 
 /// Sobe o router do servidor numa porta efêmera.
-async fn servir(estado: Estado) -> (String, oneshot::Sender<()>) {
-    let app = poph_server::router(estado);
+async fn servir(state: Estado) -> (String, oneshot::Sender<()>) {
+    let app = poph_server::router(state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("porta efêmera");
@@ -627,10 +621,10 @@ async fn servir(estado: Estado) -> (String, oneshot::Sender<()>) {
     (endereco, desligar)
 }
 
-struct Resposta {
+struct FakeResponse {
     status: StatusCode,
     json: Value,
-    texto: String,
+    text: String,
     etag: Option<String>,
 }
 
@@ -639,22 +633,22 @@ async fn pedir(
     metodo: MetodoHttp,
     caminho: &str,
     token: Option<&str>,
-    corpo: Option<Value>,
+    body: Option<Value>,
     if_match: Option<&str>,
-) -> Resposta {
-    let cliente = Client::builder()
+) -> FakeResponse {
+    let client = Client::builder()
         .timeout(Duration::from_secs(20))
         .build()
         .expect("cliente HTTP");
-    let mut pedido = cliente.request(metodo, format!("{base}{caminho}"));
+    let mut pedido = client.request(metodo, format!("{base}{caminho}"));
     if let Some(token) = token {
         pedido = pedido.bearer_auth(token);
     }
     if let Some(valor) = if_match {
         pedido = pedido.header("If-Match", valor);
     }
-    if let Some(corpo) = corpo {
-        pedido = pedido.json(&corpo);
+    if let Some(body) = body {
+        pedido = pedido.json(&body);
     }
     let resposta = pedido.send().await.expect("pedido HTTP");
     let status = resposta.status();
@@ -663,12 +657,12 @@ async fn pedir(
         .get("etag")
         .and_then(|valor| valor.to_str().ok())
         .map(str::to_owned);
-    let texto = resposta.text().await.unwrap_or_default();
-    let json = serde_json::from_str(&texto).unwrap_or(Value::Null);
-    Resposta {
+    let text = resposta.text().await.unwrap_or_default();
+    let json = serde_json::from_str(&text).unwrap_or(Value::Null);
+    FakeResponse {
         status,
         json,
-        texto,
+        text,
         etag,
     }
 }
@@ -688,13 +682,13 @@ async fn esperar_ate(descricao: &str, mut condicao: impl FnMut() -> bool) {
 
 #[tokio::test]
 async fn estado_da_org_traz_atraso_falhas_e_etag() {
-    let cenario = Cenario::novo("estado", "http://127.0.0.1:9".to_owned());
+    let cenario = Cenario::new("estado", "http://127.0.0.1:9".to_owned());
     let org = cenario.org("estado");
     let token = cenario.token(org, "estado");
-    let agente = cenario.agente(org);
-    let conversa = cenario.conversa(org, agente);
-    let primeira = cenario.mensagem(org, conversa, "primeira");
-    cenario.mensagem(org, conversa, "segunda");
+    let agent = cenario.agent(org);
+    let conversation = cenario.conversation(org, agent);
+    let primeira = cenario.message(org, conversation, "primeira");
+    cenario.message(org, conversation, "segunda");
     // Uma das duas já foi espelhada: o atraso tem de ser 1.
     cenario
         .store
@@ -708,7 +702,7 @@ async fn estado_da_org_traz_atraso_falhas_e_etag() {
         .since(primeira, 10)
         .expect("lê a leitura incremental")
         .first()
-        .map(|mensagem| mensagem.created_at)
+        .map(|message| message.created_at)
         .expect("mensagem pendente");
     // Relógio 65 s à frente da mensagem pendente: a idade tem de ser 65 s.
     cenario.relogio.store(pendente + 65_000, Ordering::SeqCst);
@@ -736,11 +730,11 @@ async fn estado_da_org_traz_atraso_falhas_e_etag() {
         .expect("falha da outra org");
 
     // Sem o módulo montado nesta instância: `connected` é nulo, e o resto é lido do banco.
-    let estado = cenario.estado();
-    let (base, desligar) = servir(estado).await;
+    let state = cenario.state();
+    let (base, desligar) = servir(state).await;
     let rota = format!("/admin/v1/orgs/{org}/matrix");
     let resposta = pedir(&base, MetodoHttp::GET, &rota, Some(&token), None, None).await;
-    assert_eq!(resposta.status, StatusCode::OK, "{}", resposta.texto);
+    assert_eq!(resposta.status, StatusCode::OK, "{}", resposta.text);
     assert_eq!(resposta.json["org_id"], json!(org.to_string()));
     assert_eq!(resposta.json["enabled"], json!(false));
     assert_eq!(resposta.json["enabled_at"], Value::Null);
@@ -765,7 +759,7 @@ async fn estado_da_org_traz_atraso_falhas_e_etag() {
     );
     // Nada de dado de cliente na resposta.
     assert!(
-        !resposta.texto.contains("5511999999999"),
+        !resposta.text.contains("5511999999999"),
         "o estado não pode trazer telefone nem texto de cliente"
     );
 
@@ -775,13 +769,13 @@ async fn estado_da_org_traz_atraso_falhas_e_etag() {
 #[tokio::test]
 async fn estado_da_org_diz_conectado_quando_a_sonda_fala_com_o_synapse() {
     let synapse = Synapse::subir().await;
-    let cenario = Cenario::novo("conectado", synapse.endereco.clone());
+    let cenario = Cenario::new("conectado", synapse.endereco.clone());
     let org = cenario.org("conectado");
     let token = cenario.token(org, "conectado");
 
-    let mut estado = cenario.estado();
+    let mut state = cenario.state();
     let rodando = matrix_inicio::iniciar_com_ajustes(
-        &mut estado,
+        &mut state,
         cenario.modulo(),
         AjustesDeInicio {
             periodo_da_sonda: Duration::from_millis(20),
@@ -790,15 +784,15 @@ async fn estado_da_org_diz_conectado_quando_a_sonda_fala_com_o_synapse() {
         },
     )
     .expect("módulo ligado");
-    let (base, desligar) = servir(estado.clone()).await;
+    let (base, desligar) = servir(state.clone()).await;
     esperar_ate("sonda falar com o Synapse falso", || {
-        estado.matrix_conectado() == Some(true)
+        state.matrix_conectado() == Some(true)
     })
     .await;
 
     let rota = format!("/admin/v1/orgs/{org}/matrix");
     let resposta = pedir(&base, MetodoHttp::GET, &rota, Some(&token), None, None).await;
-    assert_eq!(resposta.status, StatusCode::OK, "{}", resposta.texto);
+    assert_eq!(resposta.status, StatusCode::OK, "{}", resposta.text);
     assert_eq!(
         resposta.json["connected"],
         json!(true),
@@ -815,11 +809,11 @@ async fn estado_da_org_diz_conectado_quando_a_sonda_fala_com_o_synapse() {
 
 #[tokio::test]
 async fn ligar_e_desligar_exigem_if_match_e_preservam_o_corte() {
-    let cenario = Cenario::novo("liga", "http://127.0.0.1:9".to_owned());
+    let cenario = Cenario::new("liga", "http://127.0.0.1:9".to_owned());
     let org = cenario.org("liga");
     let token = cenario.token(org, "liga");
-    let estado = cenario.estado();
-    let (base, desligar) = servir(estado).await;
+    let state = cenario.state();
+    let (base, desligar) = servir(state).await;
     let rota = format!("/admin/v1/orgs/{org}/matrix");
 
     // Sem o cabeçalho: 428.
@@ -836,7 +830,7 @@ async fn ligar_e_desligar_exigem_if_match_e_preservam_o_corte() {
         sem.status,
         StatusCode::PRECONDITION_REQUIRED,
         "{}",
-        sem.texto
+        sem.text
     );
     assert_eq!(sem.json["code"], json!("precondition_required"));
 
@@ -855,7 +849,7 @@ async fn ligar_e_desligar_exigem_if_match_e_preservam_o_corte() {
         Some("0"),
     )
     .await;
-    assert_eq!(ligada.status, StatusCode::OK, "{}", ligada.texto);
+    assert_eq!(ligada.status, StatusCode::OK, "{}", ligada.text);
     assert_eq!(ligada.json["enabled"], json!(true));
     let corte = ligada.json["enabled_at"]
         .as_i64()
@@ -877,7 +871,7 @@ async fn ligar_e_desligar_exigem_if_match_e_preservam_o_corte() {
         velha.status,
         StatusCode::PRECONDITION_FAILED,
         "{}",
-        velha.texto
+        velha.text
     );
     assert_eq!(velha.json["code"], json!("version_conflict"));
     assert!(
@@ -895,7 +889,7 @@ async fn ligar_e_desligar_exigem_if_match_e_preservam_o_corte() {
         Some(&etag.to_string()),
     )
     .await;
-    assert_eq!(de_novo.status, StatusCode::OK, "{}", de_novo.texto);
+    assert_eq!(de_novo.status, StatusCode::OK, "{}", de_novo.text);
     assert_eq!(
         de_novo.json["enabled_at"],
         json!(corte),
@@ -913,7 +907,7 @@ async fn ligar_e_desligar_exigem_if_match_e_preservam_o_corte() {
         Some(&etag_atual.to_string()),
     )
     .await;
-    assert_eq!(desligada.status, StatusCode::OK, "{}", desligada.texto);
+    assert_eq!(desligada.status, StatusCode::OK, "{}", desligada.text);
     assert_eq!(desligada.json["enabled"], json!(false));
     assert_eq!(
         desligada.json["enabled_at"],
@@ -921,29 +915,29 @@ async fn ligar_e_desligar_exigem_if_match_e_preservam_o_corte() {
         "o corte fica gravado"
     );
     assert!(
-        !desligada.texto.contains(TOKEN_GLOBAL),
+        !desligada.text.contains(TOKEN_GLOBAL),
         "token global não vaza"
     );
-    assert!(!desligada.texto.contains(&token), "token de org não vaza");
+    assert!(!desligada.text.contains(&token), "token de org não vaza");
 
     let _ = desligar.send(());
 }
 
 #[tokio::test]
 async fn token_de_outra_org_e_org_inexistente() {
-    let cenario = Cenario::novo("isolamento", "http://127.0.0.1:9".to_owned());
+    let cenario = Cenario::new("isolamento", "http://127.0.0.1:9".to_owned());
     let org_a = cenario.org("a");
     let org_b = cenario.org("b");
     let token_a = cenario.token(org_a, "a");
-    let estado = cenario.estado();
-    let (base, desligar) = servir(estado).await;
+    let state = cenario.state();
+    let (base, desligar) = servir(state).await;
 
     let da_b = format!("/admin/v1/orgs/{org_b}/matrix");
     let sem_token = pedir(&base, MetodoHttp::GET, &da_b, None, None, None).await;
     assert_eq!(sem_token.status, StatusCode::UNAUTHORIZED);
 
     let cruzado = pedir(&base, MetodoHttp::GET, &da_b, Some(&token_a), None, None).await;
-    assert_eq!(cruzado.status, StatusCode::FORBIDDEN, "{}", cruzado.texto);
+    assert_eq!(cruzado.status, StatusCode::FORBIDDEN, "{}", cruzado.text);
 
     let cruzado_put = pedir(
         &base,
@@ -976,7 +970,7 @@ async fn token_de_outra_org_e_org_inexistente() {
         nao_existe.status,
         StatusCode::NOT_FOUND,
         "{}",
-        nao_existe.texto
+        nao_existe.text
     );
 
     let espaco_fantasma = format!("/admin/v1/orgs/{inexistente}/matrix/spaces");
@@ -1004,16 +998,16 @@ async fn token_de_outra_org_e_org_inexistente() {
 #[tokio::test]
 async fn espaco_do_departamento_e_criado_uma_vez_ligado_e_desligado() {
     let synapse = Synapse::subir().await;
-    let cenario = Cenario::novo("espacos", synapse.endereco.clone());
+    let cenario = Cenario::new("espacos", synapse.endereco.clone());
     let org = cenario.org("espacos");
     let token = cenario.token(org, "espacos");
-    let comercial = cenario.departamento(org, "Comercial");
-    let outro = cenario.departamento(org, "Outro");
+    let comercial = cenario.department(org, "Comercial");
+    let outro = cenario.department(org, "Outro");
 
     // Só o serviço de espaços na API (sem os laços do módulo: a asserção fica determinística).
-    let mut estado = cenario.estado();
-    estado.ligar_espacos_do_matrix(Arc::new(cenario.espacos()));
-    let (base, desligar) = servir(estado).await;
+    let mut state = cenario.state();
+    state.ligar_espacos_do_matrix(Arc::new(cenario.spaces()));
+    let (base, desligar) = servir(state).await;
     let rota = format!("/admin/v1/orgs/{org}/matrix/spaces");
 
     // Criar: cria o espaço automático do departamento.
@@ -1026,23 +1020,23 @@ async fn espaco_do_departamento_e_criado_uma_vez_ligado_e_desligado() {
         None,
     )
     .await;
-    assert_eq!(criado.status, StatusCode::OK, "{}", criado.texto);
+    assert_eq!(criado.status, StatusCode::OK, "{}", criado.text);
     assert_eq!(criado.json["department_id"], json!(comercial.to_string()));
     assert_eq!(criado.json["department_name"], json!("Comercial"));
     assert_eq!(criado.json["origin"], json!("auto"));
-    let espaco = criado.json["space_room_id"]
+    let space = criado.json["space_room_id"]
         .as_str()
         .expect("espaço")
         .to_owned();
     assert_eq!(synapse.quantidade_de_espacos(), 1);
     let no_synapse = synapse
-        .salas()
+        .rooms()
         .into_iter()
-        .find(|(id, _)| id == &espaco)
+        .find(|(id, _)| id == &space)
         .expect("o espaço existe no Synapse")
         .1;
     assert_eq!(
-        no_synapse.nome.as_deref(),
+        no_synapse.name.as_deref(),
         Some("Comercial"),
         "o espaço criado leva o nome do departamento"
     );
@@ -1058,13 +1052,13 @@ async fn espaco_do_departamento_e_criado_uma_vez_ligado_e_desligado() {
         None,
     )
     .await;
-    assert_eq!(de_novo.status, StatusCode::OK, "{}", de_novo.texto);
-    assert_eq!(de_novo.json["space_room_id"], json!(espaco));
+    assert_eq!(de_novo.status, StatusCode::OK, "{}", de_novo.text);
+    assert_eq!(de_novo.json["space_room_id"], json!(space));
     assert_eq!(synapse.quantidade_de_espacos(), 1, "um espaço só");
 
     // Ligar um espaço que já existe no Element, mas sem o bot dentro: 409 com o que fazer, e nada
     // gravado. A sala é criada no Synapse falso como outro usuário (o dono do espaço).
-    let do_operador = synapse.criar_sala("@operador:matrix-dev.local").await;
+    let do_operador = synapse.create_room("@operador:matrix-dev.local").await;
     let sem_permissoo = pedir(
         &base,
         MetodoHttp::PUT,
@@ -1078,13 +1072,13 @@ async fn espaco_do_departamento_e_criado_uma_vez_ligado_e_desligado() {
         sem_permissoo.status,
         StatusCode::CONFLICT,
         "{}",
-        sem_permissoo.texto
+        sem_permissoo.text
     );
     assert_eq!(sem_permissoo.json["code"], json!("conflict"));
-    let mensagem = sem_permissoo.json["message"].as_str().unwrap_or_default();
+    let message = sem_permissoo.json["message"].as_str().unwrap_or_default();
     assert!(
-        mensagem.contains("convite") || mensagem.contains("convite") || mensagem.contains("poder"),
-        "o erro diz o que o operador faz no Element: {mensagem}"
+        message.contains("convite") || message.contains("convite") || message.contains("poder"),
+        "o erro diz o que o operador faz no Element: {message}"
     );
     assert!(
         cenario
@@ -1110,24 +1104,24 @@ async fn espaco_do_departamento_e_criado_uma_vez_ligado_e_desligado() {
         invalido.status,
         StatusCode::BAD_REQUEST,
         "{}",
-        invalido.texto
+        invalido.text
     );
 
     // Lista: um item, com o nome do departamento.
     let lista = pedir(&base, MetodoHttp::GET, &rota, Some(&token), None, None).await;
-    assert_eq!(lista.status, StatusCode::OK, "{}", lista.texto);
+    assert_eq!(lista.status, StatusCode::OK, "{}", lista.text);
     let itens = lista.json["items"].as_array().expect("lista").clone();
     assert_eq!(itens.len(), 1);
     assert_eq!(itens[0]["department_id"], json!(comercial.to_string()));
     assert_eq!(itens[0]["department_name"], json!("Comercial"));
 
     // Uma sala dentro do espaço, para o `DELETE` ter o que esquecer.
-    let agente = cenario.agente(org);
-    let conversa = cenario.conversa(org, agente);
+    let agent = cenario.agent(org);
+    let conversation = cenario.conversation(org, agent);
     cenario
         .store
         .matrix()
-        .ensure_room(org, conversa, "!sala:matrix-dev.local", Some(&espaco))
+        .ensure_room(org, conversation, "!sala:matrix-dev.local", Some(&space))
         .expect("sala no espaço");
 
     // Desligar: apaga a linha e esquece o vínculo da sala; nada é apagado no Synapse.
@@ -1140,7 +1134,7 @@ async fn espaco_do_departamento_e_criado_uma_vez_ligado_e_desligado() {
         None,
     )
     .await;
-    assert_eq!(desligado.status, StatusCode::OK, "{}", desligado.texto);
+    assert_eq!(desligado.status, StatusCode::OK, "{}", desligado.text);
     assert_eq!(desligado.json["removed"], json!(true));
     assert_eq!(desligado.json["rooms_forgotten"], json!(1));
     assert_eq!(
@@ -1154,7 +1148,7 @@ async fn espaco_do_departamento_e_criado_uma_vez_ligado_e_desligado() {
         cenario
             .store
             .matrix()
-            .room(org, conversa)
+            .room(org, conversation)
             .expect("sala")
             .expect("existe")
             .space,
@@ -1164,7 +1158,7 @@ async fn espaco_do_departamento_e_criado_uma_vez_ligado_e_desligado() {
 
     // Departamento inexistente (ou de outra org): 404.
     let outra_org = cenario.org("outra-espacos");
-    let departamento_da_outra = cenario.departamento(outra_org, "Dela");
+    let departamento_da_outra = cenario.department(outra_org, "Dela");
     let alheio = pedir(
         &base,
         MetodoHttp::DELETE,
@@ -1174,43 +1168,43 @@ async fn espaco_do_departamento_e_criado_uma_vez_ligado_e_desligado() {
         None,
     )
     .await;
-    assert_eq!(alheio.status, StatusCode::NOT_FOUND, "{}", alheio.texto);
+    assert_eq!(alheio.status, StatusCode::NOT_FOUND, "{}", alheio.text);
 
     let _ = desligar.send(());
 }
 
 #[tokio::test]
 async fn modulo_desligado_recusa_espaco_e_mostra_conectado_nulo() {
-    let cenario = Cenario::novo("sem-modulo", "http://127.0.0.1:9".to_owned());
+    let cenario = Cenario::new("sem-modulo", "http://127.0.0.1:9".to_owned());
     let org = cenario.org("sem-modulo");
     let token = cenario.token(org, "sem-modulo");
-    let departamento = cenario.departamento(org, "Comercial");
+    let department = cenario.department(org, "Comercial");
 
     let mut config = cenario.config.clone();
     config.matrix = None;
-    let estado = Estado::novo(Arc::clone(&cenario.store), config).expect("estado sem módulo");
-    let (base, desligar) = servir(estado).await;
+    let state = Estado::novo(Arc::clone(&cenario.store), config).expect("estado sem módulo");
+    let (base, desligar) = servir(state).await;
 
     let rota = format!("/admin/v1/orgs/{org}/matrix");
     let resposta = pedir(&base, MetodoHttp::GET, &rota, Some(&token), None, None).await;
-    assert_eq!(resposta.status, StatusCode::OK, "{}", resposta.texto);
+    assert_eq!(resposta.status, StatusCode::OK, "{}", resposta.text);
     assert_eq!(
         resposta.json["connected"],
         Value::Null,
         "sem módulo nesta instância, `connected` é nulo"
     );
 
-    let espaco = pedir(
+    let space = pedir(
         &base,
         MetodoHttp::PUT,
         &format!("{rota}/spaces"),
         Some(&token),
-        Some(json!({"department_id": departamento.to_string()})),
+        Some(json!({"department_id": department.to_string()})),
         None,
     )
     .await;
-    assert_eq!(espaco.status, StatusCode::CONFLICT, "{}", espaco.texto);
-    assert_eq!(espaco.json["code"], json!("matrix_desligado"));
+    assert_eq!(space.status, StatusCode::CONFLICT, "{}", space.text);
+    assert_eq!(space.json["code"], json!("matrix_desligado"));
 
     let _ = desligar.send(());
 }

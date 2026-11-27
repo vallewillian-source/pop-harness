@@ -52,7 +52,7 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use futures::StreamExt;
-use poph_matrix::ModuloMatrix;
+use poph_matrix::MatrixModule;
 use poph_types::Secret;
 use serde_json::{Value, json};
 
@@ -108,7 +108,7 @@ pub trait EntregaDeEventos: Send + Sync {
     /// `Err` significa "não consegui agora": o Synapse vai reenviar a mesma transação. A
     /// implementação precisa ser idempotente por evento, porque o reenvio pode chegar depois de um
     /// processamento parcial.
-    fn entregar(&self, transacao: &str, eventos: Vec<Value>) -> FuturoDaEntrega<'_>;
+    fn entregar(&self, transacao: &str, events: Vec<Value>) -> FuturoDaEntrega<'_>;
 }
 
 /// Falha ao processar uma transação.
@@ -116,17 +116,17 @@ pub trait EntregaDeEventos: Send + Sync {
 /// O `motivo` é um código curto nosso (`"banco indisponível"`, `"gravação recusada"`), nunca texto
 /// de cliente: ele vai para o log e para lugar nenhum mais.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("não consegui processar a transação do Application Service: {motivo}")]
+#[error("não consegui processar a transação do Application Service: {reason}")]
 pub struct ErroEntrega {
     /// Motivo curto, sem dado de cliente.
-    pub motivo: String,
+    pub reason: String,
 }
 
 impl ErroEntrega {
     /// Monta o erro com um motivo curto.
-    pub fn novo(motivo: impl Into<String>) -> Self {
+    pub fn new(reason: impl Into<String>) -> Self {
         Self {
-            motivo: motivo.into(),
+            reason: reason.into(),
         }
     }
 }
@@ -140,7 +140,7 @@ impl ErroEntrega {
 /// comparação com o que chega no cabeçalho é feita em tempo constante.
 pub struct ReceptorAs {
     hs_token: Secret,
-    prefixo: String,
+    prefix: String,
     server_name: String,
     entrega: Arc<dyn EntregaDeEventos>,
     processadas: Mutex<Processadas>,
@@ -148,14 +148,14 @@ pub struct ReceptorAs {
 
 impl ReceptorAs {
     /// Monta o receptor com o teto padrão de transações lembradas.
-    pub fn novo(
-        prefixo: impl Into<String>,
+    pub fn new(
+        prefix: impl Into<String>,
         server_name: impl Into<String>,
         hs_token: Secret,
         entrega: Arc<dyn EntregaDeEventos>,
     ) -> Self {
         Self::com_teto(
-            prefixo,
+            prefix,
             server_name,
             hs_token,
             entrega,
@@ -165,7 +165,7 @@ impl ReceptorAs {
 
     /// Igual a [`ReceptorAs::novo`], com o teto da memória de transações escolhido pelo chamador.
     pub fn com_teto(
-        prefixo: impl Into<String>,
+        prefix: impl Into<String>,
         server_name: impl Into<String>,
         hs_token: Secret,
         entrega: Arc<dyn EntregaDeEventos>,
@@ -173,20 +173,20 @@ impl ReceptorAs {
     ) -> Self {
         Self {
             hs_token,
-            prefixo: prefixo.into(),
+            prefix: prefix.into(),
             server_name: server_name.into(),
             entrega,
-            processadas: Mutex::new(Processadas::novo(teto_transacoes)),
+            processadas: Mutex::new(Processadas::new(teto_transacoes)),
         }
     }
 
     /// Monta o receptor a partir do módulo já preparado (`ModuloMatrix::preparar`), que traz a
     /// configuração validada e os dois tokens lidos do ambiente.
-    pub fn do_modulo(modulo: ModuloMatrix, entrega: Arc<dyn EntregaDeEventos>) -> Self {
-        Self::novo(
+    pub fn do_modulo(modulo: MatrixModule, entrega: Arc<dyn EntregaDeEventos>) -> Self {
+        Self::new(
             modulo.config.prefix.clone(),
             modulo.config.server_name.clone(),
-            modulo.segredos.hs_token.clone(),
+            modulo.secrets.hs_token.clone(),
             entrega,
         )
     }
@@ -196,7 +196,7 @@ impl ReceptorAs {
         self.processadas_guardadas()
             .lock()
             .unwrap_or_else(|veneno| veneno.into_inner())
-            .teto
+            .cap
     }
 
     /// Confere o `hs_token` do cabeçalho `Authorization: Bearer <token>`.
@@ -262,7 +262,7 @@ impl ReceptorAs {
         let Some((localpart, dominio)) = resto.split_once(':') else {
             return false;
         };
-        let marca = format!("{}_", self.prefixo);
+        let marca = format!("{}_", self.prefix);
         dominio == self.server_name
             && localpart.len() > marca.len()
             && localpart.starts_with(&marca)
@@ -288,7 +288,7 @@ fn igual_em_tempo_constante(a: &[u8], b: &[u8]) -> bool {
 impl fmt::Debug for ReceptorAs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ReceptorAs")
-            .field("prefixo", &self.prefixo)
+            .field("prefixo", &self.prefix)
             .field("server_name", &self.server_name)
             .field("hs_token", &self.hs_token)
             .finish_non_exhaustive()
@@ -298,16 +298,16 @@ impl fmt::Debug for ReceptorAs {
 /// Memória FIFO das transações já processadas, com teto.
 #[derive(Debug)]
 struct Processadas {
-    teto: usize,
+    cap: usize,
     ordem: VecDeque<String>,
     conjunto: HashSet<String>,
 }
 
 impl Processadas {
-    fn novo(teto: usize) -> Self {
+    fn new(cap: usize) -> Self {
         Self {
             // Teto zero não faz sentido (nada seria lembrado): vale 1.
-            teto: teto.max(1),
+            cap: cap.max(1),
             ordem: VecDeque::new(),
             conjunto: HashSet::new(),
         }
@@ -321,7 +321,7 @@ impl Processadas {
         if self.conjunto.contains(transacao) {
             return;
         }
-        while self.ordem.len() >= self.teto {
+        while self.ordem.len() >= self.cap {
             match self.ordem.pop_front() {
                 Some(antiga) => {
                     self.conjunto.remove(&antiga);
@@ -361,35 +361,35 @@ pub fn rotas() -> Router<Estado> {
 
 /// `PUT …/transactions/{txnId}` — o lote de eventos que o Synapse entrega.
 async fn transacao(
-    State(estado): State<Estado>,
+    State(state): State<Estado>,
     Path(txn_id): Path<String>,
     cabecalhos: HeaderMap,
-    corpo: Body,
+    body: Body,
 ) -> Response {
-    atender_transacao(estado.matrix_as.as_deref(), &txn_id, &cabecalhos, corpo).await
+    atender_transacao(state.matrix_as.as_deref(), &txn_id, &cabecalhos, body).await
 }
 
 /// `GET …/users/{userId}` — "este usuário é seu?".
 async fn usuario(
-    State(estado): State<Estado>,
+    State(state): State<Estado>,
     Path(usuario): Path<String>,
     cabecalhos: HeaderMap,
 ) -> Response {
-    atender_usuario(estado.matrix_as.as_deref(), &usuario, &cabecalhos)
+    atender_usuario(state.matrix_as.as_deref(), &usuario, &cabecalhos)
 }
 
 /// `GET …/rooms/{roomAlias}` — "este alias é seu?".
 async fn alias(
-    State(estado): State<Estado>,
+    State(state): State<Estado>,
     Path(alias): Path<String>,
     cabecalhos: HeaderMap,
 ) -> Response {
-    atender_alias(estado.matrix_as.as_deref(), &alias, &cabecalhos)
+    atender_alias(state.matrix_as.as_deref(), &alias, &cabecalhos)
 }
 
 /// `POST …/ping` — o Synapse não usa hoje (spike da MX-02), mas a rota é barata de manter.
-async fn ping(State(estado): State<Estado>, cabecalhos: HeaderMap) -> Response {
-    atender_ping(estado.matrix_as.as_deref(), &cabecalhos)
+async fn ping(State(state): State<Estado>, cabecalhos: HeaderMap) -> Response {
+    atender_ping(state.matrix_as.as_deref(), &cabecalhos)
 }
 
 // ───────────────────────────── atendimento ─────────────────────────────
@@ -401,16 +401,16 @@ pub(crate) async fn atender_transacao(
     receptor: Option<&ReceptorAs>,
     txn_id: &str,
     cabecalhos: &HeaderMap,
-    corpo: Body,
+    body: Body,
 ) -> Response {
     let Some(receptor) = receptor else {
         return modulo_desligado();
     };
-    if let Err(erro) = receptor.autorizar(cabecalhos) {
-        return erro.into_response();
+    if let Err(error) = receptor.autorizar(cabecalhos) {
+        return error.into_response();
     }
 
-    let Some(bytes) = ler_corpo(corpo, TETO_CORPO).await else {
+    let Some(bytes) = ler_corpo(body, TETO_CORPO).await else {
         tracing::warn!(
             txn = %txn_id,
             teto_bytes = TETO_CORPO,
@@ -418,7 +418,7 @@ pub(crate) async fn atender_transacao(
         );
         return aceito();
     };
-    let Some(eventos) = eventos_da_transacao(&bytes) else {
+    let Some(events) = eventos_da_transacao(&bytes) else {
         tracing::warn!(
             txn = %txn_id,
             bytes = bytes.len(),
@@ -434,23 +434,23 @@ pub(crate) async fn atender_transacao(
         return aceito();
     }
 
-    let quantidade = eventos.len();
-    match receptor.entrega.entregar(txn_id, eventos).await {
+    let quantidade = events.len();
+    match receptor.entrega.entregar(txn_id, events).await {
         Ok(()) => {
             // Só depois de processar: se o processo cair antes disto, o reenvio do Synapse
             // reprocessa (a entrega é idempotente por evento).
             receptor.marcar_processada(txn_id);
             tracing::debug!(
                 txn = %txn_id,
-                eventos = quantidade,
+                events = quantidade,
                 "transação do Application Service processada"
             );
             aceito()
         }
-        Err(erro) => {
+        Err(error) => {
             tracing::warn!(
                 txn = %txn_id,
-                motivo = %erro.motivo,
+                reason = %error.reason,
                 "transação do Application Service não foi processada: 5xx para o Synapse reenviar"
             );
             ApiError::novo(
@@ -471,8 +471,8 @@ pub(crate) fn atender_usuario(
     let Some(receptor) = receptor else {
         return modulo_desligado();
     };
-    if let Err(erro) = receptor.autorizar(cabecalhos) {
-        return erro.into_response();
+    if let Err(error) = receptor.autorizar(cabecalhos) {
+        return error.into_response();
     }
     if receptor.usuario_do_modulo(usuario) {
         aceito()
@@ -489,8 +489,8 @@ pub(crate) fn atender_alias(
     let Some(receptor) = receptor else {
         return modulo_desligado();
     };
-    if let Err(erro) = receptor.autorizar(cabecalhos) {
-        return erro.into_response();
+    if let Err(error) = receptor.autorizar(cabecalhos) {
+        return error.into_response();
     }
     if receptor.alias_do_modulo(alias) {
         aceito()
@@ -503,8 +503,8 @@ pub(crate) fn atender_ping(receptor: Option<&ReceptorAs>, cabecalhos: &HeaderMap
     let Some(receptor) = receptor else {
         return modulo_desligado();
     };
-    if let Err(erro) = receptor.autorizar(cabecalhos) {
-        return erro.into_response();
+    if let Err(error) = receptor.autorizar(cabecalhos) {
+        return error.into_response();
     }
     aceito()
 }
@@ -536,12 +536,12 @@ fn nao_e_meu(o_que: &str) -> Response {
 }
 
 /// Lê o corpo até `teto` bytes. `None` = passou do teto (ou a leitura falhou).
-async fn ler_corpo(corpo: Body, teto: usize) -> Option<axum::body::Bytes> {
-    let mut fluxo = corpo.into_data_stream();
+async fn ler_corpo(body: Body, cap: usize) -> Option<axum::body::Bytes> {
+    let mut fluxo = body.into_data_stream();
     let mut dados: Vec<u8> = Vec::new();
     while let Some(parte) = fluxo.next().await {
         let parte = parte.ok()?;
-        if dados.len() + parte.len() > teto {
+        if dados.len() + parte.len() > cap {
             return None;
         }
         dados.extend_from_slice(&parte);
@@ -553,7 +553,7 @@ async fn ler_corpo(corpo: Body, teto: usize) -> Option<axum::body::Bytes> {
 fn eventos_da_transacao(bytes: &[u8]) -> Option<Vec<Value>> {
     let valor: Value = serde_json::from_slice(bytes).ok()?;
     match valor.get("events") {
-        Some(Value::Array(eventos)) => Some(eventos.clone()),
+        Some(Value::Array(events)) => Some(events.clone()),
         _ => None,
     }
 }
@@ -585,25 +585,25 @@ mod testes {
     }
 
     impl EntregaDeEventos for Anotadora {
-        fn entregar(&self, transacao: &str, eventos: Vec<Value>) -> FuturoDaEntrega<'_> {
+        fn entregar(&self, transacao: &str, events: Vec<Value>) -> FuturoDaEntrega<'_> {
             if self.falhar.load(Ordering::SeqCst) {
-                return Box::pin(async { Err(ErroEntrega::novo("banco indisponível")) });
+                return Box::pin(async { Err(ErroEntrega::new("banco indisponível")) });
             }
             self.chamadas
                 .lock()
                 .expect("trava")
-                .push((transacao.to_owned(), eventos));
+                .push((transacao.to_owned(), events));
             Box::pin(async { Ok(()) })
         }
     }
 
-    fn receptor(entrega: Arc<Anotadora>, teto: usize) -> ReceptorAs {
+    fn receptor(entrega: Arc<Anotadora>, cap: usize) -> ReceptorAs {
         ReceptorAs::com_teto(
             "ph",
             "matrix-dev.local",
             Sensitive::new(CANARIO.to_owned()),
             entrega,
-            teto,
+            cap,
         )
     }
 
@@ -616,9 +616,9 @@ mod testes {
         cabecalhos
     }
 
-    fn transacao_com(evento: &str) -> Body {
+    fn transacao_com(event: &str) -> Body {
         Body::from(
-            json!({ "events": [{ "type": "m.room.message", "event_id": evento }] }).to_string(),
+            json!({ "events": [{ "type": "m.room.message", "event_id": event }] }).to_string(),
         )
     }
 
@@ -628,7 +628,7 @@ mod testes {
 
     #[test]
     fn memoria_respeita_o_teto_e_esquece_a_mais_antiga() {
-        let mut memoria = Processadas::novo(2);
+        let mut memoria = Processadas::new(2);
         memoria.registrar("1");
         memoria.registrar("2");
         assert!(memoria.contem("1") && memoria.contem("2"));
@@ -643,7 +643,7 @@ mod testes {
 
     #[test]
     fn teto_zero_vale_um() {
-        assert_eq!(Processadas::novo(0).teto, 1);
+        assert_eq!(Processadas::new(0).cap, 1);
     }
 
     #[test]
@@ -745,13 +745,13 @@ mod testes {
         let receptor = receptor(Arc::clone(&anotadora), 8);
         let cabecalhos = cabecalho_bearer(CANARIO);
 
-        for corpo in [
+        for body in [
             Body::from("isto não é json"),
             Body::from("{ \"events\": \"não é lista\" }"),
             Body::from("{}"),
             Body::from(""),
         ] {
-            let resposta = atender_transacao(Some(&receptor), "9", &cabecalhos, corpo).await;
+            let resposta = atender_transacao(Some(&receptor), "9", &cabecalhos, body).await;
             assert_eq!(status(&resposta), StatusCode::OK, "corpo malformado");
         }
 
@@ -792,13 +792,13 @@ mod testes {
 
         let mut corpos = Vec::new();
         // Token certo (200), token errado (403), sem token (401) e corpo malformado (200).
-        for (cabecalhos, corpo) in [
+        for (cabecalhos, body) in [
             (cabecalho_bearer(CANARIO), transacao_com("$a")),
             (cabecalho_bearer("outro-token"), transacao_com("$a")),
             (HeaderMap::new(), transacao_com("$a")),
             (cabecalho_bearer(CANARIO), Body::from("lixo")),
         ] {
-            let resposta = atender_transacao(Some(&receptor), "77", &cabecalhos, corpo).await;
+            let resposta = atender_transacao(Some(&receptor), "77", &cabecalhos, body).await;
             let bytes = axum::body::to_bytes(resposta.into_body(), 64 * 1024)
                 .await
                 .expect("corpo da resposta");
@@ -807,8 +807,8 @@ mod testes {
 
         let log = String::from_utf8(capturado.lock().expect("trava").clone()).expect("utf-8");
         assert!(!log.trim().is_empty(), "o teste precisa de log para provar");
-        for corpo in &corpos {
-            assert!(!corpo.contains(CANARIO), "vazou na resposta: {corpo}");
+        for body in &corpos {
+            assert!(!body.contains(CANARIO), "vazou na resposta: {body}");
         }
         assert!(!log.contains(CANARIO), "vazou no log: {log}");
         // O `Debug` do receptor também não pode mostrar o token.

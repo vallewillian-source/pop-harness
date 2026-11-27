@@ -1,7 +1,7 @@
 # Input and output — idempotency, durable queue and resumption (HR-12)
 
 > Depends on HR-07 (storage) and HR-11 (actors).
-> Code: `crates/poph-agent/src/entrada_saida.rs`; persistence in
+> Code: `crates/poph-agent/src/entry_output.rs`; persistence in
 > `crates/poph-store/src/repos/caixas.rs` (`inbox`/`outbox`).
 > Decisions that govern this: PRD §6 steps 1 and 8, D11 (delivery at least once), D-05
 > (inactive agent does not open a turn), D-07 (2,000 msg/s per instance).
@@ -296,7 +296,7 @@ and the Application Service receiver with delivery of the attendant's reply (MX-
   with a 10 s limit (`PRAZO_DE_PARADA`) and abort only after that. Since the cursor only moves after success, nothing
   pending is lost: the next startup continues from the same point, and the repetition is idempotent through the `txnId`.
 - **Customer name in the room**: the provisioning port passes `conversations.client_name` (MX-32) to
-  `ConversaParaSala.nome_cliente`, so the room and the ghost are created with the name WhatsApp sent; without a name,
+  `ConversationToRoom.client_name`, so the room and the ghost are created with the name WhatsApp sent; without a name,
   they fall back to the identifier.
 
 Proofs: `crates/poph-server/tests/matrix_inicio.rs` — 8 tests with a real database and a fake Synapse (off, with no

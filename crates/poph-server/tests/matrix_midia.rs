@@ -23,13 +23,13 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use poph_matrix::erro::ErroChamada;
-use poph_matrix::formato::Envio;
-use poph_matrix::midia::{
-    self, BLOCO_ANEXO, LIMITE_MIDIA_BYTES, MSGTYPE_ARQUIVO, MSGTYPE_IMAGEM, PREFIXO_AVISO,
+use poph_matrix::asset::{
+    self, ASSET_BYTES_LIMIT, ATTACHMENT_BLOCK, MSGTYPE_FILE, MSGTYPE_IMAGE, PREFIX_NOTICE,
 };
-use poph_matrix::salas::{ConversaParaSala, ErroSala};
-use poph_matrix::usuarios::Fantasma;
+use poph_matrix::error::CallError;
+use poph_matrix::format::Outbound;
+use poph_matrix::rooms::{ConversationToRoom, RoomError};
+use poph_matrix::users::Ghost;
 use poph_server::matrix_espelho::{
     AvisoNaSala, DestinoMatrix, EnvioMidia, EspelhoMatrix, MidiaPublicada,
 };
@@ -50,7 +50,7 @@ struct Cenario {
 }
 
 impl Cenario {
-    fn novo(rotulo: &str) -> Self {
+    fn new(rotulo: &str) -> Self {
         static CONTADOR: AtomicUsize = AtomicUsize::new(0);
         let n = CONTADOR.fetch_add(1, Ordering::Relaxed);
         let pasta =
@@ -75,10 +75,10 @@ impl Cenario {
     }
 
     /// Grava o blob como o recebimento grava e devolve os metadados do anexo.
-    fn anexo(&self, org: OrgId, nome: &str, mime: &str, bytes: &[u8]) -> NewChannelAttachment {
+    fn anexo(&self, org: OrgId, name: &str, mime: &str, bytes: &[u8]) -> NewChannelAttachment {
         let gravado = poph_files::blob::write(&self.blobs, org, bytes).expect("grava o blob");
         NewChannelAttachment {
-            name: nome.to_owned(),
+            name: name.to_owned(),
             mime: mime.to_owned(),
             size_bytes: bytes.len() as u64,
             sha256: gravado.sha256.clone(),
@@ -135,13 +135,13 @@ fn criar_agente(store: &Store, org: OrgId) -> AgentId {
         .id
 }
 
-fn criar_conversa(store: &Store, org: OrgId, agente: AgentId, peer: &str) -> ConversationId {
+fn criar_conversa(store: &Store, org: OrgId, agent: AgentId, peer: &str) -> ConversationId {
     store
         .conversations()
         .create(
             org,
             NewConversation {
-                agent_id: agente,
+                agent_id: agent,
                 integration_id: None,
                 canal: "whatsapp".to_owned(),
                 peer_externo: Some(peer.to_owned()),
@@ -156,8 +156,8 @@ fn criar_conversa(store: &Store, org: OrgId, agente: AgentId, peer: &str) -> Con
 fn msg_cliente(
     store: &Store,
     org: OrgId,
-    conversa: ConversationId,
-    texto: &str,
+    conversation: ConversationId,
+    text: &str,
     anexos: &[NewChannelAttachment],
 ) -> poph_types::MessageId {
     store
@@ -165,12 +165,12 @@ fn msg_cliente(
         .write_with_attachments(
             org,
             NewMessage {
-                conversation_id: conversa,
+                conversation_id: conversation,
                 direction: Direction::Inbound,
                 role: Role::User,
                 origin: Origin::Agente,
                 author_name: None,
-                texto: texto.to_owned(),
+                texto: text.to_owned(),
                 attachments_json: "[]".to_owned(),
                 external_id: None,
                 turn_id: None,
@@ -186,9 +186,9 @@ fn msg_cliente(
 /// Um evento de mídia que o destino recebeu: o que a subida devolveu e o conteúdo publicado.
 #[derive(Debug, Clone)]
 struct MidiaEntregue {
-    sala: String,
+    room: String,
     txn: String,
-    remetente: String,
+    sender: String,
     /// `mxc://` que a "subida" devolveu (aqui, derivada do `txnId`).
     mxc: String,
     /// Conteúdo do evento, como o destino real monta.
@@ -207,10 +207,10 @@ impl MidiaEntregue {
 /// Um aviso em texto na sala.
 #[derive(Debug, Clone)]
 struct AvisoEntregue {
-    sala: String,
+    room: String,
     txn: String,
-    remetente: String,
-    corpo: String,
+    sender: String,
+    body: String,
 }
 
 /// O que o teste pede ao Synapse falso.
@@ -238,13 +238,13 @@ struct Falso {
     /// Recusa pedida pelo teste.
     recusa: Mutex<Recusa>,
     /// Salas pedidas.
-    salas: AtomicUsize,
+    rooms: AtomicUsize,
     /// Ordem de tudo o que entrou na sala: `midia:<txn>`, `texto:<txn>`, `aviso:<txn>`.
     ordem: Mutex<Vec<String>>,
 }
 
 impl Falso {
-    fn novo(recusa: Recusa) -> Arc<Self> {
+    fn new(recusa: Recusa) -> Arc<Self> {
         let falso = Self {
             recusa: Mutex::new(recusa),
             ..Self::default()
@@ -273,7 +273,7 @@ impl Falso {
     }
 
     /// Decide a resposta da próxima chamada de mídia.
-    fn decidir_midia(&self) -> Result<(), ErroChamada> {
+    fn decidir_midia(&self) -> Result<(), CallError> {
         let mut recusa = self.recusa.lock().unwrap();
         match &mut *recusa {
             Recusa::Nada => Ok(()),
@@ -290,22 +290,22 @@ impl Falso {
     }
 }
 
-fn transitoria() -> ErroChamada {
-    ErroChamada::Resposta {
-        operacao: "send",
+fn transitoria() -> CallError {
+    CallError::Response {
+        operation: "send",
         status: 503,
         errcode: Some("M_UNKNOWN".to_owned()),
-        mensagem: "indisponível".to_owned(),
+        message: "indisponível".to_owned(),
         retry_after_ms: None,
     }
 }
 
-fn recusada() -> ErroChamada {
-    ErroChamada::Resposta {
-        operacao: "send",
+fn recusada() -> CallError {
+    CallError::Response {
+        operation: "send",
         status: 403,
         errcode: Some("M_FORBIDDEN".to_owned()),
-        mensagem: "recusado".to_owned(),
+        message: "recusado".to_owned(),
         retry_after_ms: None,
     }
 }
@@ -313,34 +313,34 @@ fn recusada() -> ErroChamada {
 struct Sinal(Arc<Falso>);
 
 impl DestinoMatrix for Sinal {
-    fn garantir_sala(
+    fn ensure_room(
         &self,
-        dados: &ConversaParaSala,
-    ) -> impl std::future::Future<Output = Result<String, ErroSala>> + Send {
-        let sala = format!("!{}:matrix-dev.local", dados.conversa);
-        self.0.salas.fetch_add(1, Ordering::SeqCst);
-        async move { Ok(sala) }
+        dados: &ConversationToRoom,
+    ) -> impl std::future::Future<Output = Result<String, RoomError>> + Send {
+        let room = format!("!{}:matrix-dev.local", dados.conversation);
+        self.0.rooms.fetch_add(1, Ordering::SeqCst);
+        async move { Ok(room) }
     }
 
-    async fn garantir_aparelho(
+    async fn ensure_device(
         &self,
-        _dados: &ConversaParaSala,
+        _dados: &ConversationToRoom,
         _sala: &str,
-        _aparelho: &Fantasma,
-    ) -> Result<(), ErroSala> {
+        _aparelho: &Ghost,
+    ) -> Result<(), RoomError> {
         Ok(())
     }
 
-    fn enviar(
+    fn send(
         &self,
-        sala: &str,
-        envio: &Envio,
-    ) -> impl std::future::Future<Output = Result<(), ErroChamada>> + Send {
+        room: &str,
+        send: &Outbound,
+    ) -> impl std::future::Future<Output = Result<(), CallError>> + Send {
         let falso = &self.0;
-        let sala = sala.to_owned();
-        let txn = envio.txn_id.clone();
-        let corpo = envio.corpo.clone();
-        let remetente = envio.remetente.user_id().to_owned();
+        let room = room.to_owned();
+        let txn = send.txn_id.clone();
+        let body = send.body.clone();
+        let sender = send.sender.user_id().to_owned();
         *falso
             .tentativas
             .lock()
@@ -349,21 +349,21 @@ impl DestinoMatrix for Sinal {
             .or_insert(0) += 1;
         let mut textos = falso.textos.lock().unwrap();
         if !textos.iter().any(|(_, t, _, _)| *t == txn) {
-            textos.push((sala, txn.clone(), corpo, remetente));
+            textos.push((room, txn.clone(), body, sender));
             falso.ordem.lock().unwrap().push(format!("texto:{txn}"));
         }
         drop(textos);
         async move { Ok(()) }
     }
 
-    fn enviar_midia(
+    fn send_asset(
         &self,
-        sala: &str,
-        envio: &EnvioMidia,
-    ) -> impl std::future::Future<Output = Result<MidiaPublicada, ErroChamada>> + Send {
+        room: &str,
+        send: &EnvioMidia,
+    ) -> impl std::future::Future<Output = Result<MidiaPublicada, CallError>> + Send {
         let falso = &self.0;
-        let sala = sala.to_owned();
-        let txn = envio.midia.txn_id.clone();
+        let room = room.to_owned();
+        let txn = send.asset.txn_id.clone();
         *falso
             .tentativas
             .lock()
@@ -371,28 +371,28 @@ impl DestinoMatrix for Sinal {
             .entry(txn.clone())
             .or_insert(0) += 1;
         let resultado = falso.decidir_midia();
-        let remetente = envio.remetente.user_id().to_owned();
+        let sender = send.sender.user_id().to_owned();
         // Como o destino real: sobe o arquivo (aqui, o `mxc` sai do `txnId`) e publica o evento
         // com o conteúdo que a MX-43 monta.
         let mxc = format!("mxc://matrix-dev.local/{}", txn);
-        let conteudo = midia::conteudo_do_evento(&mxc, &envio.midia);
+        let conteudo = asset::event_content(&mxc, &send.asset);
         let mut midias = falso.midias.lock().unwrap();
-        let novo = !midias.iter().any(|m| m.sala == sala && m.txn == txn);
-        if resultado.is_ok() && novo {
+        let new = !midias.iter().any(|m| m.room == room && m.txn == txn);
+        if resultado.is_ok() && new {
             falso.ordem.lock().unwrap().push(format!("midia:{txn}"));
             midias.push(MidiaEntregue {
-                sala: sala.clone(),
+                room: room.clone(),
                 txn: txn.clone(),
-                remetente,
+                sender,
                 mxc: mxc.clone(),
                 conteudo,
-                bytes: envio.conteudo.len(),
+                bytes: send.conteudo.len(),
             });
         }
         drop(midias);
         // Como o destino real: o evento publicado e o `mxc` que a subida devolveu.
         let publicada = MidiaPublicada {
-            evento: format!("$midia-{txn}:matrix-dev.local"),
+            event: format!("$midia-{txn}:matrix-dev.local"),
             mxc,
         };
         async move { resultado.map(|()| publicada) }
@@ -400,22 +400,22 @@ impl DestinoMatrix for Sinal {
 
     fn avisar(
         &self,
-        sala: &str,
+        room: &str,
         aviso: &AvisoNaSala,
-    ) -> impl std::future::Future<Output = Result<(), ErroChamada>> + Send {
+    ) -> impl std::future::Future<Output = Result<(), CallError>> + Send {
         let falso = &self.0;
-        let sala = sala.to_owned();
+        let room = room.to_owned();
         let txn = aviso.txn_id.clone();
-        let remetente = aviso.remetente.user_id().to_owned();
-        let corpo = midia::corpo_do_aviso(aviso.motivo);
+        let sender = aviso.sender.user_id().to_owned();
+        let body = asset::notice_body(aviso.reason);
         let mut avisos = falso.avisos.lock().unwrap();
-        if !avisos.iter().any(|a| a.sala == sala && a.txn == txn) {
+        if !avisos.iter().any(|a| a.room == room && a.txn == txn) {
             falso.ordem.lock().unwrap().push(format!("aviso:{txn}"));
             avisos.push(AvisoEntregue {
-                sala,
+                room,
                 txn,
-                remetente,
-                corpo,
+                sender,
+                body,
             });
         }
         drop(avisos);
@@ -424,13 +424,13 @@ impl DestinoMatrix for Sinal {
 }
 
 fn espelho(cenario: &Cenario, falso: Arc<Falso>) -> EspelhoMatrix<Sinal> {
-    EspelhoMatrix::novo(cenario.store(), Sinal(falso), &config())
+    EspelhoMatrix::new(cenario.store(), Sinal(falso), &config())
         .expect("monta o espelho")
         .com_pasta_de_blobs(cenario.blobs.clone())
 }
 
-fn sala_de(conversa: ConversationId) -> String {
-    format!("!{conversa}:matrix-dev.local")
+fn sala_de(conversation: ConversationId) -> String {
+    format!("!{conversation}:matrix-dev.local")
 }
 
 fn fantasma_do_cliente(peer: &str) -> String {
@@ -458,8 +458,8 @@ fn maior_rowid_e_id(store: &Store) -> (u64, String) {
 }
 
 /// Id do anexo que o evento publicado carrega no bloco.
-fn bloco_id(midia: &MidiaEntregue) -> String {
-    midia.conteudo[BLOCO_ANEXO]["id"]
+fn bloco_id(asset: &MidiaEntregue) -> String {
+    asset.conteudo[ATTACHMENT_BLOCK]["id"]
         .as_str()
         .expect("o bloco leva o id")
         .to_owned()
@@ -469,20 +469,20 @@ fn bloco_id(midia: &MidiaEntregue) -> String {
 
 #[tokio::test]
 async fn imagem_e_pdf_do_cliente_vao_para_a_sala_depois_da_legenda() {
-    let cenario = Cenario::novo("imagem-pdf");
+    let cenario = Cenario::new("imagem-pdf");
     let store = cenario.store();
     let org = criar_org(&store, "a");
-    let agente = criar_agente(&store, org);
+    let agent = criar_agente(&store, org);
     let peer = "5521988887777";
-    let conversa = criar_conversa(&store, org, agente, peer);
+    let conversation = criar_conversa(&store, org, agent, peer);
     store.matrix().enable(org).expect("liga");
 
     let imagem = cenario.anexo(org, "foto.jpg", "image/jpeg", PNG);
     let pdf = cenario.anexo(org, "laudo.pdf", "application/pdf", PDF);
-    let com_imagem = msg_cliente(&store, org, conversa, "olha a foto", &[imagem]);
-    let com_pdf = msg_cliente(&store, org, conversa, "segue o laudo", &[pdf]);
+    let com_imagem = msg_cliente(&store, org, conversation, "olha a foto", &[imagem]);
+    let com_pdf = msg_cliente(&store, org, conversation, "segue o laudo", &[pdf]);
 
-    let falso = Falso::novo(Recusa::Nada);
+    let falso = Falso::new(Recusa::Nada);
     let relatorio = espelho(&cenario, Arc::clone(&falso))
         .ciclo()
         .await
@@ -494,9 +494,9 @@ async fn imagem_e_pdf_do_cliente_vao_para_a_sala_depois_da_legenda() {
     assert_eq!(relatorio.enviadas, 2, "as duas legendas");
 
     // Imagem: `m.image`, pelo fantasma do cliente, com o bloco e o tamanho do blob.
-    assert_eq!(midias[0].msgtype(), MSGTYPE_IMAGEM);
-    assert_eq!(midias[0].remetente, fantasma_do_cliente(peer));
-    assert_eq!(midias[0].sala, sala_de(conversa));
+    assert_eq!(midias[0].msgtype(), MSGTYPE_IMAGE);
+    assert_eq!(midias[0].sender, fantasma_do_cliente(peer));
+    assert_eq!(midias[0].room, sala_de(conversation));
     assert_eq!(midias[0].conteudo["body"], Value::String("foto.jpg".into()));
     assert_eq!(
         midias[0].conteudo["url"],
@@ -507,7 +507,7 @@ async fn imagem_e_pdf_do_cliente_vao_para_a_sala_depois_da_legenda() {
         Value::String("image/jpeg".into())
     );
     assert_eq!(midias[0].bytes, PNG.len());
-    let bloco = &midias[0].conteudo[BLOCO_ANEXO];
+    let bloco = &midias[0].conteudo[ATTACHMENT_BLOCK];
     assert_eq!(bloco["source"], Value::String("whatsapp".into()));
     assert!(
         bloco["id"].as_str().is_some_and(|id| !id.is_empty()),
@@ -515,7 +515,7 @@ async fn imagem_e_pdf_do_cliente_vao_para_a_sala_depois_da_legenda() {
     );
 
     // PDF: `m.file`.
-    assert_eq!(midias[1].msgtype(), MSGTYPE_ARQUIVO);
+    assert_eq!(midias[1].msgtype(), MSGTYPE_FILE);
     assert_eq!(
         midias[1].conteudo["info"]["mimetype"],
         Value::String("application/pdf".into())
@@ -536,9 +536,9 @@ async fn imagem_e_pdf_do_cliente_vao_para_a_sala_depois_da_legenda() {
     assert_eq!(
         ordem,
         vec![
-            format!("midia:{}", midia::txn_da_midia(&bloco_id(&midias[0]))),
+            format!("midia:{}", asset::asset_txn(&bloco_id(&midias[0]))),
             format!("texto:poph-msg-{com_imagem}"),
-            format!("midia:{}", midia::txn_da_midia(&bloco_id(&midias[1]))),
+            format!("midia:{}", asset::asset_txn(&bloco_id(&midias[1]))),
             format!("texto:poph-msg-{com_pdf}"),
         ]
     );
@@ -554,29 +554,29 @@ async fn imagem_e_pdf_do_cliente_vao_para_a_sala_depois_da_legenda() {
         .pending(org, i64::MAX, i64::MAX, 10)
         .expect("lê o registro da mídia");
     assert_eq!(registradas.len(), 2, "as duas mídias registradas");
-    for (midia, registrada) in midias.iter().zip(&registradas) {
-        assert_eq!(registrada.room, midia.sala);
+    for (asset, registrada) in midias.iter().zip(&registradas) {
+        assert_eq!(registrada.room, asset.room);
         assert_eq!(
             registrada.evento,
-            format!("$midia-{}:matrix-dev.local", midia.txn)
+            format!("$midia-{}:matrix-dev.local", asset.txn)
         );
-        assert_eq!(registrada.mxc, midia.mxc);
+        assert_eq!(registrada.mxc, asset.mxc);
         assert_eq!(
             registrada.nome,
-            midia.conteudo["body"].as_str().unwrap_or_default()
+            asset.conteudo["body"].as_str().unwrap_or_default()
         );
-        assert_eq!(registrada.agent, agente.to_string());
+        assert_eq!(registrada.agent, agent.to_string());
         // A categoria segue o que o evento é: imagem ou documento (o frontend só separa os dois).
         assert_eq!(
             registrada.category,
-            if midia.msgtype() == MSGTYPE_IMAGEM {
+            if asset.msgtype() == MSGTYPE_IMAGE {
                 poph_store::CategoryAsset::Image
             } else {
                 poph_store::CategoryAsset::Document
             },
             "categoria da mídia registrada"
         );
-        assert_eq!(registrada.size_bytes, midia.bytes as u64);
+        assert_eq!(registrada.size_bytes, asset.bytes as u64);
         assert!(
             registrada.still_to_draft() && registrada.still_to_delete(),
             "recém-publicada: as duas etapas pendentes"
@@ -586,17 +586,17 @@ async fn imagem_e_pdf_do_cliente_vao_para_a_sala_depois_da_legenda() {
 
 #[tokio::test]
 async fn reprocessar_a_mesma_midia_nao_duplica_o_evento() {
-    let cenario = Cenario::novo("idempotente");
+    let cenario = Cenario::new("idempotente");
     let store = cenario.store();
     let org = criar_org(&store, "b");
-    let agente = criar_agente(&store, org);
-    let conversa = criar_conversa(&store, org, agente, "5511911112222");
+    let agent = criar_agente(&store, org);
+    let conversation = criar_conversa(&store, org, agent, "5511911112222");
     store.matrix().enable(org).expect("liga");
     let imagem = cenario.anexo(org, "foto.png", "image/png", PNG);
-    msg_cliente(&store, org, conversa, "foto", &[imagem]);
+    msg_cliente(&store, org, conversation, "foto", &[imagem]);
 
     // Primeira passagem: a mídia falha de forma transitória e fica pendente.
-    let falso = Falso::novo(Recusa::MidiaTransitoria(1));
+    let falso = Falso::new(Recusa::MidiaTransitoria(1));
     let espelho_do_caso = espelho(&cenario, Arc::clone(&falso));
     let primeiro = espelho_do_caso.ciclo().await.expect("ciclo 1");
     assert_eq!(primeiro.midias_enviadas, 0);
@@ -625,21 +625,21 @@ async fn reprocessar_a_mesma_midia_nao_duplica_o_evento() {
 
 #[tokio::test]
 async fn arquivo_acima_do_limite_vira_aviso_e_o_cursor_segue() {
-    let cenario = Cenario::novo("grande");
+    let cenario = Cenario::new("grande");
     let store = cenario.store();
     let org = criar_org(&store, "c");
-    let agente = criar_agente(&store, org);
-    let conversa = criar_conversa(&store, org, agente, "5511933334444");
+    let agent = criar_agente(&store, org);
+    let conversation = criar_conversa(&store, org, agent, "5511933334444");
     store.matrix().enable(org).expect("liga");
 
     // A linha diz que o arquivo passa do limite (o blob no disco é pequeno de propósito: nada é
     // lido antes da decisão, e o laço não pode depender do disco para recusar).
     let mut grande = cenario.anexo(org, "video.mp4", "video/mp4", PNG);
-    grande.size_bytes = LIMITE_MIDIA_BYTES + 1;
-    msg_cliente(&store, org, conversa, "olha o vídeo", &[grande]);
-    msg_cliente(&store, org, conversa, "e depois isso", &[]);
+    grande.size_bytes = ASSET_BYTES_LIMIT + 1;
+    msg_cliente(&store, org, conversation, "olha o vídeo", &[grande]);
+    msg_cliente(&store, org, conversation, "e depois isso", &[]);
 
-    let falso = Falso::novo(Recusa::Nada);
+    let falso = Falso::new(Recusa::Nada);
     let relatorio = espelho(&cenario, Arc::clone(&falso))
         .ciclo()
         .await
@@ -649,19 +649,19 @@ async fn arquivo_acima_do_limite_vira_aviso_e_o_cursor_segue() {
     let avisos = falso.avisos();
     assert_eq!(avisos.len(), 1, "um aviso na sala");
     assert!(
-        avisos[0].corpo.starts_with(PREFIXO_AVISO),
+        avisos[0].body.starts_with(PREFIX_NOTICE),
         "aviso: {}",
-        avisos[0].corpo
+        avisos[0].body
     );
     assert!(
-        avisos[0].corpo.contains("16 MB"),
+        avisos[0].body.contains("16 MB"),
         "aviso: {}",
-        avisos[0].corpo
+        avisos[0].body
     );
     assert_eq!(relatorio.avisos_de_midia, 1);
     assert_eq!(
-        avisos[0].remetente,
-        format!("@ph_ag_{agente}:matrix-dev.local"),
+        avisos[0].sender,
+        format!("@ph_ag_{agent}:matrix-dev.local"),
         "o aviso é do fantasma do agente, dono da sala"
     );
     // A mensagem seguinte foi entregue no mesmo ciclo e o cursor passou pela mídia recusada.
@@ -671,20 +671,20 @@ async fn arquivo_acima_do_limite_vira_aviso_e_o_cursor_segue() {
 
 #[tokio::test]
 async fn anexo_sem_blob_no_disco_vira_aviso_sem_prender_o_cursor() {
-    let cenario = Cenario::novo("sem-blob");
+    let cenario = Cenario::new("sem-blob");
     let store = cenario.store();
     let org = criar_org(&store, "d");
-    let agente = criar_agente(&store, org);
-    let conversa = criar_conversa(&store, org, agente, "5511955556666");
+    let agent = criar_agente(&store, org);
+    let conversation = criar_conversa(&store, org, agent, "5511955556666");
     store.matrix().enable(org).expect("liga");
 
     let anexo = cenario.anexo(org, "foto.jpg", "image/jpeg", PNG);
     // Apaga o blob do disco, como um volume que sumiu.
     let caminho = cenario.blobs.join(org.to_string()).join(&anexo.sha256);
     fs::remove_file(&caminho).expect("apaga o blob");
-    msg_cliente(&store, org, conversa, "olha", &[anexo]);
+    msg_cliente(&store, org, conversation, "olha", &[anexo]);
 
-    let falso = Falso::novo(Recusa::Nada);
+    let falso = Falso::new(Recusa::Nada);
     let relatorio = espelho(&cenario, Arc::clone(&falso))
         .ciclo()
         .await
@@ -694,9 +694,9 @@ async fn anexo_sem_blob_no_disco_vira_aviso_sem_prender_o_cursor() {
     let avisos = falso.avisos();
     assert_eq!(avisos.len(), 1);
     assert!(
-        avisos[0].corpo.contains("não pôde ser lido"),
+        avisos[0].body.contains("não pôde ser lido"),
         "aviso: {}",
-        avisos[0].corpo
+        avisos[0].body
     );
     assert_eq!(relatorio.pendentes, 0);
     assert_eq!(cursor(&store, org), maior_rowid_e_id(&store));
@@ -704,16 +704,16 @@ async fn anexo_sem_blob_no_disco_vira_aviso_sem_prender_o_cursor() {
 
 #[tokio::test]
 async fn midia_recusada_de_vez_deixa_o_aviso_antes_de_isolar() {
-    let cenario = Cenario::novo("recusada");
+    let cenario = Cenario::new("recusada");
     let store = cenario.store();
     let org = criar_org(&store, "e");
-    let agente = criar_agente(&store, org);
-    let conversa = criar_conversa(&store, org, agente, "5511977778888");
+    let agent = criar_agente(&store, org);
+    let conversation = criar_conversa(&store, org, agent, "5511977778888");
     store.matrix().enable(org).expect("liga");
     let pdf = cenario.anexo(org, "laudo.pdf", "application/pdf", PDF);
-    msg_cliente(&store, org, conversa, "laudo", &[pdf]);
+    msg_cliente(&store, org, conversation, "laudo", &[pdf]);
 
-    let falso = Falso::novo(Recusa::MidiaDefinitiva(u32::MAX as usize));
+    let falso = Falso::new(Recusa::MidiaDefinitiva(u32::MAX as usize));
     let espelho_do_caso = espelho(&cenario, Arc::clone(&falso));
     let mut ciclos = 0;
     // Até o laço desistir: `TENTATIVAS_DEFINITIVAS` passagens.
@@ -725,9 +725,9 @@ async fn midia_recusada_de_vez_deixa_o_aviso_antes_de_isolar() {
     let avisos = falso.avisos();
     assert_eq!(avisos.len(), 1, "o aviso entrou uma vez só: {avisos:?}");
     assert!(
-        avisos[0].corpo.contains("recusou o arquivo"),
+        avisos[0].body.contains("recusou o arquivo"),
         "aviso: {}",
-        avisos[0].corpo
+        avisos[0].body
     );
     // O cursor passou: a mídia foi isolada em `matrix_falhas` e a fila não fica presa.
     assert_eq!(cursor(&store, org), maior_rowid_e_id(&store));

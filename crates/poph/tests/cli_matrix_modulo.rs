@@ -40,26 +40,26 @@ const SERVIDOR: &str = "matrix-dev.local";
 #[derive(Default, Clone)]
 struct SalaFalsa {
     tipo: Option<String>,
-    membros: Vec<String>,
-    convidados: Vec<String>,
-    estado: BTreeMap<(String, String), Value>,
+    members: Vec<String>,
+    guests: Vec<String>,
+    state: BTreeMap<(String, String), Value>,
     mensagens: Vec<(String, String, Value)>,
 }
 
 #[derive(Default)]
 struct EstadoFalso {
-    usuarios: BTreeMap<String, Option<String>>,
-    salas: BTreeMap<String, SalaFalsa>,
+    users: BTreeMap<String, Option<String>>,
+    rooms: BTreeMap<String, SalaFalsa>,
     aliases: BTreeMap<String, String>,
     proxima_sala: u32,
     versoes: u32,
 }
 
-fn responder(status: u16, corpo: Value) -> Response {
+fn responder(status: u16, body: Value) -> Response {
     (
         StatusCode::from_u16(status).expect("status válido"),
         [("content-type", "application/json")],
-        corpo.to_string(),
+        body.to_string(),
     )
         .into_response()
 }
@@ -84,22 +84,22 @@ fn decodificar(segmento: &str) -> String {
 }
 
 /// Percent-encoding mínimo de um id de usuário no parâmetro `user_id`.
-fn consulta(bruta: &str, nome: &str) -> Option<String> {
+fn consulta(bruta: &str, name: &str) -> Option<String> {
     bruta.split('&').find_map(|par| {
         let (chave, valor) = par.split_once('=')?;
-        (chave == nome).then(|| decodificar(valor))
+        (chave == name).then(|| decodificar(valor))
     })
 }
 
 async fn atender(
-    State(estado): State<Arc<Mutex<EstadoFalso>>>,
+    State(state): State<Arc<Mutex<EstadoFalso>>>,
     metodo: Method,
     uri: Uri,
     cabecalhos: HeaderMap,
-    corpo: String,
+    body: String,
 ) -> Response {
-    let corpo: Value = serde_json::from_str(&corpo).unwrap_or(Value::Null);
-    let mut guarda = estado.lock().expect("trava do Synapse falso");
+    let body: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+    let mut guarda = state.lock().expect("trava do Synapse falso");
 
     let autorizacao = cabecalhos
         .get(AUTHORIZATION)
@@ -128,22 +128,22 @@ async fn atender(
 
     match (metodo.as_str(), partes.as_slice()) {
         ("POST", [registro]) if registro == "register" => {
-            let localpart = corpo["username"].as_str().unwrap_or_default();
+            let localpart = body["username"].as_str().unwrap_or_default();
             let id = format!("@{localpart}:{SERVIDOR}");
-            if guarda.usuarios.contains_key(&id) {
+            if guarda.users.contains_key(&id) {
                 return responder(
                     400,
                     json!({ "errcode": "M_USER_IN_USE", "error": "User ID already taken." }),
                 );
             }
-            guarda.usuarios.insert(id.clone(), None);
+            guarda.users.insert(id.clone(), None);
             responder(200, json!({ "user_id": id }))
         }
-        ("GET", [perfil, id]) if perfil == "profile" => match guarda.usuarios.get(id) {
-            Some(nome) => {
+        ("GET", [profile, id]) if profile == "profile" => match guarda.users.get(id) {
+            Some(name) => {
                 let mut resposta = json!({});
-                if let Some(nome) = nome {
-                    resposta["displayname"] = Value::String(nome.clone());
+                if let Some(name) = name {
+                    resposta["displayname"] = Value::String(name.clone());
                 }
                 responder(200, resposta)
             }
@@ -152,14 +152,14 @@ async fn atender(
                 json!({ "errcode": "M_NOT_FOUND", "error": "Usuário não existe" }),
             ),
         },
-        ("PUT", [perfil, id, campo]) if perfil == "profile" && campo == "displayname" => {
+        ("PUT", [profile, id, campo]) if profile == "profile" && campo == "displayname" => {
             guarda
-                .usuarios
-                .insert(id.clone(), corpo["displayname"].as_str().map(str::to_owned));
+                .users
+                .insert(id.clone(), body["displayname"].as_str().map(str::to_owned));
             responder(200, json!({}))
         }
         ("POST", [criacao]) if criacao == "createRoom" => {
-            let alias = corpo["room_alias_name"]
+            let alias = body["room_alias_name"]
                 .as_str()
                 .map(|localpart| format!("#{localpart}:{SERVIDOR}"));
             if let Some(alias) = &alias
@@ -171,41 +171,39 @@ async fn atender(
                 );
             }
             guarda.proxima_sala += 1;
-            let sala = format!("!{}:{SERVIDOR}", guarda.proxima_sala);
-            let mut membros = Vec::new();
+            let room = format!("!{}:{SERVIDOR}", guarda.proxima_sala);
+            let mut members = Vec::new();
             if !quem.is_empty() {
-                membros.push(quem.clone());
+                members.push(quem.clone());
             }
-            guarda.salas.insert(
-                sala.clone(),
+            guarda.rooms.insert(
+                room.clone(),
                 SalaFalsa {
-                    tipo: corpo["creation_content"]["type"]
-                        .as_str()
-                        .map(str::to_owned),
-                    membros,
+                    tipo: body["creation_content"]["type"].as_str().map(str::to_owned),
+                    members,
                     ..SalaFalsa::default()
                 },
             );
             if let Some(alias) = alias {
-                guarda.aliases.insert(alias, sala.clone());
+                guarda.aliases.insert(alias, room.clone());
             }
-            responder(200, json!({ "room_id": sala }))
+            responder(200, json!({ "room_id": room }))
         }
-        ("GET", [diretorio, sala, alias]) if diretorio == "directory" && sala == "room" => {
+        ("GET", [diretorio, room, alias]) if diretorio == "directory" && room == "room" => {
             match guarda.aliases.get(alias) {
-                Some(sala) => responder(200, json!({ "room_id": sala })),
+                Some(room) => responder(200, json!({ "room_id": room })),
                 None => responder(
                     404,
                     json!({ "errcode": "M_NOT_FOUND", "error": "Alias não encontrado" }),
                 ),
             }
         }
-        ("POST", [salas, sala, convite]) if salas == "rooms" && convite == "invite" => {
-            match guarda.salas.get_mut(sala) {
+        ("POST", [rooms, room, convite]) if rooms == "rooms" && convite == "invite" => {
+            match guarda.rooms.get_mut(room) {
                 Some(alvo) => {
-                    let convidado = corpo["user_id"].as_str().unwrap_or_default().to_owned();
-                    if !alvo.convidados.contains(&convidado) {
-                        alvo.convidados.push(convidado);
+                    let convidado = body["user_id"].as_str().unwrap_or_default().to_owned();
+                    if !alvo.guests.contains(&convidado) {
+                        alvo.guests.push(convidado);
                     }
                     responder(200, json!({}))
                 }
@@ -215,18 +213,18 @@ async fn atender(
                 ),
             }
         }
-        ("POST", [entrar, alvo]) if entrar == "join" => {
-            let sala = if alvo.starts_with('#') {
+        ("POST", [enter, alvo]) if enter == "join" => {
+            let room = if alvo.starts_with('#') {
                 guarda.aliases.get(alvo).cloned()
             } else {
                 Some(alvo.clone())
             };
-            match sala.and_then(|sala| guarda.salas.get_mut(&sala).map(|alvo| (sala, alvo))) {
-                Some((sala, alvo)) => {
-                    if !alvo.membros.contains(&quem) {
-                        alvo.membros.push(quem.clone());
+            match room.and_then(|room| guarda.rooms.get_mut(&room).map(|alvo| (room, alvo))) {
+                Some((room, alvo)) => {
+                    if !alvo.members.contains(&quem) {
+                        alvo.members.push(quem.clone());
                     }
-                    responder(200, json!({ "room_id": sala }))
+                    responder(200, json!({ "room_id": room }))
                 }
                 None => responder(
                     404,
@@ -234,11 +232,11 @@ async fn atender(
                 ),
             }
         }
-        ("GET", [salas, sala, membros]) if salas == "rooms" && membros == "joined_members" => {
-            match guarda.salas.get(sala) {
+        ("GET", [rooms, room, members]) if rooms == "rooms" && members == "joined_members" => {
+            match guarda.rooms.get(room) {
                 Some(alvo) => {
                     let juntos: BTreeMap<String, Value> = alvo
-                        .membros
+                        .members
                         .iter()
                         .map(|id| (id.clone(), json!({})))
                         .collect();
@@ -250,13 +248,11 @@ async fn atender(
                 ),
             }
         }
-        ("PUT", [salas, sala, estado, tipo, chave @ ..])
-            if salas == "rooms" && estado == "state" =>
-        {
+        ("PUT", [rooms, room, state, tipo, chave @ ..]) if rooms == "rooms" && state == "state" => {
             let chave = chave.join("/");
-            match guarda.salas.get_mut(sala) {
+            match guarda.rooms.get_mut(room) {
                 Some(alvo) => {
-                    alvo.estado.insert((tipo.clone(), chave), corpo);
+                    alvo.state.insert((tipo.clone(), chave), body);
                     responder(200, json!({ "event_id": "$estado" }))
                 }
                 None => responder(
@@ -265,13 +261,11 @@ async fn atender(
                 ),
             }
         }
-        ("GET", [salas, sala, estado, tipo, chave @ ..])
-            if salas == "rooms" && estado == "state" =>
-        {
+        ("GET", [rooms, room, state, tipo, chave @ ..]) if rooms == "rooms" && state == "state" => {
             let chave = chave.join("/");
-            match guarda.salas.get(sala) {
-                Some(alvo) => match alvo.estado.get(&(tipo.clone(), chave)) {
-                    Some(corpo) => responder(200, corpo.clone()),
+            match guarda.rooms.get(room) {
+                Some(alvo) => match alvo.state.get(&(tipo.clone(), chave)) {
+                    Some(body) => responder(200, body.clone()),
                     None => responder(
                         404,
                         json!({ "errcode": "M_NOT_FOUND", "error": "Evento não existe" }),
@@ -283,11 +277,11 @@ async fn atender(
                 ),
             }
         }
-        ("PUT", [salas, sala, envio, tipo, txn]) if salas == "rooms" && envio == "send" => {
-            match guarda.salas.get_mut(sala) {
+        ("PUT", [rooms, room, send, tipo, txn]) if rooms == "rooms" && send == "send" => {
+            match guarda.rooms.get_mut(room) {
                 Some(alvo) => {
                     if !alvo.mensagens.iter().any(|(ja, _, _)| ja == txn) {
-                        alvo.mensagens.push((txn.clone(), tipo.clone(), corpo));
+                        alvo.mensagens.push((txn.clone(), tipo.clone(), body));
                     }
                     responder(200, json!({ "event_id": format!("$msg_{txn}") }))
                 }
@@ -314,7 +308,7 @@ struct Cenario {
 
 impl Cenario {
     /// `homeserver` aponta para o Synapse falso (ou para um endereço morto, quando o teste não fala com ele).
-    fn novo(rotulo: &str, homeserver: &str, habilitado: bool) -> Self {
+    fn new(rotulo: &str, homeserver: &str, habilitado: bool) -> Self {
         let pasta = std::env::temp_dir().join(format!(
             "poph-cli-matrix-modulo-{rotulo}-{}",
             std::process::id()
@@ -365,7 +359,7 @@ impl Cenario {
             ],
             false,
         );
-        assert_eq!(codigo(&saida), 0, "{}", texto(&saida.stderr));
+        assert_eq!(code(&saida), 0, "{}", text(&saida.stderr));
         json_de(&saida)["org"]["id"]
             .as_str()
             .expect("id da org")
@@ -373,7 +367,7 @@ impl Cenario {
     }
 
     /// Cria um departamento pela CLI e devolve o id.
-    fn criar_departamento(&self, slug: &str, nome: &str) -> String {
+    fn criar_departamento(&self, slug: &str, name: &str) -> String {
         let saida = self.poph(
             &[
                 "--offline",
@@ -382,12 +376,12 @@ impl Cenario {
                 "department",
                 "create",
                 "--name",
-                nome,
+                name,
                 "--json",
             ],
             false,
         );
-        assert_eq!(codigo(&saida), 0, "{}", texto(&saida.stderr));
+        assert_eq!(code(&saida), 0, "{}", text(&saida.stderr));
         json_de(&saida)["department"]["id"]
             .as_str()
             .expect("id do departamento")
@@ -401,28 +395,28 @@ impl Drop for Cenario {
     }
 }
 
-fn codigo(saida: &Output) -> i32 {
+fn code(saida: &Output) -> i32 {
     saida.status.code().unwrap_or(-1)
 }
 
-fn texto(bytes: &[u8]) -> String {
+fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
 fn json_de(saida: &Output) -> Value {
     serde_json::from_slice(&saida.stdout)
-        .unwrap_or_else(|erro| panic!("a saída não é JSON ({erro}): {}", texto(&saida.stdout)))
+        .unwrap_or_else(|error| panic!("a saída não é JSON ({error}): {}", text(&saida.stdout)))
 }
 
 /// Nenhum valor de token pode aparecer na saída do comando.
 fn sem_tokens(saida: &Output) {
     for canario in [AS_TOKEN, HS_TOKEN] {
         assert!(
-            !texto(&saida.stdout).contains(canario),
+            !text(&saida.stdout).contains(canario),
             "token vazou no stdout"
         );
         assert!(
-            !texto(&saida.stderr).contains(canario),
+            !text(&saida.stderr).contains(canario),
             "token vazou no stderr"
         );
     }
@@ -431,12 +425,12 @@ fn sem_tokens(saida: &Output) {
 /// Quantos espaços (`m.space`) o Synapse falso tem.
 fn espacos_no_synapse(synapse: &Synapse) -> usize {
     synapse
-        .estado
+        .state
         .lock()
         .expect("trava do Synapse falso")
-        .salas
+        .rooms
         .values()
-        .filter(|sala| sala.tipo.as_deref() == Some("m.space"))
+        .filter(|room| room.tipo.as_deref() == Some("m.space"))
         .count()
 }
 
@@ -444,7 +438,7 @@ fn espacos_no_synapse(synapse: &Synapse) -> usize {
 
 #[test]
 fn estado_ligar_e_desligar_pela_cli_preservam_o_corte() {
-    let cenario = Cenario::novo("ligacao", "http://127.0.0.1:9", true);
+    let cenario = Cenario::new("ligacao", "http://127.0.0.1:9", true);
     cenario.criar_org("loja-mx23");
 
     // Antes de ligar: desligado e sem corte.
@@ -459,7 +453,7 @@ fn estado_ligar_e_desligar_pela_cli_preservam_o_corte() {
         ],
         false,
     );
-    assert_eq!(codigo(&antes), 0, "{}", texto(&antes.stderr));
+    assert_eq!(code(&antes), 0, "{}", text(&antes.stderr));
     sem_tokens(&antes);
     let antes = json_de(&antes);
     assert_eq!(antes["versao_relatorio"], 1);
@@ -486,7 +480,7 @@ fn estado_ligar_e_desligar_pela_cli_preservam_o_corte() {
         ],
         false,
     );
-    assert_eq!(codigo(&ligado), 0, "{}", texto(&ligado.stderr));
+    assert_eq!(code(&ligado), 0, "{}", text(&ligado.stderr));
     sem_tokens(&ligado);
     let ligado = json_de(&ligado);
     assert_eq!(ligado["ligado"], true);
@@ -506,7 +500,7 @@ fn estado_ligar_e_desligar_pela_cli_preservam_o_corte() {
         ],
         false,
     );
-    assert_eq!(codigo(&de_novo), 0, "{}", texto(&de_novo.stderr));
+    assert_eq!(code(&de_novo), 0, "{}", text(&de_novo.stderr));
     assert_eq!(json_de(&de_novo)["corte_do_backfill_ms"], corte);
 
     // Desligar mantém o corte e não apaga nada.
@@ -521,7 +515,7 @@ fn estado_ligar_e_desligar_pela_cli_preservam_o_corte() {
         ],
         false,
     );
-    assert_eq!(codigo(&desligado), 0, "{}", texto(&desligado.stderr));
+    assert_eq!(code(&desligado), 0, "{}", text(&desligado.stderr));
     let desligado = json_de(&desligado);
     assert_eq!(desligado["ligado"], false);
     assert_eq!(
@@ -534,8 +528,8 @@ fn estado_ligar_e_desligar_pela_cli_preservam_o_corte() {
         &["--offline", "--org", "loja-mx23", "matrix", "estado"],
         false,
     );
-    assert_eq!(codigo(&texto_estado), 0, "{}", texto(&texto_estado.stderr));
-    let saida = texto(&texto_estado.stdout);
+    assert_eq!(code(&texto_estado), 0, "{}", text(&texto_estado.stderr));
+    let saida = text(&texto_estado.stdout);
     assert!(
         saida.contains("ligado:                 não"),
         "saída: {saida}"
@@ -546,30 +540,30 @@ fn estado_ligar_e_desligar_pela_cli_preservam_o_corte() {
 
 #[test]
 fn org_e_uso_sem_as_flags_dao_erro_claro() {
-    let cenario = Cenario::novo("flags", "http://127.0.0.1:9", true);
+    let cenario = Cenario::new("flags", "http://127.0.0.1:9", true);
     cenario.criar_org("existe-mx23");
 
     let inexistente = cenario.poph(
         &["--offline", "--org", "nao-existe", "matrix", "estado"],
         false,
     );
-    assert_eq!(codigo(&inexistente), 1);
+    assert_eq!(code(&inexistente), 1);
     assert!(
-        texto(&inexistente.stderr).contains("não existe org com o slug `nao-existe`"),
+        text(&inexistente.stderr).contains("não existe org com o slug `nao-existe`"),
         "stderr: {}",
-        texto(&inexistente.stderr)
+        text(&inexistente.stderr)
     );
 
     let sem_offline = cenario.poph(&["--org", "existe-mx23", "matrix", "ligar"], false);
-    assert_eq!(codigo(&sem_offline), 1);
-    assert!(texto(&sem_offline.stderr).contains("--offline"));
+    assert_eq!(code(&sem_offline), 1);
+    assert!(text(&sem_offline.stderr).contains("--offline"));
 
     let sem_org = cenario.poph(&["--offline", "matrix", "desligar"], false);
-    assert_eq!(codigo(&sem_org), 1);
-    assert!(texto(&sem_org.stderr).contains("informe --org"));
+    assert_eq!(code(&sem_org), 1);
+    assert!(text(&sem_org.stderr).contains("informe --org"));
 
     // Nada foi gravado por nenhuma dessas chamadas.
-    let estado = json_de(&cenario.poph(
+    let state = json_de(&cenario.poph(
         &[
             "--offline",
             "--org",
@@ -580,7 +574,7 @@ fn org_e_uso_sem_as_flags_dao_erro_claro() {
         ],
         false,
     ));
-    assert_eq!(estado["ligado"], false);
+    assert_eq!(state["ligado"], false);
 }
 
 // ───────────────────────────── espaços ─────────────────────────────
@@ -588,9 +582,9 @@ fn org_e_uso_sem_as_flags_dao_erro_claro() {
 #[test]
 fn espaco_cria_uma_vez_lista_e_desliga_sem_apagar_no_element() {
     let synapse = subir_synapse();
-    let cenario = Cenario::novo("espaco", &synapse.endereco, true);
+    let cenario = Cenario::new("espaco", &synapse.endereco, true);
     cenario.criar_org("vendas-mx23");
-    let departamento = cenario.criar_departamento("vendas-mx23", "Vendas");
+    let department = cenario.criar_departamento("vendas-mx23", "Vendas");
 
     // Cria o espaço do departamento.
     let criado = cenario.poph(
@@ -601,19 +595,16 @@ fn espaco_cria_uma_vez_lista_e_desliga_sem_apagar_no_element() {
             "matrix",
             "espaco",
             "--departamento",
-            &departamento,
+            &department,
             "--json",
         ],
         true,
     );
-    assert_eq!(codigo(&criado), 0, "{}", texto(&criado.stderr));
+    assert_eq!(code(&criado), 0, "{}", text(&criado.stderr));
     sem_tokens(&criado);
     let criado = json_de(&criado);
-    let espaco = criado["espaco"].as_str().expect("id do espaço").to_owned();
-    assert!(
-        espaco.starts_with('!'),
-        "o espaço é um id de sala: {espaco}"
-    );
+    let space = criado["espaco"].as_str().expect("id do espaço").to_owned();
+    assert!(space.starts_with('!'), "o espaço é um id de sala: {space}");
     assert_eq!(criado["origem"], "auto");
     assert_eq!(espacos_no_synapse(&synapse), 1);
 
@@ -626,13 +617,13 @@ fn espaco_cria_uma_vez_lista_e_desliga_sem_apagar_no_element() {
             "matrix",
             "espaco",
             "--departamento",
-            &departamento,
+            &department,
             "--json",
         ],
         true,
     );
-    assert_eq!(codigo(&repetido), 0, "{}", texto(&repetido.stderr));
-    assert_eq!(json_de(&repetido)["espaco"], espaco);
+    assert_eq!(code(&repetido), 0, "{}", text(&repetido.stderr));
+    assert_eq!(json_de(&repetido)["espaco"], space);
     assert_eq!(
         espacos_no_synapse(&synapse),
         1,
@@ -651,12 +642,12 @@ fn espaco_cria_uma_vez_lista_e_desliga_sem_apagar_no_element() {
         ],
         true,
     );
-    assert_eq!(codigo(&lista), 0, "{}", texto(&lista.stderr));
+    assert_eq!(code(&lista), 0, "{}", text(&lista.stderr));
     let lista = json_de(&lista);
     let itens = lista["espacos"].as_array().expect("lista de espaços");
     assert_eq!(itens.len(), 1);
     assert_eq!(itens[0]["departamento_nome"], "Vendas");
-    assert_eq!(itens[0]["espaco"], espaco);
+    assert_eq!(itens[0]["espaco"], space);
 
     // Desliga: a linha sai do Harness, o espaço continua no Synapse.
     let desligado = cenario.poph(
@@ -668,12 +659,12 @@ fn espaco_cria_uma_vez_lista_e_desliga_sem_apagar_no_element() {
             "espaco",
             "desligar",
             "--departamento",
-            &departamento,
+            &department,
             "--json",
         ],
         true,
     );
-    assert_eq!(codigo(&desligado), 0, "{}", texto(&desligado.stderr));
+    assert_eq!(code(&desligado), 0, "{}", text(&desligado.stderr));
     let desligado = json_de(&desligado);
     assert_eq!(desligado["removido"], true);
     assert_eq!(
@@ -698,9 +689,9 @@ fn espaco_cria_uma_vez_lista_e_desliga_sem_apagar_no_element() {
 
 #[test]
 fn espaco_sem_tokens_nomeia_a_variavel_e_nao_grava_nada() {
-    let cenario = Cenario::novo("sem-tokens", "http://127.0.0.1:9", true);
+    let cenario = Cenario::new("sem-tokens", "http://127.0.0.1:9", true);
     cenario.criar_org("sem-token-mx23");
-    let departamento = cenario.criar_departamento("sem-token-mx23", "Suporte");
+    let department = cenario.criar_departamento("sem-token-mx23", "Suporte");
 
     let saida = cenario.poph(
         &[
@@ -710,12 +701,12 @@ fn espaco_sem_tokens_nomeia_a_variavel_e_nao_grava_nada() {
             "matrix",
             "espaco",
             "--departamento",
-            &departamento,
+            &department,
         ],
         false,
     );
-    assert_eq!(codigo(&saida), 1);
-    let stderr = texto(&saida.stderr);
+    assert_eq!(code(&saida), 1);
+    let stderr = text(&saida.stderr);
     assert!(stderr.contains("POPH_MATRIX_AS_TOKEN"), "stderr: {stderr}");
     sem_tokens(&saida);
 
@@ -735,9 +726,9 @@ fn espaco_sem_tokens_nomeia_a_variavel_e_nao_grava_nada() {
 
 #[test]
 fn espaco_com_modulo_desligado_recusa_com_a_instrucao() {
-    let cenario = Cenario::novo("desligado", "http://127.0.0.1:9", false);
+    let cenario = Cenario::new("desligado", "http://127.0.0.1:9", false);
     cenario.criar_org("desligado-mx23");
-    let departamento = cenario.criar_departamento("desligado-mx23", "Vendas");
+    let department = cenario.criar_departamento("desligado-mx23", "Vendas");
 
     let saida = cenario.poph(
         &[
@@ -747,15 +738,15 @@ fn espaco_com_modulo_desligado_recusa_com_a_instrucao() {
             "matrix",
             "espaco",
             "--departamento",
-            &departamento,
+            &department,
         ],
         true,
     );
-    assert_eq!(codigo(&saida), 1);
+    assert_eq!(code(&saida), 1);
     assert!(
-        texto(&saida.stderr).contains("habilitado = true"),
+        text(&saida.stderr).contains("habilitado = true"),
         "stderr: {}",
-        texto(&saida.stderr)
+        text(&saida.stderr)
     );
     sem_tokens(&saida);
 }
@@ -763,7 +754,7 @@ fn espaco_com_modulo_desligado_recusa_com_a_instrucao() {
 #[test]
 fn espaco_de_departamento_de_outra_org_nao_existe_para_esta_org() {
     let synapse = subir_synapse();
-    let cenario = Cenario::novo("outra-org", &synapse.endereco, true);
+    let cenario = Cenario::new("outra-org", &synapse.endereco, true);
     cenario.criar_org("dona-mx23");
     cenario.criar_org("outra-mx23");
     let departamento_da_outra = cenario.criar_departamento("outra-mx23", "Financeiro");
@@ -780,11 +771,11 @@ fn espaco_de_departamento_de_outra_org_nao_existe_para_esta_org() {
         ],
         true,
     );
-    assert_eq!(codigo(&saida), 1);
+    assert_eq!(code(&saida), 1);
     assert!(
-        texto(&saida.stderr).contains("não existe nesta org"),
+        text(&saida.stderr).contains("não existe nesta org"),
         "stderr: {}",
-        texto(&saida.stderr)
+        text(&saida.stderr)
     );
     assert_eq!(
         espacos_no_synapse(&synapse),
@@ -805,16 +796,16 @@ fn espaco_de_departamento_de_outra_org_nao_existe_para_esta_org() {
         ],
         true,
     );
-    assert_eq!(codigo(&desligar), 1);
-    assert!(texto(&desligar.stderr).contains("não existe nesta org"));
+    assert_eq!(code(&desligar), 1);
+    assert!(text(&desligar.stderr).contains("não existe nesta org"));
 }
 
 #[test]
 fn espaco_recusa_combinacoes_e_espaco_invalido() {
     let synapse = subir_synapse();
-    let cenario = Cenario::novo("combinacoes", &synapse.endereco, true);
+    let cenario = Cenario::new("combinacoes", &synapse.endereco, true);
     cenario.criar_org("combina-mx23");
-    let departamento = cenario.criar_departamento("combina-mx23", "Vendas");
+    let department = cenario.criar_departamento("combina-mx23", "Vendas");
 
     // `--espaco` sem `--departamento`: o espaço é de um departamento.
     let sozinho = cenario.poph(
@@ -829,8 +820,8 @@ fn espaco_recusa_combinacoes_e_espaco_invalido() {
         ],
         true,
     );
-    assert_eq!(codigo(&sozinho), 1);
-    assert!(texto(&sozinho.stderr).contains("junto com --departamento"));
+    assert_eq!(code(&sozinho), 1);
+    assert!(text(&sozinho.stderr).contains("junto com --departamento"));
 
     // `espaco desligar` não aceita `--espaco` junto.
     let misturado = cenario.poph(
@@ -844,12 +835,12 @@ fn espaco_recusa_combinacoes_e_espaco_invalido() {
             "!abc:matrix-dev.local",
             "desligar",
             "--departamento",
-            &departamento,
+            &department,
         ],
         true,
     );
-    assert_eq!(codigo(&misturado), 1);
-    assert!(texto(&misturado.stderr).contains("sozinho"));
+    assert_eq!(code(&misturado), 1);
+    assert!(text(&misturado.stderr).contains("sozinho"));
 
     // Um espaço que não é id nem alias é recusado antes de qualquer chamada ao Synapse.
     let invalido = cenario.poph(
@@ -860,17 +851,17 @@ fn espaco_recusa_combinacoes_e_espaco_invalido() {
             "matrix",
             "espaco",
             "--departamento",
-            &departamento,
+            &department,
             "--espaco",
             "sem-prefixo",
         ],
         true,
     );
-    assert_eq!(codigo(&invalido), 1);
+    assert_eq!(code(&invalido), 1);
     assert!(
-        texto(&invalido.stderr).contains("espaço informado inválido"),
+        text(&invalido.stderr).contains("espaço informado inválido"),
         "stderr: {}",
-        texto(&invalido.stderr)
+        text(&invalido.stderr)
     );
     sem_tokens(&invalido);
     assert_eq!(espacos_no_synapse(&synapse), 0);
@@ -882,15 +873,15 @@ fn espaco_recusa_combinacoes_e_espaco_invalido() {
 /// roda o `poph` como processo, e o processo fala com o Synapse de verdade por HTTP.
 struct Synapse {
     endereco: String,
-    estado: Arc<Mutex<EstadoFalso>>,
+    state: Arc<Mutex<EstadoFalso>>,
 }
 
 fn subir_synapse() -> Synapse {
     let ouvinte = TcpListener::bind("127.0.0.1:0").expect("porta efêmera");
     ouvinte.set_nonblocking(true).expect("não bloqueante");
     let endereco = format!("http://{}", ouvinte.local_addr().expect("endereço"));
-    let estado = Arc::new(Mutex::new(EstadoFalso::default()));
-    let para_a_thread = Arc::clone(&estado);
+    let state = Arc::new(Mutex::new(EstadoFalso::default()));
+    let para_a_thread = Arc::clone(&state);
     std::thread::spawn(move || {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -902,5 +893,5 @@ fn subir_synapse() -> Synapse {
             let _ = axum::serve(listener, app).await;
         });
     });
-    Synapse { endereco, estado }
+    Synapse { endereco, state }
 }

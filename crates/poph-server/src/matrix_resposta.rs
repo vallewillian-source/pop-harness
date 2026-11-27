@@ -9,11 +9,11 @@
 //!   (mensagem + fila de saída + conversa `transferred` + auditoria, numa escrita só), com o id do
 //!   evento como chave de idempotência;
 //! - `MidiaDoAtendente` → o arquivo do atendente vai ao cliente (MX-44): baixa o conteúdo do
-//!   Synapse com teto de bytes e sem seguir redirecionamento, confere o tipo **pelo conteúdo**
+//!   Synapse com teto de bytes e sem seguir redirecionamento, confere o kind **pelo conteúdo**
 //!   (`poph_files::outbound`, a lista fechada de saída — imagem, PDF, Office, áudio e vídeo),
 //!   grava como blob da org e chama a operação atômica da MX-44 (mensagem `human` com anexo + item
 //!   `file` na fila + conversa `transferred` + auditoria, numa escrita só). O que não dá para
-//!   enviar (arquivo grande, tipo recusado, mídia que o Synapse não entrega mais) vira um aviso em
+//!   enviar (arquivo grande, kind recusado, mídia que o Synapse não entrega mais) vira um aviso em
 //!   texto na sala, e a conversa não muda;
 //! - `Ignorar` → nada, só o código do motivo no log.
 //!
@@ -75,10 +75,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use poph_matrix::midia_atendente::{self, MotivoNaoEnviar};
-use poph_matrix::{
-    Acao, ClienteMatrix, ErroMidia, IdsFantasmas, ModuloMatrix, TipoMidia, classificar,
-};
+use poph_matrix::attendant_asset::{self, NotSendReason};
+use poph_matrix::{Action, AssetError, AssetKind, GhostIds, MatrixClient, MatrixModule, classify};
 use poph_store::error::StoreError;
 use poph_store::{HumanResponse, HumanResponseWithFile, NewHumanResponse, ResponseFile, Store};
 use poph_types::{AgentId, ConversationId, OrgId};
@@ -127,7 +125,7 @@ pub struct ConversaDaSala {
     /// Org dona da sala (e da conversa).
     pub org: OrgId,
     /// Conversa espelhada na sala.
-    pub conversa: ConversationId,
+    pub conversation: ConversationId,
 }
 
 /// O que um evento de mídia do atendente traz, reunido para o caminho do envio (MX-44).
@@ -135,18 +133,18 @@ pub struct ConversaDaSala {
 /// Emprestado do evento: nada é copiado antes de o arquivo ser aceito.
 struct ArquivoDoEvento<'a> {
     /// Sala de onde veio o arquivo.
-    sala: &'a str,
+    room: &'a str,
     /// Id do evento no Matrix (idempotência e `txnId` do aviso).
-    evento_id: &'a str,
+    event_id: &'a str,
     /// Id Matrix de quem mandou no Element. É usuário comum do homeserver, **fora** do namespace
     /// do Application Service: serve só para o nome da legenda, nunca para assinar no Synapse.
-    remetente: &'a str,
+    sender: &'a str,
     /// Tipo declarado pelo `msgtype` do evento (o real vem do conteúdo).
-    tipo: TipoMidia,
+    kind: AssetKind,
     /// `mxc://` do arquivo, quando o evento trouxe.
     url: Option<&'a str>,
     /// Nome do arquivo no evento, quando trouxe.
-    nome: &'a str,
+    name: &'a str,
 }
 
 // ───────────────────────────── porta de persistência ─────────────────────────────
@@ -159,7 +157,7 @@ pub trait PortaAtendimento: Send + Sync {
     /// A conversa da sala, ou `None` quando nenhuma org ligada conhece essa sala.
     ///
     /// `Err` significa "não consegui olhar agora": vira `5xx` e o Synapse reenvia.
-    fn conversa_da_sala(&self, sala: &str) -> Result<Option<ConversaDaSala>, StoreError>;
+    fn conversa_da_sala(&self, room: &str) -> Result<Option<ConversaDaSala>, StoreError>;
 
     /// O agente dono da conversa, ou `None` quando ela sumiu entre a leitura da sala e esta.
     ///
@@ -174,7 +172,7 @@ pub trait PortaAtendimento: Send + Sync {
     fn registrar_resposta(
         &self,
         alvo: ConversaDaSala,
-        nova: NewHumanResponse<'_>,
+        fresh: NewHumanResponse<'_>,
     ) -> Result<HumanResponse, StoreError>;
 
     /// A operação atômica da MX-44 (resposta com arquivo): mensagem `human` com anexo, item
@@ -182,7 +180,7 @@ pub trait PortaAtendimento: Send + Sync {
     fn registrar_resposta_com_arquivo(
         &self,
         alvo: ConversaDaSala,
-        nova: HumanResponseWithFile<'_>,
+        fresh: HumanResponseWithFile<'_>,
     ) -> Result<HumanResponse, StoreError>;
 }
 
@@ -194,20 +192,20 @@ pub struct PortaDoHarness {
 
 impl PortaDoHarness {
     /// Monta a porta sobre o banco.
-    pub fn nova(store: Arc<Store>) -> Self {
+    pub fn fresh(store: Arc<Store>) -> Self {
         Self { store }
     }
 }
 
 impl PortaAtendimento for PortaDoHarness {
-    fn conversa_da_sala(&self, sala: &str) -> Result<Option<ConversaDaSala>, StoreError> {
+    fn conversa_da_sala(&self, room: &str) -> Result<Option<ConversaDaSala>, StoreError> {
         // Só orgs com o módulo ligado: sala de org desligada não recebe resposta nenhuma (o
         // espelhamento e o módulo inteiro estão parados para ela).
-        for estado in self.store.matrix().linked_orgs()? {
-            if let Some(gravada) = self.store.matrix().room_by_room_id(estado.org_id, sala)? {
+        for state in self.store.matrix().linked_orgs()? {
+            if let Some(gravada) = self.store.matrix().room_by_room_id(state.org_id, room)? {
                 return Ok(Some(ConversaDaSala {
-                    org: estado.org_id,
-                    conversa: gravada.conversation,
+                    org: state.org_id,
+                    conversation: gravada.conversation,
                 }));
             }
         }
@@ -215,33 +213,33 @@ impl PortaAtendimento for PortaDoHarness {
     }
 
     fn agente_da_conversa(&self, alvo: ConversaDaSala) -> Result<Option<AgentId>, StoreError> {
-        match self.store.conversations().get(alvo.org, alvo.conversa) {
-            Ok(conversa) => Ok(Some(conversa.agent_id)),
+        match self.store.conversations().get(alvo.org, alvo.conversation) {
+            Ok(conversation) => Ok(Some(conversation.agent_id)),
             // A conversa sumiu entre a leitura da sala e esta: nada a assinar, e reenviar não
             // traria a conversa de volta.
-            Err(erro) if erro.is_not_found() => Ok(None),
-            Err(erro) => Err(erro),
+            Err(error) if error.is_not_found() => Ok(None),
+            Err(error) => Err(error),
         }
     }
 
     fn registrar_resposta(
         &self,
         alvo: ConversaDaSala,
-        nova: NewHumanResponse<'_>,
+        fresh: NewHumanResponse<'_>,
     ) -> Result<HumanResponse, StoreError> {
         self.store
             .messages()
-            .register_response_human(alvo.org, alvo.conversa, nova)
+            .register_response_human(alvo.org, alvo.conversation, fresh)
     }
 
     fn registrar_resposta_com_arquivo(
         &self,
         alvo: ConversaDaSala,
-        nova: HumanResponseWithFile<'_>,
+        fresh: HumanResponseWithFile<'_>,
     ) -> Result<HumanResponse, StoreError> {
         self.store
             .messages()
-            .record_human_response_with_file(alvo.org, alvo.conversa, nova)
+            .record_human_response_with_file(alvo.org, alvo.conversation, fresh)
     }
 }
 
@@ -279,9 +277,9 @@ impl Contadores {
 /// A entrega de eventos do Application Service: grava a resposta do atendente (MX-18).
 pub struct RespostaDoAtendente {
     porta: Arc<dyn PortaAtendimento>,
-    cliente: Option<ClienteMatrix>,
-    ids: IdsFantasmas,
-    salas: Mutex<CacheSimples<ConversaDaSala>>,
+    client: Option<MatrixClient>,
+    ids: GhostIds,
+    rooms: Mutex<CacheSimples<ConversaDaSala>>,
     nomes: Mutex<CacheDeNomes>,
     validade_nome: Duration,
     contadores: Contadores,
@@ -294,14 +292,14 @@ pub struct RespostaDoAtendente {
 
 impl RespostaDoAtendente {
     /// Monta a entrega com os tetos padrão.
-    pub fn novo(
+    pub fn new(
         porta: Arc<dyn PortaAtendimento>,
-        cliente: Option<ClienteMatrix>,
-        ids: IdsFantasmas,
+        client: Option<MatrixClient>,
+        ids: GhostIds,
     ) -> Self {
         Self::com_tetos(
             porta,
-            cliente,
+            client,
             ids,
             TETO_PADRAO_SALAS,
             TETO_PADRAO_NOMES,
@@ -314,18 +312,18 @@ impl RespostaDoAtendente {
     /// Teto `0` vale `1`: um cache que não guarda nada só multiplicaria consultas.
     pub fn com_tetos(
         porta: Arc<dyn PortaAtendimento>,
-        cliente: Option<ClienteMatrix>,
-        ids: IdsFantasmas,
+        client: Option<MatrixClient>,
+        ids: GhostIds,
         teto_salas: usize,
         teto_nomes: usize,
         validade_nome: Duration,
     ) -> Self {
         Self {
             porta,
-            cliente,
+            client,
             ids,
-            salas: Mutex::new(CacheSimples::novo(teto_salas)),
-            nomes: Mutex::new(CacheDeNomes::novo(teto_nomes, validade_nome)),
+            rooms: Mutex::new(CacheSimples::new(teto_salas)),
+            nomes: Mutex::new(CacheDeNomes::new(teto_nomes, validade_nome)),
             validade_nome,
             contadores: Contadores::default(),
             metricas: MetricasMatrix::descartaveis(),
@@ -349,16 +347,16 @@ impl RespostaDoAtendente {
     }
 
     /// Conta uma falha de chamada ao Synapse: classe e, se for o limite de taxa, o `429`.
-    fn contar_erro(&self, erro: &poph_matrix::ErroChamada) {
-        match erro.classificacao() {
-            poph_matrix::erro::Classificacao::Transitoria => {
+    fn contar_erro(&self, error: &poph_matrix::CallError) {
+        match error.classification() {
+            poph_matrix::error::Classification::Transient => {
                 self.metricas.erros_transitorios.increment(1);
             }
-            poph_matrix::erro::Classificacao::Definitiva => {
+            poph_matrix::error::Classification::Definitive => {
                 self.metricas.erros_definitivos.increment(1);
             }
         }
-        if matches!(erro, poph_matrix::ErroChamada::Resposta { status: 429, .. }) {
+        if matches!(error, poph_matrix::CallError::Response { status: 429, .. }) {
             self.metricas.respostas_429.increment(1);
         }
     }
@@ -369,15 +367,15 @@ impl RespostaDoAtendente {
     /// `ReceptorAs::do_modulo(modulo, Arc::new(entrega))`.
     pub fn do_modulo(
         store: Arc<Store>,
-        modulo: &ModuloMatrix,
-    ) -> Result<Self, poph_matrix::ErroChamada> {
-        let cliente = ClienteMatrix::das_partes(&modulo.config, &modulo.segredos)?;
-        let ids = IdsFantasmas::da_config(&modulo.config).map_err(|erro| {
-            poph_matrix::ErroChamada::Configuracao(format!("ids dos usuários virtuais: {erro}"))
+        modulo: &MatrixModule,
+    ) -> Result<Self, poph_matrix::CallError> {
+        let client = MatrixClient::from_parts(&modulo.config, &modulo.secrets)?;
+        let ids = GhostIds::of_config(&modulo.config).map_err(|error| {
+            poph_matrix::CallError::Configuration(format!("ids dos usuários virtuais: {error}"))
         })?;
-        Ok(Self::novo(
-            Arc::new(PortaDoHarness::nova(store)),
-            Some(cliente),
+        Ok(Self::new(
+            Arc::new(PortaDoHarness::fresh(store)),
+            Some(client),
             ids,
         ))
     }
@@ -389,15 +387,15 @@ impl RespostaDoAtendente {
 
     /// `(ocupado, teto)` do cache de salas e do cache de nomes, para métrica e teste.
     pub fn cache(&self) -> ((usize, usize), (usize, usize)) {
-        let salas = {
+        let rooms = {
             let guardadas = self.salas_guardadas();
-            (guardadas.mapa.len(), guardadas.teto)
+            (guardadas.mapa.len(), guardadas.cap)
         };
         let nomes = {
             let guardadas = self.nomes_guardados();
-            (guardadas.mapa.len(), guardadas.teto)
+            (guardadas.mapa.len(), guardadas.cap)
         };
-        (salas, nomes)
+        (rooms, nomes)
     }
 
     /// Validade do nome de exibição em cache (teste).
@@ -407,7 +405,7 @@ impl RespostaDoAtendente {
 
     /// O mutex do cache de salas nunca fica travado durante `await`; envenenado, é recuperado.
     fn salas_guardadas(&self) -> std::sync::MutexGuard<'_, CacheSimples<ConversaDaSala>> {
-        self.salas
+        self.rooms
             .lock()
             .unwrap_or_else(|veneno| veneno.into_inner())
     }
@@ -418,19 +416,19 @@ impl RespostaDoAtendente {
             .unwrap_or_else(|veneno| veneno.into_inner())
     }
 
-    fn esquecer_sala(&self, sala: &str) {
-        self.salas_guardadas().esquecer(sala);
+    fn esquecer_sala(&self, room: &str) {
+        self.salas_guardadas().esquecer(room);
     }
 
     /// A conversa da sala, pelo cache ou pela porta.
-    fn conversa_da_sala(&self, sala: &str) -> Result<Option<ConversaDaSala>, StoreError> {
-        if let Some(alvo) = self.salas_guardadas().obter(sala) {
+    fn conversa_da_sala(&self, room: &str) -> Result<Option<ConversaDaSala>, StoreError> {
+        if let Some(alvo) = self.salas_guardadas().obter(room) {
             return Ok(Some(alvo));
         }
-        let Some(alvo) = self.porta.conversa_da_sala(sala)? else {
+        let Some(alvo) = self.porta.conversa_da_sala(room)? else {
             return Ok(None);
         };
-        self.salas_guardadas().registrar(sala, alvo);
+        self.salas_guardadas().registrar(room, alvo);
         Ok(Some(alvo))
     }
 
@@ -447,13 +445,13 @@ impl RespostaDoAtendente {
     /// chamador trata como falha explícita, sem inventar um terceiro caminho de autenticação. `Err`
     /// quando o banco não respondeu (vira `5xx`, e o Synapse reenvia).
     fn assinatura_da_sala(&self, alvo: ConversaDaSala) -> Result<Option<String>, StoreError> {
-        let Some(agente) = self.porta.agente_da_conversa(alvo)? else {
+        let Some(agent) = self.porta.agente_da_conversa(alvo)? else {
             return Ok(None);
         };
         // Id que não serve para montar fantasma (vazio) também é "não há como assinar".
         Ok(self
             .ids
-            .agente(&agente.to_string())
+            .agent(&agent.to_string())
             .ok()
             .map(|fantasma| fantasma.user_id().to_owned()))
     }
@@ -468,7 +466,7 @@ impl RespostaDoAtendente {
         &self,
         alvo: ConversaDaSala,
         transacao: &str,
-        evento_id: &str,
+        event_id: &str,
     ) -> Result<Option<String>, StoreError> {
         match self.assinatura_da_sala(alvo) {
             Ok(Some(assinatura)) => Ok(Some(assinatura)),
@@ -477,10 +475,10 @@ impl RespostaDoAtendente {
                 tracing::error!(
                     target: "poph_server::matrix_resposta",
                     org = %alvo.org,
-                    conversa = %alvo.conversa,
+                    conversation = %alvo.conversation,
                     transacao,
-                    evento = evento_id,
-                    motivo = "fantasma_do_agente_indisponivel",
+                    event = event_id,
+                    reason = "fantasma_do_agente_indisponivel",
                     "a conversa da sala não tem agente para assinar: nada foi escrito na sala"
                 );
                 Ok(None)
@@ -489,10 +487,10 @@ impl RespostaDoAtendente {
                 tracing::error!(
                     target: "poph_server::matrix_resposta",
                     org = %alvo.org,
-                    conversa = %alvo.conversa,
+                    conversation = %alvo.conversation,
                     transacao,
-                    evento = evento_id,
-                    motivo = "banco_indisponivel",
+                    event = event_id,
+                    reason = "banco_indisponivel",
                     "não consegui ler o agente da conversa agora"
                 );
                 Err(StoreError::Internal(
@@ -503,26 +501,26 @@ impl RespostaDoAtendente {
     }
 
     /// Nome de exibição do atendente, com cache e validade; "Atendente" quando não há.
-    async fn nome_do_atendente(&self, remetente: &str) -> String {
-        if let Some(nome) = self.nomes_guardados().obter(remetente) {
-            return nome;
+    async fn nome_do_atendente(&self, sender: &str) -> String {
+        if let Some(name) = self.nomes_guardados().obter(sender) {
+            return name;
         }
-        let Some(cliente) = &self.cliente else {
+        let Some(client) = &self.client else {
             return NOME_PADRAO_ATENDENTE.to_owned();
         };
-        match cliente.perfil(remetente).await {
-            Ok(perfil) => {
-                let nome = nome_util(perfil.displayname.as_deref());
-                self.nomes_guardados().registrar(remetente, &nome);
-                nome
+        match client.profile(sender).await {
+            Ok(profile) => {
+                let name = nome_util(profile.displayname.as_deref());
+                self.nomes_guardados().registrar(sender, &name);
+                name
             }
-            Err(erro) => {
+            Err(error) => {
                 // Sem nome não se perde a resposta: o prefixo cai no padrão e a próxima mensagem
                 // tenta o perfil de novo.
-                self.contar_erro(&erro);
+                self.contar_erro(&error);
                 tracing::debug!(
                     target: "poph_server::matrix_resposta",
-                    classificacao = ?erro.classificacao(),
+                    classification = ?error.classification(),
                     "não consegui ler o perfil do atendente; usando o nome padrão"
                 );
                 NOME_PADRAO_ATENDENTE.to_owned()
@@ -536,41 +534,29 @@ impl RespostaDoAtendente {
     /// Aviso é melhor-esforço: o atendente já viu que a mensagem não foi, e derrubar a transação
     /// por causa do aviso faria o Synapse reenviar a resposta do atendente de novo. Falha do aviso
     /// sai em `warn`, porque aviso que não chega é o atendente sem saber que o arquivo não foi.
-    async fn avisar(
-        &self,
-        sala: &str,
-        assinatura: &str,
-        marca: &str,
-        evento_id: &str,
-        corpo: &str,
-    ) {
+    async fn avisar(&self, room: &str, assinatura: &str, marca: &str, event_id: &str, body: &str) {
         let conteudo = json!({
-            "msgtype": poph_matrix::eventos::MSGTYPE_AVISO,
-            "body": corpo,
+            "msgtype": poph_matrix::events::MSGTYPE_NOTICE,
+            "body": body,
         });
-        self.avisar_conteudo(
-            sala,
-            assinatura,
-            &txn_do_evento(marca, evento_id),
-            &conteudo,
-        )
-        .await;
+        self.avisar_conteudo(room, assinatura, &txn_do_evento(marca, event_id), &conteudo)
+            .await;
     }
 
     /// Aviso na sala com um `txnId` e um conteúdo já montados (o aviso de mídia da MX-44 traz o
     /// motivo no `txnId`, para dois motivos do mesmo evento não se confundirem).
-    async fn avisar_conteudo(&self, sala: &str, assinatura: &str, txn: &str, conteudo: &Value) {
-        let Some(cliente) = &self.cliente else {
+    async fn avisar_conteudo(&self, room: &str, assinatura: &str, txn: &str, conteudo: &Value) {
+        let Some(client) = &self.client else {
             return;
         };
-        if let Err(erro) = cliente
-            .enviar_evento(assinatura, sala, "m.room.message", txn, conteudo)
+        if let Err(error) = client
+            .send_event(assinatura, room, "m.room.message", txn, conteudo)
             .await
         {
-            self.contar_erro(&erro);
+            self.contar_erro(&error);
             tracing::warn!(
                 target: "poph_server::matrix_resposta",
-                motivo = ?erro.classificacao(),
+                reason = ?error.classification(),
                 "não consegui escrever o aviso na sala: o atendente não fica sabendo"
             );
         }
@@ -579,12 +565,12 @@ impl RespostaDoAtendente {
     async fn responder(
         &self,
         transacao: &str,
-        sala: &str,
-        evento_id: &str,
-        remetente: &str,
-        texto: &str,
+        room: &str,
+        event_id: &str,
+        sender: &str,
+        text: &str,
     ) -> Result<(), ErroEntrega> {
-        let alvo = match self.conversa_da_sala(sala) {
+        let alvo = match self.conversa_da_sala(room) {
             Ok(Some(alvo)) => alvo,
             Ok(None) => {
                 Contadores::somar(&self.contadores.salas_desconhecidas);
@@ -592,7 +578,7 @@ impl RespostaDoAtendente {
                 tracing::info!(
                     target: "poph_server::matrix_resposta",
                     transacao,
-                    sala,
+                    room,
                     "evento de sala que nenhuma org ligada conhece: ignorado"
                 );
                 return Ok(());
@@ -601,34 +587,34 @@ impl RespostaDoAtendente {
                 tracing::error!(
                     target: "poph_server::matrix_resposta",
                     transacao,
-                    sala,
+                    room,
                     "não consegui achar a conversa da sala agora"
                 );
-                return Err(ErroEntrega::novo(MOTIVO_BANCO));
+                return Err(ErroEntrega::new(MOTIVO_BANCO));
             }
         };
 
-        let nome = self.nome_do_atendente(remetente).await;
-        let enviado = texto_enfileirado(&nome, texto);
-        let nova = NewHumanResponse {
-            event_id: evento_id,
-            raw_text: texto,
+        let name = self.nome_do_atendente(sender).await;
+        let enviado = texto_enfileirado(&name, text);
+        let fresh = NewHumanResponse {
+            event_id,
+            raw_text: text,
             sent_text: &enviado,
-            author_id: remetente,
-            author_name: &nome,
+            author_id: sender,
+            author_name: &name,
         };
 
-        match self.porta.registrar_resposta(alvo, nova) {
+        match self.porta.registrar_resposta(alvo, fresh) {
             Ok(HumanResponse::Stored(_)) => {
                 Contadores::somar(&self.contadores.gravadas);
                 self.metricas.respostas_enfileiradas.increment(1);
                 tracing::info!(
                     target: "poph_server::matrix_resposta",
                     org = %alvo.org,
-                    conversa = %alvo.conversa,
+                    conversation = %alvo.conversation,
                     transacao,
-                    sala,
-                    evento = evento_id,
+                    room,
+                    event = event_id,
                     "resposta do atendente enfileirada para o cliente"
                 );
                 Ok(())
@@ -639,7 +625,7 @@ impl RespostaDoAtendente {
                 tracing::debug!(
                     target: "poph_server::matrix_resposta",
                     transacao,
-                    evento = evento_id,
+                    event = event_id,
                     "reenvio do Synapse de uma resposta já gravada"
                 );
                 Ok(())
@@ -650,20 +636,20 @@ impl RespostaDoAtendente {
                 tracing::info!(
                     target: "poph_server::matrix_resposta",
                     org = %alvo.org,
-                    conversa = %alvo.conversa,
+                    conversation = %alvo.conversation,
                     transacao,
-                    sala,
-                    evento = evento_id,
+                    room,
+                    event = event_id,
                     "conversa encerrada: resposta não enviada"
                 );
                 // Quem escreve o aviso é o fantasma do agente: o atendente humano está fora do
                 // namespace do Application Service e receberia `403 M_FORBIDDEN` no lugar do aviso.
-                if let Ok(Some(assinatura)) = self.assinatura_relatada(alvo, transacao, evento_id) {
+                if let Ok(Some(assinatura)) = self.assinatura_relatada(alvo, transacao, event_id) {
                     self.avisar(
-                        sala,
+                        room,
                         &assinatura,
                         MARCA_AVISO_ENCERRADA,
-                        evento_id,
+                        event_id,
                         AVISO_CONVERSA_ENCERRADA,
                     )
                     .await;
@@ -673,13 +659,13 @@ impl RespostaDoAtendente {
             Ok(HumanResponse::ConversationMissing) => {
                 // A sala aponta para uma conversa que sumiu (ou é de outra org): esquecer o cache
                 // evita insistir na linha errada, e a próxima mensagem procura de novo.
-                self.esquecer_sala(sala);
+                self.esquecer_sala(room);
                 Contadores::somar(&self.contadores.salas_desconhecidas);
                 self.metricas.salas_desconhecidas.increment(1);
                 tracing::info!(
                     target: "poph_server::matrix_resposta",
                     transacao,
-                    sala,
+                    room,
                     "a sala aponta para uma conversa que não existe nesta org: ignorado"
                 );
                 Ok(())
@@ -688,13 +674,13 @@ impl RespostaDoAtendente {
                 tracing::error!(
                     target: "poph_server::matrix_resposta",
                     org = %alvo.org,
-                    conversa = %alvo.conversa,
+                    conversation = %alvo.conversation,
                     transacao,
-                    sala,
-                    motivo = "banco_indisponivel",
+                    room,
+                    reason = "banco_indisponivel",
                     "não consegui gravar a resposta do atendente agora"
                 );
-                Err(ErroEntrega::novo(MOTIVO_BANCO))
+                Err(ErroEntrega::new(MOTIVO_BANCO))
             }
         }
     }
@@ -708,7 +694,7 @@ impl RespostaDoAtendente {
     ///    download nem aviso possíveis, e o caso é relatado em `error`;
     /// 3. baixa o conteúdo do Synapse com teto de bytes (falha **transitória** volta para o Synapse
     ///    reenviar; definitiva vira aviso);
-    /// 4. confere o tipo **pelo conteúdo** com o `poph-files` (extensão enganosa e tipo fora da
+    /// 4. confere o kind **pelo conteúdo** com o `poph-files` (extensão enganosa e kind fora da
     ///    lista viram aviso, com o arquivo recusado antes de encostar no disco);
     /// 5. grava como blob da org (deduplicado por hash);
     /// 6. grava a resposta com arquivo na operação atômica da MX-44.
@@ -718,19 +704,19 @@ impl RespostaDoAtendente {
     async fn enviar_arquivo(
         &self,
         transacao: &str,
-        evento: ArquivoDoEvento<'_>,
+        event: ArquivoDoEvento<'_>,
     ) -> Result<(), ErroEntrega> {
         let ArquivoDoEvento {
-            sala,
-            evento_id,
+            room,
+            event_id,
             // O remetente humano não assina nada no Synapse (fora do namespace do AS); ele serve
             // só para o nome na legenda que o cliente lê.
-            remetente,
-            tipo,
+            sender,
+            kind,
             url,
-            nome,
-        } = evento;
-        let alvo = match self.conversa_da_sala(sala) {
+            name,
+        } = event;
+        let alvo = match self.conversa_da_sala(room) {
             Ok(Some(alvo)) => alvo,
             Ok(None) => {
                 Contadores::somar(&self.contadores.salas_desconhecidas);
@@ -738,8 +724,8 @@ impl RespostaDoAtendente {
                 tracing::info!(
                     target: "poph_server::matrix_resposta",
                     transacao,
-                    sala,
-                    evento = evento_id,
+                    room,
+                    event = event_id,
                     "arquivo em sala que nenhuma org ligada conhece: ignorado"
                 );
                 return Ok(());
@@ -748,77 +734,77 @@ impl RespostaDoAtendente {
                 tracing::error!(
                     target: "poph_server::matrix_resposta",
                     transacao,
-                    sala,
-                    motivo = "banco_indisponivel",
+                    room,
+                    reason = "banco_indisponivel",
                     "não consegui achar a conversa da sala agora"
                 );
-                return Err(ErroEntrega::novo(MOTIVO_BANCO));
+                return Err(ErroEntrega::new(MOTIVO_BANCO));
             }
         };
 
         // Quem assina o arquivo e o aviso no Synapse: o fantasma do agente. Um humano não está no
         // namespace do Application Service, e o Synapse recusa o disfarce com `403 M_FORBIDDEN`.
-        let assinatura = match self.assinatura_relatada(alvo, transacao, evento_id) {
+        let assinatura = match self.assinatura_relatada(alvo, transacao, event_id) {
             Ok(Some(assinatura)) => assinatura,
             // Reenviar não traria o agente de volta, e insistir gastaria a fila do Synapse.
             Ok(None) => return Ok(()),
-            Err(_) => return Err(ErroEntrega::novo(MOTIVO_BANCO)),
+            Err(_) => return Err(ErroEntrega::new(MOTIVO_BANCO)),
         };
 
         let Some(pasta) = self.pasta_blobs.clone() else {
             self.avisar_de_midia(
                 transacao,
-                sala,
+                room,
                 &assinatura,
-                evento_id,
-                MotivoNaoEnviar::NaoGravado,
+                event_id,
+                NotSendReason::NotStored,
             )
             .await;
             return Ok(());
         };
-        let (Some(url), Some(cliente)) = (url, self.cliente.as_ref()) else {
+        let (Some(url), Some(client)) = (url, self.client.as_ref()) else {
             self.avisar_de_midia(
                 transacao,
-                sala,
+                room,
                 &assinatura,
-                evento_id,
-                MotivoNaoEnviar::SemArquivo,
+                event_id,
+                NotSendReason::WithoutFile,
             )
             .await;
             return Ok(());
         };
 
-        let bytes = match cliente
-            .baixar_midia(&assinatura, url, midia_atendente::LIMITE_MIDIA_BYTES)
+        let bytes = match client
+            .download_asset(&assinatura, url, attendant_asset::ASSET_BYTES_LIMIT)
             .await
         {
             Ok(bytes) => bytes,
-            Err(erro) => {
-                if erro.transitorio() {
-                    if let ErroMidia::Chamada(chamada) = &erro {
+            Err(error) => {
+                if error.transient() {
+                    if let AssetError::Call(chamada) = &error {
                         self.contar_erro(chamada);
                     }
                     tracing::warn!(
                         target: "poph_server::matrix_resposta",
                         org = %alvo.org,
-                        conversa = %alvo.conversa,
+                        conversation = %alvo.conversation,
                         transacao,
-                        sala,
-                        evento = evento_id,
-                        tipo = tipo.msgtype(),
+                        room,
+                        event = event_id,
+                        kind = kind.msgtype(),
                         "não consegui baixar o arquivo do atendente agora: volta no reenvio do Synapse"
                     );
-                    return Err(ErroEntrega::novo(MOTIVO_MIDIA));
+                    return Err(ErroEntrega::new(MOTIVO_MIDIA));
                 }
-                if let ErroMidia::Chamada(chamada) = &erro {
+                if let AssetError::Call(chamada) = &error {
                     self.contar_erro(chamada);
                 }
                 self.avisar_de_midia(
                     transacao,
-                    sala,
+                    room,
                     &assinatura,
-                    evento_id,
-                    motivo_da_falha_de_midia(&erro),
+                    event_id,
+                    motivo_da_falha_de_midia(&error),
                 )
                 .await;
                 return Ok(());
@@ -829,15 +815,15 @@ impl RespostaDoAtendente {
         //
         // A lista é a de **saída** (`envio`), não a de entrada: o arquivo do atendente é entregue,
         // não lido. É ela que aceita áudio e vídeo (MX-48) sem afrouxar o que o cliente pode mandar.
-        let tipo_real = match poph_files::outbound::classify(&bytes, nome) {
-            Ok(tipo) => tipo,
+        let kind_real = match poph_files::outbound::classify(&bytes, name) {
+            Ok(kind) => kind,
             Err(_) => {
                 self.avisar_de_midia(
                     transacao,
-                    sala,
+                    room,
                     &assinatura,
-                    evento_id,
-                    MotivoNaoEnviar::TipoRecusado,
+                    event_id,
+                    NotSendReason::RefusedKind,
                 )
                 .await;
                 return Ok(());
@@ -845,7 +831,7 @@ impl RespostaDoAtendente {
         };
 
         let org = alvo.org;
-        let tamanho_bytes = bytes.len() as u64;
+        let size_bytes = bytes.len() as u64;
         let pasta_para_gravar = pasta.clone();
         let gravado = match tokio::task::spawn_blocking(move || {
             poph_files::blob::write(&pasta_para_gravar, org, &bytes)
@@ -856,28 +842,28 @@ impl RespostaDoAtendente {
             _ => {
                 self.avisar_de_midia(
                     transacao,
-                    sala,
+                    room,
                     &assinatura,
-                    evento_id,
-                    MotivoNaoEnviar::NaoGravado,
+                    event_id,
+                    NotSendReason::NotStored,
                 )
                 .await;
                 return Ok(());
             }
         };
 
-        let nome_arquivo = midia_atendente::nome_do_arquivo(nome, tipo_real.default_name());
-        let nome_atendente = self.nome_do_atendente(remetente).await;
+        let nome_arquivo = attendant_asset::file_name(name, kind_real.default_name());
+        let nome_atendente = self.nome_do_atendente(sender).await;
         let legenda = legenda_do_arquivo(&nome_atendente);
         let blob_ref = format!("{}/{}", alvo.org, gravado.sha256);
-        let nova = HumanResponseWithFile {
-            event_id: evento_id,
-            author_id: remetente,
+        let fresh = HumanResponseWithFile {
+            event_id,
+            author_id: sender,
             author_name: &nome_atendente,
             file: ResponseFile {
                 name: &nome_arquivo,
-                mime: tipo_real.mime(),
-                size_bytes: tamanho_bytes,
+                mime: kind_real.mime(),
+                size_bytes,
                 sha256: &gravado.sha256,
                 blob_path: &blob_ref,
                 caption: &legenda,
@@ -885,20 +871,20 @@ impl RespostaDoAtendente {
             },
         };
 
-        match self.porta.registrar_resposta_com_arquivo(alvo, nova) {
+        match self.porta.registrar_resposta_com_arquivo(alvo, fresh) {
             Ok(HumanResponse::Stored(_)) => {
                 Contadores::somar(&self.contadores.arquivos_gravados);
                 self.metricas.respostas_enfileiradas.increment(1);
                 tracing::info!(
                     target: "poph_server::matrix_resposta",
                     org = %alvo.org,
-                    conversa = %alvo.conversa,
+                    conversation = %alvo.conversation,
                     transacao,
-                    sala,
-                    evento = evento_id,
-                    tipo = tipo.msgtype(),
-                    mime = tipo_real.mime(),
-                    tamanho_bytes,
+                    room,
+                    event = event_id,
+                    kind = kind.msgtype(),
+                    mime = kind_real.mime(),
+                    size_bytes,
                     "arquivo do atendente enfileirado para o cliente"
                 );
                 Ok(())
@@ -909,7 +895,7 @@ impl RespostaDoAtendente {
                 tracing::debug!(
                     target: "poph_server::matrix_resposta",
                     transacao,
-                    evento = evento_id,
+                    event = event_id,
                     "reenvio do Synapse de um arquivo do atendente já gravado"
                 );
                 Ok(())
@@ -920,30 +906,30 @@ impl RespostaDoAtendente {
                 tracing::info!(
                     target: "poph_server::matrix_resposta",
                     org = %alvo.org,
-                    conversa = %alvo.conversa,
+                    conversation = %alvo.conversation,
                     transacao,
-                    sala,
-                    evento = evento_id,
+                    room,
+                    event = event_id,
                     "conversa encerrada: arquivo não enviado ao cliente"
                 );
                 self.avisar(
-                    sala,
+                    room,
                     &assinatura,
                     MARCA_AVISO_ENCERRADA,
-                    evento_id,
+                    event_id,
                     AVISO_CONVERSA_ENCERRADA,
                 )
                 .await;
                 Ok(())
             }
             Ok(HumanResponse::ConversationMissing) => {
-                self.esquecer_sala(sala);
+                self.esquecer_sala(room);
                 Contadores::somar(&self.contadores.salas_desconhecidas);
                 self.metricas.salas_desconhecidas.increment(1);
                 tracing::info!(
                     target: "poph_server::matrix_resposta",
                     transacao,
-                    sala,
+                    room,
                     "a sala aponta para uma conversa que não existe nesta org: arquivo ignorado"
                 );
                 Ok(())
@@ -952,13 +938,13 @@ impl RespostaDoAtendente {
                 tracing::error!(
                     target: "poph_server::matrix_resposta",
                     org = %alvo.org,
-                    conversa = %alvo.conversa,
+                    conversation = %alvo.conversation,
                     transacao,
-                    sala,
-                    motivo = "banco_indisponivel",
+                    room,
+                    reason = "banco_indisponivel",
                     "não consegui gravar o arquivo do atendente agora"
                 );
-                Err(ErroEntrega::novo(MOTIVO_BANCO))
+                Err(ErroEntrega::new(MOTIVO_BANCO))
             }
         }
     }
@@ -973,65 +959,65 @@ impl RespostaDoAtendente {
     async fn avisar_de_midia(
         &self,
         transacao: &str,
-        sala: &str,
+        room: &str,
         assinatura: &str,
-        evento_id: &str,
-        motivo: MotivoNaoEnviar,
+        event_id: &str,
+        reason: NotSendReason,
     ) {
         Contadores::somar(&self.contadores.avisos_de_midia);
         self.metricas.avisos_de_midia.increment(1);
         tracing::info!(
             target: "poph_server::matrix_resposta",
             transacao,
-            sala,
-            evento = evento_id,
-            motivo = motivo.codigo(),
+            room,
+            event = event_id,
+            reason = reason.code(),
             "arquivo do atendente não foi ao cliente: avisando na sala"
         );
-        let txn = midia_atendente::txn_do_aviso(evento_id, motivo);
-        let conteudo = midia_atendente::conteudo_do_aviso(motivo);
-        self.avisar_conteudo(sala, assinatura, &txn, &conteudo)
+        let txn = attendant_asset::notice_txn(event_id, reason);
+        let conteudo = attendant_asset::notice_content(reason);
+        self.avisar_conteudo(room, assinatura, &txn, &conteudo)
             .await;
     }
 
-    async fn process(&self, transacao: &str, eventos: Vec<Value>) -> Result<(), ErroEntrega> {
-        for evento in &eventos {
-            match classificar(&self.ids, evento) {
-                Acao::RespostaHumana {
-                    sala,
-                    evento_id,
-                    remetente,
-                    texto,
+    async fn process(&self, transacao: &str, events: Vec<Value>) -> Result<(), ErroEntrega> {
+        for event in &events {
+            match classify(&self.ids, event) {
+                Action::HumanResponse {
+                    room,
+                    event_id,
+                    sender,
+                    text,
                 } => {
-                    self.responder(transacao, &sala, &evento_id, &remetente, &texto)
+                    self.responder(transacao, &room, &event_id, &sender, &text)
                         .await?;
                 }
-                Acao::MidiaDoAtendente {
-                    sala,
-                    evento_id,
-                    remetente,
-                    tipo,
+                Action::AttendantAsset {
+                    room,
+                    event_id,
+                    sender,
+                    kind,
                     url,
-                    nome,
+                    name,
                 } => {
                     self.enviar_arquivo(
                         transacao,
                         ArquivoDoEvento {
-                            sala: &sala,
-                            evento_id: &evento_id,
-                            remetente: &remetente,
-                            tipo,
+                            room: &room,
+                            event_id: &event_id,
+                            sender: &sender,
+                            kind,
                             url: url.as_deref(),
-                            nome: &nome,
+                            name: &name,
                         },
                     )
                     .await?;
                 }
-                Acao::Ignorar { motivo } => {
+                Action::Ignore { reason } => {
                     tracing::debug!(
                         target: "poph_server::matrix_resposta",
                         transacao,
-                        motivo = motivo.codigo(),
+                        reason = reason.code(),
                         "evento do Matrix ignorado"
                     );
                 }
@@ -1042,18 +1028,18 @@ impl RespostaDoAtendente {
 }
 
 impl EntregaDeEventos for RespostaDoAtendente {
-    fn entregar(&self, transacao: &str, eventos: Vec<Value>) -> FuturoDaEntrega<'_> {
+    fn entregar(&self, transacao: &str, events: Vec<Value>) -> FuturoDaEntrega<'_> {
         // O id da transação vira dono: o futuro devolvido só empresta `self` (é o que o trait
         // permite), e `transacao` chega emprestada de quem chamou.
         let transacao = transacao.to_owned();
-        Box::pin(async move { self.process(&transacao, eventos).await })
+        Box::pin(async move { self.process(&transacao, events).await })
     }
 }
 
 impl std::fmt::Debug for RespostaDoAtendente {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RespostaDoAtendente")
-            .field("cliente", &self.cliente)
+            .field("cliente", &self.client)
             .field("ids", &self.ids)
             .field("validade_nome", &self.validade_nome)
             .finish_non_exhaustive()
@@ -1077,25 +1063,25 @@ impl std::fmt::Debug for RespostaDoAtendente {
 /// O corte também é o do canal: [`poph_evolution::texto::para_whatsapp`] termina chamando [`poph_evolution::texto::cortar`], então uma mensagem
 /// acima de [`poph_evolution::LIMITE_TEXTO`] chega ao cliente cortada com `…`, numa mensagem só —
 /// nunca dividida em duas.
-pub fn texto_enfileirado(nome: &str, texto: &str) -> String {
-    format!("**[{}]**:\n{texto}", nome_para_prefixo(nome))
+pub fn texto_enfileirado(name: &str, text: &str) -> String {
+    format!("**[{}]**:\n{text}", nome_para_prefixo(name))
 }
 
 /// Legenda que acompanha o arquivo do atendente no WhatsApp: `**[Nome]**` no payload, que a
 /// conversão única do canal ([`poph_evolution::texto::para_whatsapp`]) transforma no `*[Nome]*` que
 /// o cliente vê — o mesmo prefixo da mensagem de texto, sem os dois-pontos (o arquivo já é o
 /// conteúdo da mensagem).
-pub fn legenda_do_arquivo(nome: &str) -> String {
-    format!("**[{}]**", nome_para_prefixo(nome))
+pub fn legenda_do_arquivo(name: &str) -> String {
+    format!("**[{}]**", nome_para_prefixo(name))
 }
 
 /// Por que um download recusado não vai ao cliente, na linguagem do aviso da sala.
-fn motivo_da_falha_de_midia(erro: &ErroMidia) -> MotivoNaoEnviar {
-    match erro {
-        ErroMidia::Grande { .. } => MotivoNaoEnviar::Grande,
-        ErroMidia::Vazia => MotivoNaoEnviar::Vazio,
-        ErroMidia::Endereco(_) => MotivoNaoEnviar::SemArquivo,
-        ErroMidia::Chamada(_) => MotivoNaoEnviar::Indisponivel,
+fn motivo_da_falha_de_midia(error: &AssetError) -> NotSendReason {
+    match error {
+        AssetError::Large { .. } => NotSendReason::Large,
+        AssetError::Empty => NotSendReason::Empty,
+        AssetError::Address(_) => NotSendReason::WithoutFile,
+        AssetError::Call(_) => NotSendReason::Unavailable,
     }
 }
 
@@ -1104,8 +1090,8 @@ fn motivo_da_falha_de_midia(erro: &ErroMidia) -> MotivoNaoEnviar {
 ///
 /// Os marcadores saem porque o prefixo vai em Markdown: um `*` no meio do nome fecharia o
 /// negrito cedo e o cliente veria `*Ana*]*` em vez do nome.
-fn nome_para_prefixo(nome: &str) -> String {
-    let limpo: String = nome
+fn nome_para_prefixo(name: &str) -> String {
+    let limpo: String = name
         .chars()
         .map(|c| {
             if c.is_control() || matches!(c, '*' | '_' | '~' | '`') {
@@ -1132,14 +1118,14 @@ fn nome_para_prefixo(nome: &str) -> String {
 }
 
 /// Nome utilizável quando vem de um `Option` (perfil do Synapse, por exemplo).
-fn nome_util(nome: Option<&str>) -> String {
-    nome_para_prefixo(nome.unwrap_or_default())
+fn nome_util(name: Option<&str>) -> String {
+    nome_para_prefixo(name.unwrap_or_default())
 }
 
 /// `txnId` determinístico do aviso: repetir o aviso do mesmo evento não duplica (P7).
-fn txn_do_evento(marca: &str, evento_id: &str) -> String {
+fn txn_do_evento(marca: &str, event_id: &str) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in evento_id.as_bytes() {
+    for byte in event_id.as_bytes() {
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
@@ -1153,15 +1139,15 @@ fn txn_do_evento(marca: &str, evento_id: &str) -> String {
 /// Esquecer uma entrada custa uma consulta a mais (nunca um erro), então o teto pode ser pequeno.
 #[derive(Debug)]
 struct CacheSimples<V> {
-    teto: usize,
+    cap: usize,
     ordem: VecDeque<String>,
     mapa: HashMap<String, V>,
 }
 
 impl<V: Copy> CacheSimples<V> {
-    fn novo(teto: usize) -> Self {
+    fn new(cap: usize) -> Self {
         Self {
-            teto: teto.max(1),
+            cap: cap.max(1),
             ordem: VecDeque::new(),
             mapa: HashMap::new(),
         }
@@ -1175,7 +1161,7 @@ impl<V: Copy> CacheSimples<V> {
         if self.mapa.contains_key(chave) {
             return;
         }
-        while self.ordem.len() >= self.teto {
+        while self.ordem.len() >= self.cap {
             match self.ordem.pop_front() {
                 Some(antiga) => {
                     self.mapa.remove(&antiga);
@@ -1197,16 +1183,16 @@ impl<V: Copy> CacheSimples<V> {
 /// Cache do nome de exibição do atendente, com teto e validade.
 #[derive(Debug)]
 struct CacheDeNomes {
-    teto: usize,
+    cap: usize,
     validade: Duration,
     ordem: VecDeque<String>,
     mapa: HashMap<String, (String, Instant)>,
 }
 
 impl CacheDeNomes {
-    fn novo(teto: usize, validade: Duration) -> Self {
+    fn new(cap: usize, validade: Duration) -> Self {
         Self {
-            teto: teto.max(1),
+            cap: cap.max(1),
             validade,
             ordem: VecDeque::new(),
             mapa: HashMap::new(),
@@ -1214,20 +1200,20 @@ impl CacheDeNomes {
     }
 
     fn obter(&self, chave: &str) -> Option<String> {
-        let (nome, quando) = self.mapa.get(chave)?;
+        let (name, quando) = self.mapa.get(chave)?;
         if quando.elapsed() > self.validade {
             return None;
         }
-        Some(nome.clone())
+        Some(name.clone())
     }
 
-    fn registrar(&mut self, chave: &str, nome: &str) {
+    fn registrar(&mut self, chave: &str, name: &str) {
         if let Some((guardado, quando)) = self.mapa.get_mut(chave) {
-            *guardado = nome.to_owned();
+            *guardado = name.to_owned();
             *quando = Instant::now();
             return;
         }
-        while self.ordem.len() >= self.teto {
+        while self.ordem.len() >= self.cap {
             match self.ordem.pop_front() {
                 Some(antiga) => {
                     self.mapa.remove(&antiga);
@@ -1237,7 +1223,7 @@ impl CacheDeNomes {
         }
         self.ordem.push_back(chave.to_owned());
         self.mapa
-            .insert(chave.to_owned(), (nome.to_owned(), Instant::now()));
+            .insert(chave.to_owned(), (name.to_owned(), Instant::now()));
     }
 }
 
@@ -1250,13 +1236,13 @@ mod testes {
     fn alvo() -> ConversaDaSala {
         ConversaDaSala {
             org: OrgId::generate(),
-            conversa: ConversationId::generate(),
+            conversation: ConversationId::generate(),
         }
     }
 
     #[test]
     fn cache_de_salas_respeita_o_teto_e_esquece_o_mais_antigo() {
-        let mut cache = CacheSimples::novo(2);
+        let mut cache = CacheSimples::new(2);
         cache.registrar("!a", alvo());
         cache.registrar("!b", alvo());
         cache.registrar("!c", alvo());
@@ -1268,7 +1254,7 @@ mod testes {
 
     #[test]
     fn cache_de_salas_esquece_uma_sala() {
-        let mut cache = CacheSimples::novo(4);
+        let mut cache = CacheSimples::new(4);
         cache.registrar("!a", alvo());
         cache.esquecer("!a");
         assert!(cache.obter("!a").is_none());
@@ -1277,7 +1263,7 @@ mod testes {
 
     #[test]
     fn cache_de_nomes_respeita_o_teto() {
-        let mut cache = CacheDeNomes::novo(2, Duration::from_secs(60));
+        let mut cache = CacheDeNomes::new(2, Duration::from_secs(60));
         cache.registrar("@a:s", "Ana");
         cache.registrar("@b:s", "Bia");
         cache.registrar("@c:s", "Caio");
@@ -1288,14 +1274,14 @@ mod testes {
 
     #[test]
     fn cache_de_nomes_vence_pela_validade() {
-        let mut cache = CacheDeNomes::novo(4, Duration::ZERO);
+        let mut cache = CacheDeNomes::new(4, Duration::ZERO);
         cache.registrar("@a:s", "Ana");
         assert!(cache.obter("@a:s").is_none(), "validade zero vence na hora");
     }
 
     #[test]
     fn cache_de_nomes_atualiza_o_nome_da_mesma_pessoa() {
-        let mut cache = CacheDeNomes::novo(4, Duration::from_secs(60));
+        let mut cache = CacheDeNomes::new(4, Duration::from_secs(60));
         cache.registrar("@a:s", "Ana");
         cache.registrar("@a:s", "Ana Souza");
         assert_eq!(cache.obter("@a:s").as_deref(), Some("Ana Souza"));
@@ -1365,30 +1351,27 @@ mod testes {
 
     #[test]
     fn motivo_do_aviso_de_midia_segue_o_erro_do_download() {
-        use poph_matrix::ErroChamada;
-        use poph_matrix::midia_atendente::MotivoNaoEnviar;
+        use poph_matrix::CallError;
+        use poph_matrix::attendant_asset::NotSendReason;
 
         assert_eq!(
-            motivo_da_falha_de_midia(&ErroMidia::Grande {
-                bytes: 20,
-                teto: 16
-            }),
-            MotivoNaoEnviar::Grande
+            motivo_da_falha_de_midia(&AssetError::Large { bytes: 20, cap: 16 }),
+            NotSendReason::Large
         );
         assert_eq!(
-            motivo_da_falha_de_midia(&ErroMidia::Vazia),
-            MotivoNaoEnviar::Vazio
+            motivo_da_falha_de_midia(&AssetError::Empty),
+            NotSendReason::Empty
         );
         assert_eq!(
-            motivo_da_falha_de_midia(&ErroMidia::Endereco("sem mxc".to_owned())),
-            MotivoNaoEnviar::SemArquivo
+            motivo_da_falha_de_midia(&AssetError::Address("sem mxc".to_owned())),
+            NotSendReason::WithoutFile
         );
         assert_eq!(
-            motivo_da_falha_de_midia(&ErroMidia::Chamada(ErroChamada::Rede {
-                operacao: "download",
-                motivo: "caiu".to_owned()
+            motivo_da_falha_de_midia(&AssetError::Call(CallError::Network {
+                operation: "download",
+                reason: "caiu".to_owned()
             })),
-            MotivoNaoEnviar::Indisponivel
+            NotSendReason::Unavailable
         );
     }
 

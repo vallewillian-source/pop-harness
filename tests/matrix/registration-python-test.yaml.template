@@ -1,0 +1,24 @@
+id: popatende-python-test
+url: "__AS_URL__"
+as_token: "__AS_TOKEN__"
+hs_token: "__HS_TOKEN__"
+rate_limited: false
+sender_localpart: wa_as_bot
+namespaces:
+  users:
+    - exclusive: true
+      regex: "@wa_.*"
+    - exclusive: true
+      regex: "@agt_.*"
+    - exclusive: true
+      regex: "@em_.*"
+    - exclusive: true
+      regex: "@test_.*"
+  aliases:
+    - exclusive: true
+      regex: "#wa_.*"
+    - exclusive: false
+      regex: "#dep_.*"
+    - exclusive: true
+      regex: "#em_.*"
+  rooms: []

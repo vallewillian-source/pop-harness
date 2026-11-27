@@ -1,6 +1,6 @@
 [package]
 name = "poph-matrix"
-description = "Módulo Matrix do POP Harness: espelho das conversas em salas do Synapse e resposta do atendente humano (MX-07, MX-09)."
+description = "POP Harness Matrix module: mirrors conversations into Synapse rooms and delivers the human attendant response (MX-07, MX-09)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,32 +8,20 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-# O módulo inteiro mora aqui; `poph-matrix` só fala com o resto pelos tipos de `poph-types`.
 poph-types = { path = "../poph-types" }
-# HTTP com a mesma `reqwest`/`rustls` do `poph-evolution` (MX-09: cliente da API do Matrix).
-# `query` habilita o `?user_id=…` (disfarce de usuário virtual) e o `?kind=user` do registro.
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "query"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-# `tokio` só pelo relógio: a espera pedida num `429` (`retry_after_ms`) e a pausa entre os lotes
-# de convite da MX-12.
 tokio = { version = "1.54", features = ["time"] }
-# Convites em paralelo limitado (MX-12): a mesma `futures` que o `poph-server` já usa.
 futures = "0.3"
-# Log do módulo (o aviso de poder que não desceu, na criação da sala). Só código curto, nunca dado
-# de cliente.
 tracing.workspace = true
 
 [dev-dependencies]
-# Tipo real do arquivo que vai ao cliente (MX-48): o teste contra o Synapse real classifica o que
-# baixou. Caminho local, sem dependência nova de fora.
 poph-files = { path = "../poph-files" }
-# Servidor `axum` de teste que imita o Synapse (mesma versão do `poph-server`, já no Cargo.lock).
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 tokio = { version = "1.54", features = ["rt-multi-thread", "macros", "time", "net"] }
 tracing.workspace = true
-# Assinante de log no teste do valor-canário: nada novo no Cargo.lock (já entra por `poph` e `poph-server`).
 tracing-subscriber.workspace = true
 
 [lints]

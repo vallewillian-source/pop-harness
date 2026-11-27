@@ -124,14 +124,14 @@ up() {
     } > "$CREDENTIALS"
     chmod 600 "$CREDENTIALS"
 
-    render "$TEMPLATES/registro-python-teste.yaml.template" /data/registro-python.yaml "$as_py" "$hs_py" "$URL_PY"
+    render "$TEMPLATES/registration-python-test.yaml.template" /data/registro-python.yaml "$as_py" "$hs_py" "$URL_PY"
     if [ -n "${POPH_MATRIX_DEV_REGISTRO_H:-}" ]; then
         [ -f "$POPH_MATRIX_DEV_REGISTRO_H" ] \
             || fail "POPH_MATRIX_DEV_REGISTRO_H: file not found: $POPH_MATRIX_DEV_REGISTRO_H"
         copy_registry "$POPH_MATRIX_DEV_REGISTRO_H" /data/registro-harness.yaml
         echo "--- Harness registration: using the ready file $POPH_MATRIX_DEV_REGISTRO_H ---"
     else
-        render "$TEMPLATES/registro-teste.yaml.template" /data/registro-harness.yaml "$as_h" "$hs_h" "$URL_H"
+        render "$TEMPLATES/registration-test.yaml.template" /data/registro-harness.yaml "$as_h" "$hs_h" "$URL_H"
     fi
 
     if [ ! -f "$DATA/homeserver.yaml" ]; then

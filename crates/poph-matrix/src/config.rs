@@ -1,143 +1,95 @@
-//! Configuração e segredos do módulo Matrix (MX-07).
-//!
-//! A seção `[matrix]` é validada por `poph_types::HarnessConfig`; aqui ela é **decidida**: com a
-//! seção ausente ou `habilitado = false`, [`ModuloMatrix::preparar`] devolve `None` e nada do módulo
-//! existe. Só quando está ligada os dois tokens do Application Service são lidos do ambiente.
-//!
-//! Regra do segredo: os tokens vivem em [`SegredosMatrix`], no tipo `Sensivel`, e nunca aparecem em
-//! `Debug`, `Display`, log, erro ou resposta. Para usá-los (montar o cabeçalho `Authorization` na
-//! MX-09) é preciso pedir o valor com `expor()`; não existe outro caminho.
-
 use poph_types::{DomainError, MatrixConfig, Secret, Sensitive};
 
-/// Token que o Harness usa para falar com o Synapse como Application Service.
 pub const VAR_AS_TOKEN: &str = "POPH_MATRIX_AS_TOKEN";
-/// Token que o Synapse apresenta ao chamar a rota de transações do Harness.
 pub const VAR_HS_TOKEN: &str = "POPH_MATRIX_HS_TOKEN";
-/// Token da API administrativa do Synapse (MX-46): apaga do repositório a mídia que venceu.
-///
-/// É **opcional**, ao contrário dos dois do Application Service: sem ele o módulo sobe e o
-/// espelhamento funciona, e só a rotina de expiração fica desligada (com aviso no log na subida).
-/// O valor vive no tipo `Sensivel` e nunca aparece em log, erro, métrica ou teste.
 pub const VAR_ADMIN_TOKEN: &str = "POPH_MATRIX_ADMIN_TOKEN";
 
-/// Resultado das operações do módulo.
-pub type ResultadoMatrix<T> = Result<T, ErroMatrix>;
+pub type MatrixResult<T> = Result<T, MatrixError>;
 
-/// Erro de preparação do módulo. Nenhuma variante carrega o valor do token nem o da configuração.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ErroMatrix {
-    /// A seção `[matrix]` está inválida (o motivo nomeia a chave, nunca o valor).
+pub enum MatrixError {
     #[error(transparent)]
-    Configuracao(#[from] DomainError),
-    /// Variável de segredo ausente ou vazia com o módulo ligado.
+    Configuration(#[from] DomainError),
     #[error(
-        "{variavel}: defina a variável de ambiente (o módulo Matrix está ligado em `matrix.habilitado`)"
+        "{variable}: defina a variável de ambiente (o módulo Matrix está ligado em `matrix.habilitado`)"
     )]
-    TokenAusente { variavel: &'static str },
+    TokenMissing { variable: &'static str },
 }
 
-/// Os dois tokens do Application Service, lidos do ambiente.
-///
-/// `Debug` mostra `[oculto]` em cada campo (comportamento do `Sensivel`); o tipo não é `Serialize`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SegredosMatrix {
-    /// `POPH_MATRIX_AS_TOKEN`: o Harness apresenta ao Synapse.
+pub struct MatrixSecrets {
     pub as_token: Secret,
-    /// `POPH_MATRIX_HS_TOKEN`: o Synapse apresenta ao Harness.
     pub hs_token: Secret,
 }
 
-impl SegredosMatrix {
-    /// Lê os dois tokens do ambiente do processo.
-    ///
-    /// Variável ausente, vazia ou só com espaços conta como ausente.
-    pub fn do_ambiente() -> ResultadoMatrix<Self> {
-        Self::de(|nome| std::env::var(nome).ok())
+impl MatrixSecrets {
+    pub fn from_environment() -> MatrixResult<Self> {
+        Self::of(|name| std::env::var(name).ok())
     }
 
-    /// Lê os dois tokens de uma fonte qualquer (o ambiente é o caso real; os testes passam um mapa).
-    pub fn de(buscar: impl Fn(&str) -> Option<String>) -> ResultadoMatrix<Self> {
+    pub fn of(search: impl Fn(&str) -> Option<String>) -> MatrixResult<Self> {
         Ok(Self {
-            as_token: token(buscar(VAR_AS_TOKEN), VAR_AS_TOKEN)?,
-            hs_token: token(buscar(VAR_HS_TOKEN), VAR_HS_TOKEN)?,
+            as_token: token(search(VAR_AS_TOKEN), VAR_AS_TOKEN)?,
+            hs_token: token(search(VAR_HS_TOKEN), VAR_HS_TOKEN)?,
         })
     }
 }
 
-/// Lê o token de administração do Synapse, se ele existir.
-///
-/// Variável ausente, vazia ou só com espaços devolve `None` — que **não é erro**: é a rotina de
-/// expiração desligada. Quem chama avisa no log e segue.
-pub fn token_admin_do_ambiente() -> Option<Secret> {
-    token_admin_de(|nome| std::env::var(nome).ok())
+pub fn environment_admin_token() -> Option<Secret> {
+    admin_token_of(|name| std::env::var(name).ok())
 }
 
-/// Igual a [`token_admin_do_ambiente`], com a fonte injetada (testes).
-pub fn token_admin_de(buscar: impl Fn(&str) -> Option<String>) -> Option<Secret> {
-    buscar(VAR_ADMIN_TOKEN)
-        .filter(|valor| !valor.trim().is_empty())
+pub fn admin_token_of(search: impl Fn(&str) -> Option<String>) -> Option<Secret> {
+    search(VAR_ADMIN_TOKEN)
+        .filter(|value| !value.trim().is_empty())
         .map(Sensitive::new)
 }
 
-fn token(valor: Option<String>, variavel: &'static str) -> ResultadoMatrix<Secret> {
-    match valor {
-        Some(valor) if !valor.trim().is_empty() => Ok(Sensitive::new(valor)),
-        _ => Err(ErroMatrix::TokenAusente { variavel }),
+fn token(value: Option<String>, variable: &'static str) -> MatrixResult<Secret> {
+    match value {
+        Some(value) if !value.trim().is_empty() => Ok(Sensitive::new(value)),
+        _ => Err(MatrixError::TokenMissing { variable }),
     }
 }
 
-/// O módulo pronto para ligar: a seção validada e os segredos.
-///
-/// `Debug` imprime a configuração (que não tem segredo) e `[oculto]` nos dois tokens.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ModuloMatrix {
-    /// Seção `[matrix]` já validada.
+pub struct MatrixModule {
     pub config: MatrixConfig,
-    /// Tokens do Application Service.
-    pub segredos: SegredosMatrix,
+    pub secrets: MatrixSecrets,
 }
 
-impl ModuloMatrix {
-    /// Decide se o módulo existe nesta instância e, se existir, carrega os segredos.
-    ///
-    /// - seção ausente (`None`) → `None`, sem tocar no ambiente;
-    /// - `habilitado = false` → `None`, sem tocar no ambiente;
-    /// - `habilitado = true` → confere a seção e lê os dois tokens; falta de token é erro que nomeia a
-    ///   variável, nunca o valor.
-    pub fn preparar(secao: Option<MatrixConfig>) -> ResultadoMatrix<Option<Self>> {
-        Self::preparar_com(secao, |nome| std::env::var(nome).ok())
+impl MatrixModule {
+    pub fn prepare(section: Option<MatrixConfig>) -> MatrixResult<Option<Self>> {
+        Self::prepare_with(section, |name| std::env::var(name).ok())
     }
 
-    /// Igual a [`ModuloMatrix::preparar`], com a fonte dos tokens injetada (testes).
-    pub fn preparar_com(
-        secao: Option<MatrixConfig>,
-        buscar: impl Fn(&str) -> Option<String>,
-    ) -> ResultadoMatrix<Option<Self>> {
-        let Some(config) = secao else {
+    pub fn prepare_with(
+        section: Option<MatrixConfig>,
+        search: impl Fn(&str) -> Option<String>,
+    ) -> MatrixResult<Option<Self>> {
+        let Some(config) = section else {
             return Ok(None);
         };
         if !config.enabled {
             return Ok(None);
         }
         config.validar()?;
-        let segredos = SegredosMatrix::de(buscar)?;
-        Ok(Some(Self { config, segredos }))
+        let secrets = MatrixSecrets::of(search)?;
+        Ok(Some(Self { config, secrets }))
     }
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use std::collections::BTreeMap;
     use std::io::Write;
     use std::sync::{Arc, Mutex};
 
     use super::*;
 
-    /// Valor-canário: se aparecer em qualquer saída, o teste acusa.
     const CANARIO: &str = "CANARIO-MATRIX-9f3a-TAO-SECRETO";
 
-    fn ligada() -> MatrixConfig {
+    fn linked() -> MatrixConfig {
         MatrixConfig {
             enabled: true,
             homeserver_url: "http://127.0.0.1:18008".to_owned(),
@@ -146,139 +98,133 @@ mod testes {
         }
     }
 
-    fn ambiente() -> BTreeMap<String, String> {
+    fn environment() -> BTreeMap<String, String> {
         BTreeMap::from([
             (VAR_AS_TOKEN.to_owned(), CANARIO.to_owned()),
             (VAR_HS_TOKEN.to_owned(), format!("hs-{CANARIO}")),
         ])
     }
 
-    fn fonte(variaveis: BTreeMap<String, String>) -> impl Fn(&str) -> Option<String> {
-        move |nome| variaveis.get(nome).cloned()
+    fn source(variables: BTreeMap<String, String>) -> impl Fn(&str) -> Option<String> {
+        move |name| variables.get(name).cloned()
     }
 
     #[test]
-    fn secao_ausente_deixa_o_modulo_morto_sem_ler_token() {
-        let modulo = ModuloMatrix::preparar_com(None, |nome| {
-            panic!("não deveria ler {nome} com a seção ausente")
+    fn missing_section_leaves_module_dead_without_reading_token() {
+        let module = MatrixModule::prepare_with(None, |name| {
+            panic!("não deveria ler {name} com a seção ausente")
         })
         .expect("seção ausente é válida");
-        assert!(modulo.is_none());
+        assert!(module.is_none());
     }
 
     #[test]
-    fn desligada_deixa_o_modulo_morto_sem_ler_token() {
-        let mut desligada = ligada();
-        desligada.enabled = false;
-        let modulo = ModuloMatrix::preparar_com(Some(desligada), |nome| {
-            panic!("não deveria ler {nome} com o módulo desligado")
+    fn disabled_leaves_module_dead_without_reading_token() {
+        let mut disabled = linked();
+        disabled.enabled = false;
+        let module = MatrixModule::prepare_with(Some(disabled), |name| {
+            panic!("não deveria ler {name} com o módulo desligado")
         })
         .expect("módulo desligado é válido");
-        assert!(modulo.is_none());
+        assert!(module.is_none());
     }
 
     #[test]
-    fn ligada_carrega_configuracao_e_os_dois_tokens() {
-        let modulo = ModuloMatrix::preparar_com(Some(ligada()), fonte(ambiente()))
+    fn enabled_loads_configuration_and_both_tokens() {
+        let module = MatrixModule::prepare_with(Some(linked()), source(environment()))
             .expect("configuração válida")
             .expect("módulo ligado");
-        assert_eq!(modulo.config.prefix, "ph");
-        assert_eq!(modulo.segredos.as_token.expose(), CANARIO);
-        assert_eq!(modulo.segredos.hs_token.expose(), &format!("hs-{CANARIO}"));
+        assert_eq!(module.config.prefix, "ph");
+        assert_eq!(module.secrets.as_token.expose(), CANARIO);
+        assert_eq!(module.secrets.hs_token.expose(), &format!("hs-{CANARIO}"));
     }
 
     #[test]
-    fn token_ausente_ou_vazio_nomeia_a_variavel_sem_o_valor() {
-        for (as_token, hs_token, esperado) in [
+    fn absent_or_empty_token_names_variable_without_value() {
+        for (as_token, hs_token, expected) in [
             (None, Some("hs".to_owned()), VAR_AS_TOKEN),
             (Some("   ".to_owned()), Some("hs".to_owned()), VAR_AS_TOKEN),
             (Some("as".to_owned()), None, VAR_HS_TOKEN),
             (Some("as".to_owned()), Some(String::new()), VAR_HS_TOKEN),
         ] {
-            let mut variaveis = BTreeMap::new();
-            if let Some(valor) = &as_token {
-                variaveis.insert(VAR_AS_TOKEN.to_owned(), valor.clone());
+            let mut variables = BTreeMap::new();
+            if let Some(value) = &as_token {
+                variables.insert(VAR_AS_TOKEN.to_owned(), value.clone());
             }
-            if let Some(valor) = &hs_token {
-                variaveis.insert(VAR_HS_TOKEN.to_owned(), valor.clone());
+            if let Some(value) = &hs_token {
+                variables.insert(VAR_HS_TOKEN.to_owned(), value.clone());
             }
-            let erro = ModuloMatrix::preparar_com(Some(ligada()), fonte(variaveis))
+            let error = MatrixModule::prepare_with(Some(linked()), source(variables))
                 .expect_err("token faltando deve recusar o módulo");
-            let mensagem = erro.to_string();
-            assert_eq!(erro, ErroMatrix::TokenAusente { variavel: esperado });
+            let message = error.to_string();
+            assert_eq!(error, MatrixError::TokenMissing { variable: expected });
             assert!(
-                mensagem.contains(esperado),
-                "o erro deve nomear a variável: {mensagem}"
+                message.contains(expected),
+                "o erro deve nomear a variável: {message}"
             );
-            // O valor que por acaso veio no outro campo não pode aparecer no erro.
-            for valor in [as_token, hs_token].into_iter().flatten() {
-                if !valor.trim().is_empty() {
-                    assert!(
-                        !mensagem.contains(&valor),
-                        "vazou valor no erro: {mensagem}"
-                    );
+            for value in [as_token, hs_token].into_iter().flatten() {
+                if !value.trim().is_empty() {
+                    assert!(!message.contains(&value), "vazou valor no erro: {message}");
                 }
             }
         }
     }
 
     #[test]
-    fn configuracao_invalida_recusa_o_modulo_citando_a_chave() {
-        let mut invalida = ligada();
-        invalida.prefix = "PH!".to_owned();
-        let erro = ModuloMatrix::preparar_com(Some(invalida), |_| None)
+    fn invalid_configuration_refuses_module_naming_key() {
+        let mut invalid = linked();
+        invalid.prefix = "PH!".to_owned();
+        let error = MatrixModule::prepare_with(Some(invalid), |_| None)
             .expect_err("prefixo inválido deve recusar o módulo");
-        match &erro {
-            ErroMatrix::Configuracao(DomainError::Validation { field: campo, .. }) => {
-                assert_eq!(*campo, "matrix.prefixo")
+        match &error {
+            MatrixError::Configuration(DomainError::Validation { field, .. }) => {
+                assert_eq!(*field, "matrix.prefixo")
             }
-            outro => panic!("esperado erro de validação, veio {outro:?}"),
+            other => panic!("esperado erro de validação, veio {other:?}"),
         }
-        assert!(!erro.to_string().contains("PH!"));
+        assert!(!error.to_string().contains("PH!"));
     }
 
     #[test]
-    fn valor_canario_nunca_aparece_em_debug_display_ou_log() {
-        let modulo = ModuloMatrix::preparar_com(Some(ligada()), fonte(ambiente()))
+    fn canary_value_never_appears_in_debug_display_or_log() {
+        let module = MatrixModule::prepare_with(Some(linked()), source(environment()))
             .expect("configuração válida")
             .expect("módulo ligado");
 
-        let debug = format!("{modulo:?}");
+        let debug = format!("{module:?}");
         assert!(debug.contains("[oculto]"), "debug sem máscara: {debug}");
         assert!(!debug.contains(CANARIO), "vazou em Debug: {debug}");
-        let display = format!("{}", modulo.segredos.as_token);
+        let display = format!("{}", module.secrets.as_token);
         assert_eq!(display, "[oculto]");
-        assert!(!format!("{:?}", modulo.segredos).contains(CANARIO));
+        assert!(!format!("{:?}", module.secrets).contains(CANARIO));
 
-        // Log de verdade: um assinante que grava tudo o que for emitido.
-        let capturado = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let captured = Arc::new(Mutex::new(Vec::<u8>::new()));
         let assinante = tracing_subscriber::fmt()
             .with_max_level(tracing::Level::TRACE)
             .with_ansi(false)
             .with_writer({
-                let capturado = Arc::clone(&capturado);
-                move || Escritor(Arc::clone(&capturado))
+                let captured = Arc::clone(&captured);
+                move || Writer(Arc::clone(&captured))
             })
             .finish();
         tracing::subscriber::with_default(assinante, || {
             tracing::info!(
-                as_token = ?modulo.segredos.as_token,
-                hs_token = %modulo.segredos.hs_token,
+                as_token = ?module.secrets.as_token,
+                hs_token = %module.secrets.hs_token,
                 "módulo Matrix pronto"
             );
         });
-        let log = String::from_utf8(capturado.lock().expect("trava").clone()).expect("utf-8");
+        let log = String::from_utf8(captured.lock().expect("trava").clone()).expect("utf-8");
         assert!(log.contains("módulo Matrix pronto"), "log não saiu: {log}");
         assert!(!log.contains(CANARIO), "vazou no log: {log}");
     }
 
-    /// Escritor de log em memória para o teste.
-    struct Escritor(Arc<Mutex<Vec<u8>>>);
+    struct Writer(Arc<Mutex<Vec<u8>>>);
 
-    impl Write for Escritor {
-        fn write(&mut self, dados: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().expect("trava").extend_from_slice(dados);
-            Ok(dados.len())
+    impl Write for Writer {
+        fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("trava").extend_from_slice(data);
+            Ok(data.len())
         }
 
         fn flush(&mut self) -> std::io::Result<()> {

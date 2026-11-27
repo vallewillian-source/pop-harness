@@ -18,18 +18,18 @@ use std::path::PathBuf;
 use poph_store::{Direction, NewAgent, NewConversation, NewMessage, NewOrg, Origin, Role, Store};
 use poph_types::{HarnessConfig, OrgId};
 
-fn variavel(nome: &str) -> Option<String> {
-    std::env::var(nome)
+fn variavel(name: &str) -> Option<String> {
+    std::env::var(name)
         .ok()
         .filter(|valor| !valor.trim().is_empty())
 }
 
-fn numero(nome: &str, padrao: u64) -> u64 {
-    match variavel(nome) {
+fn numero(name: &str, padrao: u64) -> u64 {
+    match variavel(name) {
         Some(valor) => valor
             .trim()
             .parse()
-            .unwrap_or_else(|_| panic!("{nome} precisa ser um número inteiro")),
+            .unwrap_or_else(|_| panic!("{name} precisa ser um número inteiro")),
         None => padrao,
     }
 }
@@ -50,7 +50,7 @@ fn criar_org(store: &Store) -> OrgId {
 #[ignore = "semeadura da medição MX-30; roda por scripts/measure-memory.sh"]
 fn semeia_conversas_para_a_medicao_de_memoria() {
     let pasta = PathBuf::from(variavel("MX30_PASTA").expect("MX30_PASTA é obrigatória"));
-    let salas = numero("MX30_SALAS", 100);
+    let rooms = numero("MX30_SALAS", 100);
     let mensagens_por_sala = numero("MX30_MENSAGENS_POR_SALA", 1);
     let ligado = numero("MX30_LIGADO", 1) == 1;
 
@@ -67,7 +67,7 @@ fn semeia_conversas_para_a_medicao_de_memoria() {
         // espelhado pelo laço do módulo quando o `poph serve` subir.
         store.matrix().enable(org).expect("liga a org no módulo");
     }
-    let agente = store
+    let agent = store
         .agents()
         .create(
             org,
@@ -80,13 +80,13 @@ fn semeia_conversas_para_a_medicao_de_memoria() {
         .expect("cria o agente")
         .id;
 
-    for indice in 0..salas {
-        let conversa = store
+    for indice in 0..rooms {
+        let conversation = store
             .conversations()
             .create(
                 org,
                 NewConversation {
-                    agent_id: agente,
+                    agent_id: agent,
                     integration_id: None,
                     canal: "whatsapp".to_owned(),
                     peer_externo: Some(format!("5511{:09}", indice)),
@@ -101,7 +101,7 @@ fn semeia_conversas_para_a_medicao_de_memoria() {
                 .write(
                     org,
                     NewMessage {
-                        conversation_id: conversa,
+                        conversation_id: conversation,
                         direction: Direction::Inbound,
                         role: Role::User,
                         origin: Origin::Agente,
@@ -116,6 +116,6 @@ fn semeia_conversas_para_a_medicao_de_memoria() {
         }
     }
     eprintln!(
-        "semeadas {salas} conversas com {mensagens_por_sala} mensagem(ns) cada (ligado={ligado})"
+        "semeadas {rooms} conversas com {mensagens_por_sala} mensagem(ns) cada (ligado={ligado})"
     );
 }

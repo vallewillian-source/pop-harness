@@ -37,7 +37,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use poph_evolution::{ATTACHMENT_CAP, ConfigEvolution, EvolutionClient};
-use poph_matrix::{ClienteMatrix, ConfigCliente, IdsFantasmas};
+use poph_matrix::{ClientConfig, GhostIds, MatrixClient};
 use poph_server::evolution::CanalEvolution;
 use poph_server::{Estado, PortaDoHarness, ReceptorAs, RespostaDoAtendente};
 use poph_store::{NewAgent, NewConversation, NewOrg, Origin, OutboxState, Page, Store};
@@ -108,9 +108,9 @@ const VIDEO_MP4: &[u8] = &[
 /// Um evento de mensagem que o Harness escreveu na sala (o aviso ao atendente, por exemplo).
 #[derive(Clone, Debug)]
 struct Escrita {
-    sala: String,
+    room: String,
     tipo: String,
-    corpo: Value,
+    body: Value,
     /// `?user_id=` com que o evento foi escrito (o fantasma que assinou).
     disfarce: Option<String>,
 }
@@ -159,9 +159,9 @@ async fn perfil_falso(
 ) -> (StatusCode, Json<Value>) {
     let perfis = falso.perfis.lock().unwrap();
     match perfis.get(&usuario) {
-        Some(nome) => (
+        Some(name) => (
             StatusCode::OK,
-            Json(json!({ "displayname": nome, "avatar_url": null })),
+            Json(json!({ "displayname": name, "avatar_url": null })),
         ),
         None => (
             StatusCode::NOT_FOUND,
@@ -172,9 +172,9 @@ async fn perfil_falso(
 
 async fn enviar_falso(
     State(falso): State<SynapseFalso>,
-    Path((sala, tipo, txn)): Path<(String, String, String)>,
+    Path((room, tipo, txn)): Path<(String, String, String)>,
     Query(consulta): Query<HashMap<String, String>>,
-    Json(corpo): Json<Value>,
+    Json(body): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
     let disfarce = consulta.get("user_id").cloned();
     if !pode_personificar(disfarce.as_deref()) {
@@ -184,9 +184,9 @@ async fn enviar_falso(
     let mut escritas = falso.escritas.lock().unwrap();
     let posicao = escritas.len() + 1;
     escritas.push(Escrita {
-        sala,
+        room,
         tipo,
-        corpo,
+        body,
         disfarce,
     });
     let _ = txn;
@@ -253,17 +253,17 @@ async fn subir_synapse_falso() -> (String, SynapseFalso) {
     }
     let roteador = Router::new()
         .route("/pronto", get(|| async { StatusCode::OK }))
-        .route("/_matrix/client/v3/profile/{usuario}", get(perfil_falso))
+        .route("/_matrix/client/v3/profile/{user}", get(perfil_falso))
         .route(
-            "/_matrix/client/v3/rooms/{sala}/send/{tipo}/{txn}",
+            "/_matrix/client/v3/rooms/{room}/send/{kind}/{txn}",
             put(enviar_falso),
         )
         .route(
-            "/_matrix/client/v1/media/download/{servidor}/{id}",
+            "/_matrix/client/v1/media/download/{server}/{id}",
             get(baixar_falso_novo),
         )
         .route(
-            "/_matrix/media/v3/download/{servidor}/{id}",
+            "/_matrix/media/v3/download/{server}/{id}",
             get(baixar_falso),
         )
         .with_state(falso.clone());
@@ -278,10 +278,10 @@ async fn subir_synapse_falso() -> (String, SynapseFalso) {
 }
 
 async fn esperar_synapse(url: &str) {
-    let cliente = Client::new();
+    let client = Client::new();
     let inicio = Instant::now();
     loop {
-        if cliente.get(format!("{url}/pronto")).send().await.is_ok() {
+        if client.get(format!("{url}/pronto")).send().await.is_ok() {
             return;
         }
         assert!(
@@ -296,23 +296,23 @@ async fn esperar_synapse(url: &str) {
 
 /// Um envio que a Evolution falsa recebeu.
 #[derive(Clone, Debug)]
-struct Envio {
+struct Send {
     rota: String,
-    corpo: Value,
+    body: Value,
 }
 
 #[derive(Clone, Default)]
 struct EvolucaoFalsa {
-    envios: Arc<Mutex<Vec<Envio>>>,
+    envios: Arc<Mutex<Vec<Send>>>,
 }
 
 async fn enviar_pelo_whatsapp(
     State(falsa): State<EvolucaoFalsa>,
     Path((rota, _instancia)): Path<(String, String)>,
-    Json(corpo): Json<Value>,
+    Json(body): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
     let mut envios = falsa.envios.lock().unwrap();
-    envios.push(Envio { rota, corpo });
+    envios.push(Send { rota, body });
     let posicao = envios.len();
     (
         StatusCode::OK,
@@ -323,7 +323,7 @@ async fn enviar_pelo_whatsapp(
 async fn subir_evolution_falsa() -> (String, EvolucaoFalsa) {
     let falsa = EvolucaoFalsa::default();
     let roteador = Router::new()
-        .route("/message/{rota}/{instancia}", post(enviar_pelo_whatsapp))
+        .route("/message/{rota}/{instance}", post(enviar_pelo_whatsapp))
         .with_state(falsa.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -341,7 +341,7 @@ struct Cenario {
     pasta: PathBuf,
     store: Arc<Store>,
     org: OrgId,
-    conversa: ConversationId,
+    conversation: ConversationId,
     synapse: SynapseFalso,
     evo: EvolucaoFalsa,
     url_synapse: String,
@@ -356,7 +356,7 @@ struct Cenario {
 }
 
 impl Cenario {
-    async fn novo(rotulo: &str) -> Self {
+    async fn new(rotulo: &str) -> Self {
         let carimbo = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map(|duracao| duracao.as_nanos())
@@ -380,7 +380,7 @@ impl Cenario {
             })
             .expect("cria a org")
             .id;
-        let agente = store
+        let agent = store
             .agents()
             .create(
                 org,
@@ -393,17 +393,17 @@ impl Cenario {
             .expect("cria o agente")
             .id;
         let integracao: IntegrationId = store
-            .create_integration(org, agente, "whatsapp".to_owned(), "active".to_owned())
+            .create_integration(org, agent, "whatsapp".to_owned(), "active".to_owned())
             .expect("cria a integração")
             .id
             .parse()
             .expect("id da integração");
-        let conversa = store
+        let conversation = store
             .conversations()
             .create(
                 org,
                 NewConversation {
-                    agent_id: agente,
+                    agent_id: agent,
                     integration_id: Some(integracao),
                     canal: "whatsapp".to_owned(),
                     peer_externo: Some(TELEFONE.to_owned()),
@@ -416,11 +416,11 @@ impl Cenario {
         store.matrix().enable(org).expect("liga o módulo na org");
         store
             .matrix()
-            .ensure_room(org, conversa, SALA, None)
+            .ensure_room(org, conversation, SALA, None)
             .expect("grava a sala");
         store
             .matrix()
-            .mark_room_ready(org, conversa)
+            .mark_room_ready(org, conversation)
             .expect("sala pronta");
 
         let (url_synapse, synapse) = subir_synapse_falso().await;
@@ -433,7 +433,7 @@ impl Cenario {
             pasta,
             store,
             org,
-            conversa,
+            conversation,
             synapse,
             evo,
             url_synapse,
@@ -460,8 +460,8 @@ impl Cenario {
         format!("mxc://{SERVER_NAME}/{id}")
     }
 
-    fn canal(&self) -> CanalEvolution {
-        let cliente = EvolutionClient::new(
+    fn channel(&self) -> CanalEvolution {
+        let client = EvolutionClient::new(
             ConfigEvolution::new(
                 self.url_evo.clone(),
                 INSTANCIA,
@@ -473,7 +473,7 @@ impl Cenario {
         let integracao = self
             .store
             .conversations()
-            .get(self.org, self.conversa)
+            .get(self.org, self.conversation)
             .expect("lê a conversa")
             .integration_id
             .expect("a conversa tem integração");
@@ -482,14 +482,14 @@ impl Cenario {
             instancia: INSTANCIA.to_owned(),
             integracao,
             segredo: Some(Secret::new(SEGREDO_WEBHOOK.to_owned())),
-            cliente: Some(cliente),
+            cliente: Some(client),
             teto_midia: ATTACHMENT_CAP,
         }
     }
 
     async fn subir(&self) -> Servidor {
-        let cliente_matrix = ClienteMatrix::novo(
-            ConfigCliente::novo(
+        let cliente_matrix = MatrixClient::new(
+            ClientConfig::new(
                 self.url_synapse.clone(),
                 SERVER_NAME.to_owned(),
                 Secret::new(AS_TOKEN.to_owned()),
@@ -497,10 +497,10 @@ impl Cenario {
             .expect("config do cliente do Matrix"),
         )
         .expect("cliente do Matrix");
-        let ids = IdsFantasmas::novo(PREFIXO, SERVER_NAME).expect("ids dos fantasmas");
+        let ids = GhostIds::new(PREFIXO, SERVER_NAME).expect("ids dos fantasmas");
         let entrega = Arc::new(
-            RespostaDoAtendente::novo(
-                Arc::new(PortaDoHarness::nova(Arc::clone(&self.store))),
+            RespostaDoAtendente::new(
+                Arc::new(PortaDoHarness::fresh(Arc::clone(&self.store))),
                 Some(cliente_matrix),
                 ids,
             )
@@ -509,10 +509,10 @@ impl Cenario {
 
         let mut config = HarnessConfig::default();
         config.data.directory = self.diretorio.clone();
-        let estado = Estado::novo(Arc::clone(&self.store), config)
+        let state = Estado::novo(Arc::clone(&self.store), config)
             .expect("estado do servidor")
-            .com_canais_evolution(vec![self.canal()])
-            .com_matrix_as(Arc::new(ReceptorAs::novo(
+            .com_canais_evolution(vec![self.channel()])
+            .com_matrix_as(Arc::new(ReceptorAs::new(
                 PREFIXO,
                 SERVER_NAME,
                 Secret::new(HS_TOKEN.to_owned()),
@@ -525,14 +525,14 @@ impl Cenario {
         let endereco = listener.local_addr().expect("endereço local");
         let (desligar, sinal) = oneshot::channel::<()>();
         tokio::spawn(async move {
-            let _ = poph_server::servir_em(listener, estado, async {
+            let _ = poph_server::servir_em(listener, state, async {
                 let _ = sinal.await;
             })
             .await;
         });
         let servidor = Servidor {
             base: format!("http://{endereco}"),
-            cliente: Client::builder()
+            client: Client::builder()
                 .timeout(Duration::from_secs(20))
                 .build()
                 .expect("cliente HTTP"),
@@ -546,7 +546,7 @@ impl Cenario {
     fn messages(&self) -> Vec<poph_store::Mensagem> {
         self.store
             .messages()
-            .list(self.org, self.conversa, Page::with_limit(50))
+            .list(self.org, self.conversation, Page::with_limit(50))
             .expect("lista as mensagens")
     }
 
@@ -561,26 +561,26 @@ impl Cenario {
     fn arquivos_na_fila(&self) -> Vec<poph_store::OutboxItem> {
         self.store
             .outbox()
-            .list_files_of_conversation(self.org, self.conversa, 50)
+            .list_files_of_conversation(self.org, self.conversation, 50)
             .expect("lista os itens de arquivo da fila")
     }
 
-    fn envios(&self) -> Vec<Envio> {
+    fn envios(&self) -> Vec<Send> {
         self.evo.envios.lock().unwrap().clone()
     }
 
     /// O fantasma do agente dono da conversa: quem o Synapse aceita personificar (namespace do AS)
     /// e quem está na sala. É ele que baixa o arquivo e assina o aviso.
-    fn fantasma_do_agente(&self) -> String {
-        let agente = self
+    fn agent_ghost(&self) -> String {
+        let agent = self
             .store
             .conversations()
-            .get(self.org, self.conversa)
+            .get(self.org, self.conversation)
             .expect("lê a conversa")
             .agent_id;
-        IdsFantasmas::novo(PREFIXO, SERVER_NAME)
+        GhostIds::new(PREFIXO, SERVER_NAME)
             .expect("ids dos fantasmas")
-            .agente(&agente.to_string())
+            .agent(&agent.to_string())
             .expect("fantasma do agente")
             .user_id()
             .to_owned()
@@ -610,7 +610,7 @@ impl Drop for Cenario {
 /// O Harness no ar: entrega transações como o Synapse entregaria.
 struct Servidor {
     base: String,
-    cliente: Client,
+    client: Client,
     entrega: Arc<RespostaDoAtendente>,
     desligar: Option<oneshot::Sender<()>>,
 }
@@ -620,7 +620,7 @@ impl Servidor {
         let inicio = Instant::now();
         loop {
             match self
-                .cliente
+                .client
                 .get(format!("{}/healthz", self.base))
                 .send()
                 .await
@@ -634,12 +634,12 @@ impl Servidor {
         }
     }
 
-    async fn transacao(&self, txn: &str, corpo: &Value) -> StatusHttp {
+    async fn transacao(&self, txn: &str, body: &Value) -> StatusHttp {
         let resposta = self
-            .cliente
+            .client
             .put(format!("{}/_matrix/app/v1/transactions/{txn}", self.base))
             .header("authorization", format!("Bearer {HS_TOKEN}"))
-            .json(corpo)
+            .json(body)
             .send()
             .await
             .expect("entrega a transação");
@@ -650,12 +650,12 @@ impl Servidor {
     async fn arquivo_do_atendente(
         &self,
         txn: &str,
-        evento: &str,
+        event: &str,
         msgtype: &str,
-        nome: &str,
+        name: &str,
         url: Option<&str>,
     ) -> StatusHttp {
-        let mut conteudo = json!({ "msgtype": msgtype, "body": nome, "filename": nome });
+        let mut conteudo = json!({ "msgtype": msgtype, "body": name, "filename": name });
         if let Some(url) = url {
             conteudo["url"] = json!(url);
         }
@@ -666,7 +666,7 @@ impl Servidor {
                     "type": "m.room.message",
                     "room_id": SALA,
                     "sender": ATENDENTE,
-                    "event_id": evento,
+                    "event_id": event,
                     "origin_server_ts": 1_795_300_000_000i64,
                     "content": conteudo
                 }]
@@ -704,7 +704,7 @@ async fn esperar(rotulo: &str, mut condicao: impl FnMut() -> bool) {
 ///
 /// Vinte linhas no lugar de uma dependência nova: o teste só precisa conferir que os bytes chegam
 /// inteiros à Evolution, e o `Cargo.lock` não muda por causa de um teste.
-fn decodificar_base64(texto: &str) -> Vec<u8> {
+fn decodificar_base64(text: &str) -> Vec<u8> {
     fn valor(caractere: u8) -> Option<u8> {
         match caractere {
             b'A'..=b'Z' => Some(caractere - b'A'),
@@ -718,7 +718,7 @@ fn decodificar_base64(texto: &str) -> Vec<u8> {
     let mut saida = Vec::new();
     let mut grupo = [0u8; 4];
     let mut tamanho = 0;
-    for byte in texto.bytes() {
+    for byte in text.bytes() {
         if byte == b'=' || byte.is_ascii_whitespace() {
             continue;
         }
@@ -750,12 +750,12 @@ fn decodificar_base64(texto: &str) -> Vec<u8> {
 fn unico_aviso(cenario: &Cenario) -> String {
     let avisos = cenario.avisos_na_sala();
     assert_eq!(avisos.len(), 1, "esperava um aviso na sala: {avisos:?}");
-    assert_eq!(avisos[0].sala, SALA, "o aviso vai para a sala do atendente");
+    assert_eq!(avisos[0].room, SALA, "o aviso vai para a sala do atendente");
     assert_eq!(avisos[0].tipo, "m.room.message");
-    assert_eq!(avisos[0].corpo["msgtype"], json!("m.notice"));
+    assert_eq!(avisos[0].body["msgtype"], json!("m.notice"));
     assert_eq!(
         avisos[0].disfarce.as_deref(),
-        Some(cenario.fantasma_do_agente().as_str()),
+        Some(cenario.agent_ghost().as_str()),
         "o aviso é assinado pelo fantasma do agente, nunca pelo atendente humano"
     );
     assert_eq!(
@@ -763,7 +763,7 @@ fn unico_aviso(cenario: &Cenario) -> String {
         0,
         "nenhum pedido pode ter sido recusado por disfarce fora do namespace do AS"
     );
-    avisos[0].corpo["body"]
+    avisos[0].body["body"]
         .as_str()
         .expect("corpo do aviso é texto")
         .to_owned()
@@ -773,7 +773,7 @@ fn unico_aviso(cenario: &Cenario) -> String {
 
 #[tokio::test]
 async fn imagem_e_pdf_do_element_chegam_ao_whatsapp_com_a_legenda_do_atendente() {
-    let cenario = Cenario::novo("ok").await;
+    let cenario = Cenario::new("ok").await;
     let servidor = cenario.subir().await;
     let url_png = cenario.publicar("png-mx44", PNG);
     let url_pdf = cenario.publicar("pdf-mx44", PDF);
@@ -819,7 +819,7 @@ async fn imagem_e_pdf_do_element_chegam_ao_whatsapp_com_a_legenda_do_atendente()
         cenario
             .envios()
             .iter()
-            .filter(|envio| envio.rota == "sendMedia")
+            .filter(|send| send.rota == "sendMedia")
             .count()
             == 2
     })
@@ -827,30 +827,30 @@ async fn imagem_e_pdf_do_element_chegam_ao_whatsapp_com_a_legenda_do_atendente()
 
     let envios = cenario.envios();
     assert!(
-        envios.iter().all(|envio| envio.rota == "sendMedia"),
+        envios.iter().all(|send| send.rota == "sendMedia"),
         "nenhum texto deveria sair: {envios:?}"
     );
-    let midias: Vec<&Envio> = envios
+    let midias: Vec<&Send> = envios
         .iter()
-        .filter(|envio| envio.rota == "sendMedia")
+        .filter(|send| send.rota == "sendMedia")
         .collect();
     let (primeira, segunda) = (midias[0], midias[1]);
 
     // Imagem: `image`, o mime real e o nome do arquivo.
-    assert_eq!(primeira.corpo["mediatype"], json!("image"));
-    assert_eq!(primeira.corpo["mimetype"], json!("image/png"));
-    assert_eq!(primeira.corpo["fileName"], json!("foto.png"));
-    assert_eq!(primeira.corpo["number"], json!(TELEFONE));
-    assert_eq!(primeira.corpo["caption"], json!("*[Ana Atendente]*"));
-    let enviado = decodificar_base64(primeira.corpo["media"].as_str().expect("mídia em base64"));
+    assert_eq!(primeira.body["mediatype"], json!("image"));
+    assert_eq!(primeira.body["mimetype"], json!("image/png"));
+    assert_eq!(primeira.body["fileName"], json!("foto.png"));
+    assert_eq!(primeira.body["number"], json!(TELEFONE));
+    assert_eq!(primeira.body["caption"], json!("*[Ana Atendente]*"));
+    let enviado = decodificar_base64(primeira.body["media"].as_str().expect("mídia em base64"));
     assert_eq!(enviado, PNG, "os bytes chegam inteiros");
 
     // PDF: `document`, o mime real e a mesma legenda.
-    assert_eq!(segunda.corpo["mediatype"], json!("document"));
-    assert_eq!(segunda.corpo["mimetype"], json!("application/pdf"));
-    assert_eq!(segunda.corpo["fileName"], json!("laudo.pdf"));
-    assert_eq!(segunda.corpo["caption"], json!("*[Ana Atendente]*"));
-    let enviado = decodificar_base64(segunda.corpo["media"].as_str().expect("mídia em base64"));
+    assert_eq!(segunda.body["mediatype"], json!("document"));
+    assert_eq!(segunda.body["mimetype"], json!("application/pdf"));
+    assert_eq!(segunda.body["fileName"], json!("laudo.pdf"));
+    assert_eq!(segunda.body["caption"], json!("*[Ana Atendente]*"));
+    let enviado = decodificar_base64(segunda.body["media"].as_str().expect("mídia em base64"));
     assert_eq!(enviado, PDF, "os bytes chegam inteiros");
 
     // Nada de aviso na sala: os dois arquivos foram.
@@ -862,7 +862,7 @@ async fn imagem_e_pdf_do_element_chegam_ao_whatsapp_com_a_legenda_do_atendente()
 
     // O download saiu em nome do fantasma do agente: o atendente humano está fora do namespace do
     // Application Service e o Synapse recusaria o disfarce com `403 M_FORBIDDEN`.
-    let fantasma = cenario.fantasma_do_agente();
+    let fantasma = cenario.agent_ghost();
     assert_eq!(
         cenario.downloads(),
         vec![Some(fantasma.clone()), Some(fantasma)],
@@ -877,19 +877,19 @@ async fn imagem_e_pdf_do_element_chegam_ao_whatsapp_com_a_legenda_do_atendente()
     // Histórico: duas mensagens `human`, com anexo e sem texto.
     let mensagens = cenario.messages();
     assert_eq!(mensagens.len(), 2);
-    for (indice, (nome, mime, tamanho)) in [
+    for (indice, (name, mime, tamanho)) in [
         ("foto.png", "image/png", PNG.len()),
         ("laudo.pdf", "application/pdf", PDF.len()),
     ]
     .into_iter()
     .enumerate()
     {
-        let mensagem = &mensagens[indice];
-        assert_eq!(mensagem.origin, Origin::Human);
-        assert_eq!(mensagem.author_name.as_deref(), Some(NOME_ATENDENTE));
-        assert_eq!(mensagem.texto, "", "o atendente não digitou texto");
+        let message = &mensagens[indice];
+        assert_eq!(message.origin, Origin::Human);
+        assert_eq!(message.author_name.as_deref(), Some(NOME_ATENDENTE));
+        assert_eq!(message.texto, "", "o atendente não digitou texto");
         assert_eq!(
-            mensagem.external_id.as_deref(),
+            message.external_id.as_deref(),
             Some(if indice == 0 {
                 "$img-mx44:matrix-dev.local"
             } else {
@@ -898,7 +898,7 @@ async fn imagem_e_pdf_do_element_chegam_ao_whatsapp_com_a_legenda_do_atendente()
         );
         let anexos = cenario.anexos(indice);
         assert_eq!(anexos.len(), 1, "cada mensagem leva o seu anexo");
-        assert_eq!(anexos[0].name, nome);
+        assert_eq!(anexos[0].name, name);
         assert_eq!(anexos[0].mime, mime);
         assert_eq!(anexos[0].size_bytes, tamanho as u64);
         assert_eq!(anexos[0].extraction_status, "skipped");
@@ -909,13 +909,13 @@ async fn imagem_e_pdf_do_element_chegam_ao_whatsapp_com_a_legenda_do_atendente()
     // Fila de saída: dois itens `file`, com o payload do HR-24 e a legenda em Markdown.
     let arquivos = cenario.arquivos_na_fila();
     assert_eq!(arquivos.len(), 2);
-    for (item, (nome, mime)) in arquivos
+    for (item, (name, mime)) in arquivos
         .iter()
         .zip([("foto.png", "image/png"), ("laudo.pdf", "application/pdf")])
     {
         assert_eq!(item.tipo, "file");
         let payload: Value = serde_json::from_str(&item.content_json).expect("payload em JSON");
-        assert_eq!(payload["nome"], json!(nome));
+        assert_eq!(payload["nome"], json!(name));
         assert_eq!(payload["mime"], json!(mime));
         assert_eq!(payload["legenda"], json!("**[Ana Atendente]**"));
         assert!(
@@ -934,7 +934,7 @@ async fn imagem_e_pdf_do_element_chegam_ao_whatsapp_com_a_legenda_do_atendente()
         cenario
             .store
             .conversations()
-            .get(cenario.org, cenario.conversa)
+            .get(cenario.org, cenario.conversation)
             .expect("lê a conversa")
             .status,
         poph_store::ConversationStatus::Transferred
@@ -949,7 +949,7 @@ async fn imagem_e_pdf_do_element_chegam_ao_whatsapp_com_a_legenda_do_atendente()
     );
 
     // Nada de token no que foi para o cliente.
-    let corpos: Vec<&Value> = envios.iter().map(|envio| &envio.corpo).collect();
+    let corpos: Vec<&Value> = envios.iter().map(|send| &send.body).collect();
     let para_o_cliente = serde_json::to_string(&corpos).expect("serializa os envios");
     assert!(!para_o_cliente.contains(HS_TOKEN));
     assert!(!para_o_cliente.contains(AS_TOKEN));
@@ -964,11 +964,11 @@ async fn imagem_e_pdf_do_element_chegam_ao_whatsapp_com_a_legenda_do_atendente()
 /// humano, conteúdo inteiro para o fantasma do agente.
 #[tokio::test]
 async fn synapse_falso_recusa_disfarce_de_humano_e_entrega_para_o_fantasma_do_agente() {
-    let cenario = Cenario::novo("disfarce").await;
+    let cenario = Cenario::new("disfarce").await;
     let url = cenario.publicar("png-disfarce", PNG);
-    let fantasma = cenario.fantasma_do_agente();
-    let cliente = ClienteMatrix::novo(
-        ConfigCliente::novo(
+    let fantasma = cenario.agent_ghost();
+    let client = MatrixClient::new(
+        ClientConfig::new(
             cenario.url_synapse.clone(),
             SERVER_NAME.to_owned(),
             Secret::new(AS_TOKEN.to_owned()),
@@ -977,12 +977,12 @@ async fn synapse_falso_recusa_disfarce_de_humano_e_entrega_para_o_fantasma_do_ag
     )
     .expect("cliente do Matrix");
 
-    let negado = cliente
-        .baixar_midia(ATENDENTE, &url, poph_matrix::midia::LIMITE_MIDIA_BYTES)
+    let negado = client
+        .download_asset(ATENDENTE, &url, poph_matrix::asset::ASSET_BYTES_LIMIT)
         .await
         .expect_err("o humano está fora do namespace do Application Service");
     assert!(
-        !negado.transitorio(),
+        !negado.transient(),
         "recusa por namespace é definitiva: {negado:?}"
     );
     assert_eq!(
@@ -991,10 +991,10 @@ async fn synapse_falso_recusa_disfarce_de_humano_e_entrega_para_o_fantasma_do_ag
         "o Synapse falso recusou o disfarce de humano, como o de verdade"
     );
 
-    let bytes = cliente
-        .baixar_midia(&fantasma, &url, poph_matrix::midia::LIMITE_MIDIA_BYTES)
+    let bytes = client
+        .download_asset(&fantasma, &url, poph_matrix::asset::ASSET_BYTES_LIMIT)
         .await
-        .unwrap_or_else(|erro| panic!("o fantasma do agente baixa o arquivo ({erro:?})"));
+        .unwrap_or_else(|error| panic!("o fantasma do agente baixa o arquivo ({error:?})"));
     assert_eq!(
         bytes, PNG,
         "o conteúdo desce inteiro pelo fantasma do agente"
@@ -1003,7 +1003,7 @@ async fn synapse_falso_recusa_disfarce_de_humano_e_entrega_para_o_fantasma_do_ag
 
 #[tokio::test]
 async fn reentrega_do_mesmo_arquivo_nao_duplica_o_envio() {
-    let cenario = Cenario::novo("reentrega").await;
+    let cenario = Cenario::new("reentrega").await;
     let servidor = cenario.subir().await;
     let url = cenario.publicar("png-reentrega", PNG);
 
@@ -1055,7 +1055,7 @@ async fn reentrega_do_mesmo_arquivo_nao_duplica_o_envio() {
     let midias = cenario
         .envios()
         .into_iter()
-        .filter(|envio| envio.rota == "sendMedia")
+        .filter(|send| send.rota == "sendMedia")
         .count();
     assert_eq!(midias, 1, "reentrega não manda o arquivo de novo");
     assert_eq!(cenario.messages().len(), 1, "uma mensagem no histórico");
@@ -1073,7 +1073,7 @@ async fn reentrega_do_mesmo_arquivo_nao_duplica_o_envio() {
 
 #[tokio::test]
 async fn arquivo_acima_do_limite_vira_aviso_na_sala_e_nao_e_enviado() {
-    let cenario = Cenario::novo("grande").await;
+    let cenario = Cenario::new("grande").await;
     let servidor = cenario.subir().await;
     let grande = vec![0u8; (16 * 1024 * 1024) + 1];
     let url = cenario.publicar("grande-mx44", &grande);
@@ -1114,7 +1114,7 @@ async fn arquivo_acima_do_limite_vira_aviso_na_sala_e_nao_e_enviado() {
 
 #[tokio::test]
 async fn tipo_recusado_vira_aviso_na_sala_e_nao_e_enviado() {
-    let cenario = Cenario::novo("tipo").await;
+    let cenario = Cenario::new("tipo").await;
     let servidor = cenario.subir().await;
     let url = cenario.publicar("zip-mx44", ZIP);
 
@@ -1148,7 +1148,7 @@ async fn tipo_recusado_vira_aviso_na_sala_e_nao_e_enviado() {
 
 #[tokio::test]
 async fn arquivo_sem_url_no_evento_vira_aviso_na_sala() {
-    let cenario = Cenario::novo("sem-url").await;
+    let cenario = Cenario::new("sem-url").await;
     let servidor = cenario.subir().await;
 
     let status = servidor
@@ -1175,18 +1175,23 @@ async fn arquivo_sem_url_no_evento_vira_aviso_na_sala() {
 
 #[tokio::test]
 async fn conversa_encerrada_nao_envia_o_arquivo_e_avisa_na_sala() {
-    let cenario = Cenario::novo("encerrada").await;
+    let cenario = Cenario::new("encerrada").await;
     let url = cenario.publicar("png-encerrada", PNG);
     let versao = cenario
         .store
         .conversations()
-        .get(cenario.org, cenario.conversa)
+        .get(cenario.org, cenario.conversation)
         .expect("lê a conversa")
         .version;
     cenario
         .store
         .conversations()
-        .close_audited(cenario.org, cenario.conversa, versao, "teste".to_owned())
+        .close_audited(
+            cenario.org,
+            cenario.conversation,
+            versao,
+            "teste".to_owned(),
+        )
         .expect("encerra a conversa");
 
     let servidor = cenario.subir().await;
@@ -1222,7 +1227,7 @@ async fn conversa_encerrada_nao_envia_o_arquivo_e_avisa_na_sala() {
         cenario
             .store
             .conversations()
-            .get(cenario.org, cenario.conversa)
+            .get(cenario.org, cenario.conversation)
             .expect("lê a conversa")
             .status,
         poph_store::ConversationStatus::Closed
@@ -1233,7 +1238,7 @@ async fn conversa_encerrada_nao_envia_o_arquivo_e_avisa_na_sala() {
 async fn synapse_fora_nao_vira_aviso_e_volta_no_reenvio() {
     // Falha transitória do download é falha **nossa**: `5xx` para o Synapse reenviar, sem aviso e
     // sem envio. Quando o Synapse volta, a mesma mensagem (transação nova) entrega o arquivo.
-    let cenario = Cenario::novo("transitoria").await;
+    let cenario = Cenario::new("transitoria").await;
     let servidor = cenario.subir().await;
     cenario.recusar("png-instavel", 503);
     let url = format!("mxc://{SERVER_NAME}/png-instavel");
@@ -1274,10 +1279,7 @@ async fn synapse_fora_nao_vira_aviso_e_volta_no_reenvio() {
         .await;
     assert_eq!(status, StatusHttp::OK);
     esperar("o arquivo sair no reenvio", || {
-        cenario
-            .envios()
-            .iter()
-            .any(|envio| envio.rota == "sendMedia")
+        cenario.envios().iter().any(|send| send.rota == "sendMedia")
     })
     .await;
     assert_eq!(cenario.messages().len(), 1, "uma mensagem, no reenvio");
@@ -1293,7 +1295,7 @@ async fn synapse_fora_nao_vira_aviso_e_volta_no_reenvio() {
 /// real).
 #[tokio::test]
 async fn audio_e_video_do_atendente_chegam_ao_whatsapp_sem_aviso() {
-    let cenario = Cenario::novo("audio-video").await;
+    let cenario = Cenario::new("audio-video").await;
     let servidor = cenario.subir().await;
     let url_audio = cenario.publicar("ogg-mx48", AUDIO_OGG);
     let url_video = cenario.publicar("mp4-mx48", VIDEO_MP4);
@@ -1336,34 +1338,34 @@ async fn audio_e_video_do_atendente_chegam_ao_whatsapp_sem_aviso() {
         cenario
             .envios()
             .iter()
-            .filter(|envio| envio.rota == "sendMedia")
+            .filter(|send| send.rota == "sendMedia")
             .count()
             == 2
     })
     .await;
 
     let envios = cenario.envios();
-    let midias: Vec<&Envio> = envios
+    let midias: Vec<&Send> = envios
         .iter()
-        .filter(|envio| envio.rota == "sendMedia")
+        .filter(|send| send.rota == "sendMedia")
         .collect();
     let (audio, video) = (midias[0], midias[1]);
 
     // Áudio: documento com o MIME real e a legenda do atendente; os bytes chegam inteiros.
-    assert_eq!(audio.corpo["mediatype"], json!("document"));
-    assert_eq!(audio.corpo["mimetype"], json!("audio/ogg"));
-    assert_eq!(audio.corpo["fileName"], json!("voice-message.ogg"));
-    assert_eq!(audio.corpo["number"], json!(TELEFONE));
-    assert_eq!(audio.corpo["caption"], json!("*[Ana Atendente]*"));
-    let enviado = decodificar_base64(audio.corpo["media"].as_str().expect("mídia em base64"));
+    assert_eq!(audio.body["mediatype"], json!("document"));
+    assert_eq!(audio.body["mimetype"], json!("audio/ogg"));
+    assert_eq!(audio.body["fileName"], json!("voice-message.ogg"));
+    assert_eq!(audio.body["number"], json!(TELEFONE));
+    assert_eq!(audio.body["caption"], json!("*[Ana Atendente]*"));
+    let enviado = decodificar_base64(audio.body["media"].as_str().expect("mídia em base64"));
     assert_eq!(enviado, AUDIO_OGG, "o áudio chega inteiro ao cliente");
 
     // Vídeo: mesmo caminho, `video/mp4`.
-    assert_eq!(video.corpo["mediatype"], json!("document"));
-    assert_eq!(video.corpo["mimetype"], json!("video/mp4"));
-    assert_eq!(video.corpo["fileName"], json!("video.mp4"));
-    assert_eq!(video.corpo["caption"], json!("*[Ana Atendente]*"));
-    let enviado = decodificar_base64(video.corpo["media"].as_str().expect("mídia em base64"));
+    assert_eq!(video.body["mediatype"], json!("document"));
+    assert_eq!(video.body["mimetype"], json!("video/mp4"));
+    assert_eq!(video.body["fileName"], json!("video.mp4"));
+    assert_eq!(video.body["caption"], json!("*[Ana Atendente]*"));
+    let enviado = decodificar_base64(video.body["media"].as_str().expect("mídia em base64"));
     assert_eq!(enviado, VIDEO_MP4, "o vídeo chega inteiro ao cliente");
 
     // Nenhum aviso de tipo não aceito na sala: os dois arquivos foram.
@@ -1374,7 +1376,7 @@ async fn audio_e_video_do_atendente_chegam_ao_whatsapp_sem_aviso() {
     );
 
     // O download continua saindo em nome do fantasma do agente (regra da MX-44).
-    let fantasma = cenario.fantasma_do_agente();
+    let fantasma = cenario.agent_ghost();
     assert_eq!(
         cenario.downloads(),
         vec![Some(fantasma.clone()), Some(fantasma)],
@@ -1389,19 +1391,19 @@ async fn audio_e_video_do_atendente_chegam_ao_whatsapp_sem_aviso() {
     // Histórico: duas mensagens `human` com o anexo do tipo real e o blob no disco.
     let mensagens = cenario.messages();
     assert_eq!(mensagens.len(), 2);
-    for (indice, (nome, mime, tamanho)) in [
+    for (indice, (name, mime, tamanho)) in [
         ("voice-message.ogg", "audio/ogg", AUDIO_OGG.len()),
         ("video.mp4", "video/mp4", VIDEO_MP4.len()),
     ]
     .into_iter()
     .enumerate()
     {
-        let mensagem = &mensagens[indice];
-        assert_eq!(mensagem.origin, Origin::Human);
-        assert_eq!(mensagem.author_name.as_deref(), Some(NOME_ATENDENTE));
+        let message = &mensagens[indice];
+        assert_eq!(message.origin, Origin::Human);
+        assert_eq!(message.author_name.as_deref(), Some(NOME_ATENDENTE));
         let anexos = cenario.anexos(indice);
         assert_eq!(anexos.len(), 1, "cada mensagem leva o seu anexo");
-        assert_eq!(anexos[0].name, nome);
+        assert_eq!(anexos[0].name, name);
         assert_eq!(anexos[0].mime, mime);
         assert_eq!(anexos[0].size_bytes, tamanho as u64);
         assert_eq!(anexos[0].extraction_status, "skipped");
@@ -1427,7 +1429,7 @@ async fn audio_e_video_do_atendente_chegam_ao_whatsapp_sem_aviso() {
         cenario
             .envios()
             .into_iter()
-            .filter(|envio| envio.rota == "sendMedia")
+            .filter(|send| send.rota == "sendMedia")
             .count(),
         2,
         "reentrega de áudio e vídeo não manda os arquivos de novo"

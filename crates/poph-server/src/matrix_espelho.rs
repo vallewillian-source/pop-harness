@@ -44,7 +44,7 @@
 //!
 //! O anexo que o cliente manda já está no banco (`attachments`) quando o laço passa pela mensagem.
 //! Para mensagem de entrada do cliente com anexo, o laço monta os passos de mídia **antes** do
-//! texto: lê o blob (teto de [`poph_matrix::midia::LIMITE_MIDIA_BYTES`]), sobe ao Synapse como o
+//! texto: lê o blob (teto de [`poph_matrix::asset::LIMITE_MIDIA_BYTES`]), sobe ao Synapse como o
 //! fantasma do cliente e publica `m.image`/`m.file` com o bloco `com.<marca>.attachment`
 //! (MX-43). O texto do cliente, quando existe, é a legenda e sai depois da mídia, como já saía.
 //!
@@ -79,20 +79,18 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use futures::StreamExt;
-use poph_matrix::cliente::ClienteMatrix;
-use poph_matrix::erro::{Classificacao, ErroChamada};
-use poph_matrix::espacos::{
-    DepartamentoEspaco, Espacos, Posicao, SalaParaEspaco, resolver_departamento,
+use poph_matrix::asset::{self, Asset, AttachmentForAsset, RefusalReason};
+use poph_matrix::client::MatrixClient;
+use poph_matrix::error::{CallError, Classification};
+use poph_matrix::format::{
+    self, Decision, Meaning, MessageForMirror, MessageOrigin, MessageRole, NotMirrorReason,
+    Outbound,
 };
-use poph_matrix::formato::{
-    self, Decisao, Envio, MensagemParaEspelho, MotivoNaoEspelhar, OrigemMensagem, PapelMensagem,
-    Sentido,
+use poph_matrix::rooms::{
+    ConversationToRoom, PortError, Provisioner, RoomError, RoomStored, RoomsPort, StoredState,
 };
-use poph_matrix::midia::{self, AnexoParaMidia, Midia, MotivoDeRecusa};
-use poph_matrix::salas::{
-    ConversaParaSala, ErroPorta, ErroSala, EstadoGravado, PortaSalas, Provisionador, SalaGravada,
-};
-use poph_matrix::usuarios::{ErroFantasmas, Fantasma, IdsFantasmas};
+use poph_matrix::spaces::{DepartmentSpace, Position, RoomForSpace, Spaces, resolve_department};
+use poph_matrix::users::{Ghost, GhostIds, GhostsError};
 use poph_store::{
     AttachmentRecord, CategoryAsset, ConversationStatus, Direction, MessageSince, NewAsset, Origin,
     Role, StateRoom, Store, StoreError,
@@ -136,52 +134,52 @@ const LIMITE_MOTIVO: usize = 64;
 /// banco são de verdade nos testes, e só a rede é simulada.
 pub trait DestinoMatrix: Send + Sync {
     /// Id da sala da conversa, criando-a se ainda não existir (MX-11).
-    fn garantir_sala(
+    fn ensure_room(
         &self,
-        dados: &ConversaParaSala,
-    ) -> impl Future<Output = Result<String, ErroSala>> + Send;
+        dados: &ConversationToRoom,
+    ) -> impl Future<Output = Result<String, RoomError>> + Send;
 
     /// Garante que o usuário do aparelho (MX-42) está dentro da sala antes de falar nela.
-    fn garantir_aparelho(
+    fn ensure_device(
         &self,
-        dados: &ConversaParaSala,
-        sala: &str,
-        aparelho: &Fantasma,
-    ) -> impl Future<Output = Result<(), ErroSala>> + Send;
+        dados: &ConversationToRoom,
+        room: &str,
+        device: &Ghost,
+    ) -> impl Future<Output = Result<(), RoomError>> + Send;
 
     /// Envia um evento já decidido pelo formato, como o usuário virtual do envio.
-    fn enviar(
+    fn send(
         &self,
-        sala: &str,
-        envio: &Envio,
-    ) -> impl Future<Output = Result<(), ErroChamada>> + Send;
+        room: &str,
+        send: &Outbound,
+    ) -> impl Future<Output = Result<(), CallError>> + Send;
 
     /// Sobe a mídia do cliente ao Synapse e publica o evento na sala (MX-43).
     ///
     /// Devolve o evento e o `mxc://` que ficaram na sala: a expiração (MX-46) precisa dos dois para
     /// redigir o evento e apagar o arquivo depois do prazo.
-    fn enviar_midia(
+    fn send_asset(
         &self,
-        sala: &str,
-        envio: &EnvioMidia,
-    ) -> impl Future<Output = Result<MidiaPublicada, ErroChamada>> + Send;
+        room: &str,
+        send: &EnvioMidia,
+    ) -> impl Future<Output = Result<MidiaPublicada, CallError>> + Send;
 
     /// Escreve um aviso em texto na sala (MX-43): mídia que não entrou, em `m.notice`.
     fn avisar(
         &self,
-        sala: &str,
+        room: &str,
         aviso: &AvisoNaSala,
-    ) -> impl Future<Output = Result<(), ErroChamada>> + Send;
+    ) -> impl Future<Output = Result<(), CallError>> + Send;
 }
 
 /// Mídia do cliente pronta para a sala (MX-43): quem assina, o evento e o conteúdo do blob.
 pub struct EnvioMidia {
     /// Conversa dona do anexo (a sala é dela).
-    pub conversa: ConversationId,
+    pub conversation: ConversationId,
     /// Usuário virtual do cliente: assina a subida e o evento.
-    pub remetente: Fantasma,
+    pub sender: Ghost,
     /// O que virou o anexo: `m.image`/`m.file`, nome, tipo, tamanho e `txnId`.
-    pub midia: Midia,
+    pub asset: Asset,
     /// Bytes do blob, já lidos e validados no limite.
     pub conteudo: Vec<u8>,
 }
@@ -190,7 +188,7 @@ pub struct EnvioMidia {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MidiaPublicada {
     /// Id do evento de mídia (`m.image`/`m.file`) na sala.
-    pub evento: String,
+    pub event: String,
     /// `mxc://servidor/id` do arquivo que subiu.
     pub mxc: String,
 }
@@ -199,23 +197,23 @@ pub struct MidiaPublicada {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AvisoNaSala {
     /// Conversa dona do anexo.
-    pub conversa: ConversationId,
+    pub conversation: ConversationId,
     /// Quem assina o aviso: o fantasma do agente, dono da sala (como na MX-19).
-    pub remetente: Fantasma,
+    pub sender: Ghost,
     /// `txnId` do aviso: o mesmo anexo e o mesmo motivo não duplicam o aviso.
     pub txn_id: String,
     /// Motivo curto, que escolhe o texto e o código de log.
-    pub motivo: MotivoDeRecusa,
+    pub reason: RefusalReason,
 }
 
 /// Destino de verdade: a provisão de sala (MX-11) e o cliente da API do Matrix (MX-09).
 pub struct DestinoReal {
-    cliente: ClienteMatrix,
-    provisionador: Provisionador<PortaSalasStore>,
+    client: MatrixClient,
+    provisionador: Provisioner<PortaSalasStore>,
     /// Banco do Harness: a leitura do departamento da conversa depois da criação da sala.
     store: Arc<Store>,
     /// Espaços por departamento (MX-12). `None` nos testes antigos, que só olham a sala.
-    espacos: Option<Espacos<PortaEspacosStore>>,
+    spaces: Option<Spaces<PortaEspacosStore>>,
     /// Números do módulo (MX-26): latência por operação e salas que ficaram prontas.
     metricas: Arc<MetricasMatrix>,
 }
@@ -224,16 +222,16 @@ impl DestinoReal {
     /// Monta o destino a partir da seção `[matrix]` já validada e do cliente dela.
     pub fn montar(
         store: Arc<Store>,
-        cliente: ClienteMatrix,
+        client: MatrixClient,
         config: &MatrixConfig,
-    ) -> Result<Self, ErroFantasmas> {
+    ) -> Result<Self, GhostsError> {
         let provisionador =
-            Provisionador::da_config(cliente.clone(), PortaSalasStore(Arc::clone(&store)), config)?;
+            Provisioner::of_config(client.clone(), PortaSalasStore(Arc::clone(&store)), config)?;
         Ok(Self {
-            cliente,
+            client,
             provisionador,
             store,
-            espacos: None,
+            spaces: None,
             metricas: MetricasMatrix::descartaveis(),
         })
     }
@@ -243,8 +241,8 @@ impl DestinoReal {
     /// Com eles, a sala entra no espaço **ao ser criada**, sem esperar a próxima alteração da
     /// conversa: o laço de estado (MX-15) pode ter visto esta conversa antes de a sala existir e,
     /// sem isso, a sala ficaria fora do espaço até o cliente escrever de novo.
-    pub fn com_espacos(mut self, espacos: Espacos<PortaEspacosStore>) -> Self {
-        self.espacos = Some(espacos);
+    pub fn com_espacos(mut self, spaces: Spaces<PortaEspacosStore>) -> Self {
+        self.spaces = Some(spaces);
         self
     }
 
@@ -258,64 +256,64 @@ impl DestinoReal {
     /// Repetir não escreve nada: quando os convites da passagem fecharam, o vínculo fica gravado e a
     /// passagem seguinte sai por `JaPosicionada`. Convite pendente não grava o vínculo (regra da
     /// MX-12), e a próxima passagem do laço de estado completa o que faltou.
-    async fn posicionar_recem_criada(&self, dados: &ConversaParaSala, sala: &str) {
-        let Some(espacos) = &self.espacos else {
+    async fn posicionar_recem_criada(&self, dados: &ConversationToRoom, room: &str) {
+        let Some(spaces) = &self.spaces else {
             return;
         };
-        let departamento = match self.departamento_da_conversa(dados) {
-            Ok(departamento) => departamento,
-            Err(motivo) => {
+        let department = match self.departamento_da_conversa(dados) {
+            Ok(department) => department,
+            Err(reason) => {
                 tracing::warn!(
                     target: "poph_server::matrix_espelho",
                     org = %dados.org,
-                    conversa = %dados.conversa,
-                    motivo,
+                    conversation = %dados.conversation,
+                    reason,
                     "não consegui ler o departamento da conversa; a sala fica sem espaço por ora"
                 );
                 return;
             }
         };
-        let Some(departamento) = departamento else {
+        let Some(department) = department else {
             return;
         };
-        let agente = match self.provisionador.fantasma_do_agente(dados).await {
-            Ok(agente) => agente,
+        let agent = match self.provisionador.agent_ghost(dados).await {
+            Ok(agent) => agent,
             Err(_) => {
                 tracing::warn!(
                     target: "poph_server::matrix_espelho",
                     org = %dados.org,
-                    conversa = %dados.conversa,
-                    motivo = "fantasma_do_agente_indisponivel",
+                    conversation = %dados.conversation,
+                    reason = "fantasma_do_agente_indisponivel",
                     "sala criada mas não posicionada no espaço do departamento"
                 );
                 return;
             }
         };
-        let pedido = SalaParaEspaco {
+        let pedido = RoomForSpace {
             org: dados.org,
-            conversa: dados.conversa,
-            sala: sala.to_owned(),
-            agente,
-            departamento: Some(departamento),
+            conversation: dados.conversation,
+            room: room.to_owned(),
+            agent,
+            department: Some(department),
             // Ligar um espaço que já existe no Element é escolha do operador (MX-22/25); aqui o
             // módulo usa (ou cria) o espaço do departamento.
-            existente: None,
+            existing: None,
         };
         let inicio = Instant::now();
-        let resultado = espacos.posicionar(&pedido).await;
+        let resultado = spaces.place(&pedido).await;
         self.metricas
             .latencia_synapse_segundos
             .observe(inicio.elapsed().as_secs_f64());
         match resultado {
-            Ok(Posicao::Posicionada {
-                convites_falhos, ..
-            }) if convites_falhos > 0 => {
+            Ok(Position::Positioned {
+                failed_invitations, ..
+            }) if failed_invitations > 0 => {
                 tracing::warn!(
                     target: "poph_server::matrix_espelho",
                     org = %dados.org,
-                    conversa = %dados.conversa,
-                    convites_falhos,
-                    motivo = "convite_pendente_no_espaco",
+                    conversation = %dados.conversation,
+                    failed_invitations,
+                    reason = "convite_pendente_no_espaco",
                     "sala criada e posta no espaço, mas com convite pendente"
                 );
             }
@@ -323,20 +321,20 @@ impl DestinoReal {
                 tracing::info!(
                     target: "poph_server::matrix_espelho",
                     org = %dados.org,
-                    conversa = %dados.conversa,
+                    conversation = %dados.conversation,
                     "sala criada já dentro do espaço do departamento"
                 );
             }
-            Err(erro) => {
-                match erro.classificacao() {
-                    Classificacao::Transitoria => self.metricas.erros_transitorios.increment(1),
-                    Classificacao::Definitiva => self.metricas.erros_definitivos.increment(1),
+            Err(error) => {
+                match error.classification() {
+                    Classification::Transient => self.metricas.erros_transitorios.increment(1),
+                    Classification::Definitive => self.metricas.erros_definitivos.increment(1),
                 }
                 tracing::warn!(
                     target: "poph_server::matrix_espelho",
                     org = %dados.org,
-                    conversa = %dados.conversa,
-                    motivo = "sala_nao_posicionada_no_espaco",
+                    conversation = %dados.conversation,
+                    reason = "sala_nao_posicionada_no_espaco",
                     "sala criada mas o espaço do departamento não aceitou a sala; tenta na próxima alteração da conversa"
                 );
             }
@@ -347,26 +345,26 @@ impl DestinoReal {
     /// agente; senão nenhum. O nome vem do banco, porque é ele que nomeia o espaço criado.
     fn departamento_da_conversa(
         &self,
-        dados: &ConversaParaSala,
-    ) -> Result<Option<DepartamentoEspaco>, &'static str> {
-        let conversa = self
+        dados: &ConversationToRoom,
+    ) -> Result<Option<DepartmentSpace>, &'static str> {
+        let conversation = self
             .store
             .conversations()
-            .get(dados.org, dados.conversa)
+            .get(dados.org, dados.conversation)
             .map_err(|_| "conversa_indisponivel")?;
         let padrao = self
             .store
             .agents()
-            .get(dados.org, conversa.agent_id)
+            .get(dados.org, conversation.agent_id)
             .ok()
-            .and_then(|agente| agente.default_department);
-        let Some(escolhido) = resolver_departamento(conversa.target_department, padrao) else {
+            .and_then(|agent| agent.default_department);
+        let Some(escolhido) = resolve_department(conversation.target_department, padrao) else {
             return Ok(None);
         };
         match self.store.departments().get(dados.org, escolhido) {
-            Ok(departamento) => Ok(Some(DepartamentoEspaco {
-                id: departamento.id,
-                nome: departamento.name,
+            Ok(department) => Ok(Some(DepartmentSpace {
+                id: department.id,
+                name: department.name,
             })),
             Err(_) => Err("departamento_indisponivel"),
         }
@@ -374,14 +372,14 @@ impl DestinoReal {
 }
 
 impl DestinoMatrix for DestinoReal {
-    async fn garantir_sala(&self, dados: &ConversaParaSala) -> Result<String, ErroSala> {
+    async fn ensure_room(&self, dados: &ConversationToRoom) -> Result<String, RoomError> {
         let inicio = Instant::now();
-        let resultado = self.provisionador.provisionar(dados).await;
+        let resultado = self.provisionador.provision(dados).await;
         self.metricas
             .latencia_synapse_segundos
             .observe(inicio.elapsed().as_secs_f64());
         let pronta = resultado?;
-        if !pronta.ja_estava_pronta {
+        if !pronta.was_already_ready {
             self.metricas.salas_prontas.increment(1);
             // Sala recém-criada: entra no espaço do departamento agora. Falha aqui não derruba a
             // criação (a sala existe e as mensagens podem ser espelhadas); o laço de estado tenta
@@ -391,28 +389,28 @@ impl DestinoMatrix for DestinoReal {
         Ok(pronta.room_id)
     }
 
-    async fn garantir_aparelho(
+    async fn ensure_device(
         &self,
-        dados: &ConversaParaSala,
-        sala: &str,
-        aparelho: &Fantasma,
-    ) -> Result<(), ErroSala> {
+        dados: &ConversationToRoom,
+        room: &str,
+        device: &Ghost,
+    ) -> Result<(), RoomError> {
         self.provisionador
-            .garantir_aparelho_na_sala(dados, sala, aparelho)
+            .ensure_device_in_room(dados, room, device)
             .await
     }
 
-    async fn enviar(&self, sala: &str, envio: &Envio) -> Result<(), ErroChamada> {
-        let corpo = json!({ "msgtype": envio.msgtype, "body": envio.corpo });
+    async fn send(&self, room: &str, send: &Outbound) -> Result<(), CallError> {
+        let body = json!({ "msgtype": send.msgtype, "body": send.body });
         let inicio = Instant::now();
         let resultado = self
-            .cliente
-            .enviar_evento(
-                envio.remetente.user_id(),
-                sala,
-                envio.tipo_evento,
-                &envio.txn_id,
-                &corpo,
+            .client
+            .send_event(
+                send.sender.user_id(),
+                room,
+                send.event_kind,
+                &send.txn_id,
+                &body,
             )
             .await
             .map(|_| ());
@@ -422,22 +420,18 @@ impl DestinoMatrix for DestinoReal {
         resultado
     }
 
-    async fn enviar_midia(
-        &self,
-        sala: &str,
-        envio: &EnvioMidia,
-    ) -> Result<MidiaPublicada, ErroChamada> {
+    async fn send_asset(&self, room: &str, send: &EnvioMidia) -> Result<MidiaPublicada, CallError> {
         let inicio = Instant::now();
-        let resultado = midia::enviar(
-            &self.cliente,
-            &envio.remetente,
-            sala,
-            &envio.midia,
-            &envio.conteudo,
+        let resultado = asset::send(
+            &self.client,
+            &send.sender,
+            room,
+            &send.asset,
+            &send.conteudo,
         )
         .await
         .map(|publicada| MidiaPublicada {
-            evento: publicada.evento,
+            event: publicada.event,
             mxc: publicada.mxc,
         });
         self.metricas
@@ -446,18 +440,18 @@ impl DestinoMatrix for DestinoReal {
         resultado
     }
 
-    async fn avisar(&self, sala: &str, aviso: &AvisoNaSala) -> Result<(), ErroChamada> {
-        let corpo = midia::conteudo_do_aviso(aviso.motivo);
+    async fn avisar(&self, room: &str, aviso: &AvisoNaSala) -> Result<(), CallError> {
+        let body = asset::notice_content(aviso.reason);
         let inicio = Instant::now();
         // `m.notice`: o classificador da MX-17 ignora aviso, então o aviso não volta como resposta.
         let resultado = self
-            .cliente
-            .enviar_evento(
-                aviso.remetente.user_id(),
-                sala,
-                formato::TIPO_EVENTO,
+            .client
+            .send_event(
+                aviso.sender.user_id(),
+                room,
+                format::EVENT_KIND,
                 &aviso.txn_id,
-                &corpo,
+                &body,
             )
             .await
             .map(|_| ());
@@ -471,87 +465,87 @@ impl DestinoMatrix for DestinoReal {
 /// Porta de persistência da provisão (MX-11) sobre o repositório `matrix` do store.
 pub struct PortaSalasStore(pub Arc<Store>);
 
-impl PortaSalas for PortaSalasStore {
-    fn sala(
+impl RoomsPort for PortaSalasStore {
+    fn room(
         &self,
         org: OrgId,
-        conversa: ConversationId,
-    ) -> impl Future<Output = Result<Option<SalaGravada>, ErroPorta>> + Send {
+        conversation: ConversationId,
+    ) -> impl Future<Output = Result<Option<RoomStored>, PortError>> + Send {
         let store = Arc::clone(&self.0);
         async move {
-            let sala = store.matrix().room(org, conversa).map_err(erro_porta)?;
-            Ok(sala.map(|sala| SalaGravada {
-                room_id: sala.room_id,
-                estado: estado_gravado(sala.state),
+            let room = store.matrix().room(org, conversation).map_err(erro_porta)?;
+            Ok(room.map(|room| RoomStored {
+                room_id: room.room_id,
+                state: estado_gravado(room.state),
             }))
         }
     }
 
-    fn garantir_sala(
+    fn ensure_room(
         &self,
         org: OrgId,
-        conversa: ConversationId,
+        conversation: ConversationId,
         room_id: &str,
-    ) -> impl Future<Output = Result<SalaGravada, ErroPorta>> + Send {
+    ) -> impl Future<Output = Result<RoomStored, PortError>> + Send {
         let store = Arc::clone(&self.0);
         let room_id = room_id.to_owned();
         async move {
-            let sala = store
+            let room = store
                 .matrix()
-                .ensure_room(org, conversa, &room_id, None)
+                .ensure_room(org, conversation, &room_id, None)
                 .map_err(erro_porta)?;
-            Ok(SalaGravada {
-                room_id: sala.room_id,
-                estado: estado_gravado(sala.state),
+            Ok(RoomStored {
+                room_id: room.room_id,
+                state: estado_gravado(room.state),
             })
         }
     }
 
-    fn marcar_pronta(
+    fn mark_ready(
         &self,
         org: OrgId,
-        conversa: ConversationId,
+        conversation: ConversationId,
         nome_espelhado: Option<&str>,
-    ) -> impl Future<Output = Result<SalaGravada, ErroPorta>> + Send {
+    ) -> impl Future<Output = Result<RoomStored, PortError>> + Send {
         let store = Arc::clone(&self.0);
-        let nome = nome_espelhado.map(str::to_owned);
+        let name = nome_espelhado.map(str::to_owned);
         async move {
-            let sala = store
+            let room = store
                 .matrix()
-                .mark_room_ready_with_name(org, conversa, nome.as_deref())
+                .mark_room_ready_with_name(org, conversation, name.as_deref())
                 .map_err(erro_porta)?;
-            Ok(SalaGravada {
-                room_id: sala.room_id,
-                estado: estado_gravado(sala.state),
+            Ok(RoomStored {
+                room_id: room.room_id,
+                state: estado_gravado(room.state),
             })
         }
     }
 
-    fn teve_mensagens_antes(
+    fn had_messages_before(
         &self,
         org: OrgId,
-        conversa: ConversationId,
+        conversation: ConversationId,
         corte: i64,
-    ) -> impl Future<Output = Result<bool, ErroPorta>> + Send {
+    ) -> impl Future<Output = Result<bool, PortError>> + Send {
         let store = Arc::clone(&self.0);
         async move {
             store
                 .messages()
-                .had_messages_before(org, conversa, corte)
+                .had_messages_before(org, conversation, corte)
                 .map_err(erro_porta)
         }
     }
 }
 
-fn erro_porta(_: StoreError) -> ErroPorta {
+fn erro_porta(_: StoreError) -> PortError {
     // Sem o texto do erro do banco: ele pode carregar valor de cliente.
-    ErroPorta::nova("armazenamento do módulo Matrix indisponível")
+    PortError::fresh("armazenamento do módulo Matrix indisponível")
 }
 
-fn estado_gravado(estado: StateRoom) -> EstadoGravado {
-    match estado {
-        StateRoom::Creating => EstadoGravado::Criando,
-        StateRoom::Ready => EstadoGravado::Pronta,
+fn estado_gravado(state: StateRoom) -> StoredState {
+    match state {
+        StateRoom::Creating => StoredState::Creating,
+        StateRoom::Ready => StoredState::Ready,
     }
 }
 
@@ -568,7 +562,7 @@ pub enum ErroEspelho {
 impl ErroEspelho {
     /// Código curto para log. O texto do erro do banco nunca vai para o log: pode trazer SQL ou
     /// valores de linha.
-    pub fn codigo(&self) -> &'static str {
+    pub fn code(&self) -> &'static str {
         match self {
             Self::Armazenamento(_) => "armazenamento_indisponivel",
         }
@@ -620,11 +614,11 @@ struct DadosConversa {
     /// Identificador do cliente (o `peer`, ou o id da conversa quando o canal não tem um).
     identificador: String,
     /// Id do agente, como texto.
-    agente: String,
+    agent: String,
     /// Id da integração (instância da Evolution) da conversa, como texto (MX-42).
     integracao: Option<String>,
     /// Dados para a provisão da sala.
-    sala: ConversaParaSala,
+    room: ConversationToRoom,
 }
 
 /// Situação de uma mensagem depois de processada.
@@ -642,7 +636,7 @@ enum Desfecho {
     Pendente,
     /// Falha definitiva repetida o bastante: isolar com este motivo e esta contagem.
     Isolar {
-        motivo: String,
+        reason: String,
         tentativas: u32,
     },
 }
@@ -653,22 +647,22 @@ enum PassoFeito {
     /// Texto (ou legenda) da mensagem.
     Texto,
     /// Mídia do cliente (MX-43).
-    Midia,
+    Asset,
     /// Aviso em texto na sala de uma mídia que não entrou.
-    Aviso,
+    Notice,
 }
 
 /// Um passo da entrega de uma mensagem: o texto, a mídia ou o aviso de uma mídia que não entrou.
 enum Passo {
     /// Texto da mensagem (a legenda, quando há mídia).
-    Texto(Envio),
+    Texto(Outbound),
     /// Mídia do cliente pronta para subir, com o aviso que entra na sala se o envio falhar de vez.
-    Midia {
-        envio: EnvioMidia,
+    Asset {
+        send: EnvioMidia,
         aviso: AvisoNaSala,
     },
     /// Nada de mídia a subir: só o aviso na sala (arquivo grande, vazio, ilegível).
-    Aviso(AvisoNaSala),
+    Notice(AvisoNaSala),
 }
 
 impl Passo {
@@ -676,8 +670,8 @@ impl Passo {
     fn tipo(&self) -> PassoFeito {
         match self {
             Self::Texto(_) => PassoFeito::Texto,
-            Self::Midia { .. } => PassoFeito::Midia,
-            Self::Aviso(_) => PassoFeito::Aviso,
+            Self::Asset { .. } => PassoFeito::Asset,
+            Self::Notice(_) => PassoFeito::Notice,
         }
     }
 }
@@ -696,7 +690,7 @@ struct ItemDoGrupo {
 
 /// Mensagens de uma conversa, em ordem, para serem entregues na mesma sala.
 struct Grupo {
-    dados: ConversaParaSala,
+    dados: ConversationToRoom,
     /// Itens em ordem de `rowid`.
     itens: Vec<ItemDoGrupo>,
 }
@@ -718,7 +712,7 @@ struct DesfechoDoGrupo {
 /// O que sobrou de uma página: até onde o cursor pode andar e se algo ficou pendente.
 struct ResultadoPagina {
     /// Última posição da sequência contígua resolvida.
-    prefixo: Option<(u64, MessageId)>,
+    prefix: Option<(u64, MessageId)>,
     /// Alguma linha ficou pendente: o ciclo para aqui.
     pendente: bool,
 }
@@ -730,8 +724,8 @@ struct ResultadoPagina {
 pub struct EspelhoMatrix<D: DestinoMatrix> {
     store: Arc<Store>,
     destino: D,
-    ids: IdsFantasmas,
-    concorrencia: usize,
+    ids: GhostIds,
+    concurrency: usize,
     intervalo: Duration,
     pagina: u32,
     /// Falhas definitivas seguidas por mensagem. Só guarda mensagens que estão falhando.
@@ -751,18 +745,14 @@ pub struct EspelhoMatrix<D: DestinoMatrix> {
 
 impl<D: DestinoMatrix> EspelhoMatrix<D> {
     /// Monta o laço com a seção `[matrix]` já validada (prefixo, servidor, concorrência e intervalo).
-    pub fn novo(
-        store: Arc<Store>,
-        destino: D,
-        config: &MatrixConfig,
-    ) -> Result<Self, ErroFantasmas> {
-        let ids = IdsFantasmas::da_config(config)?;
+    pub fn new(store: Arc<Store>, destino: D, config: &MatrixConfig) -> Result<Self, GhostsError> {
+        let ids = GhostIds::of_config(config)?;
         let (parar, _) = tokio::sync::watch::channel(false);
         Ok(Self {
             store,
             destino,
             ids,
-            concorrencia: (config.concurrency as usize).max(1),
+            concurrency: (config.concurrency as usize).max(1),
             intervalo: Duration::from_millis(config.interval_ms.max(1)),
             pagina: PAGINA,
             definitivas: Mutex::new(HashMap::new()),
@@ -836,10 +826,10 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
                         0
                     }
                 }
-                Err(erro) => {
+                Err(error) => {
                     tracing::warn!(
                         target: "poph_server::matrix_espelho",
-                        motivo = erro.codigo(),
+                        reason = error.code(),
                         "ciclo do espelho do Matrix falhou; segue no próximo"
                     );
                     self.falhas_seguidas.fetch_add(1, Ordering::Relaxed) + 1
@@ -862,12 +852,12 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
         }
 
         let mut orgs: HashMap<OrgId, OrgLigada> = HashMap::new();
-        for estado in ligadas.iter().filter(|estado| estado.linked) {
-            let cursores = self.store.matrix().read_cursors(estado.org_id)?;
+        for state in ligadas.iter().filter(|state| state.linked) {
+            let cursores = self.store.matrix().read_cursors(state.org_id)?;
             orgs.insert(
-                estado.org_id,
+                state.org_id,
                 OrgLigada {
-                    corte: estado.linked_at.unwrap_or(0),
+                    corte: state.linked_at.unwrap_or(0),
                     cursor: (cursores.messages, cursores.message_ids),
                 },
             );
@@ -913,7 +903,7 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
 
             let resultado = self.processar_pagina(&orgs, pagina, &mut relatorio).await?;
 
-            if let Some((rowid, id)) = &resultado.prefixo {
+            if let Some((rowid, id)) = &resultado.prefix {
                 let id_texto = id.to_string();
                 for (org, info) in orgs.iter_mut() {
                     if *rowid > info.cursor.0 {
@@ -966,26 +956,26 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
         // `None` quando a leitura da conversa falhou nesta página: as linhas dela ficam pendentes.
         let mut conversas: HashMap<ConversationId, Option<DadosConversa>> = HashMap::new();
 
-        for (i, mensagem) in pagina.iter().enumerate() {
-            let Some(org) = orgs.get(&mensagem.org_id) else {
+        for (i, message) in pagina.iter().enumerate() {
+            let Some(org) = orgs.get(&message.org_id) else {
                 relatorio.de_org_desligada += 1;
                 continue;
             };
-            if mensagem.rowid < org.cursor.0
-                || (mensagem.rowid == org.cursor.0 && mensagem.id.to_string() == org.cursor.1)
+            if message.rowid < org.cursor.0
+                || (message.rowid == org.cursor.0 && message.id.to_string() == org.cursor.1)
             {
                 relatorio.ja_espelhadas += 1;
                 continue;
             }
-            if mensagem.created_at < org.corte {
+            if message.created_at < org.corte {
                 relatorio.antes_do_corte += 1;
                 continue;
             }
 
             let lida = conversas
-                .entry(mensagem.conversation_id)
+                .entry(message.conversation_id)
                 .or_insert_with(|| {
-                    self.dados_conversa(mensagem.org_id, mensagem.conversation_id, org.corte)
+                    self.dados_conversa(message.org_id, message.conversation_id, org.corte)
                         .ok()
                 })
                 .clone();
@@ -995,13 +985,13 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
                 continue;
             };
 
-            if dados.sala.canal == "site" {
+            if dados.room.channel == "site" {
                 continue;
             }
 
             // Mídia do cliente (MX-43): o anexo já está gravado; a mensagem vira mídia + legenda.
             // Sem saber os anexos, entregar só o texto esconderia a mídia: a linha fica pendente.
-            let anexos = match self.anexos_do_cliente(mensagem) {
+            let anexos = match self.anexos_do_cliente(message) {
                 Ok(anexos) => anexos,
                 Err(_) => {
                     estados[i] = Estado::Pendente;
@@ -1011,7 +1001,7 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
             let mut passos: Vec<Passo> = Vec::new();
             let mut midia_invalida = false;
             for anexo in &anexos {
-                match self.passo_de_midia(mensagem.org_id, &dados, anexo).await {
+                match self.passo_de_midia(message.org_id, &dados, anexo).await {
                     Ok(passo) => passos.push(passo),
                     // Sem o fantasma do agente não há nem mídia nem aviso: isola como formato.
                     Err(_) => {
@@ -1024,29 +1014,29 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
                 passos.clear();
             }
 
-            let decisao = formato::decidir(
+            let decisao = format::decide(
                 &self.ids,
-                &MensagemParaEspelho {
-                    id: mensagem.id,
-                    conversa: mensagem.conversation_id,
-                    origem: origem_de(mensagem.origin),
-                    sentido: sentido_de(mensagem.direction),
-                    papel: papel_de(mensagem.role),
-                    texto: &mensagem.texto,
-                    identificador_cliente: &dados.identificador,
-                    id_agente: &dados.agente,
-                    id_integracao: dados.integracao.as_deref(),
+                &MessageForMirror {
+                    id: message.id,
+                    conversation: message.conversation_id,
+                    origin: origem_de(message.origin),
+                    meaning: sentido_de(message.direction),
+                    role: papel_de(message.role),
+                    text: &message.texto,
+                    client_identifier: &dados.identificador,
+                    id_agent: &dados.agent,
+                    id_integration: dados.integracao.as_deref(),
                 },
             );
             let motivo_de_falha = match decisao {
                 // Com mídia já montada, texto vazio é só legenda vazia: a mídia vai sozinha.
-                Decisao::NaoEspelhar(MotivoNaoEspelhar::TextoVazio) if !passos.is_empty() => None,
-                Decisao::NaoEspelhar(_) => {
+                Decision::NotMirror(NotMirrorReason::TextEmpty) if !passos.is_empty() => None,
+                Decision::NotMirror(_) => {
                     passos.clear();
                     relatorio.nao_espelhadas += 1;
                     None
                 }
-                Decisao::Erro(_) => {
+                Decision::Error(_) => {
                     passos.clear();
                     Some(if midia_invalida {
                         MOTIVO_MIDIA
@@ -1054,25 +1044,25 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
                         MOTIVO_FORMATO
                     })
                 }
-                Decisao::Espelhar(envio) => {
-                    passos.push(Passo::Texto(envio));
+                Decision::Mirror(send) => {
+                    passos.push(Passo::Texto(send));
                     None
                 }
             };
-            if let Some(motivo) = motivo_de_falha {
+            if let Some(reason) = motivo_de_falha {
                 match self
                     .store
                     .matrix()
-                    .register_failure(mensagem.org_id, mensagem.id, motivo, 1)
+                    .register_failure(message.org_id, message.id, reason, 1)
                 {
                     Ok(_) => {
                         relatorio.isoladas += 1;
                         self.metricas.mensagens_isoladas.increment(1);
                         tracing::warn!(
                             target: "poph_server::matrix_espelho",
-                            org = %mensagem.org_id,
-                            conversa = %mensagem.conversation_id,
-                            motivo,
+                            org = %message.org_id,
+                            conversation = %message.conversation_id,
+                            reason,
                             "mensagem fora do formato do espelho: isolada em matrix_falhas"
                         );
                     }
@@ -1083,21 +1073,21 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
             if passos.is_empty() {
                 continue;
             }
-            let posicao = match indice_grupo.get(&mensagem.conversation_id) {
+            let posicao = match indice_grupo.get(&message.conversation_id) {
                 Some(posicao) => *posicao,
                 None => {
                     grupos.push(Grupo {
-                        dados: dados.sala.clone(),
+                        dados: dados.room.clone(),
                         itens: Vec::new(),
                     });
-                    indice_grupo.insert(mensagem.conversation_id, grupos.len() - 1);
+                    indice_grupo.insert(message.conversation_id, grupos.len() - 1);
                     grupos.len() - 1
                 }
             };
             grupos[posicao].itens.push(ItemDoGrupo {
                 indice: i,
-                org: mensagem.org_id,
-                id: mensagem.id,
+                org: message.org_id,
+                id: message.id,
                 passos,
             });
         }
@@ -1105,7 +1095,7 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
         // Entrega: salas em paralelo, mensagens da mesma sala em sequência.
         let desfechos: Vec<Vec<DesfechoDoGrupo>> = futures::stream::iter(grupos)
             .map(|grupo| self.entregar_grupo(grupo))
-            .buffer_unordered(self.concorrencia)
+            .buffer_unordered(self.concurrency)
             .collect()
             .await;
 
@@ -1125,20 +1115,20 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
                             relatorio.enviadas += 1;
                             self.metricas.mensagens_espelhadas.increment(1);
                         }
-                        PassoFeito::Midia => {
+                        PassoFeito::Asset => {
                             relatorio.midias_enviadas += 1;
                             self.metricas.midias_espelhadas.increment(1);
                         }
-                        PassoFeito::Aviso => relatorio.avisos_de_midia += 1,
+                        PassoFeito::Notice => relatorio.avisos_de_midia += 1,
                     }
                 }
                 Desfecho::Pendente => {
                     estados[indice] = Estado::Pendente;
                 }
-                Desfecho::Isolar { motivo, tentativas } => match self
+                Desfecho::Isolar { reason, tentativas } => match self
                     .store
                     .matrix()
-                    .register_failure(org, id, &motivo, tentativas)
+                    .register_failure(org, id, &reason, tentativas)
                 {
                     Ok(_) => {
                         estados[indice] = Estado::Resolvida;
@@ -1151,18 +1141,18 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
         }
 
         // Marca-d'água: até a primeira linha pendente, tudo resolvido.
-        let mut prefixo = None;
+        let mut prefix = None;
         let mut pendente = false;
-        for (i, mensagem) in pagina.iter().enumerate() {
+        for (i, message) in pagina.iter().enumerate() {
             if estados[i] == Estado::Pendente {
                 pendente = true;
                 break;
             }
-            prefixo = Some((mensagem.rowid, mensagem.id));
+            prefix = Some((message.rowid, message.id));
         }
         relatorio.pendentes += estados.iter().filter(|e| **e == Estado::Pendente).count() as u32;
 
-        Ok(ResultadoPagina { prefixo, pendente })
+        Ok(ResultadoPagina { prefix, pendente })
     }
 
     /// Entrega as mensagens de uma sala em ordem. Para na primeira falha: o resto fica pendente.
@@ -1170,17 +1160,17 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
         let mut saida = Vec::with_capacity(grupo.itens.len());
         let mut itens = grupo.itens.into_iter();
 
-        let conversa = grupo.dados.conversa;
-        let agente_da_conversa = grupo.dados.agente.to_string();
+        let conversation = grupo.dados.conversation;
+        let agente_da_conversa = grupo.dados.agent.to_string();
         self.metricas.tentativas.increment(1);
-        let sala = match self.destino.garantir_sala(&grupo.dados).await {
-            Ok(sala) => sala,
-            Err(erro) => {
-                if chamada_da_sala(&erro).is_some_and(eh_429) {
+        let room = match self.destino.ensure_room(&grupo.dados).await {
+            Ok(room) => room,
+            Err(error) => {
+                if chamada_da_sala(&error).is_some_and(eh_429) {
                     self.metricas.respostas_429.increment(1);
                 }
                 // A falha da sala é cobrada no primeiro passo da primeira mensagem do grupo.
-                let motivo = MOTIVO_SALA.to_owned();
+                let reason = MOTIVO_SALA.to_owned();
                 let primeiro = itens.next();
                 if let Some(item) = primeiro {
                     let tipo = item
@@ -1190,10 +1180,10 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
                         .unwrap_or(PassoFeito::Texto);
                     let desfecho = self.desfecho_de(
                         item.org,
-                        conversa,
+                        conversation,
                         &item.id,
-                        erro.classificacao(),
-                        motivo,
+                        error.classification(),
+                        reason,
                     );
                     saida.push(DesfechoDoGrupo {
                         indice: item.indice,
@@ -1224,25 +1214,25 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
                 let tipo = passo.tipo();
                 // Texto do aparelho precisa do fantasma do aparelho dentro da sala antes de falar
                 // nela (MX-42). Mídia não vem do aparelho nesta fase.
-                if let Passo::Texto(envio) = &passo
-                    && envio.origem == OrigemMensagem::Dispositivo
+                if let Passo::Texto(send) = &passo
+                    && send.origin == MessageOrigin::Device
                     && !aparelho_na_sala
                 {
                     match self
                         .destino
-                        .garantir_aparelho(&grupo.dados, &sala, &envio.remetente)
+                        .ensure_device(&grupo.dados, &room, &send.sender)
                         .await
                     {
                         Ok(()) => aparelho_na_sala = true,
-                        Err(erro) => {
+                        Err(error) => {
                             // Mesma regra dos outros fantasmas: classifica, repete na passagem
                             // seguinte (transitória) ou isola após as tentativas (definitiva). A
                             // mensagem continua gravada no Harness; só a entrega à sala espera.
                             let desfecho = self.desfecho_de(
                                 item.org,
-                                conversa,
+                                conversation,
                                 &item.id,
-                                erro.classificacao(),
+                                error.classification(),
                                 MOTIVO_APARELHO.to_owned(),
                             );
                             saida.push(DesfechoDoGrupo {
@@ -1259,24 +1249,23 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
                 }
 
                 let resultado = match &passo {
-                    Passo::Texto(envio) => self.destino.enviar(&sala, envio).await.map(|()| None),
-                    Passo::Midia { envio, .. } => {
-                        self.destino.enviar_midia(&sala, envio).await.map(Some)
+                    Passo::Texto(send) => self.destino.send(&room, send).await.map(|()| None),
+                    Passo::Asset { send, .. } => {
+                        self.destino.send_asset(&room, send).await.map(Some)
                     }
-                    Passo::Aviso(aviso) => self.destino.avisar(&sala, aviso).await.map(|()| None),
+                    Passo::Notice(aviso) => self.destino.avisar(&room, aviso).await.map(|()| None),
                 };
 
                 match resultado {
                     Ok(publicada) => {
                         // MX-46: a mídia que entrou na sala fica registrada com o evento e o
                         // `mxc`, para a expiração saber o que redigir e apagar depois do prazo.
-                        if let (Passo::Midia { envio, .. }, Some(publicada)) = (&passo, &publicada)
-                        {
+                        if let (Passo::Asset { send, .. }, Some(publicada)) = (&passo, &publicada) {
                             self.registrar_midia(
                                 item.org,
                                 &agente_da_conversa,
-                                &sala,
-                                envio,
+                                &room,
+                                send,
                                 publicada,
                             );
                         }
@@ -1289,24 +1278,24 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
                             desfecho: Desfecho::Enviada,
                         });
                     }
-                    Err(erro) => {
-                        if eh_429(&erro) {
+                    Err(error) => {
+                        if eh_429(&error) {
                             self.metricas.respostas_429.increment(1);
                         }
-                        let motivo = motivo_de_envio(&erro);
+                        let reason = motivo_de_envio(&error);
                         let desfecho = self.desfecho_de(
                             item.org,
-                            conversa,
+                            conversation,
                             &item.id,
-                            erro.classificacao(),
-                            motivo,
+                            error.classification(),
+                            reason,
                         );
                         // Mídia que não entra de vez deixa o aviso na sala (MX-43): o atendente
                         // precisa saber que o cliente mandou um arquivo que não apareceu.
-                        if let (Desfecho::Isolar { .. }, Passo::Midia { aviso, .. }) =
+                        if let (Desfecho::Isolar { .. }, Passo::Asset { aviso, .. }) =
                             (&desfecho, &passo)
                         {
-                            self.escrever_aviso(&sala, aviso).await;
+                            self.escrever_aviso(&room, aviso).await;
                         }
                         saida.push(DesfechoDoGrupo {
                             indice: item.indice,
@@ -1342,13 +1331,13 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
     }
 
     /// Escreve o aviso de mídia na sala, sem deixar a falha dele mudar o desfecho da mensagem.
-    async fn escrever_aviso(&self, sala: &str, aviso: &AvisoNaSala) {
-        if let Err(erro) = self.destino.avisar(sala, aviso).await {
+    async fn escrever_aviso(&self, room: &str, aviso: &AvisoNaSala) {
+        if let Err(error) = self.destino.avisar(room, aviso).await {
             tracing::warn!(
                 target: "poph_server::matrix_espelho",
-                conversa = %aviso.conversa,
-                motivo = aviso.motivo.codigo(),
-                classe = %erro.classificacao(),
+                conversation = %aviso.conversation,
+                reason = aviso.reason.code(),
+                classe = %error.classification(),
                 "aviso de mídia recusada não entrou na sala; a mensagem foi isolada do mesmo jeito"
             );
         }
@@ -1359,25 +1348,25 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
     fn desfecho_de(
         &self,
         org: OrgId,
-        conversa: ConversationId,
+        conversation: ConversationId,
         id: &MessageId,
-        classificacao: Classificacao,
-        motivo: String,
+        classification: Classification,
+        reason: String,
     ) -> Desfecho {
-        match classificacao {
-            Classificacao::Transitoria => {
+        match classification {
+            Classification::Transient => {
                 self.metricas.erros_transitorios.increment(1);
                 tracing::debug!(
                     target: "poph_server::matrix_espelho",
                     org = %org,
-                    conversa = %conversa,
-                    motivo = %motivo,
+                    conversation = %conversation,
+                    reason = %reason,
                     classe = "transitoria",
                     "falha no espelho do Matrix: a mensagem fica pendente"
                 );
                 Desfecho::Pendente
             }
-            Classificacao::Definitiva => {
+            Classification::Definitive => {
                 self.metricas.erros_definitivos.increment(1);
                 let tentativas = {
                     let mut mapa = self
@@ -1393,19 +1382,19 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
                     tracing::warn!(
                         target: "poph_server::matrix_espelho",
                         org = %org,
-                        conversa = %conversa,
-                        motivo = %motivo,
+                        conversation = %conversation,
+                        reason = %reason,
                         tentativas,
                         classe = "definitiva",
                         "falha definitiva repetida no espelho do Matrix: mensagem isolada"
                     );
-                    Desfecho::Isolar { motivo, tentativas }
+                    Desfecho::Isolar { reason, tentativas }
                 } else {
                     tracing::info!(
                         target: "poph_server::matrix_espelho",
                         org = %org,
-                        conversa = %conversa,
-                        motivo = %motivo,
+                        conversation = %conversation,
+                        reason = %reason,
                         tentativas,
                         classe = "definitiva",
                         "falha definitiva no espelho do Matrix: nova tentativa no próximo ciclo"
@@ -1434,18 +1423,18 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
     /// não entregar o texto escondendo a mídia.
     fn anexos_do_cliente(
         &self,
-        mensagem: &MessageSince,
+        message: &MessageSince,
     ) -> Result<Vec<AttachmentRecord>, StoreError> {
-        if mensagem.origin != Origin::Agente
-            || mensagem.role != Role::User
-            || mensagem.direction != Direction::Inbound
+        if message.origin != Origin::Agente
+            || message.role != Role::User
+            || message.direction != Direction::Inbound
         {
             return Ok(Vec::new());
         }
         let ids: Vec<String> =
-            serde_json::from_str(&mensagem.attachments_json).map_err(|erro| {
+            serde_json::from_str(&message.attachments_json).map_err(|error| {
                 StoreError::Internal(format!(
-                    "lista de anexos da mensagem não lê como JSON: {erro}"
+                    "lista de anexos da mensagem não lê como JSON: {error}"
                 ))
             })?;
         if ids.is_empty() {
@@ -1453,7 +1442,7 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
         }
         self.store
             .messages()
-            .attachments(mensagem.org_id, mensagem.id)
+            .attachments(message.org_id, message.id)
     }
 
     /// Um passo de mídia de um anexo: o envio pronto, ou o aviso de por que ele não entra.
@@ -1466,35 +1455,43 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
         dados: &DadosConversa,
         anexo: &AttachmentRecord,
     ) -> Result<Passo, ()> {
-        let id_anexo = anexo.id.to_string();
-        let remetente = self.ids.cliente(&dados.identificador).map_err(|_| ())?;
-        let decidida = midia::decidir(&AnexoParaMidia {
-            id: &id_anexo,
-            nome: &anexo.name,
+        let id_attachment = anexo.id.to_string();
+        let sender = self.ids.client(&dados.identificador).map_err(|_| ())?;
+        let decidida = asset::decide(&AttachmentForAsset {
+            id: &id_attachment,
+            name: &anexo.name,
             mime: &anexo.mime,
-            tamanho_bytes: anexo.size_bytes,
-            fonte: &dados.sala.canal,
+            size_bytes: anexo.size_bytes,
+            source: &dados.room.channel,
         });
         let decidida = match decidida {
             Ok(decidida) => decidida,
-            Err(motivo) => {
-                return Ok(Passo::Aviso(self.aviso_de_midia(dados, &id_anexo, motivo)?));
+            Err(reason) => {
+                return Ok(Passo::Notice(self.aviso_de_midia(
+                    dados,
+                    &id_attachment,
+                    reason,
+                )?));
             }
         };
         let conteudo = match self.ler_blob(org, anexo).await {
             Ok(conteudo) => conteudo,
-            Err(motivo) => {
-                return Ok(Passo::Aviso(self.aviso_de_midia(dados, &id_anexo, motivo)?));
+            Err(reason) => {
+                return Ok(Passo::Notice(self.aviso_de_midia(
+                    dados,
+                    &id_attachment,
+                    reason,
+                )?));
             }
         };
-        Ok(Passo::Midia {
-            envio: EnvioMidia {
-                conversa: dados.sala.conversa,
-                remetente,
-                midia: decidida,
+        Ok(Passo::Asset {
+            send: EnvioMidia {
+                conversation: dados.room.conversation,
+                sender,
+                asset: decidida,
                 conteudo,
             },
-            aviso: self.aviso_de_midia(dados, &id_anexo, MotivoDeRecusa::Rejeitada)?,
+            aviso: self.aviso_de_midia(dados, &id_attachment, RefusalReason::Rejeitada)?,
         })
     }
 
@@ -1506,42 +1503,42 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
     fn registrar_midia(
         &self,
         org: OrgId,
-        agente: &str,
-        sala: &str,
-        envio: &EnvioMidia,
+        agent: &str,
+        room: &str,
+        send: &EnvioMidia,
         publicada: &MidiaPublicada,
     ) {
-        let midia = &envio.midia;
+        let asset = &send.asset;
         let registro = NewAsset {
-            id: midia.id_anexo.parse().unwrap_or_else(|_| {
+            id: asset.id_attachment.parse().unwrap_or_else(|_| {
                 // O id vem do banco (é `attachments.id`); se não for um id do Harness, a gravação
                 // falha na validação e é registrada como as demais.
                 poph_types::AttachmentId::generate()
             }),
-            conversation: envio.conversa,
-            agent: agente.to_owned(),
-            room: sala.to_owned(),
-            evento: publicada.evento.clone(),
+            conversation: send.conversation,
+            agent: agent.to_owned(),
+            room: room.to_owned(),
+            evento: publicada.event.clone(),
             mxc: publicada.mxc.clone(),
-            nome: midia.nome.clone(),
-            mime: midia.mime.clone(),
-            category: if midia.msgtype == midia::MSGTYPE_IMAGEM {
+            nome: asset.name.clone(),
+            mime: asset.mime.clone(),
+            category: if asset.msgtype == asset::MSGTYPE_IMAGE {
                 CategoryAsset::Image
             } else {
                 CategoryAsset::Document
             },
-            size_bytes: midia.tamanho_bytes,
+            size_bytes: asset.size_bytes,
             sent_at: (self.agora_ms)(),
         };
-        if let Err(erro) = self.store.matrix_asset().register(org, &registro) {
+        if let Err(error) = self.store.matrix_asset().register(org, &registro) {
             tracing::warn!(
                 target: "poph_server::matrix_espelho",
                 org = %org,
-                conversa = %envio.conversa,
-                motivo = "midia_nao_registrada",
+                conversation = %send.conversation,
+                reason = "midia_nao_registrada",
                 "mídia entrou na sala mas não foi registrada para expirar: o arquivo fica no Synapse"
             );
-            let _ = erro;
+            let _ = error;
         }
     }
 
@@ -1549,15 +1546,15 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
     fn aviso_de_midia(
         &self,
         dados: &DadosConversa,
-        id_anexo: &str,
-        motivo: MotivoDeRecusa,
+        id_attachment: &str,
+        reason: RefusalReason,
     ) -> Result<AvisoNaSala, ()> {
-        let remetente = self.ids.agente(&dados.agente).map_err(|_| ())?;
+        let sender = self.ids.agent(&dados.agent).map_err(|_| ())?;
         Ok(AvisoNaSala {
-            conversa: dados.sala.conversa,
-            remetente,
-            txn_id: midia::txn_do_aviso(id_anexo, motivo),
-            motivo,
+            conversation: dados.room.conversation,
+            sender,
+            txn_id: asset::notice_txn(id_attachment, reason),
+            reason,
         })
     }
 
@@ -1570,110 +1567,108 @@ impl<D: DestinoMatrix> EspelhoMatrix<D> {
         &self,
         org: OrgId,
         anexo: &AttachmentRecord,
-    ) -> Result<Vec<u8>, MotivoDeRecusa> {
+    ) -> Result<Vec<u8>, RefusalReason> {
         let Some(pasta) = self.pasta_blobs.clone() else {
-            return Err(MotivoDeRecusa::Ilegivel);
+            return Err(RefusalReason::Unreadable);
         };
         let sha256 = anexo.sha256.clone();
-        let limite = midia::LIMITE_MIDIA_BYTES;
+        let limite = asset::ASSET_BYTES_LIMIT;
         // Leitura de disco é bloqueante: sai da tarefa do laço.
         tokio::task::spawn_blocking(move || {
             poph_files::blob::read(&pasta, org, &sha256, limite)
-                .map_err(|_| MotivoDeRecusa::Ilegivel)
+                .map_err(|_| RefusalReason::Unreadable)
         })
         .await
-        .map_err(|_| MotivoDeRecusa::Ilegivel)?
+        .map_err(|_| RefusalReason::Unreadable)?
     }
 
     /// Dados da conversa para formato e sala. Canal sem `peer` usa o id da conversa como cliente.
     fn dados_conversa(
         &self,
         org: OrgId,
-        conversa: ConversationId,
+        conversation: ConversationId,
         corte: i64,
     ) -> Result<DadosConversa, StoreError> {
-        let conversa_lida = self.store.conversations().get(org, conversa)?;
+        let conversa_lida = self.store.conversations().get(org, conversation)?;
         // Mesma regra que a listagem usa para `external_peer` (RP-02): um só lugar, na store.
         let identificador = conversa_lida.identifier_client();
-        let nome_agente = self
+        let agent_name = self
             .store
             .agents()
             .get(org, conversa_lida.agent_id)
             .ok()
-            .map(|agente| agente.name);
-        let agente: AgentId = conversa_lida.agent_id;
-        let sala = ConversaParaSala {
+            .map(|agent| agent.name);
+        let agent: AgentId = conversa_lida.agent_id;
+        let room = ConversationToRoom {
             org,
-            conversa,
-            cliente: identificador.clone(),
+            conversation,
+            client: identificador.clone(),
             // Nome que o WhatsApp mandou (`pushName`, MX-32), já normalizado no banco. Sem ele, a
             // sala e o fantasma do cliente caem no identificador.
-            nome_cliente: conversa_lida.customer_name.clone(),
-            agente,
-            nome_agente,
-            canal: conversa_lida.canal.clone(),
-            departamento: conversa_lida.target_department,
-            fechada: conversa_lida.status == ConversationStatus::Closed,
-            corte_backfill: Some(corte),
+            client_name: conversa_lida.customer_name.clone(),
+            agent,
+            agent_name,
+            channel: conversa_lida.canal.clone(),
+            department: conversa_lida.target_department,
+            closed: conversa_lida.status == ConversationStatus::Closed,
+            backfill_cutoff: Some(corte),
         };
         Ok(DadosConversa {
             identificador,
-            agente: agente.to_string(),
+            agent: agent.to_string(),
             integracao: conversa_lida.integration_id.map(|id| id.to_string()),
-            sala,
+            room,
         })
     }
 }
 
 // ───────────────────────────── conversões e motivos ─────────────────────────────
 
-fn origem_de(origem: Origin) -> OrigemMensagem {
-    match origem {
-        Origin::Agente => OrigemMensagem::Agente,
-        Origin::Human => OrigemMensagem::Humana,
-        Origin::Device => OrigemMensagem::Dispositivo,
+fn origem_de(origin: Origin) -> MessageOrigin {
+    match origin {
+        Origin::Agente => MessageOrigin::Agent,
+        Origin::Human => MessageOrigin::Human,
+        Origin::Device => MessageOrigin::Device,
     }
 }
 
-fn sentido_de(direcao: Direction) -> Sentido {
+fn sentido_de(direcao: Direction) -> Meaning {
     match direcao {
-        Direction::Inbound => Sentido::Entrada,
-        Direction::Outbound => Sentido::Saida,
+        Direction::Inbound => Meaning::Entry,
+        Direction::Outbound => Meaning::Output,
     }
 }
 
-fn papel_de(papel: Role) -> PapelMensagem {
-    match papel {
-        Role::User => PapelMensagem::Cliente,
-        Role::Assistant => PapelMensagem::Agente,
-        Role::Tool | Role::System => PapelMensagem::Outro,
+fn papel_de(role: Role) -> MessageRole {
+    match role {
+        Role::User => MessageRole::Client,
+        Role::Assistant => MessageRole::Agent,
+        Role::Tool | Role::System => MessageRole::Other,
     }
 }
 
 /// Código curto do erro do Synapse, quando ele existe e é seguro para gravar.
-fn motivo_de_envio(erro: &ErroChamada) -> String {
-    match erro {
-        ErroChamada::Resposta {
-            errcode: Some(codigo),
+fn motivo_de_envio(error: &CallError) -> String {
+    match error {
+        CallError::Response {
+            errcode: Some(code),
             ..
-        } if codigo_seguro(codigo) => codigo.clone(),
+        } if codigo_seguro(code) => code.clone(),
         _ => MOTIVO_ENVIO.to_owned(),
     }
 }
 
 /// Chamada ao Synapse por trás de um erro de sala, quando o erro veio de uma chamada.
-fn chamada_da_sala(erro: &ErroSala) -> Option<&ErroChamada> {
-    match erro {
-        ErroSala::Chamada(chamada) | ErroSala::Fantasmas(ErroFantasmas::Chamada(chamada)) => {
-            Some(chamada)
-        }
+fn chamada_da_sala(error: &RoomError) -> Option<&CallError> {
+    match error {
+        RoomError::Call(chamada) | RoomError::Ghosts(GhostsError::Call(chamada)) => Some(chamada),
         _ => None,
     }
 }
 
 /// `429` do Synapse (limite de taxa).
-fn eh_429(erro: &ErroChamada) -> bool {
-    matches!(erro, ErroChamada::Resposta { status: 429, .. })
+fn eh_429(error: &CallError) -> bool {
+    matches!(error, CallError::Response { status: 429, .. })
 }
 
 /// Relógio do sistema em milissegundos (o mesmo carimbo que o Harness grava nas mensagens).
@@ -1685,10 +1680,10 @@ pub(crate) fn relogio_do_sistema() -> i64 {
 }
 
 /// Só letras, números e `_`, até o limite da coluna: o que o Synapse manda como `errcode`.
-fn codigo_seguro(codigo: &str) -> bool {
-    !codigo.is_empty()
-        && codigo.len() <= LIMITE_MOTIVO
-        && codigo
+fn codigo_seguro(code: &str) -> bool {
+    !code.is_empty()
+        && code.len() <= LIMITE_MOTIVO
+        && code
             .chars()
             .all(|caractere| caractere.is_ascii_alphanumeric() || caractere == '_')
 }

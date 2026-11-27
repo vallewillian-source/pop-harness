@@ -66,21 +66,21 @@
 //! # fn exemplo(
 //! #     store: Arc<poph_store::Store>,
 //! #     config: &poph_types::MatrixConfig,
-//! #     cliente: poph_matrix::ClienteMatrix,
-//! #     ids: poph_matrix::IdsFantasmas,
-//! #     espacos: poph_matrix::Espacos<impl poph_matrix::PortaEspacos + Send + Sync + 'static>,
+//! #     cliente: poph_matrix::MatrixClient,
+//! #     ids: poph_matrix::GhostIds,
+//! #     espacos: poph_matrix::Spaces<impl poph_matrix::SpacesPort + Send + Sync + 'static>,
 //! # ) -> Result<(), Box<dyn std::error::Error>> {
 //! // O `poph serve` monta a porta, o destino e a peça, e sobe a peça numa tarefa própria.
 //! // A porta dos espaços (MX-12) chega pronta de quem liga o módulo.
-//! let porta = PortaEstadoStore::nova(Arc::clone(&store));
+//! let porta = PortaEstadoStore::fresh(Arc::clone(&store));
 //! // Os fantasmas entram porque renomear a sala passa pelo serviço da MX-10 (`MX-33`).
-//! let usuarios = Arc::new(poph_matrix::UsuariosVirtuais::novo(
+//! let usuarios = Arc::new(poph_matrix::VirtualUsers::new(
 //!     cliente.clone(),
 //!     ids,
-//!     poph_matrix::TETO_PADRAO_CACHE,
+//!     poph_matrix::DEFAULT_CACHE_CAP,
 //! ));
-//! let destino = DestinoDoSynapse::novo(cliente, usuarios, espacos);
-//! let estado = Arc::new(EstadoDasConversas::novo(porta, destino, config)?);
+//! let destino = DestinoDoSynapse::new(cliente, usuarios, espacos);
+//! let estado = Arc::new(EstadoDasConversas::new(porta, destino, config)?);
 //! tokio::spawn(estado.executar());
 //! # Ok(())
 //! # }
@@ -92,15 +92,14 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use poph_matrix::MembroSala;
-use poph_matrix::cliente::ClienteMatrix;
-use poph_matrix::erro::{Classificacao, ErroChamada};
-use poph_matrix::espacos::{
-    DepartamentoEspaco, ErroEspaco, Espacos, PortaEspacos, Posicao, SalaParaEspaco,
-    resolver_departamento,
+use poph_matrix::RoomMember;
+use poph_matrix::client::MatrixClient;
+use poph_matrix::error::{CallError, Classification};
+use poph_matrix::rooms::{ConversationToRoom, METADATA_KIND, NAME_KIND, RoomMetadata};
+use poph_matrix::spaces::{
+    DepartmentSpace, Position, RoomForSpace, SpaceError, Spaces, SpacesPort, resolve_department,
 };
-use poph_matrix::salas::{ConversaParaSala, MetadataSala, TIPO_METADATA, TIPO_NOME};
-use poph_matrix::usuarios::{ErroFantasmas, IdsFantasmas, UsuariosVirtuais};
+use poph_matrix::users::{GhostIds, GhostsError, VirtualUsers};
 use poph_store::error::StoreError;
 use poph_store::{ConversationStatus, StateRoom, Store};
 use poph_types::{AgentId, ConversationId, MatrixConfig, OrgId};
@@ -132,7 +131,7 @@ pub const AVISO_ENCERRADA: &str =
     "Conversa encerrada. Uma nova mensagem do cliente abre uma conversa nova.";
 
 /// `msgtype` do aviso na sala.
-const MSGTYPE_AVISO: &str = "m.notice";
+const MSGTYPE_NOTICE: &str = "m.notice";
 
 /// Marca do `txnId` dos avisos de estado.
 const MARCA_AVISO: &str = "ph_est";
@@ -160,7 +159,7 @@ pub struct ConversaAlterada {
     /// Org dona.
     pub org: OrgId,
     /// Conversa alterada.
-    pub conversa: ConversationId,
+    pub conversation: ConversationId,
     /// Instante da alteração (ms): a primeira metade do cursor.
     pub atualizado_em: i64,
 }
@@ -180,61 +179,61 @@ pub struct ConversaEstado {
     /// Org dona.
     pub org: OrgId,
     /// Conversa.
-    pub conversa: ConversationId,
+    pub conversation: ConversationId,
     /// Situação atual.
     pub status: ConversationStatus,
     /// Agente que atende.
-    pub agente: AgentId,
+    pub agent: AgentId,
     /// Nome do agente (vazio cai no id).
-    pub nome_agente: Option<String>,
+    pub agent_name: Option<String>,
     /// Canal da conversa (`whatsapp`, `console`…).
-    pub canal: String,
+    pub channel: String,
     /// Identificador do cliente no canal (o telefone, no WhatsApp).
-    pub cliente: String,
+    pub client: String,
     /// Nome do cliente, quando o Harness tiver um. Hoje é sempre `None`: a coluna
     /// `conversations.client_name` entra na MX-32 e o preenchimento aqui é da MX-33.
-    pub nome_cliente: Option<String>,
+    pub client_name: Option<String>,
     /// Departamento alvo da transferência, com o nome que o espaço mostra.
-    pub departamento_alvo: Option<DepartamentoEspaco>,
+    pub departamento_alvo: Option<DepartmentSpace>,
     /// Departamento padrão do agente (P3: é o segundo da ordem de resolução).
-    pub departamento_padrao: Option<DepartamentoEspaco>,
+    pub departamento_padrao: Option<DepartmentSpace>,
     /// Instante da alteração (ms), o mesmo que a leitura incremental devolve.
     pub atualizado_em: i64,
 }
 
 impl ConversaEstado {
     /// Departamento que manda a sala para um espaço (P3, com a função da MX-12).
-    pub fn departamento(&self) -> Option<DepartamentoEspaco> {
+    pub fn department(&self) -> Option<DepartmentSpace> {
         let alvo = self
             .departamento_alvo
             .as_ref()
-            .map(|departamento| departamento.id);
+            .map(|department| department.id);
         let padrao = self
             .departamento_padrao
             .as_ref()
-            .map(|departamento| departamento.id);
-        let escolhido = resolver_departamento(alvo, padrao)?;
+            .map(|department| department.id);
+        let escolhido = resolve_department(alvo, padrao)?;
         self.departamento_alvo
             .iter()
             .chain(self.departamento_padrao.iter())
-            .find(|departamento| departamento.id == escolhido)
+            .find(|department| department.id == escolhido)
             .cloned()
     }
 
     /// A conversa como a provisão de sala e o metadata a enxergam.
-    pub fn para_sala(&self, departamento: Option<DepartamentoEspaco>) -> ConversaParaSala {
-        ConversaParaSala {
+    pub fn para_sala(&self, department: Option<DepartmentSpace>) -> ConversationToRoom {
+        ConversationToRoom {
             org: self.org,
-            conversa: self.conversa,
-            cliente: self.cliente.clone(),
-            nome_cliente: self.nome_cliente.clone(),
-            agente: self.agente,
-            nome_agente: self.nome_agente.clone(),
-            canal: self.canal.clone(),
-            departamento: departamento.map(|departamento| departamento.id),
-            fechada: self.status == ConversationStatus::Closed,
+            conversation: self.conversation,
+            client: self.client.clone(),
+            client_name: self.client_name.clone(),
+            agent: self.agent,
+            agent_name: self.agent_name.clone(),
+            channel: self.channel.clone(),
+            department: department.map(|department| department.id),
+            closed: self.status == ConversationStatus::Closed,
             // O corte do backfill é da provisão da sala (MX-11); aqui só o metadata é montado.
-            corte_backfill: None,
+            backfill_cutoff: None,
         }
     }
 }
@@ -245,7 +244,7 @@ pub struct SalaEstado {
     /// Id da sala no Synapse.
     pub room_id: String,
     /// Espaço do departamento em que a sala está gravada, quando houver.
-    pub espaco: Option<String>,
+    pub space: Option<String>,
     /// Última situação já espelhada (`None` quando a sala nunca teve o estado espelhado).
     pub ultimo_status: Option<ConversationStatus>,
     /// Último nome do cliente já enviado ao Matrix (nome da sala, `client_name` do metadata e nome
@@ -279,24 +278,24 @@ pub trait PortaEstado: Send + Sync {
     ) -> impl Future<Output = Result<Vec<ConversaAlterada>, StoreError>> + Send;
 
     /// A conversa, com agente e departamentos já resolvidos (`None` quando não existe mais).
-    fn conversa(
+    fn conversation(
         &self,
         org: OrgId,
-        conversa: ConversationId,
+        conversation: ConversationId,
     ) -> impl Future<Output = Result<Option<ConversaEstado>, StoreError>> + Send;
 
     /// A sala da conversa (`None` quando ainda não existe).
-    fn sala(
+    fn room(
         &self,
         org: OrgId,
-        conversa: ConversationId,
+        conversation: ConversationId,
     ) -> impl Future<Output = Result<Option<SalaEstado>, StoreError>> + Send;
 
     /// Grava a situação já espelhada.
     fn definir_ultimo_status(
         &self,
         org: OrgId,
-        conversa: ConversationId,
+        conversation: ConversationId,
         status: ConversationStatus,
     ) -> impl Future<Output = Result<(), StoreError>> + Send;
 
@@ -304,8 +303,8 @@ pub trait PortaEstado: Send + Sync {
     fn definir_nome_espelhado(
         &self,
         org: OrgId,
-        conversa: ConversationId,
-        nome: &str,
+        conversation: ConversationId,
+        name: &str,
     ) -> impl Future<Output = Result<(), StoreError>> + Send;
 
     /// Avança o cursor de conversas da org (só para a frente).
@@ -325,7 +324,7 @@ pub struct PortaEstadoStore {
 
 impl PortaEstadoStore {
     /// Monta a porta sobre o banco.
-    pub fn nova(store: Arc<Store>) -> Self {
+    pub fn fresh(store: Arc<Store>) -> Self {
         Self { store }
     }
 }
@@ -337,9 +336,9 @@ impl PortaEstado for PortaEstadoStore {
             let estados = store.matrix().linked_orgs()?;
             Ok(estados
                 .into_iter()
-                .map(|estado| EstadoOrg {
-                    org: estado.org_id,
-                    ligado: estado.linked,
+                .map(|state| EstadoOrg {
+                    org: state.org_id,
+                    ligado: state.linked,
                 })
                 .collect())
         }
@@ -369,75 +368,75 @@ impl PortaEstado for PortaEstadoStore {
             let conversas = store.conversations().changed_since(apos, limite)?;
             Ok(conversas
                 .into_iter()
-                .map(|conversa| ConversaAlterada {
-                    org: conversa.org_id,
-                    conversa: conversa.id,
-                    atualizado_em: conversa.updated_at,
+                .map(|conversation| ConversaAlterada {
+                    org: conversation.org_id,
+                    conversation: conversation.id,
+                    atualizado_em: conversation.updated_at,
                 })
                 .collect())
         }
     }
 
-    fn conversa(
+    fn conversation(
         &self,
         org: OrgId,
-        conversa: ConversationId,
+        conversation: ConversationId,
     ) -> impl Future<Output = Result<Option<ConversaEstado>, StoreError>> + Send {
         let store = Arc::clone(&self.store);
         async move {
-            let lida = match store.conversations().get(org, conversa) {
+            let lida = match store.conversations().get(org, conversation) {
                 Ok(lida) => lida,
-                Err(erro) if erro.is_not_found() => return Ok(None),
-                Err(erro) => return Err(erro),
+                Err(error) if error.is_not_found() => return Ok(None),
+                Err(error) => return Err(error),
             };
-            let agente = store.agents().get(org, lida.agent_id).ok();
-            let departamento = |id: poph_types::DepartmentId| {
+            let agent = store.agents().get(org, lida.agent_id).ok();
+            let department = |id: poph_types::DepartmentId| {
                 store
                     .departments()
                     .get(org, id)
                     .ok()
-                    .map(|departamento| DepartamentoEspaco {
-                        id: departamento.id,
-                        nome: departamento.name,
+                    .map(|department| DepartmentSpace {
+                        id: department.id,
+                        name: department.name,
                     })
             };
             // Mesma regra que a listagem usa para `external_peer` (RP-02): um só lugar, na store.
             let identificador = lida.identifier_client();
             Ok(Some(ConversaEstado {
                 org,
-                conversa,
+                conversation,
                 status: lida.status,
-                agente: lida.agent_id,
-                nome_agente: agente.as_ref().map(|agente| agente.name.clone()),
-                canal: lida.canal.clone(),
-                cliente: identificador,
+                agent: lida.agent_id,
+                agent_name: agent.as_ref().map(|agent| agent.name.clone()),
+                channel: lida.canal.clone(),
+                client: identificador,
                 // Nome do cliente (`pushName`, MX-32). Sem ele o metadata sai sem `client_name` —
                 // e uma transferência apagaria o nome que a criação da sala já tinha posto.
-                nome_cliente: lida.customer_name.clone(),
-                departamento_alvo: lida.target_department.and_then(departamento),
-                departamento_padrao: agente
+                client_name: lida.customer_name.clone(),
+                departamento_alvo: lida.target_department.and_then(department),
+                departamento_padrao: agent
                     .as_ref()
-                    .and_then(|agente| agente.default_department)
-                    .and_then(departamento),
+                    .and_then(|agent| agent.default_department)
+                    .and_then(department),
                 atualizado_em: lida.updated_at,
             }))
         }
     }
 
-    fn sala(
+    fn room(
         &self,
         org: OrgId,
-        conversa: ConversationId,
+        conversation: ConversationId,
     ) -> impl Future<Output = Result<Option<SalaEstado>, StoreError>> + Send {
         let store = Arc::clone(&self.store);
         async move {
-            let sala = store.matrix().room(org, conversa)?;
-            Ok(sala.map(|sala| SalaEstado {
-                room_id: sala.room_id,
-                espaco: sala.space,
-                ultimo_status: sala.last_status,
-                nome_espelhado: sala.name_client_mirrored,
-                pronta: sala.state == StateRoom::Ready,
+            let room = store.matrix().room(org, conversation)?;
+            Ok(room.map(|room| SalaEstado {
+                room_id: room.room_id,
+                space: room.space,
+                ultimo_status: room.last_status,
+                nome_espelhado: room.name_client_mirrored,
+                pronta: room.state == StateRoom::Ready,
             }))
         }
     }
@@ -445,14 +444,14 @@ impl PortaEstado for PortaEstadoStore {
     fn definir_ultimo_status(
         &self,
         org: OrgId,
-        conversa: ConversationId,
+        conversation: ConversationId,
         status: ConversationStatus,
     ) -> impl Future<Output = Result<(), StoreError>> + Send {
         let store = Arc::clone(&self.store);
         async move {
             store
                 .matrix()
-                .define_last_status(org, conversa, status)
+                .define_last_status(org, conversation, status)
                 .map(|_| ())
         }
     }
@@ -460,15 +459,15 @@ impl PortaEstado for PortaEstadoStore {
     fn definir_nome_espelhado(
         &self,
         org: OrgId,
-        conversa: ConversationId,
-        nome: &str,
+        conversation: ConversationId,
+        name: &str,
     ) -> impl Future<Output = Result<(), StoreError>> + Send {
         let store = Arc::clone(&self.store);
-        let nome = nome.to_owned();
+        let name = name.to_owned();
         async move {
             store
                 .matrix()
-                .set_mirrored_customer_name(org, conversa, &nome)
+                .set_mirrored_customer_name(org, conversation, &name)
                 .map(|_| ())
         }
     }
@@ -500,41 +499,41 @@ pub trait DestinoEstado: Send + Sync {
     /// Escreve o aviso (`m.notice`) na sala. `txn` é a chave de idempotência (P7).
     fn avisar(
         &self,
-        sala: &str,
-        agente: AgentId,
+        room: &str,
+        agent: AgentId,
         txn: &str,
-        texto: &str,
-    ) -> impl Future<Output = Result<(), ErroChamada>> + Send;
+        text: &str,
+    ) -> impl Future<Output = Result<(), CallError>> + Send;
 
     /// Reescreve o evento de metadata que o Element lê.
     fn escrever_metadata(
         &self,
-        sala: &str,
-        agente: AgentId,
-        metadata: &MetadataSala,
-    ) -> impl Future<Output = Result<(), ErroChamada>> + Send;
+        room: &str,
+        agent: AgentId,
+        metadata: &RoomMetadata,
+    ) -> impl Future<Output = Result<(), CallError>> + Send;
 
     /// Põe a sala no espaço do departamento (MX-12).
-    fn posicionar(
+    fn place(
         &self,
-        dados: SalaParaEspaco,
-    ) -> impl Future<Output = Result<Posicao, ErroEspaco>> + Send;
+        dados: RoomForSpace,
+    ) -> impl Future<Output = Result<Position, SpaceError>> + Send;
 
     /// Renomeia a sala (`m.room.name`) com o nome do cliente (MX-33). Idempotente no Synapse.
     fn renomear(
         &self,
-        sala: &str,
-        agente: AgentId,
-        nome: &str,
-    ) -> impl Future<Output = Result<(), ErroChamada>> + Send;
+        room: &str,
+        agent: AgentId,
+        name: &str,
+    ) -> impl Future<Output = Result<(), CallError>> + Send;
 
     /// Deixa o fantasma do cliente com o nome de exibição novo (MX-10, que só reescreve o perfil
     /// quando o nome muda). Idempotente.
     fn renomear_fantasma(
         &self,
-        cliente: &str,
-        nome: &str,
-    ) -> impl Future<Output = Result<(), ErroChamada>> + Send;
+        client: &str,
+        name: &str,
+    ) -> impl Future<Output = Result<(), CallError>> + Send;
 }
 
 /// Quem escreve o aviso na sala.
@@ -544,52 +543,48 @@ pub trait DestinoEstado: Send + Sync {
 /// a sala de atendimento, o normal hoje é o **fantasma do agente** — que é o dono da sala e com
 /// certeza está dentro dela.
 pub fn escolher_remetente(
-    membros: &BTreeMap<String, MembroSala>,
+    members: &BTreeMap<String, RoomMember>,
     bot: &str,
-    agente: &str,
+    agent: &str,
 ) -> String {
-    if membros.contains_key(bot) {
+    if members.contains_key(bot) {
         bot.to_owned()
     } else {
-        agente.to_owned()
+        agent.to_owned()
     }
 }
 
 /// Destino de verdade: o cliente da API do Matrix (MX-09), os fantasmas da MX-10 e os espaços da
 /// MX-12.
-pub struct DestinoDoSynapse<P: PortaEspacos + Send + Sync> {
-    cliente: ClienteMatrix,
-    usuarios: Arc<UsuariosVirtuais>,
-    ids: IdsFantasmas,
-    espacos: Espacos<P>,
+pub struct DestinoDoSynapse<P: SpacesPort + Send + Sync> {
+    client: MatrixClient,
+    users: Arc<VirtualUsers>,
+    ids: GhostIds,
+    spaces: Spaces<P>,
     /// Sala → quem avisa. Sem validade: a escolha só mudaria se o bot entrasse na sala depois, e
     /// nesse caso o aviso continua saindo por quem está lá.
     remetentes: Mutex<CacheRemetentes>,
 }
 
-impl<P: PortaEspacos + Send + Sync> DestinoDoSynapse<P> {
+impl<P: SpacesPort + Send + Sync> DestinoDoSynapse<P> {
     /// Monta a partir do cliente, dos fantasmas da instância e dos espaços (MX-12).
     ///
     /// Os fantasmas entram porque renomear a sala quando o nome do cliente chega (MX-33) passa pelo
     /// mesmo serviço que registra e nomeia o fantasma do cliente (MX-10) — repetir é idempotente.
-    pub fn novo(
-        cliente: ClienteMatrix,
-        usuarios: Arc<UsuariosVirtuais>,
-        espacos: Espacos<P>,
-    ) -> Self {
-        let ids = usuarios.ids().clone();
+    pub fn new(client: MatrixClient, users: Arc<VirtualUsers>, spaces: Spaces<P>) -> Self {
+        let ids = users.ids().clone();
         Self {
-            cliente,
-            usuarios,
+            client,
+            users,
             ids,
-            espacos,
-            remetentes: Mutex::new(CacheRemetentes::novo(TETO_PADRAO_REMETENTES)),
+            spaces,
+            remetentes: Mutex::new(CacheRemetentes::new(TETO_PADRAO_REMETENTES)),
         }
     }
 
     /// Troca o teto do cache de remetentes (testes).
-    pub fn com_teto_de_remetentes(mut self, teto: usize) -> Self {
-        self.remetentes = Mutex::new(CacheRemetentes::novo(teto));
+    pub fn com_teto_de_remetentes(mut self, cap: usize) -> Self {
+        self.remetentes = Mutex::new(CacheRemetentes::new(cap));
         self
     }
 
@@ -599,19 +594,19 @@ impl<P: PortaEspacos + Send + Sync> DestinoDoSynapse<P> {
     }
 
     /// Quem avisa nesta sala: o bot quando ele está dentro, senão o fantasma do agente.
-    async fn remetente(&self, sala: &str, agente: AgentId) -> Option<String> {
-        if let Some(guardado) = self.cache_remetentes().obter(sala) {
+    async fn sender(&self, room: &str, agent: AgentId) -> Option<String> {
+        if let Some(guardado) = self.cache_remetentes().obter(room) {
             return Some(guardado);
         }
-        let Ok(fantasma) = self.ids.agente(&agente.to_string()) else {
+        let Ok(fantasma) = self.ids.agent(&agent.to_string()) else {
             return None;
         };
-        let escolhido = match self.cliente.membros(fantasma.user_id(), sala).await {
-            Ok(membros) => escolher_remetente(&membros, &self.bot(), fantasma.user_id()),
+        let escolhido = match self.client.members(fantasma.user_id(), room).await {
+            Ok(members) => escolher_remetente(&members, &self.bot(), fantasma.user_id()),
             // Sem conseguir conferir, fala quem com certeza está na sala.
             Err(_) => fantasma.user_id().to_owned(),
         };
-        self.cache_remetentes().guardar(sala, &escolhido);
+        self.cache_remetentes().guardar(room, &escolhido);
         Some(escolhido)
     }
 
@@ -622,72 +617,71 @@ impl<P: PortaEspacos + Send + Sync> DestinoDoSynapse<P> {
     }
 }
 
-impl<P: PortaEspacos + Send + Sync> DestinoEstado for DestinoDoSynapse<P> {
+impl<P: SpacesPort + Send + Sync> DestinoEstado for DestinoDoSynapse<P> {
     async fn avisar(
         &self,
-        sala: &str,
-        agente: AgentId,
+        room: &str,
+        agent: AgentId,
         txn: &str,
-        texto: &str,
-    ) -> Result<(), ErroChamada> {
-        let Some(remetente) = self.remetente(sala, agente).await else {
-            return Err(ErroChamada::Configuracao(
+        text: &str,
+    ) -> Result<(), CallError> {
+        let Some(sender) = self.sender(room, agent).await else {
+            return Err(CallError::Configuration(
                 "id de agente fora do padrão do módulo Matrix".to_owned(),
             ));
         };
-        let corpo = json!({ "msgtype": MSGTYPE_AVISO, "body": texto });
-        self.cliente
-            .enviar_evento(&remetente, sala, "m.room.message", txn, &corpo)
+        let body = json!({ "msgtype": MSGTYPE_NOTICE, "body": text });
+        self.client
+            .send_event(&sender, room, "m.room.message", txn, &body)
             .await
             .map(|_| ())
     }
 
     async fn escrever_metadata(
         &self,
-        sala: &str,
-        agente: AgentId,
-        metadata: &MetadataSala,
-    ) -> Result<(), ErroChamada> {
+        room: &str,
+        agent: AgentId,
+        metadata: &RoomMetadata,
+    ) -> Result<(), CallError> {
         // Quem escreve é o fantasma do agente, como na criação da sala (MX-11): é ele que tem
         // poder de escrever evento de estado nesta sala (o bot do AS não é membro dela).
-        let Ok(fantasma) = self.ids.agente(&agente.to_string()) else {
-            return Err(ErroChamada::Configuracao(
+        let Ok(fantasma) = self.ids.agent(&agent.to_string()) else {
+            return Err(CallError::Configuration(
                 "id de agente fora do padrão do módulo Matrix".to_owned(),
             ));
         };
-        let corpo =
-            serde_json::to_value(metadata).map_err(|erro| ErroChamada::RespostaInvalida {
-                operacao: "state (metadata)",
-                motivo: format!("o metadata da sala não serializou: {erro}"),
-            })?;
-        self.cliente
-            .enviar_estado(fantasma.user_id(), sala, TIPO_METADATA, None, &corpo)
+        let body = serde_json::to_value(metadata).map_err(|error| CallError::InvalidResponse {
+            operation: "state (metadata)",
+            reason: format!("o metadata da sala não serializou: {error}"),
+        })?;
+        self.client
+            .send_state(fantasma.user_id(), room, METADATA_KIND, None, &body)
             .await
             .map(|_| ())
     }
 
-    async fn posicionar(&self, dados: SalaParaEspaco) -> Result<Posicao, ErroEspaco> {
-        self.espacos.posicionar(&dados).await
+    async fn place(&self, dados: RoomForSpace) -> Result<Position, SpaceError> {
+        self.spaces.place(&dados).await
     }
 
-    async fn renomear(&self, sala: &str, agente: AgentId, nome: &str) -> Result<(), ErroChamada> {
+    async fn renomear(&self, room: &str, agent: AgentId, name: &str) -> Result<(), CallError> {
         // Quem escreve é o fantasma do agente, como no metadata: é ele que tem poder de evento de
         // estado nesta sala (o bot do AS não é membro dela).
-        let Ok(fantasma) = self.ids.agente(&agente.to_string()) else {
-            return Err(ErroChamada::Configuracao(
+        let Ok(fantasma) = self.ids.agent(&agent.to_string()) else {
+            return Err(CallError::Configuration(
                 "id de agente fora do padrão do módulo Matrix".to_owned(),
             ));
         };
-        let corpo = json!({ "name": nome });
-        self.cliente
-            .enviar_estado(fantasma.user_id(), sala, TIPO_NOME, None, &corpo)
+        let body = json!({ "name": name });
+        self.client
+            .send_state(fantasma.user_id(), room, NAME_KIND, None, &body)
             .await
             .map(|_| ())
     }
 
-    async fn renomear_fantasma(&self, cliente: &str, nome: &str) -> Result<(), ErroChamada> {
-        self.usuarios
-            .garantir_cliente(cliente, nome)
+    async fn renomear_fantasma(&self, client: &str, name: &str) -> Result<(), CallError> {
+        self.users
+            .ensure_client(client, name)
             .await
             .map(|_| ())
             .map_err(chamada_dos_fantasmas)
@@ -695,15 +689,15 @@ impl<P: PortaEspacos + Send + Sync> DestinoEstado for DestinoDoSynapse<P> {
 }
 
 /// O erro de fantasma como erro de chamada, para o laço tratar os dois do mesmo jeito.
-fn chamada_dos_fantasmas(erro: ErroFantasmas) -> ErroChamada {
-    match erro {
-        ErroFantasmas::Chamada(chamada) => chamada,
+fn chamada_dos_fantasmas(error: GhostsError) -> CallError {
+    match error {
+        GhostsError::Call(chamada) => chamada,
         // Identificador inválido ou id divergente não é problema de rede: é configuração.
-        outro => ErroChamada::Configuracao(outro.to_string()),
+        outro => CallError::Configuration(outro.to_string()),
     }
 }
 
-impl<P: PortaEspacos + Send + Sync> std::fmt::Debug for DestinoDoSynapse<P> {
+impl<P: SpacesPort + Send + Sync> std::fmt::Debug for DestinoDoSynapse<P> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // O cliente e os espaços ficam de fora: nenhum dos dois precisa expor token no `Debug`.
         f.debug_struct("DestinoDoSynapse")
@@ -714,36 +708,36 @@ impl<P: PortaEspacos + Send + Sync> std::fmt::Debug for DestinoDoSynapse<P> {
 
 /// Mapa sala → remetente, com teto (FIFO). Acertar o cache não fala com o Synapse.
 struct CacheRemetentes {
-    teto: usize,
+    cap: usize,
     itens: BTreeMap<String, String>,
     ordem: VecDeque<String>,
 }
 
 impl CacheRemetentes {
-    fn novo(teto: usize) -> Self {
+    fn new(cap: usize) -> Self {
         Self {
-            teto: teto.max(1),
+            cap: cap.max(1),
             itens: BTreeMap::new(),
             ordem: VecDeque::new(),
         }
     }
 
-    fn obter(&self, sala: &str) -> Option<String> {
-        self.itens.get(sala).cloned()
+    fn obter(&self, room: &str) -> Option<String> {
+        self.itens.get(room).cloned()
     }
 
-    fn guardar(&mut self, sala: &str, remetente: &str) {
-        if self.itens.contains_key(sala) {
+    fn guardar(&mut self, room: &str, sender: &str) {
+        if self.itens.contains_key(room) {
             return;
         }
-        while self.itens.len() >= self.teto {
+        while self.itens.len() >= self.cap {
             let Some(antiga) = self.ordem.pop_front() else {
                 break;
             };
             self.itens.remove(&antiga);
         }
-        self.itens.insert(sala.to_owned(), remetente.to_owned());
-        self.ordem.push_back(sala.to_owned());
+        self.itens.insert(room.to_owned(), sender.to_owned());
+        self.ordem.push_back(room.to_owned());
     }
 }
 
@@ -752,15 +746,12 @@ impl CacheRemetentes {
 /// Texto do aviso de uma mudança de situação.
 ///
 /// Curto e sem dado de cliente: o aviso aparece na sala para qualquer membro.
-pub fn aviso_de_status(
-    status: ConversationStatus,
-    departamento: Option<&DepartamentoEspaco>,
-) -> String {
+pub fn aviso_de_status(status: ConversationStatus, department: Option<&DepartmentSpace>) -> String {
     match status {
-        ConversationStatus::Transferred => match departamento {
-            Some(departamento) => format!(
+        ConversationStatus::Transferred => match department {
+            Some(department) => format!(
                 "Atendimento humano assumiu a conversa (departamento {}): o agente automático está pausado até ela ser reaberta.",
-                departamento.nome_do_espaco()
+                department.space_name()
             ),
             None => AVISO_TRANSFERIDA.to_owned(),
         },
@@ -773,44 +764,44 @@ pub fn aviso_de_status(
 ///
 /// Repetir a passagem depois de uma falha usa o mesmo `txnId` e o Synapse não duplica o evento
 /// (P7); uma segunda transferência da mesma conversa tem outro instante, então tem aviso próprio.
-pub fn txn_do_aviso(conversa: &ConversaEstado) -> String {
-    let corpo: String = conversa
-        .conversa
+pub fn notice_txn(conversation: &ConversaEstado) -> String {
+    let body: String = conversation
+        .conversation
         .to_string()
         .chars()
         .filter(char::is_ascii_hexdigit)
         .collect();
     format!(
-        "{MARCA_AVISO}_{corpo}_{}_{}",
-        conversa.atualizado_em,
-        conversa.status.as_text()
+        "{MARCA_AVISO}_{body}_{}_{}",
+        conversation.atualizado_em,
+        conversation.status.as_text()
     )
 }
 
 /// Motivo curto de uma falha de chamada, seguro para log (sem corpo nem endereço).
-fn motivo_da_chamada(erro: &ErroChamada) -> String {
-    match erro {
-        ErroChamada::Resposta {
+fn motivo_da_chamada(error: &CallError) -> String {
+    match error {
+        CallError::Response {
             status, errcode, ..
         } => match errcode {
-            Some(codigo) => format!("{status}_{codigo}"),
+            Some(code) => format!("{status}_{code}"),
             None => format!("http_{status}"),
         },
-        ErroChamada::Rede { .. } => "rede".to_owned(),
-        ErroChamada::Prazo { .. } => "prazo".to_owned(),
-        ErroChamada::Configuracao(_) => "configuracao".to_owned(),
-        ErroChamada::RespostaInvalida { .. } => "resposta_invalida".to_owned(),
+        CallError::Network { .. } => "rede".to_owned(),
+        CallError::Deadline { .. } => "prazo".to_owned(),
+        CallError::Configuration(_) => "configuracao".to_owned(),
+        CallError::InvalidResponse { .. } => "resposta_invalida".to_owned(),
     }
 }
 
 /// Motivo curto de uma falha de espaço, seguro para log.
-fn motivo_do_espaco(erro: &ErroEspaco) -> &'static str {
-    match erro {
-        ErroEspaco::Chamada(_) => "chamada",
-        ErroEspaco::Armazenamento(_) => "armazenamento",
-        ErroEspaco::SemPermissao { .. } => "sem_permissao",
-        ErroEspaco::EspacoInvalido { .. } => "espaco_invalido",
-        ErroEspaco::Interno { .. } => "interno",
+fn motivo_do_espaco(error: &SpaceError) -> &'static str {
+    match error {
+        SpaceError::Call(_) => "chamada",
+        SpaceError::Armazenamento(_) => "armazenamento",
+        SpaceError::WithoutPermission { .. } => "sem_permissao",
+        SpaceError::InvalidSpace { .. } => "espaco_invalido",
+        SpaceError::Internal { .. } => "interno",
     }
 }
 
@@ -826,7 +817,7 @@ pub enum ErroEstado {
 
 impl ErroEstado {
     /// Código curto para log. O texto do erro do banco nunca vai para o log.
-    pub fn codigo(&self) -> &'static str {
+    pub fn code(&self) -> &'static str {
         match self {
             Self::Armazenamento(_) => "armazenamento_indisponivel",
         }
@@ -882,7 +873,7 @@ struct CursorOrg {
 pub struct EstadoDasConversas<D: DestinoEstado, P: PortaEstado> {
     porta: P,
     destino: D,
-    ids: IdsFantasmas,
+    ids: GhostIds,
     intervalo: Duration,
     pagina: u32,
     /// Quantas passagens seguidas terminaram com pendência.
@@ -895,8 +886,8 @@ pub struct EstadoDasConversas<D: DestinoEstado, P: PortaEstado> {
 
 impl<D: DestinoEstado, P: PortaEstado> EstadoDasConversas<D, P> {
     /// Monta o laço com a seção `[matrix]` já validada (o intervalo é o mesmo do espelhamento).
-    pub fn novo(porta: P, destino: D, config: &MatrixConfig) -> Result<Self, ErroFantasmas> {
-        let ids = IdsFantasmas::da_config(config)?;
+    pub fn new(porta: P, destino: D, config: &MatrixConfig) -> Result<Self, GhostsError> {
+        let ids = GhostIds::of_config(config)?;
         let (parar, _) = tokio::sync::watch::channel(false);
         Ok(Self {
             porta,
@@ -963,10 +954,10 @@ impl<D: DestinoEstado, P: PortaEstado> EstadoDasConversas<D, P> {
                         0
                     }
                 }
-                Err(erro) => {
+                Err(error) => {
                     tracing::warn!(
                         target: "poph_server::matrix_estado",
-                        motivo = erro.codigo(),
+                        reason = error.code(),
                         "passagem do estado das conversas no Matrix falhou; segue na próxima"
                     );
                     self.falhas_seguidas.fetch_add(1, Ordering::Relaxed) + 1
@@ -984,13 +975,13 @@ impl<D: DestinoEstado, P: PortaEstado> EstadoDasConversas<D, P> {
         let mut relatorio = RelatorioCiclo::default();
 
         let mut orgs: BTreeMap<OrgId, CursorOrg> = BTreeMap::new();
-        for estado in self.porta.orgs().await? {
-            if !estado.ligado {
+        for state in self.porta.orgs().await? {
+            if !state.ligado {
                 continue;
             }
-            let cursores = self.porta.cursores(estado.org).await?;
+            let cursores = self.porta.cursores(state.org).await?;
             orgs.insert(
-                estado.org,
+                state.org,
                 CursorOrg {
                     atualizado_em: cursores.atualizado_em,
                     id: cursores
@@ -1032,12 +1023,15 @@ impl<D: DestinoEstado, P: PortaEstado> EstadoDasConversas<D, P> {
                 if cursor.bloqueada {
                     continue;
                 }
-                let par = (alterada.atualizado_em, alterada.conversa.to_string());
+                let par = (alterada.atualizado_em, alterada.conversation.to_string());
                 if par <= (cursor.atualizado_em, cursor.id.clone()) {
                     continue;
                 }
                 // A conversa pode ter sumido entre a leitura da página e esta.
-                let Some(conversa) = self.porta.conversa(alterada.org, alterada.conversa).await?
+                let Some(conversation) = self
+                    .porta
+                    .conversation(alterada.org, alterada.conversation)
+                    .await?
                 else {
                     cursor.atualizado_em = par.0;
                     cursor.id = par.1;
@@ -1045,7 +1039,7 @@ impl<D: DestinoEstado, P: PortaEstado> EstadoDasConversas<D, P> {
                     continue;
                 };
                 relatorio.conferidas += 1;
-                match self.espelhar(&conversa, &mut relatorio).await? {
+                match self.espelhar(&conversation, &mut relatorio).await? {
                     Desfecho::Feito => {
                         cursor.atualizado_em = par.0;
                         cursor.id = par.1;
@@ -1058,7 +1052,7 @@ impl<D: DestinoEstado, P: PortaEstado> EstadoDasConversas<D, P> {
             let Some(ultima) = pagina.last() else {
                 break;
             };
-            apos = (ultima.atualizado_em, ultima.conversa.to_string());
+            apos = (ultima.atualizado_em, ultima.conversation.to_string());
             if ultima_pagina {
                 break;
             }
@@ -1082,11 +1076,11 @@ impl<D: DestinoEstado, P: PortaEstado> EstadoDasConversas<D, P> {
         alvo: &ConversaEstado,
         relatorio: &mut RelatorioCiclo,
     ) -> Result<Desfecho, ErroEstado> {
-        let Some(sala) = self.porta.sala(alvo.org, alvo.conversa).await? else {
+        let Some(room) = self.porta.room(alvo.org, alvo.conversation).await? else {
             relatorio.sem_sala += 1;
             return Ok(Desfecho::Feito);
         };
-        if !sala.pronta {
+        if !room.pronta {
             // Sala no meio da criação (MX-11): a passagem seguinte termina o serviço.
             relatorio.adiadas += 1;
             return Ok(Desfecho::Adiado);
@@ -1094,13 +1088,13 @@ impl<D: DestinoEstado, P: PortaEstado> EstadoDasConversas<D, P> {
 
         // `last_status` vazio é "nunca espelhei": a sala nasceu com o metadata da criação, e a
         // referência é a conversa aberta (o estado em que toda conversa nasce).
-        let espelhada = sala.ultimo_status.unwrap_or(ConversationStatus::Open);
+        let espelhada = room.ultimo_status.unwrap_or(ConversationStatus::Open);
         let mut fresca: Option<ConversaEstado> = None;
 
         if espelhada != alvo.status {
             // Reconferência antes de escrever: se a conversa mudou no meio da passagem, o metadata
             // não pode sair com a situação velha (é o caso de uma conversa que acabou de encerrar).
-            let Some(atual) = self.porta.conversa(alvo.org, alvo.conversa).await? else {
+            let Some(atual) = self.porta.conversation(alvo.org, alvo.conversation).await? else {
                 relatorio.sem_sala += 1;
                 return Ok(Desfecho::Feito);
             };
@@ -1109,25 +1103,25 @@ impl<D: DestinoEstado, P: PortaEstado> EstadoDasConversas<D, P> {
                 return Ok(Desfecho::Adiado);
             }
 
-            let departamento = atual.departamento();
-            let texto = aviso_de_status(atual.status, departamento.as_ref());
-            let txn = txn_do_aviso(&atual);
+            let department = atual.department();
+            let text = aviso_de_status(atual.status, department.as_ref());
+            let txn = notice_txn(&atual);
 
             let inicio = Instant::now();
             let resultado = self
                 .destino
-                .avisar(&sala.room_id, atual.agente, &txn, &texto)
+                .avisar(&room.room_id, atual.agent, &txn, &text)
                 .await;
             self.medir_synapse(inicio.elapsed().as_secs_f64());
             if let Some(desfecho) = self.tratar(resultado, &atual, "aviso", relatorio) {
                 return Ok(desfecho);
             }
 
-            let metadata = MetadataSala::da_conversa(&atual.para_sala(departamento));
+            let metadata = RoomMetadata::of_conversation(&atual.para_sala(department));
             let inicio = Instant::now();
             let resultado = self
                 .destino
-                .escrever_metadata(&sala.room_id, atual.agente, &metadata)
+                .escrever_metadata(&room.room_id, atual.agent, &metadata)
                 .await;
             self.medir_synapse(inicio.elapsed().as_secs_f64());
             if let Some(desfecho) = self.tratar(resultado, &atual, "metadata", relatorio) {
@@ -1135,13 +1129,13 @@ impl<D: DestinoEstado, P: PortaEstado> EstadoDasConversas<D, P> {
             }
 
             self.porta
-                .definir_ultimo_status(atual.org, atual.conversa, atual.status)
+                .definir_ultimo_status(atual.org, atual.conversation, atual.status)
                 .await?;
             relatorio.avisadas += 1;
             tracing::info!(
                 target: "poph_server::matrix_estado",
                 org = %atual.org,
-                conversa = %atual.conversa,
+                conversation = %atual.conversation,
                 situacao = atual.status.as_text(),
                 "estado da conversa espelhado na sala"
             );
@@ -1150,19 +1144,19 @@ impl<D: DestinoEstado, P: PortaEstado> EstadoDasConversas<D, P> {
             relatorio.sem_mudanca += 1;
         }
 
-        let origem = fresca.as_ref().unwrap_or(alvo);
+        let origin = fresca.as_ref().unwrap_or(alvo);
 
         // Nome do cliente que chegou depois da criação da sala (MX-33). Roda depois do estado para
         // o metadata escrito ali já levar o nome novo, e antes do espaço, que é independente.
         let metadata_ja_escrita = fresca.is_some();
         if let Some(desfecho) = self
-            .renomear_se_preciso(origem, &sala, metadata_ja_escrita, relatorio)
+            .renomear_se_preciso(origin, &room, metadata_ja_escrita, relatorio)
             .await?
         {
             return Ok(desfecho);
         }
 
-        self.posicionar(origem, &sala, relatorio).await;
+        self.place(origin, &room, relatorio).await;
         Ok(Desfecho::Feito)
     }
 
@@ -1178,37 +1172,41 @@ impl<D: DestinoEstado, P: PortaEstado> EstadoDasConversas<D, P> {
     /// não havia nada a fazer ou o serviço terminou.
     async fn renomear_se_preciso(
         &self,
-        conversa: &ConversaEstado,
-        sala: &SalaEstado,
+        conversation: &ConversaEstado,
+        room: &SalaEstado,
         metadata_ja_escrita: bool,
         relatorio: &mut RelatorioCiclo,
     ) -> Result<Option<Desfecho>, ErroEstado> {
-        let Some(nome) = nome_do_cliente(conversa.nome_cliente.as_deref()) else {
+        let Some(name) = nome_do_cliente(conversation.client_name.as_deref()) else {
             // Conversa sem nome mantém o que a sala já tem: nome nunca volta a vazio.
             return Ok(None);
         };
-        if sala.nome_espelhado.as_deref() == Some(nome.as_str()) {
+        if room.nome_espelhado.as_deref() == Some(name.as_str()) {
             return Ok(None);
         }
 
         // Relê antes de escrever: o metadata sai do estado ATUAL da conversa, para um nome atrasado
         // nunca devolver uma conversa `closed` a `active` (a mesma proteção do aviso de situação).
-        let Some(atual) = self.porta.conversa(conversa.org, conversa.conversa).await? else {
+        let Some(atual) = self
+            .porta
+            .conversation(conversation.org, conversation.conversation)
+            .await?
+        else {
             return Ok(Some(Desfecho::Feito));
         };
-        let Some(nome) = nome_do_cliente(atual.nome_cliente.as_deref()) else {
+        let Some(name) = nome_do_cliente(atual.client_name.as_deref()) else {
             return Ok(None);
         };
-        if sala.nome_espelhado.as_deref() == Some(nome.as_str()) {
+        if room.nome_espelhado.as_deref() == Some(name.as_str()) {
             return Ok(None);
         }
-        let metadata_ja_escrita = metadata_ja_escrita && atual == *conversa;
+        let metadata_ja_escrita = metadata_ja_escrita && atual == *conversation;
 
         // (a) nome da sala.
         let inicio = Instant::now();
         let resultado = self
             .destino
-            .renomear(&sala.room_id, atual.agente, &nome)
+            .renomear(&room.room_id, atual.agent, &name)
             .await;
         self.medir_synapse(inicio.elapsed().as_secs_f64());
         if let Some(desfecho) = self.tratar(resultado, &atual, "nome da sala", relatorio) {
@@ -1218,11 +1216,11 @@ impl<D: DestinoEstado, P: PortaEstado> EstadoDasConversas<D, P> {
         // (b) metadata com o estado atual — pulado quando o passo do estado acabou de escrevê-lo
         // com esta mesma conversa (o `client_name` já foi).
         if !metadata_ja_escrita {
-            let metadata = MetadataSala::da_conversa(&atual.para_sala(atual.departamento()));
+            let metadata = RoomMetadata::of_conversation(&atual.para_sala(atual.department()));
             let inicio = Instant::now();
             let resultado = self
                 .destino
-                .escrever_metadata(&sala.room_id, atual.agente, &metadata)
+                .escrever_metadata(&room.room_id, atual.agent, &metadata)
                 .await;
             self.medir_synapse(inicio.elapsed().as_secs_f64());
             if let Some(desfecho) = self.tratar(resultado, &atual, "metadata do nome", relatorio) {
@@ -1232,7 +1230,7 @@ impl<D: DestinoEstado, P: PortaEstado> EstadoDasConversas<D, P> {
 
         // (c) fantasma do cliente com o nome novo.
         let inicio = Instant::now();
-        let resultado = self.destino.renomear_fantasma(&atual.cliente, &nome).await;
+        let resultado = self.destino.renomear_fantasma(&atual.client, &name).await;
         self.medir_synapse(inicio.elapsed().as_secs_f64());
         if let Some(desfecho) = self.tratar(resultado, &atual, "nome do fantasma", relatorio) {
             return Ok(Some(desfecho));
@@ -1240,14 +1238,14 @@ impl<D: DestinoEstado, P: PortaEstado> EstadoDasConversas<D, P> {
 
         // (d) só depois das três chamadas o nome é dado como espelhado.
         self.porta
-            .definir_nome_espelhado(atual.org, atual.conversa, &nome)
+            .definir_nome_espelhado(atual.org, atual.conversation, &name)
             .await?;
         relatorio.renomeadas += 1;
         // Sem o nome no log: o id da conversa basta para achar a sala.
         tracing::info!(
             target: "poph_server::matrix_estado",
             org = %atual.org,
-            conversa = %atual.conversa,
+            conversation = %atual.conversation,
             "nome do cliente atualizado na sala (sala, metadata e fantasma)"
         );
         Ok(None)
@@ -1258,39 +1256,39 @@ impl<D: DestinoEstado, P: PortaEstado> EstadoDasConversas<D, P> {
     /// `None` = deu certo e a passagem segue; `Some(desfecho)` = parar por aqui.
     fn tratar(
         &self,
-        resultado: Result<(), ErroChamada>,
-        conversa: &ConversaEstado,
+        resultado: Result<(), CallError>,
+        conversation: &ConversaEstado,
         etapa: &'static str,
         relatorio: &mut RelatorioCiclo,
     ) -> Option<Desfecho> {
-        let erro = resultado.err()?;
-        let motivo = motivo_da_chamada(&erro);
-        match erro.classificacao() {
-            Classificacao::Transitoria => {
+        let error = resultado.err()?;
+        let reason = motivo_da_chamada(&error);
+        match error.classification() {
+            Classification::Transient => {
                 self.metricas.erros_transitorios.increment(1);
-                if erro.retry_after_ms().is_some() {
+                if error.retry_after_ms().is_some() {
                     self.metricas.respostas_429.increment(1);
                 }
                 relatorio.adiadas += 1;
                 tracing::warn!(
                     target: "poph_server::matrix_estado",
-                    org = %conversa.org,
-                    conversa = %conversa.conversa,
+                    org = %conversation.org,
+                    conversation = %conversation.conversation,
                     etapa,
-                    motivo,
+                    reason,
                     "estado não espelhado agora; a passagem seguinte tenta de novo"
                 );
                 Some(Desfecho::Adiado)
             }
-            Classificacao::Definitiva => {
+            Classification::Definitive => {
                 self.metricas.erros_definitivos.increment(1);
                 relatorio.puladas += 1;
                 tracing::warn!(
                     target: "poph_server::matrix_estado",
-                    org = %conversa.org,
-                    conversa = %conversa.conversa,
+                    org = %conversation.org,
+                    conversation = %conversation.conversation,
                     etapa,
-                    motivo,
+                    reason,
                     "estado recusado pelo Synapse; a conversa volta na próxima alteração"
                 );
                 Some(Desfecho::Feito)
@@ -1301,74 +1299,74 @@ impl<D: DestinoEstado, P: PortaEstado> EstadoDasConversas<D, P> {
     /// Põe a sala no espaço do departamento atual (MX-12), sem aviso.
     ///
     /// Falha aqui não desfaz o estado já espelhado nem trava a fila: fica no log, com o motivo.
-    async fn posicionar(
+    async fn place(
         &self,
-        conversa: &ConversaEstado,
-        sala: &SalaEstado,
+        conversation: &ConversaEstado,
+        room: &SalaEstado,
         relatorio: &mut RelatorioCiclo,
     ) {
-        let departamento = conversa.departamento();
-        if departamento.is_none() && sala.espaco.is_none() {
+        let department = conversation.department();
+        if department.is_none() && room.space.is_none() {
             return;
         }
-        let Ok(agente) = self.ids.agente(&conversa.agente.to_string()) else {
+        let Ok(agent) = self.ids.agent(&conversation.agent.to_string()) else {
             tracing::warn!(
                 target: "poph_server::matrix_estado",
-                org = %conversa.org,
-                conversa = %conversa.conversa,
-                motivo = "id_de_agente_invalido",
+                org = %conversation.org,
+                conversation = %conversation.conversation,
+                reason = "id_de_agente_invalido",
                 "sala não posicionada no espaço do departamento"
             );
             return;
         };
-        let dados = SalaParaEspaco {
-            org: conversa.org,
-            conversa: conversa.conversa,
-            sala: sala.room_id.clone(),
-            agente,
-            departamento,
+        let dados = RoomForSpace {
+            org: conversation.org,
+            conversation: conversation.conversation,
+            room: room.room_id.clone(),
+            agent,
+            department,
             // Ligar um espaço que já existe no Element é escolha do operador (MX-22/25); aqui o
             // módulo usa (ou cria) o espaço do departamento.
-            existente: None,
+            existing: None,
         };
         let inicio = Instant::now();
-        let resultado = self.destino.posicionar(dados).await;
+        let resultado = self.destino.place(dados).await;
         self.medir_synapse(inicio.elapsed().as_secs_f64());
         match resultado {
-            Ok(Posicao::Posicionada { movida, .. }) if movida => {
+            Ok(Position::Positioned { moved, .. }) if moved => {
                 relatorio.posicionadas += 1;
                 tracing::info!(
                     target: "poph_server::matrix_estado",
-                    org = %conversa.org,
-                    conversa = %conversa.conversa,
-                    "sala movida para o espaço do departamento novo"
+                    org = %conversation.org,
+                    conversation = %conversation.conversation,
+                    "sala moved para o espaço do departamento novo"
                 );
             }
             // Convite pendente: o vínculo não foi gravado de propósito (MX-12), então a próxima
             // alteração desta conversa repete a passagem e convida quem ficou de fora.
-            Ok(Posicao::Posicionada {
-                convites_falhos, ..
-            }) if convites_falhos > 0 => {
+            Ok(Position::Positioned {
+                failed_invitations, ..
+            }) if failed_invitations > 0 => {
                 tracing::warn!(
                     target: "poph_server::matrix_estado",
-                    org = %conversa.org,
-                    conversa = %conversa.conversa,
-                    convites_falhos,
-                    motivo = "convite_pendente_no_espaco",
+                    org = %conversation.org,
+                    conversation = %conversation.conversation,
+                    failed_invitations,
+                    reason = "convite_pendente_no_espaco",
                     "sala não ficou gravada no espaço porque há convite pendente; tenta na próxima alteração"
                 );
             }
             Ok(_) => {}
-            Err(erro) => {
-                match erro.classificacao() {
-                    Classificacao::Transitoria => self.metricas.erros_transitorios.increment(1),
-                    Classificacao::Definitiva => self.metricas.erros_definitivos.increment(1),
+            Err(error) => {
+                match error.classification() {
+                    Classification::Transient => self.metricas.erros_transitorios.increment(1),
+                    Classification::Definitive => self.metricas.erros_definitivos.increment(1),
                 }
                 tracing::warn!(
                     target: "poph_server::matrix_estado",
-                    org = %conversa.org,
-                    conversa = %conversa.conversa,
-                    motivo = motivo_do_espaco(&erro),
+                    org = %conversation.org,
+                    conversation = %conversation.conversation,
+                    reason = motivo_do_espaco(&error),
                     "sala não entrou no espaço do departamento; tenta na próxima alteração"
                 );
             }
@@ -1383,9 +1381,9 @@ impl<D: DestinoEstado, P: PortaEstado> EstadoDasConversas<D, P> {
 }
 
 /// Nome do cliente que vale para a sala: vazio ou só espaço não conta (MX-33).
-fn nome_do_cliente(nome: Option<&str>) -> Option<String> {
-    nome.map(str::trim)
-        .filter(|nome| !nome.is_empty())
+fn nome_do_cliente(name: Option<&str>) -> Option<String> {
+    name.map(str::trim)
+        .filter(|name| !name.is_empty())
         .map(str::to_owned)
 }
 
@@ -1400,23 +1398,23 @@ mod testes {
     use super::*;
     use poph_types::DepartmentId;
 
-    fn departamento(nome: &str) -> DepartamentoEspaco {
-        DepartamentoEspaco {
+    fn department(name: &str) -> DepartmentSpace {
+        DepartmentSpace {
             id: DepartmentId::generate(),
-            nome: nome.to_owned(),
+            name: name.to_owned(),
         }
     }
 
-    fn conversa(status: ConversationStatus, atualizado_em: i64) -> ConversaEstado {
+    fn conversation(status: ConversationStatus, atualizado_em: i64) -> ConversaEstado {
         ConversaEstado {
             org: OrgId::generate(),
-            conversa: ConversationId::generate(),
+            conversation: ConversationId::generate(),
             status,
-            agente: AgentId::generate(),
-            nome_agente: Some("Bia".to_owned()),
-            canal: "whatsapp".to_owned(),
-            cliente: "5511999990000".to_owned(),
-            nome_cliente: None,
+            agent: AgentId::generate(),
+            agent_name: Some("Bia".to_owned()),
+            channel: "whatsapp".to_owned(),
+            client: "5511999990000".to_owned(),
+            client_name: None,
             departamento_alvo: None,
             departamento_padrao: None,
             atualizado_em,
@@ -1439,32 +1437,28 @@ mod testes {
         );
         let com_departamento = aviso_de_status(
             ConversationStatus::Transferred,
-            Some(&departamento("Suporte técnico")),
+            Some(&department("Suporte técnico")),
         );
         assert!(com_departamento.contains("departamento Suporte técnico"));
-        for texto in [AVISO_REABERTA, AVISO_TRANSFERIDA, AVISO_ENCERRADA] {
-            assert!(!texto.contains('@'), "{texto}");
-            assert!(!texto.chars().any(|c| c.is_ascii_digit()), "{texto}");
+        for text in [AVISO_REABERTA, AVISO_TRANSFERIDA, AVISO_ENCERRADA] {
+            assert!(!text.contains('@'), "{text}");
+            assert!(!text.chars().any(|c| c.is_ascii_digit()), "{text}");
         }
     }
 
     #[test]
     fn txn_do_aviso_muda_com_instante_e_situacao() {
-        let mut uma = conversa(ConversationStatus::Transferred, 1_000);
-        let primeira = txn_do_aviso(&uma);
-        assert_eq!(primeira, txn_do_aviso(&uma), "repetir dá a mesma chave");
+        let mut uma = conversation(ConversationStatus::Transferred, 1_000);
+        let primeira = notice_txn(&uma);
+        assert_eq!(primeira, notice_txn(&uma), "repetir dá a mesma chave");
         assert!(primeira.starts_with("ph_est_"));
         assert!(!primeira.contains('-'), "{primeira}");
         uma.atualizado_em = 2_000;
-        assert_ne!(primeira, txn_do_aviso(&uma), "outra transição, outra chave");
+        assert_ne!(primeira, notice_txn(&uma), "outra transição, outra chave");
         uma.status = ConversationStatus::Closed;
-        assert_ne!(primeira, txn_do_aviso(&uma));
-        let outra = conversa(ConversationStatus::Transferred, 1_000);
-        assert_ne!(
-            primeira,
-            txn_do_aviso(&outra),
-            "outra conversa, outra chave"
-        );
+        assert_ne!(primeira, notice_txn(&uma));
+        let outra = conversation(ConversationStatus::Transferred, 1_000);
+        assert_ne!(primeira, notice_txn(&outra), "outra conversa, outra chave");
     }
 
     #[test]
@@ -1480,44 +1474,44 @@ mod testes {
 
     #[test]
     fn departamento_resolve_alvo_antes_do_padrao() {
-        let padrao = departamento("Geral");
-        let alvo = departamento("Suporte");
-        let mut uma = conversa(ConversationStatus::Open, 1);
+        let padrao = department("Geral");
+        let alvo = department("Suporte");
+        let mut uma = conversation(ConversationStatus::Open, 1);
         uma.departamento_padrao = Some(padrao.clone());
-        assert_eq!(uma.departamento(), Some(padrao));
+        assert_eq!(uma.department(), Some(padrao));
         uma.departamento_alvo = Some(alvo.clone());
-        assert_eq!(uma.departamento(), Some(alvo));
+        assert_eq!(uma.department(), Some(alvo));
         uma.departamento_padrao = None;
         uma.departamento_alvo = None;
-        assert_eq!(uma.departamento(), None);
+        assert_eq!(uma.department(), None);
     }
 
     #[test]
     fn remetente_do_aviso_e_o_bot_quando_ele_esta_na_sala() {
         let bot = "@ph_as_bot:matrix-dev.local";
-        let agente = "@ph_ag_1:matrix-dev.local";
-        let mut membros = BTreeMap::new();
-        membros.insert(
-            agente.to_owned(),
-            MembroSala {
+        let agent = "@ph_ag_1:matrix-dev.local";
+        let mut members = BTreeMap::new();
+        members.insert(
+            agent.to_owned(),
+            RoomMember {
                 display_name: None,
                 avatar_url: None,
             },
         );
-        assert_eq!(escolher_remetente(&membros, bot, agente), agente);
-        membros.insert(
+        assert_eq!(escolher_remetente(&members, bot, agent), agent);
+        members.insert(
             bot.to_owned(),
-            MembroSala {
+            RoomMember {
                 display_name: None,
                 avatar_url: None,
             },
         );
-        assert_eq!(escolher_remetente(&membros, bot, agente), bot);
+        assert_eq!(escolher_remetente(&members, bot, agent), bot);
     }
 
     #[test]
     fn cache_de_remetentes_respeita_o_teto() {
-        let mut cache = CacheRemetentes::novo(2);
+        let mut cache = CacheRemetentes::new(2);
         cache.guardar("!a", "@bot");
         cache.guardar("!b", "@bot");
         cache.guardar("!c", "@bot");
@@ -1537,7 +1531,7 @@ mod testes {
             interval_ms: 1_000,
             ..MatrixConfig::default()
         };
-        let laco = EstadoDasConversas::novo(PortaNula, DestinoNulo, &config).expect("monta o laço");
+        let laco = EstadoDasConversas::new(PortaNula, DestinoNulo, &config).expect("monta o laço");
         assert_eq!(laco.atraso_apos(0), Duration::from_secs(1));
         assert_eq!(laco.atraso_apos(1), Duration::from_secs(2));
         assert_eq!(laco.atraso_apos(3), Duration::from_secs(8));
@@ -1567,7 +1561,7 @@ mod testes {
             Ok(Vec::new())
         }
 
-        async fn conversa(
+        async fn conversation(
             &self,
             _org: OrgId,
             _conversa: ConversationId,
@@ -1575,7 +1569,7 @@ mod testes {
             Ok(None)
         }
 
-        async fn sala(
+        async fn room(
             &self,
             _org: OrgId,
             _conversa: ConversationId,
@@ -1621,7 +1615,7 @@ mod testes {
             _agente: AgentId,
             _txn: &str,
             _texto: &str,
-        ) -> Result<(), ErroChamada> {
+        ) -> Result<(), CallError> {
             Ok(())
         }
 
@@ -1629,13 +1623,13 @@ mod testes {
             &self,
             _sala: &str,
             _agente: AgentId,
-            _metadata: &MetadataSala,
-        ) -> Result<(), ErroChamada> {
+            _metadata: &RoomMetadata,
+        ) -> Result<(), CallError> {
             Ok(())
         }
 
-        async fn posicionar(&self, _dados: SalaParaEspaco) -> Result<Posicao, ErroEspaco> {
-            Ok(Posicao::SemDepartamento)
+        async fn place(&self, _dados: RoomForSpace) -> Result<Position, SpaceError> {
+            Ok(Position::WithoutDepartment)
         }
 
         async fn renomear(
@@ -1643,11 +1637,11 @@ mod testes {
             _sala: &str,
             _agente: AgentId,
             _nome: &str,
-        ) -> Result<(), ErroChamada> {
+        ) -> Result<(), CallError> {
             Ok(())
         }
 
-        async fn renomear_fantasma(&self, _cliente: &str, _nome: &str) -> Result<(), ErroChamada> {
+        async fn renomear_fantasma(&self, _cliente: &str, _nome: &str) -> Result<(), CallError> {
             Ok(())
         }
     }

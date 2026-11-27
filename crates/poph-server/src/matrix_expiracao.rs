@@ -38,10 +38,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use poph_matrix::cliente::ClienteMatrix;
-use poph_matrix::erro::{Classificacao, ErroMidia};
-use poph_matrix::expiracao::{self, MidiaParaExpirar};
-use poph_matrix::usuarios::IdsFantasmas;
+use poph_matrix::client::MatrixClient;
+use poph_matrix::error::{AssetError, Classification};
+use poph_matrix::expiration::{self, AssetToExpire};
+use poph_matrix::users::GhostIds;
 use poph_store::{RoomAsset, Store};
 use poph_types::{MatrixConfig, OrgId, Secret};
 use tokio::sync::watch;
@@ -71,10 +71,10 @@ const EXPOENTE_MAXIMO: u32 = 20;
 ///
 /// Dobra a cada falha, com teto: um arquivo que não se consegue apagar continua sendo tentado de
 /// vez em quando, em vez de sair da fila para sempre ou de ser chamado a cada passagem.
-pub fn espera_apos(tentativas: u32, base: Duration, teto: Duration) -> Duration {
+pub fn espera_apos(tentativas: u32, base: Duration, cap: Duration) -> Duration {
     let passo = tentativas.saturating_sub(1).min(EXPOENTE_MAXIMO);
     let fator = 1u32.checked_shl(passo).unwrap_or(u32::MAX);
-    base.saturating_mul(fator).min(teto)
+    base.saturating_mul(fator).min(cap)
 }
 
 /// O que uma passagem fez. Só contagens: nada de texto de cliente, nome de arquivo ou token.
@@ -99,13 +99,13 @@ pub struct RelatoExpiracao {
 /// O serviço de expiração da mídia das salas.
 pub struct ExpiracaoMidia {
     store: Arc<Store>,
-    cliente: ClienteMatrix,
+    client: MatrixClient,
     /// Token da API administrativa do Synapse (nunca em log).
     token_admin: Secret,
-    ids: IdsFantasmas,
+    ids: GhostIds,
     /// Prazo de retenção, em dias, como está em `matrix.midia_retencao_dias`.
     retencao_dias: u32,
-    lote: u32,
+    batch: u32,
     periodo: Duration,
     espera_base: Duration,
     espera_maxima: Duration,
@@ -120,10 +120,10 @@ pub struct ExpiracaoMidia {
 impl std::fmt::Debug for ExpiracaoMidia {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ExpiracaoMidia")
-            .field("cliente", &self.cliente)
+            .field("cliente", &self.client)
             .field("token_admin", &self.token_admin)
             .field("retencao_dias", &self.retencao_dias)
-            .field("lote", &self.lote)
+            .field("lote", &self.batch)
             .field("periodo", &self.periodo)
             .finish_non_exhaustive()
     }
@@ -134,21 +134,21 @@ impl ExpiracaoMidia {
     ///
     /// O token **não** vem da configuração: quem o leu do ambiente passa aqui, e a ausência dele é
     /// tratada antes (a rotina nem é criada).
-    pub fn novo(
+    pub fn new(
         store: Arc<Store>,
-        cliente: ClienteMatrix,
+        client: MatrixClient,
         token_admin: Secret,
         config: &MatrixConfig,
-    ) -> Result<Self, poph_matrix::usuarios::ErroFantasmas> {
-        let ids = IdsFantasmas::da_config(config)?;
+    ) -> Result<Self, poph_matrix::users::GhostsError> {
+        let ids = GhostIds::of_config(config)?;
         let (parar, _) = watch::channel(false);
         Ok(Self {
             store,
-            cliente,
+            client,
             token_admin,
             ids,
             retencao_dias: config.attachment_retention_days.max(1),
-            lote: LOTE_PADRAO,
+            batch: LOTE_PADRAO,
             periodo: PERIODO_PADRAO,
             espera_base: ESPERA_BASE,
             espera_maxima: ESPERA_MAXIMA,
@@ -171,8 +171,8 @@ impl ExpiracaoMidia {
     }
 
     /// Mídias por org e por passagem (zero vale um).
-    pub fn com_lote(mut self, lote: u32) -> Self {
-        self.lote = lote.max(1);
+    pub fn com_lote(mut self, batch: u32) -> Self {
+        self.batch = batch.max(1);
         self
     }
 
@@ -183,9 +183,9 @@ impl ExpiracaoMidia {
     }
 
     /// Troca a espera da falha (testes com base curta provam o crescimento sem esperar minutos).
-    pub fn com_espera(mut self, base: Duration, teto: Duration) -> Self {
+    pub fn com_espera(mut self, base: Duration, cap: Duration) -> Self {
         self.espera_base = base;
-        self.espera_maxima = teto;
+        self.espera_maxima = cap;
         self
     }
 
@@ -230,7 +230,7 @@ impl ExpiracaoMidia {
             Err(_) => {
                 tracing::warn!(
                     target: "poph_server::matrix_expiracao",
-                    motivo = "banco_indisponivel",
+                    reason = "banco_indisponivel",
                     "não consegui listar as orgs do módulo; a expiração tenta na próxima passagem"
                 );
                 relato.erros_de_banco += 1;
@@ -239,12 +239,12 @@ impl ExpiracaoMidia {
         };
 
         let mut orgs_com_tratamento: Vec<OrgId> = Vec::new();
-        for estado in orgs.iter().filter(|estado| estado.linked) {
-            let org = estado.org_id;
+        for state in orgs.iter().filter(|state| state.linked) {
+            let org = state.org_id;
             let midias = match self
                 .store
                 .matrix_asset()
-                .pending(org, corte, agora, self.lote)
+                .pending(org, corte, agora, self.batch)
             {
                 Ok(midias) => midias,
                 Err(_) => {
@@ -252,15 +252,15 @@ impl ExpiracaoMidia {
                     tracing::warn!(
                         target: "poph_server::matrix_expiracao",
                         org = %org,
-                        motivo = "banco_indisponivel",
+                        reason = "banco_indisponivel",
                         "não consegui ler a fila da expiração; tenta na próxima passagem"
                     );
                     continue;
                 }
             };
             relato.vencidas += u32::try_from(midias.len()).unwrap_or(u32::MAX);
-            for midia in &midias {
-                self.tratar(midia, agora, &mut relato).await;
+            for asset in &midias {
+                self.tratar(asset, agora, &mut relato).await;
             }
             orgs_com_tratamento.push(org);
         }
@@ -281,52 +281,52 @@ impl ExpiracaoMidia {
     }
 
     /// As duas etapas de uma mídia. Cada uma é independente: a que falha não impede a outra.
-    async fn tratar(&self, midia: &RoomAsset, agora: i64, relato: &mut RelatoExpiracao) {
-        let mut falha: Option<ErroMidia> = None;
+    async fn tratar(&self, asset: &RoomAsset, agora: i64, relato: &mut RelatoExpiracao) {
+        let mut falha: Option<AssetError> = None;
 
-        if midia.still_to_draft() {
-            match self.redigir(midia).await {
+        if asset.still_to_draft() {
+            match self.redact(asset).await {
                 Ok(()) => {
                     match self
                         .store
                         .matrix_asset()
-                        .mark_draft(midia.org_id, midia.id, agora)
+                        .mark_draft(asset.org_id, asset.id, agora)
                     {
                         Ok(()) => {
                             relato.redigidas += 1;
                             self.metricas.midias_redigidas.increment(1);
                             tracing::info!(
                                 target: "poph_server::matrix_expiracao",
-                                org = %midia.org_id,
-                                conversa = %midia.conversation,
+                                org = %asset.org_id,
+                                conversation = %asset.conversation,
                                 "evento de mídia redigido na sala depois do prazo de retenção"
                             );
                         }
                         Err(_) => relato.erros_de_banco += 1,
                     }
                 }
-                Err(erro) => {
-                    self.contar_erro(&erro);
+                Err(error) => {
+                    self.contar_erro(&error);
                     tracing::warn!(
                         target: "poph_server::matrix_expiracao",
-                        org = %midia.org_id,
-                        conversa = %midia.conversation,
-                        motivo = expiracao::codigo_do_erro(&erro),
-                        classe = %erro.classificacao(),
+                        org = %asset.org_id,
+                        conversation = %asset.conversation,
+                        reason = expiration::error_code(&error),
+                        classe = %error.classification(),
                         "não consegui redigir o evento da mídia; o arquivo é apagado do mesmo jeito"
                     );
-                    falha = Some(erro);
+                    falha = Some(error);
                 }
             }
         }
 
-        if midia.still_to_delete() {
-            match expiracao::apagar(&self.cliente, &self.token_admin, &midia.mxc).await {
+        if asset.still_to_delete() {
+            match expiration::delete(&self.client, &self.token_admin, &asset.mxc).await {
                 Ok(apagou) => {
                     match self
                         .store
                         .matrix_asset()
-                        .mark_deleted(midia.org_id, midia.id, agora)
+                        .mark_deleted(asset.org_id, asset.id, agora)
                     {
                         Ok(()) => {
                             relato.apagadas += 1;
@@ -336,8 +336,8 @@ impl ExpiracaoMidia {
                             self.metricas.midias_apagadas.increment(1);
                             tracing::info!(
                                 target: "poph_server::matrix_expiracao",
-                                org = %midia.org_id,
-                                conversa = %midia.conversation,
+                                org = %asset.org_id,
+                                conversation = %asset.conversation,
                                 ja_apagada = !apagou,
                                 "arquivo de mídia apagado do Synapse depois do prazo de retenção"
                             );
@@ -345,24 +345,24 @@ impl ExpiracaoMidia {
                         Err(_) => relato.erros_de_banco += 1,
                     }
                 }
-                Err(erro) => {
-                    self.contar_erro(&erro);
+                Err(error) => {
+                    self.contar_erro(&error);
                     tracing::warn!(
                         target: "poph_server::matrix_expiracao",
-                        org = %midia.org_id,
-                        conversa = %midia.conversation,
-                        motivo = expiracao::codigo_do_erro(&erro),
-                        classe = %erro.classificacao(),
+                        org = %asset.org_id,
+                        conversation = %asset.conversation,
+                        reason = expiration::error_code(&error),
+                        classe = %error.classification(),
                         "não consegui apagar o arquivo da mídia; tenta de novo depois"
                     );
-                    falha = falha.or(Some(erro));
+                    falha = falha.or(Some(error));
                 }
             }
         }
 
         match falha {
-            Some(erro) => {
-                let tentativas = midia.attempts.saturating_add(1);
+            Some(error) => {
+                let tentativas = asset.attempts.saturating_add(1);
                 let espera = espera_apos(tentativas, self.espera_base, self.espera_maxima);
                 let proxima =
                     agora.saturating_add(i64::try_from(espera.as_millis()).unwrap_or(i64::MAX));
@@ -370,10 +370,10 @@ impl ExpiracaoMidia {
                     .store
                     .matrix_asset()
                     .adiar(
-                        midia.org_id,
-                        midia.id,
+                        asset.org_id,
+                        asset.id,
                         proxima,
-                        &expiracao::codigo_do_erro(&erro),
+                        &expiration::error_code(&error),
                         agora,
                     )
                     .is_err()
@@ -384,7 +384,7 @@ impl ExpiracaoMidia {
                 self.metricas.midias_expiracao_adiadas.increment(1);
             }
             None => {
-                if !midia.still_to_draft() && !midia.still_to_delete() {
+                if !asset.still_to_draft() && !asset.still_to_delete() {
                     relato.concluidas += 1;
                 }
             }
@@ -392,36 +392,34 @@ impl ExpiracaoMidia {
     }
 
     /// Redige o evento da mídia na sala, como o fantasma do agente da conversa.
-    async fn redigir(&self, midia: &RoomAsset) -> Result<(), ErroMidia> {
-        let fantasma = self.ids.agente(&midia.agent).map_err(|_| {
-            ErroMidia::Endereco(
+    async fn redact(&self, asset: &RoomAsset) -> Result<(), AssetError> {
+        let fantasma = self.ids.agent(&asset.agent).map_err(|_| {
+            AssetError::Address(
                 "o agente da conversa não vira usuário virtual nesta instalação".to_owned(),
             )
         })?;
-        let id = midia.id.to_string();
-        let para = MidiaParaExpirar {
+        let id = asset.id.to_string();
+        let para = AssetToExpire {
             id: &id,
-            nome: &midia.nome,
-            mime: &midia.mime,
-            categoria: midia.category.as_text(),
-            tamanho_bytes: midia.size_bytes,
-            enviada_em: midia.sent_at,
+            name: &asset.nome,
+            mime: &asset.mime,
+            category: asset.category.as_text(),
+            size_bytes: asset.size_bytes,
+            sent_at: asset.sent_at,
         };
-        expiracao::redigir(&self.cliente, &fantasma, &midia.room, &midia.evento, &para)
+        expiration::redact(&self.client, &fantasma, &asset.room, &asset.evento, &para)
             .await
             .map(|_| ())
-            .map_err(ErroMidia::Chamada)
+            .map_err(AssetError::Call)
     }
 
     /// Conta a falha por classe (e o `429`), como o restante do módulo.
-    fn contar_erro(&self, erro: &ErroMidia) {
-        match erro.classificacao() {
-            Classificacao::Transitoria => self.metricas.erros_transitorios.increment(1),
-            Classificacao::Definitiva => self.metricas.erros_definitivos.increment(1),
+    fn contar_erro(&self, error: &AssetError) {
+        match error.classification() {
+            Classification::Transient => self.metricas.erros_transitorios.increment(1),
+            Classification::Definitive => self.metricas.erros_definitivos.increment(1),
         }
-        if let ErroMidia::Chamada(poph_matrix::erro::ErroChamada::Resposta {
-            status: 429, ..
-        }) = erro
+        if let AssetError::Call(poph_matrix::error::CallError::Response { status: 429, .. }) = error
         {
             self.metricas.respostas_429.increment(1);
         }
@@ -435,16 +433,16 @@ mod testes {
     #[test]
     fn a_espera_dobra_ate_o_teto() {
         let base = Duration::from_secs(60);
-        let teto = Duration::from_secs(3_600);
-        assert_eq!(espera_apos(1, base, teto), Duration::from_secs(60));
-        assert_eq!(espera_apos(2, base, teto), Duration::from_secs(120));
-        assert_eq!(espera_apos(3, base, teto), Duration::from_secs(240));
-        assert_eq!(espera_apos(6, base, teto), Duration::from_secs(1_920));
+        let cap = Duration::from_secs(3_600);
+        assert_eq!(espera_apos(1, base, cap), Duration::from_secs(60));
+        assert_eq!(espera_apos(2, base, cap), Duration::from_secs(120));
+        assert_eq!(espera_apos(3, base, cap), Duration::from_secs(240));
+        assert_eq!(espera_apos(6, base, cap), Duration::from_secs(1_920));
         // No teto, e não passa dele nem com muita falha.
-        assert_eq!(espera_apos(7, base, teto), teto);
-        assert_eq!(espera_apos(1_000, base, teto), teto);
+        assert_eq!(espera_apos(7, base, cap), cap);
+        assert_eq!(espera_apos(1_000, base, cap), cap);
         // Sem falha não há espera (não é chamado nesse caso, mas a função não estoura).
-        assert_eq!(espera_apos(0, base, teto), base);
+        assert_eq!(espera_apos(0, base, cap), base);
     }
 
     #[test]

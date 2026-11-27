@@ -29,9 +29,9 @@ use axum::Router;
 use axum::extract::State;
 use axum::http::{HeaderMap, Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
-use poph_matrix::cliente::{ClienteMatrix, ConfigCliente};
+use poph_matrix::client::{ClientConfig, MatrixClient};
 use poph_matrix::config::VAR_ADMIN_TOKEN;
-use poph_matrix::expiracao::{BLOCO_EXPIRADO, CAMPO_CATEGORIA, CAMPO_ENVIADA_EM, CAMPO_NOME};
+use poph_matrix::expiration::{CATEGORY_FIELD, EXPIRED_BLOCK, NAME_FIELD, SENT_AT_FIELD};
 use poph_server::matrix_expiracao::{ExpiracaoMidia, RelatoExpiracao};
 use poph_server::matrix_inicio::expiracao_do_modulo;
 use poph_server::matrix_metricas::MetricasMatrix;
@@ -101,11 +101,11 @@ fn texto_dos_logs() -> String {
 
 #[derive(Debug, Clone)]
 struct Redacao {
-    sala: String,
-    evento: String,
+    room: String,
+    event: String,
     txn: String,
     como: Option<String>,
-    corpo: Value,
+    body: Value,
 }
 
 #[derive(Clone, Default)]
@@ -120,11 +120,11 @@ struct Falso {
     falha_do_apagamento: Arc<Mutex<Option<u16>>>,
 }
 
-fn responder(status: u16, corpo: Value) -> Response {
+fn responder(status: u16, body: Value) -> Response {
     (
         StatusCode::from_u16(status).expect("status válido"),
         [("content-type", "application/json")],
-        corpo.to_string(),
+        body.to_string(),
     )
         .into_response()
 }
@@ -154,10 +154,10 @@ async fn atender(
     metodo: Method,
     uri: Uri,
     cabecalhos: HeaderMap,
-    corpo: String,
+    body: String,
 ) -> Response {
     falso.chamadas.fetch_add(1, Ordering::SeqCst);
-    let corpo: Value = serde_json::from_str(&corpo).unwrap_or(Value::Null);
+    let body: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
     let consulta: HashMap<String, String> = uri
         .query()
         .map(|bruta| {
@@ -219,16 +219,16 @@ async fn atender(
             return responder(404, json!({ "errcode": "M_UNRECOGNIZED" }));
         }
         let mut redacoes = falso.redacoes.lock().unwrap();
-        let novo = !redacoes
+        let new = !redacoes
             .iter()
-            .any(|r| r.sala == partes[0] && r.txn == partes[3]);
-        if novo {
+            .any(|r| r.room == partes[0] && r.txn == partes[3]);
+        if new {
             redacoes.push(Redacao {
-                sala: partes[0].to_owned(),
-                evento: partes[2].to_owned(),
+                room: partes[0].to_owned(),
+                event: partes[2].to_owned(),
                 txn: partes[3].to_owned(),
                 como: consulta.get("user_id").cloned(),
-                corpo,
+                body,
             });
         }
         let posicao = redacoes.len();
@@ -273,9 +273,9 @@ impl Synapse {
         }
     }
 
-    fn cliente(&self) -> ClienteMatrix {
-        ClienteMatrix::novo(
-            ConfigCliente::novo(
+    fn client(&self) -> MatrixClient {
+        MatrixClient::new(
+            ClientConfig::new(
                 self.url.clone(),
                 SERVIDOR.to_owned(),
                 Secret::new(AS_TOKEN.to_owned()),
@@ -325,12 +325,12 @@ struct Cenario {
     relogio: Arc<AtomicI64>,
     store: Option<Arc<Store>>,
     org: Org,
-    conversa: Conversa,
+    conversation: Conversa,
     synapse: Synapse,
 }
 
 impl Cenario {
-    async fn novo(rotulo: &str, agora: i64) -> Self {
+    async fn new(rotulo: &str, agora: i64) -> Self {
         static CONTADOR: AtomicUsize = AtomicUsize::new(0);
         let n = CONTADOR.fetch_add(1, Ordering::Relaxed);
         let pasta = std::env::temp_dir().join(format!(
@@ -354,7 +354,7 @@ impl Cenario {
                 config_json: String::new(),
             })
             .expect("cria a org");
-        let agente = store
+        let agent = store
             .agents()
             .create(
                 org.id,
@@ -365,12 +365,12 @@ impl Cenario {
                 },
             )
             .expect("cria o agente");
-        let conversa = store
+        let conversation = store
             .conversations()
             .create(
                 org.id,
                 NewConversation {
-                    agent_id: agente.id,
+                    agent_id: agent.id,
                     integration_id: None,
                     canal: "whatsapp".to_owned(),
                     peer_externo: Some("5511999990000".to_owned()),
@@ -381,11 +381,11 @@ impl Cenario {
         store.matrix().enable(org.id).expect("liga o módulo");
         store
             .matrix()
-            .ensure_room(org.id, conversa.id, SALA, None)
+            .ensure_room(org.id, conversation.id, SALA, None)
             .expect("grava a sala");
         store
             .matrix()
-            .mark_room_ready(org.id, conversa.id)
+            .mark_room_ready(org.id, conversation.id)
             .expect("sala pronta");
 
         logs_capturados();
@@ -394,7 +394,7 @@ impl Cenario {
             relogio,
             store: Some(store),
             org,
-            conversa,
+            conversation,
             synapse: Synapse::subir().await,
         }
     }
@@ -412,30 +412,30 @@ impl Cenario {
     }
 
     /// Grava uma mídia publicada neste cenário, com o carimbo escolhido.
-    fn publicar(&self, nome: &str, enviada_em: i64) -> AttachmentId {
+    fn publicar(&self, name: &str, sent_at: i64) -> AttachmentId {
         let id = AttachmentId::generate();
-        let categoria = if nome.ends_with(".jpg") {
+        let category = if name.ends_with(".jpg") {
             CategoryAsset::Image
         } else {
             CategoryAsset::Document
         };
-        let mime = if categoria == CategoryAsset::Image {
+        let mime = if category == CategoryAsset::Image {
             "image/jpeg"
         } else {
             "application/pdf"
         };
         let registro = NewAsset {
             id,
-            conversation: self.conversa.id,
+            conversation: self.conversation.id,
             agent: AGENTE.to_owned(),
             room: SALA.to_owned(),
             evento: format!("$midia-{id}:matrix-dev.local"),
             mxc: format!("mxc://{SERVIDOR}/media-{id}"),
-            nome: nome.to_owned(),
+            nome: name.to_owned(),
             mime: mime.to_owned(),
-            category: categoria,
+            category,
             size_bytes: 2_048,
-            sent_at: enviada_em,
+            sent_at,
         };
         assert!(
             self.store()
@@ -461,9 +461,9 @@ impl Cenario {
     /// O serviço de expiração, com o relógio do cenário e esperas curtas para o teste não dormir.
     fn servico(&self) -> ExpiracaoMidia {
         let relogio = Arc::clone(&self.relogio);
-        ExpiracaoMidia::novo(
+        ExpiracaoMidia::new(
             Arc::clone(self.store()),
-            self.synapse.cliente(),
+            self.synapse.client(),
             Secret::new(ADMIN_TOKEN.to_owned()),
             &self.config(),
         )
@@ -490,7 +490,7 @@ impl Drop for Cenario {
 
 #[tokio::test]
 async fn antes_do_prazo_nada_acontece() {
-    let cenario = Cenario::novo("antes", 1_000 * DIA).await;
+    let cenario = Cenario::new("antes", 1_000 * DIA).await;
     // Três dias: dentro da retenção de quatro.
     let id = cenario.publicar("laudo.pdf", cenario.agora() - 3 * DIA);
 
@@ -515,9 +515,9 @@ async fn antes_do_prazo_nada_acontece() {
 
 #[tokio::test]
 async fn depois_do_prazo_redige_e_apaga_uma_vez_so() {
-    let cenario = Cenario::novo("depois", 1_000 * DIA).await;
-    let enviada_em = cenario.agora() - 5 * DIA;
-    let id = cenario.publicar("laudo.pdf", enviada_em);
+    let cenario = Cenario::new("depois", 1_000 * DIA).await;
+    let sent_at = cenario.agora() - 5 * DIA;
+    let id = cenario.publicar("laudo.pdf", sent_at);
     let servico = cenario.servico();
 
     let relato = servico.passar().await;
@@ -529,18 +529,18 @@ async fn depois_do_prazo_redige_e_apaga_uma_vez_so() {
     // A redação: como o fantasma do agente, no evento certo, com o bloco do frontend.
     let redacoes = cenario.synapse.redacoes();
     assert_eq!(redacoes.len(), 1, "{redacoes:?}");
-    assert_eq!(redacoes[0].sala, SALA);
-    assert_eq!(redacoes[0].evento, format!("$midia-{id}:matrix-dev.local"));
+    assert_eq!(redacoes[0].room, SALA);
+    assert_eq!(redacoes[0].event, format!("$midia-{id}:matrix-dev.local"));
     assert_eq!(
         redacoes[0].como.as_deref(),
         Some("@ph_ag_agt_1:matrix-dev.local"),
         "quem redige é o fantasma do agente (moderador da sala)"
     );
-    let bloco = &redacoes[0].corpo[BLOCO_EXPIRADO];
-    assert_eq!(bloco[CAMPO_NOME], json!("laudo.pdf"));
-    assert_eq!(bloco[CAMPO_CATEGORIA], json!("document"));
+    let bloco = &redacoes[0].body[EXPIRED_BLOCK];
+    assert_eq!(bloco[NAME_FIELD], json!("laudo.pdf"));
+    assert_eq!(bloco[CATEGORY_FIELD], json!("document"));
     // 1.000 dias antes: o carimbo em ISO-8601 é o que o Element formata como "dd/mm".
-    assert_eq!(bloco[CAMPO_ENVIADA_EM], json!("1972-09-22T00:00:00Z"));
+    assert_eq!(bloco[SENT_AT_FIELD], json!("1972-09-22T00:00:00Z"));
 
     // O apagamento: pela API admin, com o token de administrador.
     assert_eq!(
@@ -565,7 +565,7 @@ async fn depois_do_prazo_redige_e_apaga_uma_vez_so() {
 
 #[tokio::test]
 async fn a_redacao_que_falha_nao_impede_apagar_e_o_item_volta_depois() {
-    let cenario = Cenario::novo("redacao-falha", 1_000 * DIA).await;
+    let cenario = Cenario::new("redacao-falha", 1_000 * DIA).await;
     cenario.publicar("foto.jpg", cenario.agora() - 5 * DIA);
     let servico = cenario.servico();
     cenario.synapse.recusar_redacao_com(500);
@@ -595,7 +595,7 @@ async fn a_redacao_que_falha_nao_impede_apagar_e_o_item_volta_depois() {
 
 #[tokio::test]
 async fn falha_no_apagamento_nao_vira_laco_apertado_e_a_espera_cresce() {
-    let cenario = Cenario::novo("espera", 1_000 * DIA).await;
+    let cenario = Cenario::new("espera", 1_000 * DIA).await;
     cenario.publicar("laudo.pdf", cenario.agora() - 5 * DIA);
     let servico = cenario.servico();
     cenario.synapse.recusar_apagamento_com(503);
@@ -640,7 +640,7 @@ async fn falha_no_apagamento_nao_vira_laco_apertado_e_a_espera_cresce() {
 
 #[tokio::test]
 async fn org_com_o_modulo_desligado_nao_e_tocada() {
-    let cenario = Cenario::novo("desligada", 1_000 * DIA).await;
+    let cenario = Cenario::new("desligada", 1_000 * DIA).await;
     cenario.publicar("laudo.pdf", cenario.agora() - 30 * DIA);
     cenario
         .store()
@@ -656,7 +656,7 @@ async fn org_com_o_modulo_desligado_nao_e_tocada() {
 
 #[tokio::test]
 async fn o_token_de_administrador_nao_aparece_no_log() {
-    let cenario = Cenario::novo("canario", 1_000 * DIA).await;
+    let cenario = Cenario::new("canario", 1_000 * DIA).await;
     cenario.publicar("laudo.pdf", cenario.agora() - 5 * DIA);
     let servico = cenario.servico();
     // Falhas nas duas etapas: o caminho que mais escreve log.
@@ -686,12 +686,12 @@ async fn o_token_de_administrador_nao_aparece_no_log() {
 
 #[tokio::test]
 async fn sem_token_a_rotina_fica_desligada_com_aviso_e_sem_chamada() {
-    let cenario = Cenario::novo("sem-token", 1_000 * DIA).await;
+    let cenario = Cenario::new("sem-token", 1_000 * DIA).await;
     cenario.publicar("laudo.pdf", cenario.agora() - 5 * DIA);
 
     let sem_token = expiracao_do_modulo(
         Arc::clone(cenario.store()),
-        cenario.synapse.cliente(),
+        cenario.synapse.client(),
         &cenario.config(),
         None,
         None,
@@ -716,7 +716,7 @@ async fn sem_token_a_rotina_fica_desligada_com_aviso_e_sem_chamada() {
     // Com o token, a rotina existe e funciona.
     let com_token = expiracao_do_modulo(
         Arc::clone(cenario.store()),
-        cenario.synapse.cliente(),
+        cenario.synapse.client(),
         &cenario.config(),
         None,
         Some(Secret::new(ADMIN_TOKEN.to_owned())),
@@ -733,7 +733,7 @@ async fn sem_token_a_rotina_fica_desligada_com_aviso_e_sem_chamada() {
 async fn as_metricas_do_modulo_contam_por_entrada() {
     use poph_types::Registry;
 
-    let cenario = Cenario::novo("metricas", 1_000 * DIA).await;
+    let cenario = Cenario::new("metricas", 1_000 * DIA).await;
     cenario.publicar("laudo.pdf", cenario.agora() - 5 * DIA);
     cenario.publicar("foto.jpg", cenario.agora() - 6 * DIA);
     cenario.publicar("novo.pdf", cenario.agora() - DIA);
@@ -750,38 +750,38 @@ async fn as_metricas_do_modulo_contam_por_entrada() {
     assert_eq!(relato.redigidas, 2, "{relato:?}");
     assert_eq!(relato.apagadas, 2);
 
-    let texto = registro.render();
+    let text = registro.render();
     assert!(
-        texto.contains("poph_matrix_midias_redigidas_total 2\n"),
-        "{texto}"
+        text.contains("poph_matrix_midias_redigidas_total 2\n"),
+        "{text}"
     );
     assert!(
-        texto.contains("poph_matrix_midias_apagadas_total 2\n"),
-        "{texto}"
+        text.contains("poph_matrix_midias_apagadas_total 2\n"),
+        "{text}"
     );
     // A que ainda não venceu fica contada como pendente.
     assert!(
-        texto.contains("poph_matrix_midias_pendentes_expiracao 1\n"),
-        "{texto}"
+        text.contains("poph_matrix_midias_pendentes_expiracao 1\n"),
+        "{text}"
     );
     assert!(
-        texto.contains("poph_matrix_midias_expiracao_adiadas_total 0\n"),
-        "{texto}"
+        text.contains("poph_matrix_midias_expiracao_adiadas_total 0\n"),
+        "{text}"
     );
 }
 
 #[tokio::test]
 async fn o_prazo_configurado_manda_no_corte() {
-    let cenario = Cenario::novo("prazo", 1_000 * DIA).await;
+    let cenario = Cenario::new("prazo", 1_000 * DIA).await;
     cenario.publicar("laudo.pdf", cenario.agora() - 2 * DIA);
     let relogio = Arc::clone(&cenario.relogio);
 
     // Um dia de retenção: a mídia de dois dias já venceu.
     let mut config = cenario.config();
     config.attachment_retention_days = 1;
-    let servico = ExpiracaoMidia::novo(
+    let servico = ExpiracaoMidia::new(
         Arc::clone(cenario.store()),
-        cenario.synapse.cliente(),
+        cenario.synapse.client(),
         Secret::new(ADMIN_TOKEN.to_owned()),
         &config,
     )
@@ -792,12 +792,12 @@ async fn o_prazo_configurado_manda_no_corte() {
     assert_eq!(relato.redigidas, 1, "{relato:?}");
 
     // Com o padrão de quatro dias, a mesma mídia estaria dentro do prazo.
-    let outro = Cenario::novo("prazo-padrao", 1_000 * DIA).await;
+    let outro = Cenario::new("prazo-padrao", 1_000 * DIA).await;
     let id = outro.publicar("laudo2.pdf", outro.agora() - 2 * DIA);
     let relogio = Arc::clone(&outro.relogio);
-    let padrao = ExpiracaoMidia::novo(
+    let padrao = ExpiracaoMidia::new(
         Arc::clone(outro.store()),
-        outro.synapse.cliente(),
+        outro.synapse.client(),
         Secret::new(ADMIN_TOKEN.to_owned()),
         &outro.config(),
     )
@@ -815,7 +815,7 @@ async fn o_prazo_configurado_manda_no_corte() {
 /// O laço de fundo para no desligamento, como os outros do módulo.
 #[tokio::test]
 async fn o_laco_de_fundo_para_quando_pedido() {
-    let cenario = Cenario::novo("parada", 1_000 * DIA).await;
+    let cenario = Cenario::new("parada", 1_000 * DIA).await;
     let servico = Arc::new(cenario.servico().com_periodo(Duration::from_millis(5)));
     let tarefa = tokio::spawn(Arc::clone(&servico).executar());
     tokio::time::sleep(Duration::from_millis(20)).await;

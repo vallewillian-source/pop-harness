@@ -36,10 +36,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use poph_matrix::config::{ErroMatrix, ModuloMatrix};
-use poph_matrix::espacos::{EspacoGravado, OrigemEspaco, PortaEspacos};
-use poph_matrix::salas::ErroPorta;
-use poph_matrix::{ClienteMatrix, Espacos, IdsFantasmas, UsuariosVirtuais};
+use poph_matrix::config::{MatrixError, MatrixModule};
+use poph_matrix::rooms::PortError;
+use poph_matrix::spaces::{SpaceOrigin, SpacesPort, StoredSpace};
+use poph_matrix::{GhostIds, MatrixClient, Spaces, VirtualUsers};
 use poph_store::{SpaceOrigin as OrigemGravada, Store, StoreError};
 use poph_types::{ConversationId, DepartmentId, OrgId};
 use tokio::sync::watch;
@@ -58,7 +58,7 @@ use crate::matrix_resposta::RespostaDoAtendente;
 ///
 /// É o tipo que a API administrativa (MX-22) usa para criar e ligar espaço: o mesmo que o laço de
 /// estado (MX-15) usa por dentro, só com a porta real [`PortaEspacosStore`].
-pub type EspacosDoModulo = poph_matrix::Espacos<PortaEspacosStore>;
+pub type EspacosDoModulo = poph_matrix::Spaces<PortaEspacosStore>;
 
 /// Intervalo da sonda de conexão quando o Synapse está respondendo.
 pub const PERIODO_DA_SONDA: Duration = Duration::from_secs(30);
@@ -82,7 +82,7 @@ pub struct SinalDeConexao {
 }
 
 impl SinalDeConexao {
-    fn nova() -> Self {
+    fn fresh() -> Self {
         Self {
             conectado: AtomicBool::new(false),
         }
@@ -138,7 +138,7 @@ pub struct MatrixRodando {
     /// Aviso na sala quando a resposta humana falha de vez (MX-19).
     falhas_aviso: Arc<AvisoDeFalhas>,
     /// Expiração da mídia (MX-46). `None` quando o token de administração não está no ambiente.
-    expiracao: Option<Arc<ExpiracaoMidia>>,
+    expiration: Option<Arc<ExpiracaoMidia>>,
     conexao: Arc<SinalDeConexao>,
     parar_sonda: watch::Sender<bool>,
     tarefas: Vec<tokio::task::JoinHandle<()>>,
@@ -169,8 +169,8 @@ impl MatrixRodando {
         self.espelho.pedir_parada();
         self.estado_das_conversas.pedir_parada();
         self.falhas_aviso.pedir_parada();
-        if let Some(expiracao) = &self.expiracao {
-            expiracao.pedir_parada();
+        if let Some(expiration) = &self.expiration {
+            expiration.pedir_parada();
         }
         self.parar_sonda.send_replace(true);
         for tarefa in self.tarefas {
@@ -180,7 +180,7 @@ impl MatrixRodando {
             {
                 tracing::warn!(
                     target: "poph_server::matrix_inicio",
-                    motivo = "prazo_de_parada_estourado",
+                    reason = "prazo_de_parada_estourado",
                     "laço do módulo Matrix não terminou no prazo; abortado"
                 );
             }
@@ -197,58 +197,58 @@ impl MatrixRodando {
 /// Devolve `None` quando o módulo está desligado (`[matrix]` ausente ou `habilitado = false`) ou
 /// quando a configuração/segredos não permitem subir — nos dois casos o servidor segue sem o
 /// módulo: sem tarefas, sem métricas e com as rotas do Synapse em `404`.
-pub fn iniciar(estado: &mut Estado) -> Option<MatrixRodando> {
-    let modulo = match ModuloMatrix::preparar(estado.config.matrix.clone()) {
+pub fn iniciar(state: &mut Estado) -> Option<MatrixRodando> {
+    let modulo = match MatrixModule::prepare(state.config.matrix.clone()) {
         Ok(Some(modulo)) => modulo,
         Ok(None) => {
             // Desligado de propósito: nem os tokens são lidos do ambiente.
             return None;
         }
-        Err(erro) => {
+        Err(error) => {
             tracing::error!(
                 target: "poph_server::matrix_inicio",
-                motivo = codigo_do_modulo(&erro),
+                reason = codigo_do_modulo(&error),
                 "módulo Matrix ligado na configuração, mas não subiu; o servidor segue sem ele"
             );
             return None;
         }
     };
-    iniciar_com(estado, modulo)
+    iniciar_com(state, modulo)
 }
 
 /// Igual a [`iniciar`], com o módulo já preparado (é o que os testes usam, sem tocar no ambiente).
 ///
 /// Devolve `None` quando alguma peça não pôde ser montada; a configuração já foi validada antes.
-pub fn iniciar_com(estado: &mut Estado, modulo: ModuloMatrix) -> Option<MatrixRodando> {
-    iniciar_com_ajustes(estado, modulo, AjustesDeInicio::padrao())
+pub fn iniciar_com(state: &mut Estado, modulo: MatrixModule) -> Option<MatrixRodando> {
+    iniciar_com_ajustes(state, modulo, AjustesDeInicio::padrao())
 }
 
 /// Igual a [`iniciar_com`], com os ajustes de sonda e de desligamento escolhidos pelo chamador.
 pub fn iniciar_com_ajustes(
-    estado: &mut Estado,
-    modulo: ModuloMatrix,
+    state: &mut Estado,
+    modulo: MatrixModule,
     ajustes: AjustesDeInicio,
 ) -> Option<MatrixRodando> {
-    let store = Arc::clone(&estado.store);
-    let metricas = estado.metricas_matrix().ok().flatten();
+    let store = Arc::clone(&state.store);
+    let metricas = state.metricas_matrix().ok().flatten();
 
-    let cliente = match ClienteMatrix::das_partes(&modulo.config, &modulo.segredos) {
-        Ok(cliente) => cliente,
-        Err(erro) => {
+    let client = match MatrixClient::from_parts(&modulo.config, &modulo.secrets) {
+        Ok(client) => client,
+        Err(error) => {
             tracing::error!(
                 target: "poph_server::matrix_inicio",
-                motivo = codigo_da_chamada(&erro),
+                reason = codigo_da_chamada(&error),
                 "cliente do Matrix não foi montado; o módulo não sobe"
             );
             return None;
         }
     };
-    let ids = match IdsFantasmas::da_config(&modulo.config) {
+    let ids = match GhostIds::of_config(&modulo.config) {
         Ok(ids) => ids,
         Err(_) => {
             tracing::error!(
                 target: "poph_server::matrix_inicio",
-                motivo = "fantasmas_invalidos",
+                reason = "fantasmas_invalidos",
                 "ids dos usuários virtuais inválidos; o módulo não sobe"
             );
             return None;
@@ -256,20 +256,20 @@ pub fn iniciar_com_ajustes(
     };
     // Fantasmas da instância: o laço de estado renomeia o do cliente quando o nome chega depois da
     // criação da sala (MX-33), pelo mesmo serviço idempotente da MX-10.
-    let usuarios = Arc::new(UsuariosVirtuais::novo(
-        cliente.clone(),
+    let users = Arc::new(VirtualUsers::new(
+        client.clone(),
         ids.clone(),
-        poph_matrix::TETO_PADRAO_CACHE,
+        poph_matrix::DEFAULT_CACHE_CAP,
     ));
 
     // ───── espelho das mensagens (MX-14) ─────
-    let mut destino = match DestinoReal::montar(Arc::clone(&store), cliente.clone(), &modulo.config)
+    let mut destino = match DestinoReal::montar(Arc::clone(&store), client.clone(), &modulo.config)
     {
         Ok(destino) => destino,
         Err(_) => {
             tracing::error!(
                 target: "poph_server::matrix_inicio",
-                motivo = "espelho_nao_montado",
+                reason = "espelho_nao_montado",
                 "provisão de sala não foi montada; o módulo não sobe"
             );
             return None;
@@ -283,8 +283,8 @@ pub fn iniciar_com_ajustes(
     // de estado pode ter visto a conversa antes de a sala existir, e sem isso a sala ficaria fora
     // do espaço até o cliente escrever de novo. Nenhuma decisão muda: quem move a sala quando o
     // departamento muda continua sendo o laço de estado (MX-15).
-    match Espacos::da_config(
-        cliente.clone(),
+    match Spaces::of_config(
+        client.clone(),
         PortaEspacosStore(Arc::clone(&store)),
         &modulo.config,
     ) {
@@ -292,17 +292,17 @@ pub fn iniciar_com_ajustes(
         Err(_) => {
             tracing::warn!(
                 target: "poph_server::matrix_inicio",
-                motivo = "espacos_do_espelho_nao_montados",
+                reason = "espacos_do_espelho_nao_montados",
                 "o espelho cria a sala sem espaço; o laço de estado posiciona na próxima alteração"
             );
         }
     }
-    let mut espelho = match EspelhoMatrix::novo(Arc::clone(&store), destino, &modulo.config) {
+    let mut espelho = match EspelhoMatrix::new(Arc::clone(&store), destino, &modulo.config) {
         Ok(espelho) => espelho,
         Err(_) => {
             tracing::error!(
                 target: "poph_server::matrix_inicio",
-                motivo = "espelho_nao_montado",
+                reason = "espelho_nao_montado",
                 "laço do espelho não foi montado; o módulo não sobe"
             );
             return None;
@@ -313,19 +313,19 @@ pub fn iniciar_com_ajustes(
     }
     // Mídia do cliente (MX-43): a pasta onde o recebimento grava os blobs das orgs. É a mesma do
     // resto do servidor (`Estado::arquivos`), não uma segunda configuração.
-    espelho = espelho.com_pasta_de_blobs(estado.arquivos.blob_folder.clone());
+    espelho = espelho.com_pasta_de_blobs(state.arquivos.blob_folder.clone());
 
     // ───── espelho do estado (MX-15) ─────
-    let espacos = match Espacos::da_config(
-        cliente.clone(),
+    let spaces = match Spaces::of_config(
+        client.clone(),
         PortaEspacosStore(Arc::clone(&store)),
         &modulo.config,
     ) {
-        Ok(espacos) => espacos,
+        Ok(spaces) => spaces,
         Err(_) => {
             tracing::error!(
                 target: "poph_server::matrix_inicio",
-                motivo = "espacos_nao_montados",
+                reason = "espacos_nao_montados",
                 "espaços por departamento não foram montados; o módulo não sobe"
             );
             return None;
@@ -335,33 +335,33 @@ pub fn iniciar_com_ajustes(
     // Segundo handle do mesmo serviço, só para a API criar e ligar espaço sob demanda: nenhuma
     // decisão muda (quem posiciona sala continua sendo o laço de estado, MX-15) e não há estado em
     // memória em `Espacos` — é cliente + ids + porta.
-    match Espacos::da_config(
-        cliente.clone(),
+    match Spaces::of_config(
+        client.clone(),
         PortaEspacosStore(Arc::clone(&store)),
         &modulo.config,
     ) {
-        Ok(espacos_da_api) => estado.ligar_espacos_do_matrix(Arc::new(espacos_da_api)),
+        Ok(espacos_da_api) => state.ligar_espacos_do_matrix(Arc::new(espacos_da_api)),
         Err(_) => {
             tracing::warn!(
                 target: "poph_server::matrix_inicio",
-                motivo = "espacos_da_api_nao_montados",
+                reason = "espacos_da_api_nao_montados",
                 "API administrativa do módulo fica sem os espaços; o resto do módulo segue"
             );
         }
     }
 
     // ───── aviso de falha da resposta humana (MX-19) ─────
-    let mut falhas_aviso = AvisoDeFalhas::novo(
-        Arc::new(PortaFalhasDoHarness::nova(Arc::clone(&store))),
-        AvisoNoSynapse::novo(cliente.clone(), ids.clone()),
+    let mut falhas_aviso = AvisoDeFalhas::new(
+        Arc::new(PortaFalhasDoHarness::fresh(Arc::clone(&store))),
+        AvisoNoSynapse::new(client.clone(), ids.clone()),
     );
     if let Some(metricas) = &metricas {
         falhas_aviso = falhas_aviso.com_metricas(Arc::clone(metricas));
     }
 
-    let destino_estado = DestinoDoSynapse::novo(cliente.clone(), usuarios, espacos);
-    let mut estado_das_conversas = match EstadoDasConversas::novo(
-        PortaEstadoStore::nova(Arc::clone(&store)),
+    let destino_estado = DestinoDoSynapse::new(client.clone(), users, spaces);
+    let mut estado_das_conversas = match EstadoDasConversas::new(
+        PortaEstadoStore::fresh(Arc::clone(&store)),
         destino_estado,
         &modulo.config,
     ) {
@@ -369,7 +369,7 @@ pub fn iniciar_com_ajustes(
         Err(_) => {
             tracing::error!(
                 target: "poph_server::matrix_inicio",
-                motivo = "estado_nao_montado",
+                reason = "estado_nao_montado",
                 "laço do estado da conversa não foi montado; o módulo não sobe"
             );
             return None;
@@ -380,22 +380,22 @@ pub fn iniciar_com_ajustes(
     }
 
     // ───── expiração da mídia (MX-46) ─────
-    let expiracao = expiracao_do_modulo(
-        Arc::clone(&estado.store),
-        cliente.clone(),
+    let expiration = expiracao_do_modulo(
+        Arc::clone(&state.store),
+        client.clone(),
         &modulo.config,
         metricas.clone(),
-        poph_matrix::config::token_admin_do_ambiente(),
+        poph_matrix::config::environment_admin_token(),
     )
     .map(Arc::new);
 
     // ───── receptor do Application Service (MX-16) com a resposta do atendente (MX-18) ─────
     let mut entrega = match RespostaDoAtendente::do_modulo(Arc::clone(&store), &modulo) {
         Ok(entrega) => entrega,
-        Err(erro) => {
+        Err(error) => {
             tracing::error!(
                 target: "poph_server::matrix_inicio",
-                motivo = codigo_da_chamada(&erro),
+                reason = codigo_da_chamada(&error),
                 "entrega da resposta do atendente não foi montada; o módulo não sobe"
             );
             return None;
@@ -406,50 +406,50 @@ pub fn iniciar_com_ajustes(
     }
     // Arquivo do atendente (MX-44): a mesma pasta de blobs do recebimento e do espelho — quem
     // baixa o arquivo da sala precisa de onde gravá-lo.
-    entrega = entrega.com_pasta_de_blobs(estado.arquivos.blob_folder.clone());
+    entrega = entrega.com_pasta_de_blobs(state.arquivos.blob_folder.clone());
     let receptor = ReceptorAs::do_modulo(modulo, Arc::new(entrega));
-    estado.ligar_matrix_as(Arc::new(receptor));
+    state.ligar_matrix_as(Arc::new(receptor));
 
     // ───── os laços no ar ─────
     let espelho = Arc::new(espelho);
     let estado_das_conversas = Arc::new(estado_das_conversas);
     let falhas_aviso = Arc::new(falhas_aviso);
-    let conexao = Arc::new(SinalDeConexao::nova());
+    let conexao = Arc::new(SinalDeConexao::fresh());
     // O sinal de vida também fica no `Estado`: é o "conectado" que a API administrativa lê.
-    estado.ligar_sinal_do_matrix(Arc::clone(&conexao));
+    state.ligar_sinal_do_matrix(Arc::clone(&conexao));
     let (parar_sonda, sinal_da_sonda) = watch::channel(false);
     let mut tarefas = vec![
         tokio::spawn(Arc::clone(&espelho).executar()),
         tokio::spawn(Arc::clone(&estado_das_conversas).executar()),
         tokio::spawn(Arc::clone(&falhas_aviso).executar(PERIODO_PADRAO)),
         tokio::spawn(sondar(
-            cliente,
+            client,
             Arc::clone(&conexao),
             ajustes.periodo_da_sonda,
             ajustes.teto_da_sonda,
             sinal_da_sonda,
         )),
     ];
-    if let Some(expiracao) = &expiracao {
-        tarefas.push(tokio::spawn(Arc::clone(expiracao).executar()));
+    if let Some(expiration) = &expiration {
+        tarefas.push(tokio::spawn(Arc::clone(expiration).executar()));
     }
     tracing::info!(
         target: "poph_server::matrix_inicio",
-        servidor = %estado.config.matrix.as_ref().map(|matrix| matrix.server_name.as_str()).unwrap_or_default(),
-        intervalo_ms = estado
+        servidor = %state.config.matrix.as_ref().map(|matrix| matrix.server_name.as_str()).unwrap_or_default(),
+        intervalo_ms = state
             .config
             .matrix
             .as_ref()
             .map(|matrix| matrix.interval_ms)
             .unwrap_or_default(),
-        expiracao_de_midia = expiracao.is_some(),
+        expiracao_de_midia = expiration.is_some(),
         "módulo Matrix ligado: espelho, estado e receptor do Application Service no ar"
     );
     Some(MatrixRodando {
         espelho,
         estado_das_conversas,
         falhas_aviso,
-        expiracao,
+        expiration,
         conexao,
         parar_sonda,
         tarefas,
@@ -464,7 +464,7 @@ pub fn iniciar_com_ajustes(
 /// espelha, responde e atende — o que não acontece é a limpeza da mídia no Synapse depois do prazo.
 pub fn expiracao_do_modulo(
     store: Arc<Store>,
-    cliente: ClienteMatrix,
+    client: MatrixClient,
     config: &poph_types::MatrixConfig,
     metricas: Option<Arc<crate::matrix_metricas::MetricasMatrix>>,
     token: Option<poph_types::Secret>,
@@ -472,28 +472,28 @@ pub fn expiracao_do_modulo(
     let Some(token) = token else {
         tracing::warn!(
             target: "poph_server::matrix_inicio",
-            motivo = "token_de_administrador_ausente",
+            reason = "token_de_administrador_ausente",
             variavel = poph_matrix::config::VAR_ADMIN_TOKEN,
             "expiração da mídia desligada: defina POPH_MATRIX_ADMIN_TOKEN para apagar do Synapse a mídia vencida (o resto do módulo Matrix segue normal)"
         );
         return None;
     };
-    match ExpiracaoMidia::novo(Arc::clone(&store), cliente, token, config) {
-        Ok(expiracao) => {
+    match ExpiracaoMidia::new(Arc::clone(&store), client, token, config) {
+        Ok(expiration) => {
             tracing::info!(
                 target: "poph_server::matrix_inicio",
                 retencao_dias = config.attachment_retention_days,
                 "expiração da mídia ligada: o que passar do prazo é redigido na sala e apagado do Synapse"
             );
             Some(match metricas {
-                Some(metricas) => expiracao.com_metricas(metricas),
-                None => expiracao,
+                Some(metricas) => expiration.com_metricas(metricas),
+                None => expiration,
             })
         }
         Err(_) => {
             tracing::error!(
                 target: "poph_server::matrix_inicio",
-                motivo = "expiracao_nao_montada",
+                reason = "expiracao_nao_montada",
                 "expiração da mídia não foi montada; o módulo Matrix segue sem ela"
             );
             None
@@ -506,10 +506,10 @@ pub fn expiracao_do_modulo(
 /// Ela não segura nada: se o Synapse estiver fora, o módulo fica degradado e o servidor atende
 /// normalmente. Cada sonda é uma requisição leve (`/_matrix/client/versions`).
 async fn sondar(
-    cliente: ClienteMatrix,
+    client: MatrixClient,
     conexao: Arc<SinalDeConexao>,
     periodo: Duration,
-    teto: Duration,
+    cap: Duration,
     mut parar: watch::Receiver<bool>,
 ) {
     let mut falhas = 0u32;
@@ -517,7 +517,7 @@ async fn sondar(
         if *parar.borrow() {
             break;
         }
-        let resultado = cliente.conferir_conexao().await;
+        let resultado = client.check_connection().await;
         let espera = match resultado {
             Ok(()) => {
                 if conexao.degradado() {
@@ -530,18 +530,18 @@ async fn sondar(
                 falhas = 0;
                 periodo
             }
-            Err(erro) => {
+            Err(error) => {
                 if conexao.conectado() {
                     tracing::warn!(
                         target: "poph_server::matrix_inicio",
-                        motivo = codigo_da_chamada(&erro),
+                        reason = codigo_da_chamada(&error),
                         "Synapse parou de responder: módulo Matrix degradado, sem derrubar o servidor"
                     );
                 }
                 conexao.conectado.store(false, Ordering::Relaxed);
                 falhas = falhas.saturating_add(1);
                 let fator = 1u32.checked_shl(falhas.min(10)).unwrap_or(u32::MAX);
-                periodo.saturating_mul(fator).min(teto)
+                periodo.saturating_mul(fator).min(cap)
             }
         };
         tokio::select! {
@@ -559,117 +559,114 @@ async fn sondar(
 /// lógica do módulo e não conhece o banco; quem junta as duas pontas é o servidor.
 pub struct PortaEspacosStore(pub Arc<Store>);
 
-impl PortaEspacos for PortaEspacosStore {
-    fn espaco(
+impl SpacesPort for PortaEspacosStore {
+    fn space(
         &self,
         org: OrgId,
-        departamento: DepartmentId,
-    ) -> impl std::future::Future<Output = Result<Option<EspacoGravado>, ErroPorta>> + Send {
+        department: DepartmentId,
+    ) -> impl std::future::Future<Output = Result<Option<StoredSpace>, PortError>> + Send {
         let store = Arc::clone(&self.0);
         async move {
-            let espaco = store
-                .matrix()
-                .space(org, departamento)
-                .map_err(erro_porta)?;
-            Ok(espaco.map(|espaco| EspacoGravado {
-                room_id: espaco.room_id,
-                alias: espaco.alias,
-                origem: origem_da_gravada(espaco.origin),
+            let space = store.matrix().space(org, department).map_err(erro_porta)?;
+            Ok(space.map(|space| StoredSpace {
+                room_id: space.room_id,
+                alias: space.alias,
+                origin: origem_da_gravada(space.origin),
             }))
         }
     }
 
-    fn garantir_espaco(
+    fn ensure_space(
         &self,
         org: OrgId,
-        departamento: DepartmentId,
+        department: DepartmentId,
         room_id: &str,
         alias: &str,
-        origem: OrigemEspaco,
-    ) -> impl std::future::Future<Output = Result<EspacoGravado, ErroPorta>> + Send {
+        origin: SpaceOrigin,
+    ) -> impl std::future::Future<Output = Result<StoredSpace, PortError>> + Send {
         let store = Arc::clone(&self.0);
         let room_id = room_id.to_owned();
         let alias = alias.to_owned();
         async move {
             let gravado = store
                 .matrix()
-                .ensure_space(org, departamento, &room_id, &alias, origem_gravada(origem))
+                .ensure_space(org, department, &room_id, &alias, origem_gravada(origin))
                 .map_err(erro_porta)?;
-            Ok(EspacoGravado {
+            Ok(StoredSpace {
                 room_id: gravado.room_id,
                 alias: gravado.alias,
-                origem: origem_da_gravada(gravado.origin),
+                origin: origem_da_gravada(gravado.origin),
             })
         }
     }
 
-    fn espaco_da_sala(
+    fn room_space(
         &self,
         org: OrgId,
-        conversa: ConversationId,
-    ) -> impl std::future::Future<Output = Result<Option<String>, ErroPorta>> + Send {
+        conversation: ConversationId,
+    ) -> impl std::future::Future<Output = Result<Option<String>, PortError>> + Send {
         let store = Arc::clone(&self.0);
         async move {
-            let sala = store.matrix().room(org, conversa).map_err(erro_porta)?;
-            Ok(sala.and_then(|sala| sala.space))
+            let room = store.matrix().room(org, conversation).map_err(erro_porta)?;
+            Ok(room.and_then(|room| room.space))
         }
     }
 
-    fn definir_espaco_da_sala(
+    fn set_room_space(
         &self,
         org: OrgId,
-        conversa: ConversationId,
-        espaco: Option<&str>,
-    ) -> impl std::future::Future<Output = Result<(), ErroPorta>> + Send {
+        conversation: ConversationId,
+        space: Option<&str>,
+    ) -> impl std::future::Future<Output = Result<(), PortError>> + Send {
         let store = Arc::clone(&self.0);
-        let espaco = espaco.map(str::to_owned);
+        let space = space.map(str::to_owned);
         async move {
             store
                 .matrix()
-                .set_space_of_room(org, conversa, espaco.as_deref())
+                .set_space_of_room(org, conversation, space.as_deref())
                 .map(|_| ())
                 .map_err(erro_porta)
         }
     }
 }
 
-fn erro_porta(_: StoreError) -> ErroPorta {
+fn erro_porta(_: StoreError) -> PortError {
     // Sem o texto do erro do banco: ele pode carregar valor de cliente.
-    ErroPorta::nova("armazenamento do módulo Matrix indisponível")
+    PortError::fresh("armazenamento do módulo Matrix indisponível")
 }
 
-fn origem_da_gravada(origem: OrigemGravada) -> OrigemEspaco {
-    match origem {
-        OrigemGravada::Automatic => OrigemEspaco::Automatico,
-        OrigemGravada::Linked => OrigemEspaco::Ligado,
+fn origem_da_gravada(origin: OrigemGravada) -> SpaceOrigin {
+    match origin {
+        OrigemGravada::Automatic => SpaceOrigin::Automatic,
+        OrigemGravada::Linked => SpaceOrigin::Linked,
     }
 }
 
-fn origem_gravada(origem: OrigemEspaco) -> OrigemGravada {
-    match origem {
-        OrigemEspaco::Automatico => OrigemGravada::Automatic,
-        OrigemEspaco::Ligado => OrigemGravada::Linked,
+fn origem_gravada(origin: SpaceOrigin) -> OrigemGravada {
+    match origin {
+        SpaceOrigin::Automatic => OrigemGravada::Automatic,
+        SpaceOrigin::Linked => OrigemGravada::Linked,
     }
 }
 
 // ───────────────────────────── códigos curtos de log ─────────────────────────────
 
 /// Código curto do erro de preparação (nunca o valor da configuração nem o token).
-fn codigo_do_modulo(erro: &ErroMatrix) -> &'static str {
-    match erro {
-        ErroMatrix::Configuracao(_) => "configuracao_invalida",
-        ErroMatrix::TokenAusente { .. } => "token_ausente",
+fn codigo_do_modulo(error: &MatrixError) -> &'static str {
+    match error {
+        MatrixError::Configuration(_) => "configuracao_invalida",
+        MatrixError::TokenMissing { .. } => "token_ausente",
     }
 }
 
 /// Código curto de um erro de chamada, sem o texto que o Synapse mandou.
-fn codigo_da_chamada(erro: &poph_matrix::ErroChamada) -> &'static str {
-    use poph_matrix::ErroChamada;
-    match erro {
-        ErroChamada::Configuracao(_) => "configuracao_invalida",
-        ErroChamada::Rede { .. } => "rede",
-        ErroChamada::Prazo { .. } => "prazo",
-        ErroChamada::Resposta { .. } => "resposta_do_synapse",
-        ErroChamada::RespostaInvalida { .. } => "resposta_invalida",
+fn codigo_da_chamada(error: &poph_matrix::CallError) -> &'static str {
+    use poph_matrix::CallError;
+    match error {
+        CallError::Configuration(_) => "configuracao_invalida",
+        CallError::Network { .. } => "rede",
+        CallError::Deadline { .. } => "prazo",
+        CallError::Response { .. } => "resposta_do_synapse",
+        CallError::InvalidResponse { .. } => "resposta_invalida",
     }
 }

@@ -24,9 +24,9 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use clap::{Args, Subcommand};
-use poph_matrix::espacos::OrigemEspaco as OrigemGravada;
+use poph_matrix::spaces::SpaceOrigin as OrigemGravada;
 use poph_matrix::{
-    Classificacao, ClienteMatrix, DepartamentoEspaco, ErroEspaco, Espacos, ModuloMatrix,
+    Classification, DepartmentSpace, MatrixClient, MatrixModule, SpaceError, Spaces,
 };
 use poph_server::matrix_inicio::PortaEspacosStore;
 use poph_store::{NewAuditEntry, StateMatrixOrg, Store};
@@ -51,13 +51,13 @@ pub struct SaidaArgs {
 #[derive(Debug, Args)]
 pub struct EspacoArgs {
     /// Departamento do espaço (id UUID v7 da org). Sem ele, lista os espaços da org.
-    #[arg(long, value_name = "ID")]
-    pub departamento: Option<String>,
+    #[arg(long = "departamento", value_name = "ID")]
+    pub department: Option<String>,
 
     /// Espaço que já existe no Element: id `!…` ou alias `#…`. Sem ele, o módulo cria o espaço do
     /// departamento pelo alias próprio. Só vale junto com `--departamento`.
-    #[arg(long, value_name = "ID_OU_ALIAS")]
-    pub espaco: Option<String>,
+    #[arg(long = "espaco", value_name = "ID_OU_ALIAS")]
+    pub space: Option<String>,
 
     /// Saída em JSON (formato estável, `versao_relatorio` = 1).
     #[arg(long)]
@@ -79,8 +79,8 @@ pub enum AcaoEspaco {
 #[derive(Debug, Args)]
 pub struct DesligarEspacoArgs {
     /// Departamento cujo espaço sai do módulo (id UUID v7 da org).
-    #[arg(long, value_name = "ID")]
-    pub departamento: String,
+    #[arg(long = "departamento", value_name = "ID")]
+    pub department: String,
 
     /// Saída em JSON (formato estável, `versao_relatorio` = 1).
     #[arg(long)]
@@ -105,15 +105,14 @@ fn abrir(
     org: Option<&str>,
 ) -> Result<Contexto, String> {
     exigir_offline(offline)?;
-    let texto =
-        org.ok_or_else(|| "informe --org com o id (UUID v7) ou o slug da org".to_owned())?;
+    let text = org.ok_or_else(|| "informe --org com o id (UUID v7) ou o slug da org".to_owned())?;
     let pasta = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let arquivo = config::resolver_arquivo(flag.as_deref(), ambiente, &pasta);
     let config = config::carregar(arquivo.as_deref(), ambiente)
-        .map_err(|erro| format!("configuração inválida: {erro}"))?;
+        .map_err(|error| format!("configuração inválida: {error}"))?;
     let store =
-        Store::open(&config).map_err(|erro| format!("não consegui abrir o banco: {erro}"))?;
-    let org = resolver_org(&store, texto)?;
+        Store::open(&config).map_err(|error| format!("não consegui abrir o banco: {error}"))?;
+    let org = resolver_org(&store, text)?;
     Ok(Contexto {
         store: Arc::new(store),
         org,
@@ -122,7 +121,7 @@ fn abrir(
 }
 
 /// Executa `poph matrix estado|ligar|desligar|espaco`.
-pub fn estado(
+pub fn state(
     flag: Option<PathBuf>,
     ambiente: &config::Ambiente,
     offline: bool,
@@ -131,7 +130,7 @@ pub fn estado(
 ) -> ExitCode {
     let ctx = match abrir(flag, ambiente, offline, org) {
         Ok(ctx) => ctx,
-        Err(mensagem) => return erro(&mensagem),
+        Err(message) => return error(&message),
     };
     responder(mostrar_estado(&ctx, args.json))
 }
@@ -147,13 +146,13 @@ pub fn ligar_ou_desligar(
 ) -> ExitCode {
     let ctx = match abrir(flag, ambiente, offline, org) {
         Ok(ctx) => ctx,
-        Err(mensagem) => return erro(&mensagem),
+        Err(message) => return error(&message),
     };
     responder(alterar_ligacao(&ctx, ligar, args.json))
 }
 
 /// `poph matrix espaco …`.
-pub fn espaco(
+pub fn space(
     flag: Option<PathBuf>,
     ambiente: &config::Ambiente,
     offline: bool,
@@ -162,20 +161,20 @@ pub fn espaco(
 ) -> ExitCode {
     let ctx = match abrir(flag, ambiente, offline, org) {
         Ok(ctx) => ctx,
-        Err(mensagem) => return erro(&mensagem),
+        Err(message) => return error(&message),
     };
-    let resultado = match (&args.acao, &args.departamento) {
-        (Some(AcaoEspaco::Desligar(desligar)), None) if args.espaco.is_none() => {
-            desligar_espaco(&ctx, &desligar.departamento, desligar.json)
+    let resultado = match (&args.acao, &args.department) {
+        (Some(AcaoEspaco::Desligar(desligar)), None) if args.space.is_none() => {
+            desligar_espaco(&ctx, &desligar.department, desligar.json)
         }
         (Some(_), _) => Err(
             "use `espaco desligar --departamento <id>` sozinho: não combine com --departamento ou --espaco"
                 .to_owned(),
         ),
-        (None, Some(departamento)) => {
-            garantir_espaco(&ctx, departamento, args.espaco.as_deref(), args.json)
+        (None, Some(department)) => {
+            ensure_space(&ctx, department, args.space.as_deref(), args.json)
         }
-        (None, None) if args.espaco.is_some() => {
+        (None, None) if args.space.is_some() => {
             Err("--espaco só vale junto com --departamento (o espaço é de um departamento)".to_owned())
         }
         (None, None) => listar_espacos(&ctx, args.json),
@@ -185,13 +184,13 @@ pub fn espaco(
 
 fn responder(resultado: Resultado) -> ExitCode {
     match resultado {
-        Ok(codigo) => codigo,
-        Err(mensagem) => erro(&mensagem),
+        Ok(code) => code,
+        Err(message) => error(&message),
     }
 }
 
-fn erro(mensagem: &str) -> ExitCode {
-    eprintln!("erro: {mensagem}");
+fn error(message: &str) -> ExitCode {
+    eprintln!("erro: {message}");
     ExitCode::from(1)
 }
 
@@ -264,7 +263,7 @@ enum ErroLigacao {
     /// A versão lida antes mudou até a gravação: quem gravou foi outro processo.
     VersaoMudou,
     /// Falha do banco ou da configuração, com a mensagem pronta.
-    Outro(String),
+    Other(String),
 }
 
 /// `poph matrix ligar|desligar`: lê a versão, confere e grava.
@@ -304,7 +303,7 @@ fn alterar_ligacao(ctx: &Contexto, ligar: bool, json: bool) -> Resultado {
             );
             Ok(ExitCode::from(SAIDA_CONFLITO))
         }
-        Err(ErroLigacao::Outro(mensagem)) => Err(mensagem),
+        Err(ErroLigacao::Other(message)) => Err(message),
     }
 }
 
@@ -318,7 +317,7 @@ fn aplicar_ligacao(
         .store
         .matrix()
         .state(ctx.org)
-        .map_err(|erro| ErroLigacao::Outro(descrever(&erro)))?;
+        .map_err(|error| ErroLigacao::Other(descrever(&error)))?;
     if atual.updated_at != esperada {
         return Err(ErroLigacao::VersaoMudou);
     }
@@ -327,8 +326,8 @@ fn aplicar_ligacao(
     } else {
         ctx.store.matrix().disable(ctx.org)
     }
-    .map_err(|erro| ErroLigacao::Outro(descrever(&erro)))?;
-    auditar(ctx, "update", "matrix", ctx.org.to_string()).map_err(ErroLigacao::Outro)?;
+    .map_err(|error| ErroLigacao::Other(descrever(&error)))?;
+    auditar(ctx, "update", "matrix", ctx.org.to_string()).map_err(ErroLigacao::Other)?;
     Ok(depois)
 }
 
@@ -337,27 +336,27 @@ fn aplicar_ligacao(
 /// `poph matrix espaco` (sem `--departamento`): lista os espaços da org.
 fn listar_espacos(ctx: &Contexto, json: bool) -> Resultado {
     let slug = ler(ctx.store.orgs().get(ctx.org))?.slug;
-    let espacos = ler(ctx.store.matrix().list_spaces(ctx.org))?;
+    let spaces = ler(ctx.store.matrix().list_spaces(ctx.org))?;
     let mut itens = Vec::new();
-    for espaco in &espacos {
-        let nome = ctx
+    for space in &spaces {
+        let name = ctx
             .store
             .departments()
-            .get(ctx.org, espaco.departamento)
+            .get(ctx.org, space.departamento)
             .ok()
-            .map(|departamento| departamento.name);
-        itens.push((espaco, nome));
+            .map(|department| department.name);
+        itens.push((space, name));
     }
     if json {
         let lista: Vec<Value> = itens
             .iter()
-            .map(|(espaco, nome)| {
+            .map(|(space, name)| {
                 json!({
-                    "departamento": espaco.departamento.to_string(),
-                    "departamento_nome": nome,
-                    "espaco": espaco.room_id,
-                    "alias": espaco.alias,
-                    "origem": espaco.origin.as_text(),
+                    "departamento": space.departamento.to_string(),
+                    "departamento_nome": name,
+                    "espaco": space.room_id,
+                    "alias": space.alias,
+                    "origem": space.origin.as_text(),
                 })
             })
             .collect();
@@ -366,12 +365,12 @@ fn listar_espacos(ctx: &Contexto, json: bool) -> Resultado {
         println!("nenhum espaço por departamento na org `{slug}`.");
     } else {
         println!("espaços por departamento da org `{slug}`: {}", itens.len());
-        for (espaco, nome) in &itens {
+        for (space, name) in &itens {
             println!(
                 "  - {} → {} ({})",
-                nome.as_deref().unwrap_or("departamento sem nome"),
-                espaco.room_id,
-                descricao_origem(espaco.origin.as_text())
+                name.as_deref().unwrap_or("departamento sem nome"),
+                space.room_id,
+                descricao_origem(space.origin.as_text())
             );
         }
     }
@@ -379,17 +378,17 @@ fn listar_espacos(ctx: &Contexto, json: bool) -> Resultado {
 }
 
 /// `poph matrix espaco --departamento <id> [--espaco …]`: cria o espaço ou liga um que já existe.
-fn garantir_espaco(
+fn ensure_space(
     ctx: &Contexto,
     departamento_texto: &str,
-    existente: Option<&str>,
+    existing: Option<&str>,
     json: bool,
 ) -> Resultado {
     let departamento_id: DepartmentId = parse_id(departamento_texto)?;
-    let departamento = ler(ctx.store.departments().get(ctx.org, departamento_id))?;
-    let existente = existente.map(str::trim).filter(|texto| !texto.is_empty());
+    let department = ler(ctx.store.departments().get(ctx.org, departamento_id))?;
+    let existing = existing.map(str::trim).filter(|text| !text.is_empty());
 
-    let modulo = match ModuloMatrix::preparar(ctx.config.matrix.clone()) {
+    let modulo = match MatrixModule::prepare(ctx.config.matrix.clone()) {
         Ok(Some(modulo)) => modulo,
         Ok(None) => {
             return Err(
@@ -398,46 +397,46 @@ fn garantir_espaco(
             );
         }
         // A mensagem do erro nomeia a variável ou o campo; nunca traz o valor.
-        Err(erro) => return Err(erro.to_string()),
+        Err(error) => return Err(error.to_string()),
     };
-    let cliente = ClienteMatrix::das_partes(&modulo.config, &modulo.segredos).map_err(|_| {
+    let client = MatrixClient::from_parts(&modulo.config, &modulo.secrets).map_err(|_| {
         "não consegui montar a conexão com o Synapse: confira `homeserver_url` na seção [matrix]"
             .to_owned()
     })?;
-    let espacos = Espacos::da_config(
-        cliente,
+    let spaces = Spaces::of_config(
+        client,
         PortaEspacosStore(Arc::clone(&ctx.store)),
         &modulo.config,
     )
     .map_err(|_| "não consegui montar o serviço de espaços: confira a seção [matrix]".to_owned())?;
 
-    let alvo = DepartamentoEspaco {
-        id: departamento.id,
-        nome: departamento.name.clone(),
+    let alvo = DepartmentSpace {
+        id: department.id,
+        name: department.name.clone(),
     };
-    let gravado = executar_assincrono(espacos.garantir_espaco(ctx.org, &alvo, existente))?
+    let gravado = executar_assincrono(spaces.ensure_space(ctx.org, &alvo, existing))?
         .map_err(mensagem_do_espaco)?;
-    auditar(ctx, "update", "matrix_space", departamento.id.to_string())?;
+    auditar(ctx, "update", "matrix_space", department.id.to_string())?;
 
-    let origem = match gravado.origem {
-        OrigemGravada::Automatico => "auto",
-        OrigemGravada::Ligado => "linked",
+    let origin = match gravado.origin {
+        OrigemGravada::Automatic => "auto",
+        OrigemGravada::Linked => "linked",
     };
     if json {
         imprimir_json(&json!({
             "versao_relatorio": 1,
-            "departamento": departamento.id.to_string(),
-            "departamento_nome": departamento.name,
+            "departamento": department.id.to_string(),
+            "departamento_nome": department.name,
             "espaco": gravado.room_id,
             "alias": gravado.alias,
-            "origem": origem,
+            "origem": origin,
         }));
     } else {
         println!(
             "espaço do departamento `{}`: {} ({})",
-            departamento.name,
+            department.name,
             gravado.room_id,
-            descricao_origem(origem)
+            descricao_origem(origin)
         );
         println!("  alias: {}", gravado.alias);
     }
@@ -448,20 +447,20 @@ fn garantir_espaco(
 fn desligar_espaco(ctx: &Contexto, departamento_texto: &str, json: bool) -> Resultado {
     let departamento_id: DepartmentId = parse_id(departamento_texto)?;
     // Departamento de outra org (ou inexistente) não passa daqui: nada muda.
-    let departamento = ler(ctx.store.departments().get(ctx.org, departamento_id))?;
-    let desligado = ler(ctx.store.matrix().disable_space(ctx.org, departamento.id))?;
-    auditar(ctx, "delete", "matrix_space", departamento.id.to_string())?;
+    let department = ler(ctx.store.departments().get(ctx.org, departamento_id))?;
+    let desligado = ler(ctx.store.matrix().disable_space(ctx.org, department.id))?;
+    auditar(ctx, "delete", "matrix_space", department.id.to_string())?;
     if json {
         imprimir_json(&json!({
             "versao_relatorio": 1,
-            "departamento": departamento.id.to_string(),
+            "departamento": department.id.to_string(),
             "removido": desligado.removed,
             "salas_esquecidas": desligado.rooms_forgotten,
         }));
     } else if desligado.removed {
         println!(
             "espaço do departamento `{}` desligado: {} sala(s) deixaram de estar registradas nele.",
-            departamento.name, desligado.rooms_forgotten
+            department.name, desligado.rooms_forgotten
         );
         println!(
             "  nada foi apagado no Element. Na próxima alteração de conversa desse departamento, a sala volta a ser posicionada no mesmo espaço."
@@ -469,7 +468,7 @@ fn desligar_espaco(ctx: &Contexto, departamento_texto: &str, json: bool) -> Resu
     } else {
         println!(
             "o departamento `{}` não tinha espaço ligado: nada a fazer.",
-            departamento.name
+            department.name
         );
     }
     Ok(ExitCode::SUCCESS)
@@ -477,22 +476,22 @@ fn desligar_espaco(ctx: &Contexto, departamento_texto: &str, json: bool) -> Resu
 
 /// Tradução do erro do serviço de espaços para o operador. Mesmo critério da API (MX-22): falta de
 /// permissão vira instrução; falha de rede vira "tente de novo"; nada do corpo do Synapse sai.
-fn mensagem_do_espaco(erro: ErroEspaco) -> String {
-    match erro {
-        ErroEspaco::SemPermissao { o_que_falta } => o_que_falta,
-        ErroEspaco::EspacoInvalido { motivo } => format!("espaço informado inválido: {motivo}"),
-        ErroEspaco::Interno { .. } => {
+fn mensagem_do_espaco(error: SpaceError) -> String {
+    match error {
+        SpaceError::WithoutPermission { what_is_missing } => what_is_missing,
+        SpaceError::InvalidSpace { reason } => format!("espaço informado inválido: {reason}"),
+        SpaceError::Internal { .. } => {
             "falha interna do módulo Matrix ao garantir o espaço (defeito do módulo, não do ambiente)"
                 .to_owned()
         }
-        ErroEspaco::Armazenamento(_) => {
+        SpaceError::Armazenamento(_) => {
             "o armazenamento do módulo Matrix não respondeu: tente de novo".to_owned()
         }
-        ErroEspaco::Chamada(chamada) => match chamada.classificacao() {
-            Classificacao::Transitoria => {
+        SpaceError::Call(chamada) => match chamada.classification() {
+            Classification::Transient => {
                 "o Synapse não respondeu: tente de novo em instantes".to_owned()
             }
-            Classificacao::Definitiva => {
+            Classification::Definitive => {
                 "o Synapse recusou a operação do espaço: confira o espaço informado no Element"
                     .to_owned()
             }
@@ -505,12 +504,12 @@ fn executar_assincrono<F: std::future::Future>(futuro: F) -> Result<F::Output, S
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .map_err(|erro| format!("não consegui iniciar o runtime: {erro}"))?;
+        .map_err(|error| format!("não consegui iniciar o runtime: {error}"))?;
     Ok(runtime.block_on(futuro))
 }
 
-fn descricao_origem(origem: &str) -> &'static str {
-    match origem {
+fn descricao_origem(origin: &str) -> &'static str {
+    match origin {
         "auto" | "automatico" => "criado pelo módulo",
         _ => "ligado a um espaço que já existia no Element",
     }
@@ -520,7 +519,7 @@ fn descricao_origem(origem: &str) -> &'static str {
 
 /// Converte o erro do banco na frase do operador.
 fn ler<T>(resultado: Result<T, poph_store::StoreError>) -> Result<T, String> {
-    resultado.map_err(|erro| descrever(&erro))
+    resultado.map_err(|error| descrever(&error))
 }
 
 /// Auditoria da alteração, com ator `cli` (a API grava `admin_token`).
