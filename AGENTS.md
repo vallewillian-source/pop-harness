@@ -144,7 +144,7 @@ check it against the table. Two rules the table makes clear:
 | Per-department spaces (what the agent sees organised in Element) | `poph-matrix/src/espacos.rs` (`PortaEspacos` port, implemented by `poph-server` over `store.matrix()`) | `docs/DADOS.md` §11.4 |
 | Matrix module wiring in the server (starts, degrades, per-org on/off, ordered stop) | `poph-server/src/matrix_inicio.rs` (composition root; `PortaEspacosStore` over `store.matrix()`) | `docs/ENTRADA_E_SAIDA.md` §8, `docs/API.md` |
 | Overview, base decisions, status | (no code) | `docs/VISAO_GERAL.md`, `docs/DECISOES.md`, `ROADMAP.md` |
-| Flows and Cases (language, compiler, engine, effects, API and CLI) | `crates/poph-fluxos/`; `poph-store` (`fichas`, `fluxos`, `fluxo_*`); `poph-agent` (`turno/fluxo*.rs`); `poph-server` (`api/fichas.rs`, `api/fluxos.rs`) | `docs/FLUXOS.md` (overview, operation, limits); `docs/FLUXOS_LINGUAGEM.md` (language, IR and diagnostics) |
+| Flows and Cases (language, compiler, engine, effects, API and CLI) | `crates/poph-fluxos/`; `poph-store` (`fichas`, `fluxos`, `fluxo_*`); `poph-agent` (`turno/flow*.rs`); `poph-server` (`api/fichas.rs`, `api/fluxos.rs`) | `docs/FLUXOS.md` (overview, operation, limits); `docs/FLUXOS_LINGUAGEM.md` (language, IR and diagnostics) |
 | Databases, schema and migrations | `poph-store/` (`migrations.rs`, `migrations/harness/`, `writer.rs`) | `docs/DADOS.md` |
 | Agents and instructions | `poph-agent/src/compositor.rs`, `poph-server/src/api/instrucoes.rs` | `docs/AGENTES.md` |
 

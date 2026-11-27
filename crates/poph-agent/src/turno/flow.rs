@@ -78,7 +78,7 @@ pub(crate) struct Preparation {
 #[derive(Default)]
 pub(crate) struct FlowOutcome {
     pub texto: Option<String>,
-    pub registro: Option<Value>,
+    pub outcome_record: Option<Value>,
     pub in_progress: bool,
     pub reservation: bool,
 }
@@ -532,22 +532,22 @@ pub(crate) enum NoStartReason {
     None,
     BelowThreshold,
     Failed,
-    NotPerguntado,
+    NotAsked,
 }
 
 pub(crate) fn reason_without_beginning(jev: Option<&JevResult>, g9_linked: bool) -> NoStartReason {
     let Some(jev) = jev else {
-        return NoStartReason::NotPerguntado;
+        return NoStartReason::NotAsked;
     };
     match jev.response(IdGate::G9) {
         Some(raw) if raw.choice.as_deref() == Some(G9_NONE) => NoStartReason::None,
         Some(_) => NoStartReason::BelowThreshold,
         None if g9_linked && jev.failed() => NoStartReason::Failed,
-        None => NoStartReason::NotPerguntado,
+        None => NoStartReason::NotAsked,
     }
 }
 
-fn registro(resultado: &str) -> Value {
+fn outcome_record(resultado: &str) -> Value {
     json!({ "resultado": resultado })
 }
 
@@ -576,7 +576,7 @@ pub(crate) fn decide(
         return match block_of_execution(adjustments, store, org, active) {
             Some((block, ir)) => FlowOutcome {
                 texto: Some(block),
-                registro: Some(json!({
+                outcome_record: Some(json!({
                     "resultado": "execucao_ativa",
                     "fluxo": ir.fluxo.id,
                     "execucao": active.id.to_string(),
@@ -586,7 +586,7 @@ pub(crate) fn decide(
             }
             .in_progress(),
             None => FlowOutcome {
-                registro: Some(json!({
+                outcome_record: Some(json!({
                     "resultado": "execucao_ativa_sem_bloco",
                     "execucao": active.id.to_string(),
                 })),
@@ -621,12 +621,12 @@ pub(crate) fn decide(
                 match block {
                     Some((texto, ir)) => FlowOutcome {
                         texto: Some(apply_note_of_effect(texto, effects)),
-                        registro: Some(record_started(&execution, &ir)),
+                        outcome_record: Some(record_started(&execution, &ir)),
                         ..FlowOutcome::default()
                     }
                     .in_progress(),
                     None => FlowOutcome {
-                        registro: Some(json!({
+                        outcome_record: Some(json!({
                             "resultado": "iniciou_sem_bloco",
                             "fluxo": slug,
                             "execucao": execution.id.to_string(),
@@ -647,7 +647,7 @@ pub(crate) fn decide(
                         let block = block_of_execution(adjustments, store, org, &active);
                         FlowOutcome {
                             texto: block.map(|(texto, _)| texto),
-                            registro: Some(json!({
+                            outcome_record: Some(json!({
                                 "resultado": "execucao_ativa",
                                 "fluxo": slug,
                                 "execucao": active.id.to_string(),
@@ -658,7 +658,7 @@ pub(crate) fn decide(
                         .in_progress()
                     }
                     _ => FlowOutcome {
-                        registro: Some(json!({
+                        outcome_record: Some(json!({
                             "resultado": "nao_iniciou",
                             "fluxo": slug,
                             "motivo": "a Ficha já tinha execução ativa quando o Jev escolheu",
@@ -677,7 +677,7 @@ pub(crate) fn decide(
                 );
                 FlowOutcome {
                     texto: block_catalog(&preparation.released, tool_of_beginning),
-                    registro: Some(json!({
+                    outcome_record: Some(json!({
                         "resultado": "nao_iniciou",
                         "fluxo": slug,
                         "motivo": motivo,
@@ -690,7 +690,7 @@ pub(crate) fn decide(
                 tracing::warn!(error = %error, fluxo = slug, "erro ao iniciar o fluxo escolhido pelo G9");
                 FlowOutcome {
                     texto: block_catalog(&preparation.released, tool_of_beginning),
-                    registro: Some(json!({
+                    outcome_record: Some(json!({
                         "resultado": "falhou",
                         "fluxo": slug,
                         "motivo": "erro de armazenamento ao iniciar a execução",
@@ -704,22 +704,22 @@ pub(crate) fn decide(
 
     match reason_without_beginning(jev, g9_linked) {
         NoStartReason::None => FlowOutcome {
-            registro: Some(registro("nenhum")),
+            outcome_record: Some(outcome_record("nenhum")),
             ..FlowOutcome::default()
         },
         NoStartReason::BelowThreshold => FlowOutcome {
-            registro: Some(registro("abaixo_do_limiar")),
+            outcome_record: Some(outcome_record("abaixo_do_limiar")),
             ..FlowOutcome::default()
         },
         NoStartReason::Failed => FlowOutcome {
             texto: block_catalog(&preparation.released, tool_of_beginning),
-            registro: Some(registro("fallback")),
+            outcome_record: Some(outcome_record("fallback")),
             ..FlowOutcome::default()
         }
         .reservation(),
-        NoStartReason::NotPerguntado => FlowOutcome {
+        NoStartReason::NotAsked => FlowOutcome {
             texto: block_catalog(&preparation.released, tool_of_beginning),
-            registro: Some(registro("reserva")),
+            outcome_record: Some(outcome_record("reserva")),
             ..FlowOutcome::default()
         }
         .reservation(),

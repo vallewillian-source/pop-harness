@@ -297,13 +297,12 @@ impl Scenario {
             ..poph_agent::summary::SummaryOptions::default()
         })
         .with_g9_metrics(MetricsG9::own());
-        let registro = poph_agent::turno::registrar_ferramentas_do_fluxo(
+        let registro = poph_agent::turno::register_flow_tools(
             poph_agent::turno::DefaultRegistry::new(),
             Arc::clone(&self.store),
             &fluxos.clone().unwrap_or_default(),
         );
-        let registro =
-            poph_agent::turno::registrar_ferramenta_encerramento(registro, Arc::clone(&self.store));
+        let registro = poph_agent::turno::register_closing_tool(registro, Arc::clone(&self.store));
         engine = engine.with_tools(Arc::new(registro));
         if let Some(adjustments) = fluxos {
             engine = engine.with_flows(&adjustments);
@@ -1003,7 +1002,7 @@ async fn motor_desligado_nao_registra_nem_oferece_as_ferramentas() {
             "`{tool}` não é oferecida com o motor desligado: {names:?}"
         );
     }
-    let registro = poph_agent::turno::registrar_ferramentas_do_fluxo(
+    let registro = poph_agent::turno::register_flow_tools(
         poph_agent::turno::DefaultRegistry::new(),
         Arc::clone(&scenario.store),
         &FlowsConfig {
@@ -1016,7 +1015,7 @@ async fn motor_desligado_nao_registra_nem_oferece_as_ferramentas() {
         "motor desligado não registra ferramenta de fluxo: {:?}",
         registro.names()
     );
-    let ligado = poph_agent::turno::registrar_ferramentas_do_fluxo(
+    let ligado = poph_agent::turno::register_flow_tools(
         poph_agent::turno::DefaultRegistry::new(),
         Arc::clone(&scenario.store),
         &FlowsConfig::default(),

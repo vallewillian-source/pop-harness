@@ -63,14 +63,14 @@ mod tests {
             indice: 0,
             efeito: effect,
         };
-        let mensagem =
+        let message_effect =
             effect_of_transition(&produced(poph_fluxos::ir::Efeito::MensagemAoCliente {
                 texto: "Já vou verificar.".to_owned(),
             }));
-        assert_eq!(mensagem.tipo, "mensagem_ao_cliente");
-        assert_eq!(mensagem.key, "etapa:coleta/0");
+        assert_eq!(message_effect.tipo, "mensagem_ao_cliente");
+        assert_eq!(message_effect.key, "etapa:coleta/0");
         assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&mensagem.payload_json).expect("JSON"),
+            serde_json::from_str::<serde_json::Value>(&message_effect.payload_json).expect("JSON"),
             serde_json::json!({ "texto": "Já vou verificar." })
         );
 
@@ -85,12 +85,12 @@ mod tests {
             serde_json::json!({ "para": "5511999990000", "mensagem": "Cliente pediu visita." })
         );
 
-        let encaminhar = effect_of_transition(&produced(poph_fluxos::ir::Efeito::Encaminhar {
+        let forward = effect_of_transition(&produced(poph_fluxos::ir::Efeito::Encaminhar {
             departamento: "Comercial".to_owned(),
         }));
-        assert_eq!(encaminhar.tipo, "encaminhar");
+        assert_eq!(forward.tipo, "encaminhar");
         assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&encaminhar.payload_json).expect("JSON"),
+            serde_json::from_str::<serde_json::Value>(&forward.payload_json).expect("JSON"),
             serde_json::json!({ "departamento": "Comercial" })
         );
     }

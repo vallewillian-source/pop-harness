@@ -8,15 +8,15 @@ use poph_store::{Execution, Ficha, Store, StoreError, TransitionExtras};
 use poph_types::{ActionActor, FlowsConfig, RecordStatus};
 use serde_json::{Map, Value};
 
-use super::fluxo::{self, AdjustmentsFlow, Initiator};
+use super::flow::{self, AdjustmentsFlow, Initiator};
 use super::tools::{DefaultRegistry, InternalTool, ToolContext, ToolFuture};
 use crate::flows_transition::transition_engine;
 
 pub const NAME_RUN_ACTION: &str = "fluxo_executar_acao";
 pub const NAME_ABANDON: &str = "fluxo_abandonar";
-pub const NAME_START: &str = fluxo::NAME_TOOL_START;
+pub const NAME_START: &str = flow::NAME_TOOL_START;
 
-pub fn eh_tool_flow(nome: &str) -> bool {
+pub fn is_flow_tool(nome: &str) -> bool {
     matches!(nome, NAME_RUN_ACTION | NAME_ABANDON | NAME_START)
 }
 
@@ -148,11 +148,11 @@ impl FlowTurn {
                 estado
             ));
         }
-        let load =
-            match fluxo::load_for_act(&self.adjustments, &self.store, context.org, &execution) {
-                Some(load) => load,
-                None => return Err(not_consegui_read_o_flow()),
-            };
+        let load = match flow::load_for_act(&self.adjustments, &self.store, context.org, &execution)
+        {
+            Some(load) => load,
+            None => return Err(could_not_read_the_flow()),
+        };
         let text_of_case = ficha.id.to_string();
         let mut engine_context = ContextEngine::novo(&load.evaluator)
             .com_ficha(&text_of_case)
@@ -208,8 +208,7 @@ impl FlowTurn {
         if !applied {
             return Ok(None);
         }
-        let Some(load) =
-            fluxo::load_for_act(&self.adjustments, &self.store, context.org, execution)
+        let Some(load) = flow::load_for_act(&self.adjustments, &self.store, context.org, execution)
         else {
             return Ok(Some(String::new()));
         };
@@ -297,11 +296,11 @@ impl FlowTurn {
         {
             return Ok("Este fluxo já tinha sido abandonado; nada mudou.".to_owned());
         }
-        let load =
-            match fluxo::load_for_act(&self.adjustments, &self.store, context.org, &execution) {
-                Some(load) => load,
-                None => return Err(not_consegui_read_o_flow()),
-            };
+        let load = match flow::load_for_act(&self.adjustments, &self.store, context.org, &execution)
+        {
+            Some(load) => load,
+            None => return Err(could_not_read_the_flow()),
+        };
         let resultado = motor::abandonar(&load.estado, &motivo, ActionActor::Agent, Some(&chave))
             .map_err(|error| format!("erro: {error}"))?;
         self.store
@@ -377,7 +376,7 @@ impl FlowTurn {
             );
         }
         let slug = self.slug_request(context.org, ficha.agent_id, &request)?;
-        match fluxo::start(
+        match flow::start(
             &self.adjustments,
             &self.store,
             context.org,
@@ -388,9 +387,9 @@ impl FlowTurn {
         )
         .map_err(|error| failure_of_read(error, "a abertura do fluxo"))?
         {
-            fluxo::Beginning::Open { execution, effects } => {
+            flow::Beginning::Open { execution, effects } => {
                 let Some(load) =
-                    fluxo::load_for_act(&self.adjustments, &self.store, context.org, &execution)
+                    flow::load_for_act(&self.adjustments, &self.store, context.org, &execution)
                 else {
                     return Ok(format!(
                         "Fluxo `{slug}` iniciado. O bloco da etapa entra no próximo turno."
@@ -406,10 +405,10 @@ impl FlowTurn {
                 }
                 Ok(response)
             }
-            fluxo::Beginning::AlreadyActive => Err(
+            flow::Beginning::AlreadyActive => Err(
                 "erro: já existe um fluxo em andamento neste atendimento; continue nele".to_owned(),
             ),
-            fluxo::Beginning::Rejected(motivo) => Err(format!("erro: {motivo}")),
+            flow::Beginning::Rejected(motivo) => Err(format!("erro: {motivo}")),
         }
     }
 
@@ -443,7 +442,7 @@ impl FlowTurn {
 }
 
 fn note_of_effect() -> String {
-    format!("\n{}", fluxo::NOTE_OF_EFFECT)
+    format!("\n{}", flow::NOTE_OF_EFFECT)
 }
 
 fn response_of_action(
@@ -624,7 +623,7 @@ fn error_of_transition(error: StoreError, acao: &str) -> String {
     }
 }
 
-fn not_consegui_read_o_flow() -> String {
+fn could_not_read_the_flow() -> String {
     "erro: não consegui ler a etapa atual deste fluxo; siga a conversa sem ele nesta mensagem"
         .to_owned()
 }

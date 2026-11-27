@@ -225,13 +225,12 @@ impl Cenario {
         })
         .with_g9_metrics(MetricsG9::own());
         // FX-24: as ferramentas do fluxo entram no registro do turno, como na montagem real.
-        let registro = poph_agent::turno::registrar_ferramentas_do_fluxo(
+        let registro = poph_agent::turno::register_flow_tools(
             poph_agent::turno::DefaultRegistry::new(),
             Arc::clone(&self.store),
             &fluxos.clone().unwrap_or_default(),
         );
-        let registro =
-            poph_agent::turno::registrar_ferramenta_encerramento(registro, Arc::clone(&self.store));
+        let registro = poph_agent::turno::register_closing_tool(registro, Arc::clone(&self.store));
         motor = motor.with_tools(Arc::new(registro));
         if let Some(ajustes) = fluxos {
             motor = motor.with_flows(&ajustes);

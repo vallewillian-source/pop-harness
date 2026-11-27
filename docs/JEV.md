@@ -1187,7 +1187,7 @@ Para a taxa de falso positivo, conte no JSON os casos com `categoria` iniciando 
 
 > **Escolhe, e o turno inicia.** O gate devolve qual fluxo iniciar. Desde a FX-23, o turno valida a escolha
 > (fluxo ativo, liberado ao agente, revisão publicada, Ficha aberta) e abre a execução antes de o modelo de texto
-> responder. Sem escolha confiável, nada inicia. A ligação está em `poph-agent` (`turno/fluxo.rs`) e foi provada por
+> responder. Sem escolha confiável, nada inicia. A ligação está em `poph-agent` (`turno/flow.rs`) e foi provada por
 > `poph-agent/tests/fluxo_turno.rs`.
 
 | Peça | Como está |

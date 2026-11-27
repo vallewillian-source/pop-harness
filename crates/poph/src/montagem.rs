@@ -306,13 +306,9 @@ pub fn montar(
         Some(cache) => AdjustmentsFlow::of_config(&configuracao.flows).with_cache(cache),
         None => AdjustmentsFlow::of_config(&configuracao.flows),
     };
-    let registro = poph_agent::turno::registrar_ferramentas_do_fluxo_com(
-        registro,
-        Arc::clone(&store),
-        ajustes_do_fluxo,
-    );
     let registro =
-        poph_agent::turno::registrar_ferramenta_encerramento(registro, Arc::clone(&store));
+        poph_agent::turno::register_flow_tools_with(registro, Arc::clone(&store), ajustes_do_fluxo);
+    let registro = poph_agent::turno::register_closing_tool(registro, Arc::clone(&store));
     match (&base, &catalogo) {
         (Some(base), Some(catalogo)) => {
             let busca: Arc<dyn KnowledgeSearcher> = Arc::clone(base) as Arc<dyn KnowledgeSearcher>;

@@ -1,7 +1,7 @@
 mod console;
 mod department;
-mod fluxo;
-mod fluxo_ferramentas;
+mod flow;
+mod flow_tools;
 mod http_tools;
 mod pause;
 mod prompt;
@@ -42,11 +42,10 @@ use crate::providers::{Providers, ResolvedProvider};
 use crate::summary::{self, Resumidor, SummaryOptions};
 
 pub use console::{TransportConsole, text_item};
-pub use fluxo::{ABRE_FLOWS, AdjustmentsFlow, CLOSES_FLOWS, NAME_TOOL_START};
-pub use fluxo_ferramentas::{
-    NAME_ABANDON, NAME_RUN_ACTION, eh_tool_flow, register as registrar_ferramentas_do_fluxo,
-    register_closure as registrar_ferramenta_encerramento,
-    register_with as registrar_ferramentas_do_fluxo_com,
+pub use flow::{ABRE_FLOWS, AdjustmentsFlow, CLOSES_FLOWS, NAME_TOOL_START};
+pub use flow_tools::{
+    NAME_ABANDON, NAME_RUN_ACTION, is_flow_tool, register as register_flow_tools,
+    register_closure as register_closing_tool, register_with as register_flow_tools_with,
 };
 pub use http_tools::HttpToolRegistry;
 use http_tools::{HttpToolCalls, HttpToolContext};
@@ -233,10 +232,8 @@ struct PreparedTurn {
 impl PreparedTurn {
     fn retain_flow_tools(&self, offered: &mut Vec<poph_core::llm::Tool>) {
         offered.retain(|tool| match tool.nome.as_str() {
-            fluxo_ferramentas::NAME_START => self.flow_fallback,
-            fluxo_ferramentas::NAME_RUN_ACTION | fluxo_ferramentas::NAME_ABANDON => {
-                self.active_flow
-            }
+            flow_tools::NAME_START => self.flow_fallback,
+            flow_tools::NAME_RUN_ACTION | flow_tools::NAME_ABANDON => self.active_flow,
             _ => true,
         });
     }
@@ -570,7 +567,7 @@ impl TurnEngine {
         };
 
         let flow_preparation = self.fluxos.as_ref().and_then(|settings| {
-            fluxo::prepare(settings, &self.store, org, conversation_id, agent_id)
+            flow::prepare(settings, &self.store, org, conversation_id, agent_id)
         });
         let g9_flows: Vec<poph_jev::JevFlow> = flow_preparation
             .as_ref()
@@ -913,15 +910,15 @@ impl TurnEngine {
 
         let g9_enabled = self.jev.is_some() && self.agent_gates(&hot_agent.agente).g9;
         let turn_flow = match self.fluxos.as_ref() {
-            Some(settings) => fluxo::decide(
+            Some(settings) => flow::decide(
                 settings,
                 &self.store,
                 org,
                 flow_preparation.as_ref(),
                 jev.as_ref(),
                 g9_enabled,
-                self.tools.tool(fluxo::NAME_TOOL_START).is_some()
-                    && hot_agent.tool_enabled(fluxo::NAME_TOOL_START),
+                self.tools.tool(flow::NAME_TOOL_START).is_some()
+                    && hot_agent.tool_enabled(flow::NAME_TOOL_START),
             ),
             None => Default::default(),
         };
@@ -1089,16 +1086,16 @@ impl TurnEngine {
             .touch(org, conversation_id, self.store.now())?;
 
         let modelo = self.selected_model(&hot_agent);
-        let jev_json = match (&jev, &turn_flow.registro) {
+        let jev_json = match (&jev, &turn_flow.outcome_record) {
             (Some(item), _) if !item.decisions.is_empty() => {
-                let mut registro = item.to_json();
+                let mut record = item.to_json();
                 if review.took_place() {
-                    registro["revisao"] = review.to_json();
+                    record["revisao"] = review.to_json();
                 }
-                if let Some(fluxo) = &turn_flow.registro {
-                    registro["fluxo"] = fluxo.clone();
+                if let Some(fluxo) = &turn_flow.outcome_record {
+                    record["fluxo"] = fluxo.clone();
                 }
-                Some(registro.to_string())
+                Some(record.to_string())
             }
             (_, Some(fluxo)) => Some(json!({ "fluxo": fluxo }).to_string()),
             _ => None,
@@ -1281,7 +1278,7 @@ impl TurnEngine {
                             call.nome
                         ),
                     )
-                } else if call.nome == fluxo_ferramentas::NAME_START && !prepared.flow_fallback {
+                } else if call.nome == flow_tools::NAME_START && !prepared.flow_fallback {
                     ToolOutcome::rejected(
                         REASON_OUTSIDE_DO_TURN,
                         "erro: iniciar fluxo não é sua decisão neste turno; siga a orientação do bloco <fluxo_em_andamento>"
@@ -1902,14 +1899,11 @@ impl TurnEngine {
             .last_set(org, conversa, self.options.message_read_limit.max(1))?)
     }
 
-    fn record_g9_result(&self, desfecho: &fluxo::FlowOutcome) {
-        let Some(registro) = desfecho.registro.as_ref() else {
+    fn record_g9_result(&self, desfecho: &flow::FlowOutcome) {
+        let Some(record) = desfecho.outcome_record.as_ref() else {
             return;
         };
-        match registro
-            .get("resultado")
-            .and_then(serde_json::Value::as_str)
-        {
+        match record.get("resultado").and_then(serde_json::Value::as_str) {
             Some("iniciou" | "iniciou_sem_bloco") => self.g9_metrics.start.increment(1),
             Some("nenhum") => self.g9_metrics.none.increment(1),
             Some("abaixo_do_limiar") => self.g9_metrics.below_threshold.increment(1),
