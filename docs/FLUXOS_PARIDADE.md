@@ -18,7 +18,7 @@ própria suíte prova que a remoção vale — esses casos estão nomeados como 
 
 | # | Linha do PRD §8 (antes → agora) | Teste que prova |
 |---|---|---|
-| 1 | Fluxo do **agente** (`linked_template_id`) / template da org com associação → **fluxo da org**, permissão por agente | `crates/poph-server/tests/agente_fluxos.rs::agente_fluxos_lista_substitui_com_versao_teto_isolamento_e_auditoria` (FX-28: lista de fluxos do agente, `If-Match`, teto de 20, isolamento entre orgs e auditoria) |
+| 1 | Fluxo do **agente** (`linked_template_id`) / template da org com associação → **fluxo da org**, permissão por agente | `crates/poph-server/tests/agent_flows.rs::agent_flows_list_replace_version_cap_isolation_and_audit` (FX-28: lista de fluxos do agente, `If-Match`, teto de 20, isolamento entre orgs e auditoria) |
 | 2 | Ficha só nasce com o fluxo → **Ficha sempre nasce com a conversa** | **Não testável no `poph-flows`**: o motor é puro e não cria Ficha. É a FX-20 (`poph-store`: Ficha aberta com a conversa, fluxo como sub-item). Justificativa registrada aqui até essa tarefa. |
 | 3 | `next_step: "closed"` fecha a Ficha; estado `closing_pending` → `fim(...)` conclui **só a execução**; fechar atendimento é decisão explícita | `paridade::closed_do_pop_atende_virou_fim_que_conclui_a_execucao`, `paridade::fim_so_pede_o_fechamento_do_atendimento_quando_declara_isso`, `paridade::nao_existe_estado_closing_pending`, `paridade::execucao_encerrada_nao_aceita_acao` |
 | 4 | Várias Fichas ativas por conversa (até 3 no prompt) → **uma execução ativa por Ficha** | **Não testável no `poph-flows`**: o motor não conhece Ficha nem concorrência; a garantia é o índice único parcial de `fluxo_execucoes` (FX-20, PRD L6). O tipo documenta a regra (`poph_types::StatusExecucao`). |

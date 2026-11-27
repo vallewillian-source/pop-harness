@@ -110,10 +110,11 @@ The secret comes only from the environment (`POPH_EVO_SEGREDO_LOJA=...`), read a
 |---|---|---|
 | New message recorded | 200, `situacao: nova` | inbox, conversation, message and attachments recorded in one transaction |
 | Same message again (redelivery) | 200, `situacao: duplicada` | returns the same IDs; does not record or download media |
-| Connection state (`open`, `close`, QR) | 200, `efeito: estado` | updates the integration's `connection_state` |
+| Connection state (`open`, `close`, QR) | 200, `efeito: estado` | updates the integration's `connection_state`; the integration's `version` does not change |
 | `connecting` state or transient error | 200, `efeito: nenhum` | changes nothing |
 | Event with no effect (e.g. `send.message`) | 200, `efeito: nenhum` | does not record |
 | State for an integration that does not exist | 200, `efeito: integracao_inexistente` | does not create a row |
+| Message typed on the device (org with the Matrix module on) | 200, `efeito: aparelho` | records the message once as `out`/`device`, with no inbox and no outbox row; the conversation goes to `transferred` and the audit gets `device_takeover`; a redelivery does not duplicate |
 | Missing or wrong secret | 401, `webhook_nao_autorizado` | does not read the body nor record |
 | Instance or org not configured | 404 | — |
 | Message for an integration that does not exist or is archived | 404 | does not record (without an owner agent there is no conversation) |
@@ -130,8 +131,10 @@ Audio, video, stickers, contacts and location do not come in (decision of the ma
 our own send and what the customer typed on the phone; without the filter the agent would talk to itself. Accepting it
 is `Policy::accept_from_me` (`ChannelConfig::accept_from_me`), off by default. Whoever turns it on decides what to do
 with the event: today the server turns it on only for the org with the Matrix module active (MX-41), where the echo of
-our own send is discarded and the message typed on the device enters as `direction out` and `origin device`, with no
-turn. The conversation goes to `transferred`, so the next message from the customer does not get a reply from the agent either: the person on the device is the one answering.
+our own send is discarded — recognized by the `external_message_id` recorded when the send was confirmed, with no
+message, outbox row or takeover audit — and the message typed on the device enters as `direction out` and `origin
+device`, with no turn. The conversation goes to `transferred`, so the next message from the customer does not get a
+reply from the agent either: the person on the device is the one answering.
 
 **Unsupported content (MX-45).** Audio, video, sticker, contact, location and poll enter as **history text**, with the
 fixed notice from `poph_types::UnsupportedContent` (for audio, `[O cliente enviou um áudio, que o sistema não consegue

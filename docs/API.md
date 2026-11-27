@@ -1219,7 +1219,7 @@ Liberar ou tirar é a lista inteira de uma vez.
 - A versão do agente sobe a cada troca, então quem leu a lista antes e tenta gravar depois recebe
   `412` e relê. Não há "liberar para todos" (decisão em aberto no PRD §15).
 
-Provas: `crates/poph-server/tests/agente_fluxos.rs` (ponta a ponta, com servidor e banco
+Provas: `crates/poph-server/tests/agent_flows.rs` (ponta a ponta, com servidor e banco
 temporários). As listas de cobertura de `crates/poph-server/tests/api.rs` (OpenAPI, auditoria,
 isolamento por org e documentação da API) também conhecem as duas rotas.
 

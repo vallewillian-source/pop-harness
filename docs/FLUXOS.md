@@ -205,7 +205,7 @@ O passo a passo para descobrir o motivo está em [RUNBOOKS.md](RUNBOOKS.md), na 
 | Motor (início, ações, decisões, fim, efeitos) | `poph-flows/tests/engine.rs`, `engine_outcome.rs`, `poph-store/tests/flow_executions.rs` |
 | Gate G9 e turno | `poph-jev/tests/g9_fluxo.rs`, `poph-agent/tests/flow_turn.rs`, `flow_tools.rs` |
 | Paridade com o POP Atende | `poph-flows/tests/parity.rs` e [FLUXOS_PARIDADE.md](FLUXOS_PARIDADE.md) |
-| API, permissão, Fichas e ações humanas | `poph-server/tests/agente_fluxos.rs`, `fichas_leitura.rs`, `fichas_acoes.rs`, `org_isolation.rs` |
+| API, permissão, Fichas e ações humanas | `poph-server/tests/agent_flows.rs`, `fichas_leitura.rs`, `fichas_acoes.rs`, `org_isolation.rs` |
 | CLI | `poph/tests/cli_flow.rs` |
 | Backup | testes de backup em `poph-store` (19), `poph-server/tests/backup_http.rs` (9) e `poph/tests/cli_backup.rs` (6) |
 | Retenção e cluster | `poph-retention/tests/database.rs`, `poph/tests/cli_retencao.rs`, `poph-server/tests/cluster_forwarding.rs` |
