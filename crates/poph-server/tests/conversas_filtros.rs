@@ -1,4 +1,3 @@
-
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -18,31 +17,31 @@ use reqwest::{Client, Method};
 use serde_json::Value;
 use tokio::sync::oneshot;
 
-struct Cenario {
-    pasta: PathBuf,
+struct Scenario {
+    dir: PathBuf,
     store: Arc<Store>,
     config: HarnessConfig,
 }
 
-impl Cenario {
-    fn novo(rotulo: &str) -> Self {
-        static CONTADOR: AtomicUsize = AtomicUsize::new(0);
-        let n = CONTADOR.fetch_add(1, Ordering::Relaxed);
-        let pasta = std::env::temp_dir().join(format!(
-            "poph-conversas-element-{rotulo}-{}-{n}",
+impl Scenario {
+    fn new(label: &str) -> Self {
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "poph-conversas-element-{label}-{}-{n}",
             std::process::id()
         ));
-        let _ = fs::remove_dir_all(&pasta);
-        fs::create_dir_all(pasta.join("dados")).expect("pasta de dados");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("dados")).expect("pasta de dados");
         let mut config = HarnessConfig::default();
-        config.data.directory = pasta.join("dados");
+        config.data.directory = dir.join("dados");
         config.validar().expect("configuração válida");
-        let relogio = Arc::new(AtomicI64::new(1_000_000));
+        let clock = Arc::new(AtomicI64::new(1_000_000));
         let store = Store::open(&config)
             .expect("abre o banco")
-            .with_clock(Arc::new(move || relogio.fetch_add(10, Ordering::SeqCst)));
+            .with_clock(Arc::new(move || clock.fetch_add(10, Ordering::SeqCst)));
         Self {
-            pasta,
+            dir,
             store: Arc::new(store),
             config,
         }
@@ -63,19 +62,19 @@ impl Cenario {
             .expect("cria a org")
     }
 
-    fn token(&self, org: OrgId, rotulo: &str) -> String {
-        let segredo = format!("segredo-{rotulo}");
+    fn token(&self, org: OrgId, label: &str) -> String {
+        let secret = format!("segredo-{label}");
         let salt = SaltString::generate(&mut OsRng);
         let hash = Argon2::default()
-            .hash_password(segredo.as_bytes(), &salt)
+            .hash_password(secret.as_bytes(), &salt)
             .expect("hash argon2")
             .to_string();
-        let criado = self
+        let created = self
             .store
             .tokens()
-            .create(Some(org), rotulo, &hash)
+            .create(Some(org), label, &hash)
             .expect("cria o token");
-        format!("poph_{}_{segredo}", criado.id)
+        format!("poph_{}_{secret}", created.id)
     }
 
     fn agente(&self, org: &Org, slug: &str, nome: &str) -> Agente {
@@ -93,64 +92,64 @@ impl Cenario {
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.pasta);
+        let _ = fs::remove_dir_all(&self.dir);
     }
 }
 
-async fn servir(estado: ServerState) -> (String, oneshot::Sender<()>) {
+async fn serve(estado: ServerState) -> (String, oneshot::Sender<()>) {
     let app = poph_server::router(estado);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("porta efêmera");
     let endereco = format!("http://{}", listener.local_addr().expect("endereço"));
-    let (desligar, sinal) = oneshot::channel();
+    let (desligar, signal) = oneshot::channel();
     tokio::spawn(async move {
         let _ = axum::serve(listener, app)
             .with_graceful_shutdown(async {
-                let _ = sinal.await;
+                let _ = signal.await;
             })
             .await;
     });
     (endereco, desligar)
 }
 
-struct Resposta {
+struct Response {
     status: StatusCode,
     json: Value,
     texto: String,
 }
 
-async fn pedir(
+async fn request(
     base: &str,
-    metodo: Method,
-    caminho: &str,
+    method: Method,
+    path: &str,
     token: &str,
     if_match: Option<&str>,
-) -> Resposta {
-    let cliente = Client::builder()
+) -> Response {
+    let client = Client::builder()
         .timeout(Duration::from_secs(20))
         .build()
         .expect("cliente HTTP");
-    let mut pedido = cliente
-        .request(metodo, format!("{base}{caminho}"))
+    let mut call = client
+        .request(method, format!("{base}{path}"))
         .bearer_auth(token);
-    if let Some(valor) = if_match {
-        pedido = pedido.header("If-Match", valor);
+    if let Some(etag) = if_match {
+        call = call.header("If-Match", etag);
     }
-    let resposta = pedido.send().await.expect("pedido HTTP");
-    let status = resposta.status();
-    let texto = resposta.text().await.unwrap_or_default();
+    let response = call.send().await.expect("pedido HTTP");
+    let status = response.status();
+    let texto = response.text().await.unwrap_or_default();
     let json = serde_json::from_str(&texto).unwrap_or(Value::Null);
-    Resposta {
+    Response {
         status,
         json,
         texto,
     }
 }
 
-fn conversa_do_cliente(c: &Cenario, org: &Org, agente: AgentId, peer: &str) -> Conversa {
+fn conversation_for_client(c: &Scenario, org: &Org, agente: AgentId, peer: &str) -> Conversa {
     c.store
         .conversations()
         .create(
@@ -166,37 +165,37 @@ fn conversa_do_cliente(c: &Cenario, org: &Org, agente: AgentId, peer: &str) -> C
         .expect("cria a conversa")
 }
 
-fn itens_de(resposta: &Resposta) -> Vec<Value> {
-    assert_eq!(resposta.status, StatusCode::OK, "{}", resposta.texto);
-    resposta.json["items"]
+fn items_of(response: &Response) -> Vec<Value> {
+    assert_eq!(response.status, StatusCode::OK, "{}", response.texto);
+    response.json["items"]
         .as_array()
         .cloned()
         .expect("items da lista")
 }
 
-fn ids_de(itens: &[Value]) -> Vec<String> {
-    itens
+fn ids_of(items: &[Value]) -> Vec<String> {
+    items
         .iter()
         .map(|v| v["id"].as_str().unwrap_or_default().to_owned())
         .collect()
 }
 
-fn caminho_lista(org: OrgId) -> String {
+fn list_path(org: OrgId) -> String {
     format!("/admin/v1/orgs/{org}/conversations")
 }
 
 #[tokio::test]
-async fn filtro_por_cliente_e_situacao_ficam_dentro_da_org() {
-    let c = Cenario::novo("filtros");
+async fn client_and_status_filters_stay_inside_org() {
+    let c = Scenario::new("filtros");
     let a = c.org("a");
     let b = c.org("b");
     let token_a = c.token(a.id, "a");
-    let agente_a = c.agente(&a, "bia", "Bia");
-    let agente_b = c.agente(&b, "leo", "Leo");
-    let c1 = conversa_do_cliente(&c, &a, agente_a.id, "5511");
-    let c2 = conversa_do_cliente(&c, &a, agente_a.id, "5511");
-    let c3 = conversa_do_cliente(&c, &a, agente_a.id, "5522");
-    let d1 = conversa_do_cliente(&c, &b, agente_b.id, "5511");
+    let agent_a = c.agente(&a, "bia", "Bia");
+    let agent_b = c.agente(&b, "leo", "Leo");
+    let c1 = conversation_for_client(&c, &a, agent_a.id, "5511");
+    let c2 = conversation_for_client(&c, &a, agent_a.id, "5511");
+    let c3 = conversation_for_client(&c, &a, agent_a.id, "5522");
+    let d1 = conversation_for_client(&c, &b, agent_b.id, "5511");
     c.store
         .conversations()
         .transfer(a.id, c2.id, None, None, "{}".to_owned())
@@ -205,84 +204,84 @@ async fn filtro_por_cliente_e_situacao_ficam_dentro_da_org() {
         .conversations()
         .change_status(a.id, c3.id, 1, ConversationStatus::Closed, None)
         .expect("fecha c3");
-    let (base, desligar) = servir(c.estado()).await;
-    let lista = caminho_lista(a.id);
+    let (base, desligar) = serve(c.estado()).await;
+    let list_url = list_path(a.id);
 
-    let do_cliente = pedir(
+    let by_client = request(
         &base,
         Method::GET,
-        &format!("{lista}?external_peer=5511"),
+        &format!("{list_url}?external_peer=5511"),
         &token_a,
         None,
     )
     .await;
-    let itens = itens_de(&do_cliente);
+    let items = items_of(&by_client);
     assert_eq!(
-        ids_de(&itens),
+        ids_of(&items),
         vec![c1.id.to_string(), c2.id.to_string()],
         "só as duas conversas do cliente, na org A"
     );
     assert!(
-        !ids_de(&itens).contains(&d1.id.to_string()),
+        !ids_of(&items).contains(&d1.id.to_string()),
         "a conversa do mesmo cliente na org B não aparece"
     );
 
-    let transferidas = pedir(
+    let transferred = request(
         &base,
         Method::GET,
-        &format!("{lista}?status=transferred"),
+        &format!("{list_url}?status=transferred"),
         &token_a,
         None,
     )
     .await;
-    assert_eq!(ids_de(&itens_de(&transferidas)), vec![c2.id.to_string()]);
+    assert_eq!(ids_of(&items_of(&transferred)), vec![c2.id.to_string()]);
 
-    let os_dois = pedir(
+    let both = request(
         &base,
         Method::GET,
-        &format!("{lista}?external_peer=5511&status=open"),
+        &format!("{list_url}?external_peer=5511&status=open"),
         &token_a,
         None,
     )
     .await;
     assert_eq!(
-        ids_de(&itens_de(&os_dois)),
+        ids_of(&items_of(&both)),
         vec![c1.id.to_string()],
         "cliente e situação juntos"
     );
 
-    let fechadas = pedir(
+    let closed = request(
         &base,
         Method::GET,
-        &format!("{lista}?status=closed"),
+        &format!("{list_url}?status=closed"),
         &token_a,
         None,
     )
     .await;
-    assert_eq!(ids_de(&itens_de(&fechadas)), vec![c3.id.to_string()]);
+    assert_eq!(ids_of(&items_of(&closed)), vec![c3.id.to_string()]);
 
-    let sem_conversa = pedir(
+    let none_found = request(
         &base,
         Method::GET,
-        &format!("{lista}?external_peer=9999"),
+        &format!("{list_url}?external_peer=9999"),
         &token_a,
         None,
     )
     .await;
-    assert!(itens_de(&sem_conversa).is_empty());
+    assert!(items_of(&none_found).is_empty());
 
     let _ = desligar.send(());
 }
 
 #[tokio::test]
-async fn sort_recent_ordena_pela_atividade_e_devolve_next_cursor_nulo() {
-    let c = Cenario::novo("recente");
+async fn sort_recent_orders_by_activity_and_returns_null_next_cursor() {
+    let c = Scenario::new("recente");
     let org = c.org("a");
     let token = c.token(org.id, "a");
     let agente = c.agente(&org, "bia", "Bia");
-    let c1 = conversa_do_cliente(&c, &org, agente.id, "5511");
-    let c2 = conversa_do_cliente(&c, &org, agente.id, "5522");
-    let c3 = conversa_do_cliente(&c, &org, agente.id, "5533");
+    let c1 = conversation_for_client(&c, &org, agente.id, "5511");
+    let c2 = conversation_for_client(&c, &org, agente.id, "5522");
+    let c3 = conversation_for_client(&c, &org, agente.id, "5533");
     c.store
         .conversations()
         .touch(org.id, c1.id, 9_000_000)
@@ -291,108 +290,108 @@ async fn sort_recent_ordena_pela_atividade_e_devolve_next_cursor_nulo() {
         .conversations()
         .touch(org.id, c3.id, 9_000_000)
         .expect("toca c3");
-    let (base, desligar) = servir(c.estado()).await;
-    let lista = caminho_lista(org.id);
+    let (base, desligar) = serve(c.estado()).await;
+    let list_url = list_path(org.id);
 
-    let ordenadas = pedir(
+    let ordered = request(
         &base,
         Method::GET,
-        &format!("{lista}?sort=recent"),
+        &format!("{list_url}?sort=recent"),
         &token,
         None,
     )
     .await;
-    assert_eq!(ordenadas.status, StatusCode::OK, "{}", ordenadas.texto);
+    assert_eq!(ordered.status, StatusCode::OK, "{}", ordered.texto);
     assert_eq!(
-        ids_de(&itens_de(&ordenadas)),
+        ids_of(&items_of(&ordered)),
         vec![c3.id.to_string(), c1.id.to_string(), c2.id.to_string()]
     );
     assert!(
-        ordenadas.json["next_cursor"].is_null(),
+        ordered.json["next_cursor"].is_null(),
         "sort=recent não usa cursor: next_cursor vem nulo"
     );
 
-    let duas = pedir(
+    let two = request(
         &base,
         Method::GET,
-        &format!("{lista}?sort=recent&limit=2"),
+        &format!("{list_url}?sort=recent&limit=2"),
         &token,
         None,
     )
     .await;
     assert_eq!(
-        ids_de(&itens_de(&duas)),
+        ids_of(&items_of(&two)),
         vec![c3.id.to_string(), c1.id.to_string()]
     );
-    assert!(duas.json["next_cursor"].is_null());
+    assert!(two.json["next_cursor"].is_null());
 
-    let cursor_vazio = pedir(
+    let empty_cursor = request(
         &base,
         Method::GET,
-        &format!("{lista}?sort=recent&cursor="),
+        &format!("{list_url}?sort=recent&cursor="),
         &token,
         None,
     )
     .await;
     assert_eq!(
-        cursor_vazio.status,
+        empty_cursor.status,
         StatusCode::OK,
         "{}",
-        cursor_vazio.texto
+        empty_cursor.texto
     );
 
-    let do_cliente = pedir(
+    let by_client = request(
         &base,
         Method::GET,
-        &format!("{lista}?sort=recent&external_peer=5522"),
+        &format!("{list_url}?sort=recent&external_peer=5522"),
         &token,
         None,
     )
     .await;
-    assert_eq!(ids_de(&itens_de(&do_cliente)), vec![c2.id.to_string()]);
+    assert_eq!(ids_of(&items_of(&by_client)), vec![c2.id.to_string()]);
 
     let _ = desligar.send(());
 }
 
 #[tokio::test]
-async fn sort_recent_recusa_cursor_e_limite_fora_da_faixa_com_400() {
-    let c = Cenario::novo("recente-400");
+async fn sort_recent_rejects_cursor_and_out_of_range_limit_with_400() {
+    let c = Scenario::new("recente-400");
     let org = c.org("a");
     let token = c.token(org.id, "a");
     let agente = c.agente(&org, "bia", "Bia");
-    let conversa = conversa_do_cliente(&c, &org, agente.id, "5511");
-    let (base, desligar) = servir(c.estado()).await;
-    let lista = caminho_lista(org.id);
+    let conversa = conversation_for_client(&c, &org, agente.id, "5511");
+    let (base, desligar) = serve(c.estado()).await;
+    let list_url = list_path(org.id);
 
-    let com_cursor = pedir(
+    let with_cursor = request(
         &base,
         Method::GET,
-        &format!("{lista}?sort=recent&cursor={}", conversa.id),
+        &format!("{list_url}?sort=recent&cursor={}", conversa.id),
         &token,
         None,
     )
     .await;
     assert_eq!(
-        com_cursor.status,
+        with_cursor.status,
         StatusCode::BAD_REQUEST,
         "cursor com sort=recent é recusado, não ignorado: {}",
-        com_cursor.texto
+        with_cursor.texto
     );
 
-    for limite in ["0", "201"] {
-        let fora = pedir(
+    for limit in ["0", "201"] {
+        let outside = request(
             &base,
             Method::GET,
-            &format!("{lista}?sort=recent&limit={limite}"),
+            &format!("{list_url}?sort=recent&limit={limit}"),
             &token,
             None,
         )
         .await;
         assert_eq!(
-            fora.status,
+            outside.status,
             StatusCode::BAD_REQUEST,
-            "limit={limite} com sort=recent: {}",
-            fora.texto
+            "limit={limit} com sort=recent: {}",
+            outside.texto
         );
     }
 
@@ -400,32 +399,32 @@ async fn sort_recent_recusa_cursor_e_limite_fora_da_faixa_com_400() {
 }
 
 #[tokio::test]
-async fn valor_invalido_nos_filtros_devolve_400_sem_repetir_o_valor() {
-    let c = Cenario::novo("invalidos");
+async fn invalid_filter_value_returns_400_without_echoing_value() {
+    let c = Scenario::new("invalidos");
     let org = c.org("a");
     let token = c.token(org.id, "a");
-    let (base, desligar) = servir(c.estado()).await;
-    let lista = caminho_lista(org.id);
-    const ESTRANHO: &str = "xyzzy-valor-estranho";
+    let (base, desligar) = serve(c.estado()).await;
+    let list_url = list_path(org.id);
+    const ODD_VALUE: &str = "xyzzy-valor-estranho";
 
-    for consulta in [
-        format!("{lista}?status={ESTRANHO}"),
-        format!("{lista}?external_peer=%20%20"),
-        format!("{lista}?external_peer="),
-        format!("{lista}?sort={ESTRANHO}"),
-        format!("{lista}?sort=recent&limit=0"),
+    for query in [
+        format!("{list_url}?status={ODD_VALUE}"),
+        format!("{list_url}?external_peer=%20%20"),
+        format!("{list_url}?external_peer="),
+        format!("{list_url}?sort={ODD_VALUE}"),
+        format!("{list_url}?sort=recent&limit=0"),
     ] {
-        let resposta = pedir(&base, Method::GET, &consulta, &token, None).await;
+        let response = request(&base, Method::GET, &query, &token, None).await;
         assert_eq!(
-            resposta.status,
+            response.status,
             StatusCode::BAD_REQUEST,
-            "{consulta}: {}",
-            resposta.texto
+            "{query}: {}",
+            response.texto
         );
         assert!(
-            !resposta.texto.contains(ESTRANHO),
+            !response.texto.contains(ODD_VALUE),
             "o valor recebido não volta na mensagem de erro: {}",
-            resposta.texto
+            response.texto
         );
     }
 
@@ -433,76 +432,76 @@ async fn valor_invalido_nos_filtros_devolve_400_sem_repetir_o_valor() {
 }
 
 #[tokio::test]
-async fn sem_sort_a_lista_segue_por_id_com_cursor_e_limit_ajustado() {
-    let c = Cenario::novo("sem-sort");
+async fn without_sort_list_follows_id_with_cursor_and_adjusted_limit() {
+    let c = Scenario::new("sem-sort");
     let org = c.org("a");
     let token = c.token(org.id, "a");
     let agente = c.agente(&org, "bia", "Bia");
     let ids: Vec<String> = (0..5)
         .map(|n| {
-            conversa_do_cliente(&c, &org, agente.id, &format!("55{n}"))
+            conversation_for_client(&c, &org, agente.id, &format!("55{n}"))
                 .id
                 .to_string()
         })
         .collect();
-    let (base, desligar) = servir(c.estado()).await;
-    let lista = caminho_lista(org.id);
+    let (base, desligar) = serve(c.estado()).await;
+    let list_url = list_path(org.id);
 
-    let primeira = pedir(
+    let first = request(
         &base,
         Method::GET,
-        &format!("{lista}?limit=2"),
+        &format!("{list_url}?limit=2"),
         &token,
         None,
     )
     .await;
-    assert_eq!(ids_de(&itens_de(&primeira)), ids[..2]);
-    let cursor = primeira.json["next_cursor"]
+    assert_eq!(ids_of(&items_of(&first)), ids[..2]);
+    let cursor = first.json["next_cursor"]
         .as_str()
         .expect("página cheia traz next_cursor")
         .to_owned();
     assert_eq!(cursor, ids[1], "o cursor é o último id da página");
 
-    let segunda = pedir(
+    let second = request(
         &base,
         Method::GET,
-        &format!("{lista}?limit=2&cursor={cursor}"),
+        &format!("{list_url}?limit=2&cursor={cursor}"),
         &token,
         None,
     )
     .await;
-    assert_eq!(ids_de(&itens_de(&segunda)), ids[2..4]);
+    assert_eq!(ids_of(&items_of(&second)), ids[2..4]);
 
-    let ultima = pedir(
+    let last = request(
         &base,
         Method::GET,
-        &format!("{lista}?limit=2&cursor={}", ids[3]),
+        &format!("{list_url}?limit=2&cursor={}", ids[3]),
         &token,
         None,
     )
     .await;
-    assert_eq!(ids_de(&itens_de(&ultima)), ids[4..5]);
-    assert!(ultima.json["next_cursor"].is_null());
+    assert_eq!(ids_of(&items_of(&last)), ids[4..5]);
+    assert!(last.json["next_cursor"].is_null());
 
-    let grande = pedir(
+    let large = request(
         &base,
         Method::GET,
-        &format!("{lista}?limit=500"),
+        &format!("{list_url}?limit=500"),
         &token,
         None,
     )
     .await;
-    assert_eq!(itens_de(&grande).len(), 5);
+    assert_eq!(items_of(&large).len(), 5);
 
-    let do_cliente = pedir(
+    let by_client = request(
         &base,
         Method::GET,
-        &format!("{lista}?external_peer=550&limit=1"),
+        &format!("{list_url}?external_peer=550&limit=1"),
         &token,
         None,
     )
     .await;
-    assert_eq!(ids_de(&itens_de(&do_cliente)), ids[..1]);
+    assert_eq!(ids_of(&items_of(&by_client)), ids[..1]);
 
     let _ = desligar.send(());
 }
