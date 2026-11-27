@@ -1,19 +1,3 @@
-//! Casos de paridade com o POP Atende (FX-15).
-//!
-//! Cada caso desta suíte reproduz um comportamento que o motor do POP Atende tem e que
-//! **permanece** no Harness. O cabeçalho de cada caso cita o teste ou a função de onde ele veio:
-//! `apps/backend/tests/test_fichas/` (a suíte do POP Atende) ou `apps/backend/core/fichas/`
-//! (`state_engine.py`, `validators.py`).
-//!
-//! As diferenças **intencionais** do PRD de Fluxos §8 estão em `docs/FLUXOS_PARIDADE.md`, com o
-//! teste que prova cada uma. O que o PRD removeu não é reproduzido aqui: `completion`
-//! `any`/`all`, auto-transição por busca em largura, atores `client`/`provider` e o fechamento da
-//! Ficha por `next_step = "closed"`. Onde o caso serve justamente para provar que a remoção vale,
-//! ele está nomeado como tal.
-//!
-//! As IRs são montadas à mão (como nos testes do motor) para o caso ser o menor possível; os nomes
-//! de etapa e de campo seguem os templates do POP Atende (`abertura`, `orcamento`, `fechamento`).
-
 use std::sync::OnceLock;
 
 use poph_fluxos::ir::{
@@ -24,115 +8,117 @@ use poph_fluxos::regras::{Dados, RuleEvaluator};
 use poph_types::{ActionActor, ExecutionStatus, FieldKind, RecordEventKind};
 use serde_json::{Value as Json, json};
 
-// ------------------------------------------------------------------ auxiliares
-
-/// Contexto mínimo das chamadas do motor (sem Ficha, sem cliente, só combinadores).
-fn contexto() -> Context<'static> {
-    static AVALIADOR: OnceLock<RuleEvaluator> = OnceLock::new();
-    Context::new(AVALIADOR.get_or_init(RuleEvaluator::without_functions))
+fn context() -> Context<'static> {
+    static EVALUATOR: OnceLock<RuleEvaluator> = OnceLock::new();
+    Context::new(EVALUATOR.get_or_init(RuleEvaluator::without_functions))
 }
 
-fn campo(id: &str, tipo: FieldKind, obrigatorio: bool) -> Campo {
+fn campo(id: &str, tipo: FieldKind, required: bool) -> Campo {
     Campo {
         id: id.to_owned(),
         label: id.to_uppercase(),
         tipo,
-        required: obrigatorio,
+        required,
         options: Vec::new(),
         help: None,
     }
 }
 
-fn campo_opcao(id: &str, opcoes: &[&str]) -> Campo {
+fn field_option(id: &str, options: &[&str]) -> Campo {
     Campo {
         id: id.to_owned(),
         label: id.to_uppercase(),
         tipo: FieldKind::Option,
         required: true,
-        options: opcoes.iter().map(|opcao| (*opcao).to_owned()).collect(),
+        options: options.iter().map(|option| (*option).to_owned()).collect(),
         help: None,
     }
 }
 
-fn acao(id: &str, ator: Option<ActionActor>, exige: &[&str], destino: Destination) -> Acao {
+fn acao(id: &str, actor: Option<ActionActor>, requires: &[&str], target: Destination) -> Acao {
     Acao {
         id: id.to_owned(),
         label: id.to_uppercase(),
-        requires: exige.iter().map(|nome| (*nome).to_owned()).collect(),
-        actor: ator,
-        goes_to: destino,
+        requires: requires.iter().map(|nome| (*nome).to_owned()).collect(),
+        actor,
+        goes_to: target,
         effects: Vec::new(),
     }
 }
 
-fn acao_para_etapa(id: &str, ator: Option<ActionActor>, exige: &[&str], vai_para: &str) -> Acao {
+fn action_for_step(
+    id: &str,
+    actor: Option<ActionActor>,
+    requires: &[&str],
+    goes_for: &str,
+) -> Acao {
     acao(
         id,
-        ator,
-        exige,
+        actor,
+        requires,
         Destination::Etapa {
-            id: vai_para.to_owned(),
+            id: goes_for.to_owned(),
         },
     )
 }
 
-fn acao_para_fim(
+fn action_for_end(
     id: &str,
-    ator: Option<ActionActor>,
+    actor: Option<ActionActor>,
     resultado: &str,
-    encerra_atendimento: bool,
+    closes_service: bool,
 ) -> Acao {
     acao(
         id,
-        ator,
+        actor,
         &[],
         Destination::Fim {
             id: "concluido".to_owned(),
             resultado: Some(resultado.to_owned()),
-            ends_service: encerra_atendimento,
+            ends_service: closes_service,
         },
     )
 }
 
-fn etapa(id: &str, atores: &[ActionActor], campos: Vec<Campo>, acoes: Vec<Acao>) -> Etapa {
+fn etapa(id: &str, actors: &[ActionActor], campos: Vec<Campo>, actions: Vec<Acao>) -> Etapa {
     Etapa {
         id: id.to_owned(),
         nome: id.to_uppercase(),
         instruction: None,
-        action_actors: atores.to_vec(),
+        action_actors: actors.to_vec(),
         campos,
-        actions: acoes,
+        actions,
         on_enter: Vec::new(),
     }
 }
 
-fn etapa_com_entrada(
+fn step_with_entry(
     id: &str,
-    atores: &[ActionActor],
+    actors: &[ActionActor],
     campos: Vec<Campo>,
-    acoes: Vec<Acao>,
-    ao_entrar: Vec<Effect>,
+    actions: Vec<Acao>,
+    enter: Vec<Effect>,
 ) -> Etapa {
     Etapa {
-        on_enter: ao_entrar,
-        ..etapa(id, atores, campos, acoes)
+        on_enter: enter,
+        ..etapa(id, actors, campos, actions)
     }
 }
 
-fn decisao(id: &str, se: Rule, entao: Destination, senao: Destination) -> Decisao {
+fn decisao(id: &str, se: Rule, then: Destination, r#else: Destination) -> Decisao {
     Decisao {
         id: id.to_owned(),
         se,
-        then_branch: entao,
-        else_branch: senao,
+        then_branch: then,
+        else_branch: r#else,
     }
 }
 
-fn vai_para(id: &str) -> Destination {
+fn goes_for(id: &str) -> Destination {
     Destination::Etapa { id: id.to_owned() }
 }
 
-fn fluxo(inicio: &str, etapas: Vec<Etapa>, decisoes: Vec<Decisao>) -> Ir {
+fn fluxo(beginning: &str, steps: Vec<Etapa>, decisions: Vec<Decisao>) -> Ir {
     Ir {
         schema_versao: poph_fluxos::ir::SCHEMA_VERSAO,
         fluxo: Fluxo {
@@ -145,9 +131,9 @@ fn fluxo(inicio: &str, etapas: Vec<Etapa>, decisoes: Vec<Decisao>) -> Ir {
             not_when: None,
             examples: vec!["quero um orçamento".to_owned()],
         },
-        start: inicio.to_owned(),
-        stages: etapas,
-        decisions: decisoes,
+        start: beginning.to_owned(),
+        stages: steps,
+        decisions,
         ends: vec![
             Fim {
                 id: "concluido".to_owned(),
@@ -164,31 +150,29 @@ fn fluxo(inicio: &str, etapas: Vec<Etapa>, decisoes: Vec<Decisao>) -> Ir {
     }
 }
 
-fn campos(valor: Json) -> Campos {
-    valor
+fn campos(value: Json) -> Campos {
+    value
         .as_object()
         .expect("o caso informa um objeto de campos")
         .clone()
 }
 
-fn sem_campos() -> Campos {
+fn without_fields() -> Campos {
     Campos::new()
 }
 
-fn dados(valor: Json) -> Dados {
-    valor
+fn dados(value: Json) -> Dados {
+    value
         .as_object()
         .expect("o caso informa um objeto de dados")
         .clone()
 }
 
-fn tipos(resultado: &poph_fluxos::motor::Resultado) -> Vec<RecordEventKind> {
+fn kinds(resultado: &poph_fluxos::motor::Resultado) -> Vec<RecordEventKind> {
     resultado.events.iter().map(|evento| evento.tipo).collect()
 }
 
-/// Fluxo de duas etapas em que `execucao` tem uma ação restrita ao agente e outra ao atendente,
-/// ambas levando para `pos` — o cenário real da `fch_BB9AE9BDE1A4` do POP Atende.
-fn fluxo_de_dois_atores() -> Ir {
+fn flow_two_actors() -> Ir {
     fluxo(
         "execucao",
         vec![
@@ -197,15 +181,15 @@ fn fluxo_de_dois_atores() -> Ir {
                 &[ActionActor::Agent, ActionActor::Attendant],
                 Vec::new(),
                 vec![
-                    acao_para_etapa("agente_conclui", Some(ActionActor::Agent), &[], "pos"),
-                    acao_para_etapa("atendente_valida", Some(ActionActor::Attendant), &[], "pos"),
+                    action_for_step("agente_conclui", Some(ActionActor::Agent), &[], "pos"),
+                    action_for_step("atendente_valida", Some(ActionActor::Attendant), &[], "pos"),
                 ],
             ),
             etapa(
                 "pos",
                 &[ActionActor::Agent],
                 Vec::new(),
-                vec![acao_para_fim(
+                vec![action_for_end(
                     "fechar",
                     Some(ActionActor::Agent),
                     "Feito",
@@ -217,14 +201,8 @@ fn fluxo_de_dois_atores() -> Ir {
     )
 }
 
-// ---------------------------------------------------------------------------------------------
-// Avanço `auto` (PRD §6.4; `state_engine.resolve_auto_advance`)
-// ---------------------------------------------------------------------------------------------
-
-/// Origem: `test_state_engine.py::TestStateEngineExecution::test_any_completion_advances_immediately`
-/// e `state_engine.execute_action` (completion `auto` com um único ator exigido).
 #[test]
-fn auto_avanca_quando_o_unico_ator_exigido_e_quem_agiu() {
+fn auto_advances_when_only_required_actor_is_who_acted() {
     let ir = fluxo(
         "abertura",
         vec![
@@ -232,7 +210,7 @@ fn auto_avanca_quando_o_unico_ator_exigido_e_quem_agiu() {
                 "abertura",
                 &[ActionActor::Agent],
                 vec![campo("relato", FieldKind::Text, true)],
-                vec![acao_para_etapa(
+                vec![action_for_step(
                     "registrar_relato",
                     None,
                     &["relato"],
@@ -243,7 +221,7 @@ fn auto_avanca_quando_o_unico_ator_exigido_e_quem_agiu() {
                 "orcamento",
                 &[ActionActor::Agent],
                 Vec::new(),
-                vec![acao_para_fim("fechar", None, "Feito", false)],
+                vec![action_for_end("fechar", None, "Feito", false)],
             ),
         ],
         Vec::new(),
@@ -257,11 +235,11 @@ fn auto_avanca_quando_o_unico_ator_exigido_e_quem_agiu() {
         &campos(json!({ "relato": "Chuveiro queimado" })),
         ActionActor::Agent,
         Some("k1"),
-        &contexto(),
+        &context(),
     )
     .expect("a ação é aceita");
 
-    assert_eq!(resultado.new_state.no_atual, vai_para("orcamento"));
+    assert_eq!(resultado.new_state.no_atual, goes_for("orcamento"));
     assert_eq!(resultado.new_state.status, ExecutionStatus::Active);
     assert_eq!(
         resultado.new_state.dados["abertura"]["relato"],
@@ -271,28 +249,26 @@ fn auto_avanca_quando_o_unico_ator_exigido_e_quem_agiu() {
         resultado.waiting.is_empty(),
         "quem age sozinho não deixa ninguém pendente"
     );
-    assert!(tipos(&resultado).contains(&RecordEventKind::StepEntered));
+    assert!(kinds(&resultado).contains(&RecordEventKind::StepEntered));
 }
 
-/// Origem: `test_state_engine.py::TestCompletionGatedActors::test_all_waits_for_second_gated_actor_then_advances`
-/// (primeira metade) — o atendente age e o agente ainda não, então a etapa fica `parcial`.
 #[test]
-fn auto_fica_parcial_quando_falta_o_outro_ator_restrito() {
-    let ir = fluxo_de_dois_atores();
+fn auto_stays_partial_when_other_restricted_actor_missing() {
+    let ir = flow_two_actors();
     let estado = start(&ir).expect("a execução começa");
 
     let resultado = execute_action(
         &ir,
         &estado,
         "atendente_valida",
-        &sem_campos(),
+        &without_fields(),
         ActionActor::Attendant,
         Some("k1"),
-        &contexto(),
+        &context(),
     )
     .expect("a ação é aceita");
 
-    assert_eq!(resultado.new_state.no_atual, vai_para("execucao"));
+    assert_eq!(resultado.new_state.no_atual, goes_for("execucao"));
     assert_eq!(resultado.new_state.status, ExecutionStatus::Active);
     assert_eq!(
         resultado.new_state.actors_who_acted,
@@ -303,108 +279,100 @@ fn auto_fica_parcial_quando_falta_o_outro_ator_restrito() {
         vec![ActionActor::Agent],
         "o Python devolve `waiting_on == [agent]`"
     );
-    assert_eq!(tipos(&resultado), vec![RecordEventKind::ActionExecuted]);
+    assert_eq!(kinds(&resultado), vec![RecordEventKind::ActionExecuted]);
     assert_eq!(
         required_actors(ir.stages.first().expect("há etapa")),
         vec![ActionActor::Agent, ActionActor::Attendant]
     );
 }
 
-/// Origem: `test_state_engine.py::TestCompletionGatedActors::test_all_waits_for_second_gated_actor_then_advances`
-/// (segunda metade) — o segundo ator age e a etapa avança.
 #[test]
-fn auto_avanca_quando_o_segundo_ator_restrito_age() {
-    let ir = fluxo_de_dois_atores();
+fn auto_advances_when_second_actor_restricted_acts() {
+    let ir = flow_two_actors();
     let estado = start(&ir).expect("a execução começa");
-    let parcial = execute_action(
+    let partial = execute_action(
         &ir,
         &estado,
         "atendente_valida",
-        &sem_campos(),
+        &without_fields(),
         ActionActor::Attendant,
         Some("k1"),
-        &contexto(),
+        &context(),
     )
     .expect("a primeira ação é aceita");
 
     let resultado = execute_action(
         &ir,
-        &parcial.new_state,
+        &partial.new_state,
         "agente_conclui",
-        &sem_campos(),
+        &without_fields(),
         ActionActor::Agent,
         Some("k2"),
-        &contexto(),
+        &context(),
     )
     .expect("a segunda ação é aceita");
 
-    assert_eq!(resultado.new_state.no_atual, vai_para("pos"));
+    assert_eq!(resultado.new_state.no_atual, goes_for("pos"));
     assert!(resultado.waiting.is_empty());
     assert_eq!(resultado.new_state.actors_who_acted, Vec::new());
-    assert_eq!(tipos(&resultado)[0], RecordEventKind::ActionExecuted);
-    assert!(tipos(&resultado).contains(&RecordEventKind::StepCompleted));
+    assert_eq!(kinds(&resultado)[0], RecordEventKind::ActionExecuted);
+    assert!(kinds(&resultado).contains(&RecordEventKind::StepCompleted));
 }
 
-/// Origem: `state_engine.resolve_auto_advance` — a decisão olha as ações **não executadas**, então
-/// a ordem dos dois atores não muda o destino.
 #[test]
-fn auto_os_dois_atores_chegam_ao_mesmo_destino_em_qualquer_ordem() {
-    let ir = fluxo_de_dois_atores();
+fn auto_both_actors_arrive_same_target_in_any_order() {
+    let ir = flow_two_actors();
     let estado = start(&ir).expect("a execução começa");
 
-    // Agente primeiro: o atendente fica pendente.
-    let agente_primeiro = execute_action(
+    let agent_first = execute_action(
         &ir,
         &estado,
         "agente_conclui",
-        &sem_campos(),
+        &without_fields(),
         ActionActor::Agent,
         Some("k1"),
-        &contexto(),
+        &context(),
     )
     .expect("a ação do agente é aceita");
-    assert_eq!(agente_primeiro.waiting, vec![ActionActor::Attendant]);
-    let depois = execute_action(
+    assert_eq!(agent_first.waiting, vec![ActionActor::Attendant]);
+    let after = execute_action(
         &ir,
-        &agente_primeiro.new_state,
+        &agent_first.new_state,
         "atendente_valida",
-        &sem_campos(),
+        &without_fields(),
         ActionActor::Attendant,
         Some("k2"),
-        &contexto(),
+        &context(),
     )
     .expect("a ação do atendente é aceita");
-    assert_eq!(depois.new_state.no_atual, vai_para("pos"));
+    assert_eq!(after.new_state.no_atual, goes_for("pos"));
 
-    // Atendente primeiro: o agente fica pendente, e o destino é o mesmo.
-    let atendente_primeiro = execute_action(
+    let attendant_first = execute_action(
         &ir,
         &estado,
         "atendente_valida",
-        &sem_campos(),
+        &without_fields(),
         ActionActor::Attendant,
         Some("k1"),
-        &contexto(),
+        &context(),
     )
     .expect("a ação do atendente é aceita");
-    assert_eq!(atendente_primeiro.waiting, vec![ActionActor::Agent]);
-    let depois = execute_action(
+    assert_eq!(attendant_first.waiting, vec![ActionActor::Agent]);
+    let after = execute_action(
         &ir,
-        &atendente_primeiro.new_state,
+        &attendant_first.new_state,
         "agente_conclui",
-        &sem_campos(),
+        &without_fields(),
         ActionActor::Agent,
         Some("k2"),
-        &contexto(),
+        &context(),
     )
     .expect("a ação do agente é aceita");
-    assert_eq!(depois.new_state.no_atual, vai_para("pos"));
+    assert_eq!(after.new_state.no_atual, goes_for("pos"));
 }
 
-/// Origem: `test_state_engine.py::TestCompletionGatedActors::test_all_with_client_actor_advances_on_agent_action`
-/// — ator que está em `actors` mas não tem ação própria restrita nunca trava a etapa.
 #[test]
-fn auto_ator_sem_acao_propria_nao_trava_a_etapa() {
+fn auto_actor_without_own_action_does_not_lock_step() {
     let ir = fluxo(
         "abertura",
         vec![
@@ -412,7 +380,7 @@ fn auto_ator_sem_acao_propria_nao_trava_a_etapa() {
                 "abertura",
                 &[ActionActor::Agent, ActionActor::Attendant],
                 Vec::new(),
-                vec![acao_para_etapa(
+                vec![action_for_step(
                     "relatar",
                     Some(ActionActor::Agent),
                     &[],
@@ -423,7 +391,7 @@ fn auto_ator_sem_acao_propria_nao_trava_a_etapa() {
                 "agendamento",
                 &[ActionActor::Agent],
                 Vec::new(),
-                vec![acao_para_fim("fechar", None, "Feito", false)],
+                vec![action_for_end("fechar", None, "Feito", false)],
             ),
         ],
         Vec::new(),
@@ -434,21 +402,19 @@ fn auto_ator_sem_acao_propria_nao_trava_a_etapa() {
         &ir,
         &estado,
         "relatar",
-        &sem_campos(),
+        &without_fields(),
         ActionActor::Agent,
         Some("k1"),
-        &contexto(),
+        &context(),
     )
     .expect("a ação é aceita");
 
-    assert_eq!(resultado.new_state.no_atual, vai_para("agendamento"));
+    assert_eq!(resultado.new_state.no_atual, goes_for("agendamento"));
     assert!(resultado.waiting.is_empty());
 }
 
-/// Origem: `test_state_engine.py::TestAutoCompletionExecution::test_auto_close_action_is_decisive`
-/// — ação de encerramento efetiva mesmo com outro participante pendente.
 #[test]
-fn auto_a_acao_que_leva_ao_fim_e_decisiva_com_outro_ator_pendente() {
+fn auto_action_leading_to_end_is_decisive_with_other_actor_pending() {
     let ir = fluxo(
         "orcamento",
         vec![
@@ -457,15 +423,15 @@ fn auto_a_acao_que_leva_ao_fim_e_decisiva_com_outro_ator_pendente() {
                 &[ActionActor::Agent, ActionActor::Attendant],
                 Vec::new(),
                 vec![
-                    acao_para_fim("cancelar", Some(ActionActor::Agent), "Cancelado", false),
-                    acao_para_etapa("aprovar", Some(ActionActor::Attendant), &[], "fechamento"),
+                    action_for_end("cancelar", Some(ActionActor::Agent), "Cancelado", false),
+                    action_for_step("aprovar", Some(ActionActor::Attendant), &[], "fechamento"),
                 ],
             ),
             etapa(
                 "fechamento",
                 &[ActionActor::Agent],
                 Vec::new(),
-                vec![acao_para_fim("fechar", None, "Feito", false)],
+                vec![action_for_end("fechar", None, "Feito", false)],
             ),
         ],
         Vec::new(),
@@ -476,30 +442,24 @@ fn auto_a_acao_que_leva_ao_fim_e_decisiva_com_outro_ator_pendente() {
         &ir,
         &estado,
         "cancelar",
-        &sem_campos(),
+        &without_fields(),
         ActionActor::Agent,
         Some("k1"),
-        &contexto(),
+        &context(),
     )
     .expect("a ação é aceita");
 
     assert_eq!(resultado.new_state.status, ExecutionStatus::Completed);
     assert_eq!(resultado.new_state.resultado.as_deref(), Some("Cancelado"));
     assert_eq!(
-        tipos(&resultado).last(),
+        kinds(&resultado).last(),
         Some(&RecordEventKind::ExecutionCompleted)
     );
     assert!(resultado.waiting.is_empty());
 }
 
-// ---------------------------------------------------------------------------------------------
-// Ação restrita por ator (PRD §8, linha dos atores; `state_engine.execute_action` passos 2 e 3)
-// ---------------------------------------------------------------------------------------------
-
-/// Origem: `test_state_engine.py::TestStateEngineValidation::test_actor_not_permitted_in_step` e
-/// `state_engine.execute_action` (conferência de `action_actor_required`).
 #[test]
-fn acao_restrita_ao_atendente_recusada_para_o_agente() {
+fn action_restricted_attendant_refused_for_agent() {
     let ir = fluxo(
         "validacao",
         vec![
@@ -508,79 +468,75 @@ fn acao_restrita_ao_atendente_recusada_para_o_agente() {
                 &[ActionActor::Agent, ActionActor::Attendant],
                 Vec::new(),
                 vec![
-                    acao_para_etapa("validar", Some(ActionActor::Attendant), &[], "pos"),
-                    acao_para_fim("encerrar", None, "Feito", false),
+                    action_for_step("validar", Some(ActionActor::Attendant), &[], "pos"),
+                    action_for_end("encerrar", None, "Feito", false),
                 ],
             ),
             etapa(
                 "pos",
                 &[ActionActor::Agent],
                 Vec::new(),
-                vec![acao_para_fim("fechar", None, "Feito", false)],
+                vec![action_for_end("fechar", None, "Feito", false)],
             ),
         ],
         Vec::new(),
     );
     let estado = start(&ir).expect("a execução começa");
 
-    let erro = execute_action(
+    let error = execute_action(
         &ir,
         &estado,
         "validar",
-        &sem_campos(),
+        &without_fields(),
         ActionActor::Agent,
         Some("k1"),
-        &contexto(),
+        &context(),
     )
     .expect_err("o agente não executa ação do atendente");
 
-    assert_eq!(erro.api_code(), "acao_invalida");
+    assert_eq!(error.api_code(), "acao_invalida");
     assert!(
-        erro.to_string().contains("restrita ao ator `atendente`"),
-        "{erro}"
+        error.to_string().contains("restrita ao ator `atendente`"),
+        "{error}"
     );
 }
 
-/// Origem: `test_state_engine.py::TestStateEngineValidation::test_actor_not_permitted_in_step` —
-/// ator fora da lista `actors` do step.
 #[test]
-fn ator_fora_dos_atores_da_etapa_e_recusado() {
+fn actor_outside_actors_step_and_refused() {
     let ir = fluxo(
         "atendimento_humano",
         vec![etapa(
             "atendimento_humano",
             &[ActionActor::Attendant],
             Vec::new(),
-            vec![acao_para_fim("encerrar", None, "Feito", false)],
+            vec![action_for_end("encerrar", None, "Feito", false)],
         )],
         Vec::new(),
     );
     let estado = start(&ir).expect("a execução começa");
 
-    let erro = execute_action(
+    let error = execute_action(
         &ir,
         &estado,
         "encerrar",
-        &sem_campos(),
+        &without_fields(),
         ActionActor::Agent,
         Some("k1"),
-        &contexto(),
+        &context(),
     )
     .expect_err("o agente não age nesta etapa");
 
-    assert_eq!(erro.api_code(), "acao_invalida");
+    assert_eq!(error.api_code(), "acao_invalida");
     assert!(
-        erro.to_string()
+        error
+            .to_string()
             .contains("não age na etapa `atendimento_humano`"),
-        "{erro}"
+        "{error}"
     );
 }
 
-/// Origem: `state_engine.execute_action` (passo 3, `InvalidAction`) e PRD §8, linha da
-/// auto-transição: o motor do POP Atende procurava a ação por busca em largura; aqui a ação que não
-/// existe na etapa devolve **as válidas** e nada é executado.
 #[test]
-fn acao_inexistente_devolve_as_validas_e_nao_muda_nada() {
+fn missing_action_returns_valid_ones_and_changes_nothing() {
     let ir = fluxo(
         "orcamento",
         vec![
@@ -589,46 +545,43 @@ fn acao_inexistente_devolve_as_validas_e_nao_muda_nada() {
                 &[ActionActor::Agent],
                 Vec::new(),
                 vec![
-                    acao_para_etapa("enviar_orcamento", None, &[], "fechamento"),
-                    acao_para_fim("cancelar", None, "Cancelado", false),
+                    action_for_step("enviar_orcamento", None, &[], "fechamento"),
+                    action_for_end("cancelar", None, "Cancelado", false),
                 ],
             ),
             etapa(
                 "fechamento",
                 &[ActionActor::Agent],
                 Vec::new(),
-                vec![acao_para_fim("fechar", None, "Feito", false)],
+                vec![action_for_end("fechar", None, "Feito", false)],
             ),
         ],
         Vec::new(),
     );
     let estado = start(&ir).expect("a execução começa");
 
-    let erro = execute_action(
+    let error = execute_action(
         &ir,
         &estado,
         "aprovar",
-        &sem_campos(),
+        &without_fields(),
         ActionActor::Agent,
         Some("k1"),
-        &contexto(),
+        &context(),
     )
     .expect_err("a ação não existe na etapa");
 
-    let mensagem = erro.to_string();
-    assert_eq!(erro.api_code(), "acao_invalida");
+    let mensagem = error.to_string();
+    assert_eq!(error.api_code(), "acao_invalida");
     assert!(mensagem.contains("`enviar_orcamento`"), "{mensagem}");
     assert!(mensagem.contains("`cancelar`"), "{mensagem}");
-    // O estado de entrada segue intacto: nada foi gravado e nenhuma chave foi consumida.
     assert!(estado.dados.is_empty());
     assert!(estado.keys.is_empty());
-    assert_eq!(estado.no_atual, vai_para("orcamento"));
+    assert_eq!(estado.no_atual, goes_for("orcamento"));
 }
 
-/// Origem: `test_state_engine.py::TestFichaStateValidation::test_closed_ficha_rejects_actions`
-/// (`FichaAlreadyClosed`) — execução encerrada não aceita ação.
 #[test]
-fn execucao_encerrada_nao_aceita_acao() {
+fn closed_execution_does_not_accept_action() {
     let ir = fluxo(
         "coleta",
         vec![etapa(
@@ -636,53 +589,51 @@ fn execucao_encerrada_nao_aceita_acao() {
             &[ActionActor::Agent],
             Vec::new(),
             vec![
-                acao_para_fim("concluir", None, "Feito", false),
-                acao_para_etapa("voltar", None, &[], "coleta"),
+                action_for_end("concluir", None, "Feito", false),
+                action_for_step("voltar", None, &[], "coleta"),
             ],
         )],
         Vec::new(),
     );
     let estado = start(&ir).expect("a execução começa");
-    let concluida = execute_action(
+    let finished = execute_action(
         &ir,
         &estado,
         "concluir",
-        &sem_campos(),
+        &without_fields(),
         ActionActor::Agent,
         Some("k1"),
-        &contexto(),
+        &context(),
     )
     .expect("a ação é aceita");
-    assert_eq!(concluida.new_state.status, ExecutionStatus::Completed);
+    assert_eq!(finished.new_state.status, ExecutionStatus::Completed);
 
-    let erro = execute_action(
+    let error = execute_action(
         &ir,
-        &concluida.new_state,
+        &finished.new_state,
         "voltar",
-        &sem_campos(),
+        &without_fields(),
         ActionActor::Agent,
         Some("k2"),
-        &contexto(),
+        &context(),
     )
     .expect_err("execução concluída não aceita ação");
 
-    assert_eq!(erro.api_code(), "acao_invalida");
-    assert!(erro.to_string().contains("não aceita ação"), "{erro}");
+    assert_eq!(error.api_code(), "acao_invalida");
+    assert!(error.to_string().contains("não aceita ação"), "{error}");
 }
 
-/// Origem: `test_state_engine.py::TestFichaStateValidation::test_closing_pending_rejects_actions`
-/// (`ClosingPendingError`). No POP Atende a Ficha passava pelo estado `closing_pending` antes de
-/// fechar; no Harness esse estado **não existe** — fechar atendimento é decisão explícita (PRD §8).
 #[test]
-fn nao_existe_estado_closing_pending() {
-    let erro = ExecutionStatus::from_text("closing_pending")
+fn no_state_closing_pending() {
+    let error = ExecutionStatus::from_text("closing_pending")
         .expect_err("`closing_pending` não é situação de execução no Harness");
 
-    assert_eq!(erro.api_code(), "validation_error");
+    assert_eq!(error.api_code(), "validation_error");
     assert!(
-        erro.to_string()
+        error
+            .to_string()
             .contains("aceitos: ativa, concluida, abandonada, falha"),
-        "{erro}"
+        "{error}"
     );
     for situacao in ["ativa", "concluida", "abandonada", "falha"] {
         assert!(
@@ -692,17 +643,10 @@ fn nao_existe_estado_closing_pending() {
     }
 }
 
-// ---------------------------------------------------------------------------------------------
-// Condicionais (PRD §8, linha da condicional; `core/fichas/conditionals.py`, resolvido em
-// `state_engine._resolve_conditional_route`)
-// ---------------------------------------------------------------------------------------------
-
-/// Origem: `test_conditional_runtime.py::TestEvaluatePopExpr` — cada caso do avaliador de
-/// `pop_expr` do POP Atende, agora como combinador declarativo.
 #[test]
-fn condicional_com_os_operadores_do_pop_atende_escolhe_o_ramo() {
-    let avaliador = RuleEvaluator::without_functions();
-    let execucao = dados(json!({
+fn conditional_with_operators_pop_atende_chooses_branch() {
+    let evaluator = RuleEvaluator::without_functions();
+    let execution = dados(json!({
         "orcamento": {
             "tipo": "hidraulica",
             "valor": 800,
@@ -714,7 +658,7 @@ fn condicional_com_os_operadores_do_pop_atende_escolhe_o_ramo() {
         }
     }));
 
-    let casos: Vec<(&str, Rule, bool)> = vec![
+    let cases: Vec<(&str, Rule, bool)> = vec![
         (
             "`tipo == \"hidraulica\"`",
             Rule::Igual {
@@ -841,18 +785,16 @@ fn condicional_com_os_operadores_do_pop_atende_escolhe_o_ramo() {
         ),
     ];
 
-    for (nome, regra, esperado) in casos {
-        let obtido = avaliador
-            .evaluate(&regra, &execucao)
-            .unwrap_or_else(|erro| panic!("{nome}: {erro}"));
-        assert_eq!(obtido, esperado, "{nome}");
+    for (nome, rule, expected_json) in cases {
+        let obtained = evaluator
+            .evaluate(&rule, &execution)
+            .unwrap_or_else(|error| panic!("{nome}: {error}"));
+        assert_eq!(obtained, expected_json, "{nome}");
     }
 }
 
-/// Origem: `state_engine._resolve_conditional_route` — condicional que leva a outra condicional,
-/// resolvida na mesma passagem (o `while` do Python).
 #[test]
-fn duas_condicionais_encadeadas_escolhem_a_etapa_final() {
+fn two_conditionals_chained_choose_step_final() {
     let ir = fluxo(
         "triagem",
         vec![
@@ -860,7 +802,7 @@ fn duas_condicionais_encadeadas_escolhem_a_etapa_final() {
                 "triagem",
                 &[ActionActor::Agent],
                 vec![
-                    campo_opcao("tipo", &["hidraulica", "eletrica"]),
+                    field_option("tipo", &["hidraulica", "eletrica"]),
                     campo("valor", FieldKind::Number, true),
                 ],
                 vec![acao(
@@ -876,13 +818,13 @@ fn duas_condicionais_encadeadas_escolhem_a_etapa_final() {
                 "caro",
                 &[ActionActor::Agent],
                 Vec::new(),
-                vec![acao_para_fim("fechar", None, "Caro", false)],
+                vec![action_for_end("fechar", None, "Caro", false)],
             ),
             etapa(
                 "barato",
                 &[ActionActor::Agent],
                 Vec::new(),
-                vec![acao_para_fim("fechar", None, "Barato", false)],
+                vec![action_for_end("fechar", None, "Barato", false)],
             ),
         ],
         vec![
@@ -895,7 +837,7 @@ fn duas_condicionais_encadeadas_escolhem_a_etapa_final() {
                 Destination::Decisao {
                     id: "valor_define".to_owned(),
                 },
-                vai_para("barato"),
+                goes_for("barato"),
             ),
             decisao(
                 "valor_define",
@@ -903,8 +845,8 @@ fn duas_condicionais_encadeadas_escolhem_a_etapa_final() {
                     campo: "triagem.valor".to_owned(),
                     value: "500".to_owned(),
                 },
-                vai_para("caro"),
-                vai_para("barato"),
+                goes_for("caro"),
+                goes_for("barato"),
             ),
         ],
     );
@@ -917,11 +859,11 @@ fn duas_condicionais_encadeadas_escolhem_a_etapa_final() {
         &campos(json!({ "tipo": "hidraulica", "valor": 800 })),
         ActionActor::Agent,
         Some("k1"),
-        &contexto(),
+        &context(),
     )
     .expect("a ação é aceita");
 
-    assert_eq!(resultado.new_state.no_atual, vai_para("caro"));
+    assert_eq!(resultado.new_state.no_atual, goes_for("caro"));
     let resolvidas: Vec<&poph_fluxos::motor::Evento> = resultado
         .events
         .iter()
@@ -932,8 +874,7 @@ fn duas_condicionais_encadeadas_escolhem_a_etapa_final() {
     assert_eq!(resolvidas[1].payload["decisao"], json!("valor_define"));
 }
 
-/// Script de apoio do caso seguinte: um fluxo válido com a `def` que decide o ramo.
-const SCRIPT_COM_DEF: &str = r#"
+const SCRIPT_WITH_DEF: &str = r#"
 fluxo(
     id = "teste_paridade_def",
     nome = "Teste da paridade com def",
@@ -959,11 +900,9 @@ def grave(dados):
     return "parou" in resumo
 "#;
 
-/// Origem: PRD §8, linha da condicional (o lado avançado: `def`) e `conditionals.py`, que avaliava
-/// expressão em texto. Aqui a regra pode ser uma função declarada no script.
 #[test]
-fn condicional_com_def_escolhe_o_ramo() {
-    let avaliador = RuleEvaluator::new(SCRIPT_COM_DEF).expect("o script de apoio carrega");
+fn conditional_with_def_chooses_branch() {
+    let evaluator = RuleEvaluator::new(SCRIPT_WITH_DEF).expect("o script de apoio carrega");
     let ir = fluxo(
         "triagem",
         vec![
@@ -984,13 +923,13 @@ fn condicional_com_def_escolhe_o_ramo() {
                 "grave",
                 &[ActionActor::Agent],
                 Vec::new(),
-                vec![acao_para_fim("fechar", None, "Grave", false)],
+                vec![action_for_end("fechar", None, "Grave", false)],
             ),
             etapa(
                 "simples",
                 &[ActionActor::Agent],
                 Vec::new(),
-                vec![acao_para_fim("fechar", None, "Simples", false)],
+                vec![action_for_end("fechar", None, "Simples", false)],
             ),
         ],
         vec![decisao(
@@ -998,42 +937,40 @@ fn condicional_com_def_escolhe_o_ramo() {
             Rule::Funcao {
                 nome: "grave".to_owned(),
             },
-            vai_para("grave"),
-            vai_para("simples"),
+            goes_for("grave"),
+            goes_for("simples"),
         )],
     );
-    let contexto = Context::new(&avaliador);
+    let context = Context::new(&evaluator);
     let estado = start(&ir).expect("a execução começa");
 
-    let caso_grave = execute_action(
+    let case_severe = execute_action(
         &ir,
         &estado,
         "seguir",
         &campos(json!({ "relato": "O chuveiro parou de esquentar" })),
         ActionActor::Agent,
         Some("k1"),
-        &contexto,
+        &context,
     )
     .expect("a ação é aceita");
-    assert_eq!(caso_grave.new_state.no_atual, vai_para("grave"));
+    assert_eq!(case_severe.new_state.no_atual, goes_for("grave"));
 
-    let caso_simples = execute_action(
+    let case_simple = execute_action(
         &ir,
         &estado,
         "seguir",
         &campos(json!({ "relato": "Quero trocar a torneira da pia" })),
         ActionActor::Agent,
         Some("k2"),
-        &contexto,
+        &context,
     )
     .expect("a ação é aceita");
-    assert_eq!(caso_simples.new_state.no_atual, vai_para("simples"));
+    assert_eq!(case_simple.new_state.no_atual, goes_for("simples"));
 }
 
-/// Origem: `state_engine._resolve_conditional_route` — no POP Atende, condicional que aponta para
-/// etapa inexistente simplesmente ficava no nó; no Harness o motor **falha fechado**.
 #[test]
-fn condicional_que_vai_para_etapa_inexistente_falha_fechado() {
+fn conditional_to_missing_step_fails_closed() {
     let ir = fluxo(
         "triagem",
         vec![etapa(
@@ -1054,35 +991,29 @@ fn condicional_que_vai_para_etapa_inexistente_falha_fechado() {
             Rule::Vazio {
                 campo: "triagem.nada".to_owned(),
             },
-            vai_para("fantasma"),
-            vai_para("triagem"),
+            goes_for("fantasma"),
+            goes_for("triagem"),
         )],
     );
     let estado = start(&ir).expect("a execução começa");
 
-    let erro = execute_action(
+    let error = execute_action(
         &ir,
         &estado,
         "seguir",
-        &sem_campos(),
+        &without_fields(),
         ActionActor::Agent,
         Some("k1"),
-        &contexto(),
+        &context(),
     )
     .expect_err("destino inexistente é divergência de IR");
 
-    assert_eq!(erro.api_code(), "ir_divergente");
-    assert!(erro.to_string().contains("`fantasma`"), "{erro}");
+    assert_eq!(error.api_code(), "ir_divergente");
+    assert!(error.to_string().contains("`fantasma`"), "{error}");
 }
 
-// ---------------------------------------------------------------------------------------------
-// Campos obrigatórios e tipos de campo (PRD §8, linha dos campos; `core/fichas/validators.py`)
-// ---------------------------------------------------------------------------------------------
-
-/// Origem: `test_state_engine.py::TestFieldValidation::test_required_field_missing` e
-/// `TestStateEngineValidation::test_missing_required_field` — erro com a lista do que falta.
 #[test]
-fn campo_obrigatorio_faltando_devolve_a_lista() {
+fn field_required_missing_returns_list() {
     let ir = fluxo(
         "abertura",
         vec![
@@ -1093,7 +1024,7 @@ fn campo_obrigatorio_faltando_devolve_a_lista() {
                     campo("valor", FieldKind::Number, true),
                     campo("descricao", FieldKind::Text, true),
                 ],
-                vec![acao_para_etapa(
+                vec![action_for_step(
                     "enviar_orcamento",
                     None,
                     &["valor", "descricao"],
@@ -1104,232 +1035,222 @@ fn campo_obrigatorio_faltando_devolve_a_lista() {
                 "fechamento",
                 &[ActionActor::Agent],
                 Vec::new(),
-                vec![acao_para_fim("fechar", None, "Feito", false)],
+                vec![action_for_end("fechar", None, "Feito", false)],
             ),
         ],
         Vec::new(),
     );
     let estado = start(&ir).expect("a execução começa");
 
-    let erro = execute_action(
+    let error = execute_action(
         &ir,
         &estado,
         "enviar_orcamento",
         &campos(json!({ "valor": 1000.0 })),
         ActionActor::Agent,
         Some("k1"),
-        &contexto(),
+        &context(),
     )
     .expect_err("falta o campo obrigatório");
 
-    assert_eq!(erro.api_code(), "campos_invalidos");
-    let mensagem = erro.to_string();
+    assert_eq!(error.api_code(), "campos_invalidos");
+    let mensagem = error.to_string();
     assert!(mensagem.contains("`descricao`"), "{mensagem}");
     assert!(mensagem.contains("ainda não foi preenchido"), "{mensagem}");
 }
 
-/// Origem: `test_state_engine.py::TestFieldValidation::test_text_field_validation` — o tipo é
-/// conferido de forma estrita (o `max_length` do POP Atende não existe na linguagem).
 #[test]
-fn campo_de_texto_recusa_numero() {
+fn field_text_refusal_number() {
     let ir = fluxo(
         "abertura",
         vec![etapa(
             "abertura",
             &[ActionActor::Agent],
             vec![campo("relato", FieldKind::Text, true)],
-            vec![acao_para_fim("registrar", None, "Feito", false)],
+            vec![action_for_end("registrar", None, "Feito", false)],
         )],
         Vec::new(),
     );
     let estado = start(&ir).expect("a execução começa");
 
-    let aceito = execute_action(
+    let accepted = execute_action(
         &ir,
         &estado,
         "registrar",
         &campos(json!({ "relato": "  texto curto  " })),
         ActionActor::Agent,
         Some("k1"),
-        &contexto(),
+        &context(),
     )
     .expect("texto é aceito");
     assert_eq!(
-        aceito.new_state.dados["abertura"]["relato"],
+        accepted.new_state.dados["abertura"]["relato"],
         json!("texto curto"),
         "o texto é gravado sem os espaços das pontas"
     );
 
-    let erro = execute_action(
+    let error = execute_action(
         &ir,
         &estado,
         "registrar",
         &campos(json!({ "relato": 42 })),
         ActionActor::Agent,
         Some("k2"),
-        &contexto(),
+        &context(),
     )
     .expect_err("número não é texto");
 
-    assert_eq!(erro.api_code(), "campos_invalidos");
-    assert!(erro.to_string().contains("esperava texto"), "{erro}");
+    assert_eq!(error.api_code(), "campos_invalidos");
+    assert!(error.to_string().contains("esperava texto"), "{error}");
 }
 
-/// Origem: `test_state_engine.py::TestFieldValidation::test_number_field_validation` (o `min`/`max`
-/// do POP Atende não existe na linguagem; o tipo é estrito).
 #[test]
-fn campo_de_numero_recusa_texto() {
+fn field_number_refusal_text() {
     let ir = fluxo(
         "orcamento",
         vec![etapa(
             "orcamento",
             &[ActionActor::Agent],
             vec![campo("valor", FieldKind::Number, true)],
-            vec![acao_para_fim("enviar", None, "Enviado", false)],
+            vec![action_for_end("enviar", None, "Enviado", false)],
         )],
         Vec::new(),
     );
     let estado = start(&ir).expect("a execução começa");
 
-    let aceito = execute_action(
+    let accepted = execute_action(
         &ir,
         &estado,
         "enviar",
         &campos(json!({ "valor": 1000.0 })),
         ActionActor::Agent,
         Some("k1"),
-        &contexto(),
+        &context(),
     )
     .expect("número é aceito");
-    assert_eq!(aceito.new_state.dados["orcamento"]["valor"], json!(1000.0));
+    assert_eq!(
+        accepted.new_state.dados["orcamento"]["valor"],
+        json!(1000.0)
+    );
 
-    let erro = execute_action(
+    let error = execute_action(
         &ir,
         &estado,
         "enviar",
         &campos(json!({ "valor": "mil" })),
         ActionActor::Agent,
         Some("k2"),
-        &contexto(),
+        &context(),
     )
     .expect_err("texto não é número");
 
-    assert_eq!(erro.api_code(), "campos_invalidos");
-    assert!(erro.to_string().contains("esperava número"), "{erro}");
+    assert_eq!(error.api_code(), "campos_invalidos");
+    assert!(error.to_string().contains("esperava número"), "{error}");
 }
 
-/// Origem: `test_state_engine.py::TestFieldValidation::test_select_field_validation` — só as
-/// opções declaradas, com a lista na mensagem.
 #[test]
-fn campo_de_opcao_recusa_valor_fora_da_lista() {
+fn field_option_refusal_value_outside_list() {
     let ir = fluxo(
         "triagem",
         vec![etapa(
             "triagem",
             &[ActionActor::Agent],
-            vec![campo_opcao("periodo", &["manha", "tarde"])],
-            vec![acao_para_fim("agendar", None, "Agendado", false)],
+            vec![field_option("periodo", &["manha", "tarde"])],
+            vec![action_for_end("agendar", None, "Agendado", false)],
         )],
         Vec::new(),
     );
     let estado = start(&ir).expect("a execução começa");
 
-    let aceito = execute_action(
+    let accepted = execute_action(
         &ir,
         &estado,
         "agendar",
         &campos(json!({ "periodo": "tarde" })),
         ActionActor::Agent,
         Some("k1"),
-        &contexto(),
+        &context(),
     )
     .expect("opção declarada é aceita");
-    assert_eq!(aceito.new_state.dados["triagem"]["periodo"], json!("tarde"));
+    assert_eq!(
+        accepted.new_state.dados["triagem"]["periodo"],
+        json!("tarde")
+    );
 
-    let erro = execute_action(
+    let error = execute_action(
         &ir,
         &estado,
         "agendar",
         &campos(json!({ "periodo": "madrugada" })),
         ActionActor::Agent,
         Some("k2"),
-        &contexto(),
+        &context(),
     )
     .expect_err("valor fora da lista é recusado");
 
-    assert_eq!(erro.api_code(), "campos_invalidos");
-    let mensagem = erro.to_string();
+    assert_eq!(error.api_code(), "campos_invalidos");
+    let mensagem = error.to_string();
     assert!(mensagem.contains("esperava uma das opções"), "{mensagem}");
     assert!(mensagem.contains("manha"), "{mensagem}");
     assert!(mensagem.contains("tarde"), "{mensagem}");
 }
 
-/// Origem: `core/fichas/validators.py` (linhas 50–61: tipo `datetime` aceita ISO 8601 e recusa o
-/// resto). Diferença registrada em `FLUXOS_PARIDADE.md`: o Harness confere **forma e faixas**, não
-/// o calendário (`2026-02-30` passa).
 #[test]
-fn campo_de_data_aceita_iso_e_recusa_texto_livre() {
+fn date_field_accepts_iso_refuses_free_text() {
     let ir = fluxo(
         "agendamento",
         vec![etapa(
             "agendamento",
             &[ActionActor::Agent],
             vec![campo("data_hora_visita", FieldKind::Data, true)],
-            vec![acao_para_fim("confirmar", None, "Confirmado", false)],
+            vec![action_for_end("confirmar", None, "Confirmado", false)],
         )],
         Vec::new(),
     );
     let estado = start(&ir).expect("a execução começa");
 
-    let aceito = execute_action(
+    let accepted = execute_action(
         &ir,
         &estado,
         "confirmar",
         &campos(json!({ "data_hora_visita": "2026-03-15T14:00:00" })),
         ActionActor::Agent,
         Some("k1"),
-        &contexto(),
+        &context(),
     )
     .expect("data ISO é aceita");
     assert_eq!(
-        aceito.new_state.dados["agendamento"]["data_hora_visita"],
+        accepted.new_state.dados["agendamento"]["data_hora_visita"],
         json!("2026-03-15T14:00:00")
     );
 
-    let erro = execute_action(
+    let error = execute_action(
         &ir,
         &estado,
         "confirmar",
         &campos(json!({ "data_hora_visita": "amanhã de manhã" })),
         ActionActor::Agent,
         Some("k2"),
-        &contexto(),
+        &context(),
     )
     .expect_err("texto livre não é data");
 
-    assert_eq!(erro.api_code(), "campos_invalidos");
+    assert_eq!(error.api_code(), "campos_invalidos");
     assert!(
-        erro.to_string().contains("esperava data ISO 8601"),
-        "{erro}"
+        error.to_string().contains("esperava data ISO 8601"),
+        "{error}"
     );
 }
 
-// ---------------------------------------------------------------------------------------------
-// `next_step: "closed"` → `fim(...)` (PRD §8, linha do encerramento)
-// ---------------------------------------------------------------------------------------------
-
-/// Origem: `test_state_engine.py::TestGlobalStateDerivation::test_closed_state` e o tratamento de
-/// `next_step == "closed"` em `execute_action` — no Harness o `closed` virou `fim(...)`, que
-/// conclui a **execução** com resultado.
 #[test]
-fn closed_do_pop_atende_virou_fim_que_conclui_a_execucao() {
+fn pop_atende_closed_became_end_that_concludes_execution() {
     let ir = fluxo(
         "fechamento",
         vec![etapa(
             "fechamento",
             &[ActionActor::Agent],
             Vec::new(),
-            vec![acao_para_fim(
+            vec![action_for_end(
                 "concluir",
                 None,
                 "Atendimento concluído",
@@ -1344,10 +1265,10 @@ fn closed_do_pop_atende_virou_fim_que_conclui_a_execucao() {
         &ir,
         &estado,
         "concluir",
-        &sem_campos(),
+        &without_fields(),
         ActionActor::Agent,
         Some("k1"),
-        &contexto(),
+        &context(),
     )
     .expect("a ação é aceita");
 
@@ -1358,7 +1279,7 @@ fn closed_do_pop_atende_virou_fim_que_conclui_a_execucao() {
     );
     assert_eq!(resultado.new_state.motivo, None);
     assert_eq!(
-        tipos(&resultado),
+        kinds(&resultado),
         vec![
             RecordEventKind::ActionExecuted,
             RecordEventKind::StepCompleted,
@@ -1367,11 +1288,8 @@ fn closed_do_pop_atende_virou_fim_que_conclui_a_execucao() {
     );
 }
 
-/// Origem: PRD §8, linha do encerramento — antes, `next_step: "closed"` fechava a Ficha; agora o
-/// `fim(...)` conclui a execução e **fechar o atendimento é decisão explícita**
-/// (`fim(encerra_atendimento = True)`).
 #[test]
-fn fim_so_pede_o_fechamento_do_atendimento_quando_declara_isso() {
+fn end_only_asks_for_closure_when_it_declares_that() {
     let ir = fluxo(
         "fechamento",
         vec![etapa(
@@ -1379,62 +1297,59 @@ fn fim_so_pede_o_fechamento_do_atendimento_quando_declara_isso() {
             &[ActionActor::Agent],
             Vec::new(),
             vec![
-                acao_para_fim("concluir", None, "Concluído", false),
-                acao_para_fim("encerrar_tudo", None, "Encerrado", true),
+                action_for_end("concluir", None, "Concluído", false),
+                action_for_end("encerrar_tudo", None, "Encerrado", true),
             ],
         )],
         Vec::new(),
     );
     let estado = start(&ir).expect("a execução começa");
 
-    let sem_encerrar = execute_action(
+    let without_close = execute_action(
         &ir,
         &estado,
         "concluir",
-        &sem_campos(),
+        &without_fields(),
         ActionActor::Agent,
         Some("k1"),
-        &contexto(),
+        &context(),
     )
     .expect("a ação é aceita");
-    assert_eq!(sem_encerrar.new_state.status, ExecutionStatus::Completed);
+    assert_eq!(without_close.new_state.status, ExecutionStatus::Completed);
     assert!(
-        !sem_encerrar.ends_service,
+        !without_close.ends_service,
         "concluir o fluxo não fecha o atendimento"
     );
 
-    let encerrando = execute_action(
+    let closing = execute_action(
         &ir,
         &estado,
         "encerrar_tudo",
-        &sem_campos(),
+        &without_fields(),
         ActionActor::Agent,
         Some("k2"),
-        &contexto(),
+        &context(),
     )
     .expect("a ação é aceita");
-    assert_eq!(encerrando.new_state.status, ExecutionStatus::Completed);
+    assert_eq!(closing.new_state.status, ExecutionStatus::Completed);
     assert!(
-        encerrando.ends_service,
+        closing.ends_service,
         "o fim que declara o encerramento pede o fechamento ao chamador"
     );
 }
 
-/// Origem: `test_completion_step.py` (`find_completion_step_key`) — o POP Atende descobria a etapa
-/// de fechamento **pelo nome** dela ("Encerrado", "Fechamento", "FIM"); no Harness o encerramento é
-/// declarado no `fim(...)`, então uma etapa chamada "Encerrado" não encerra nada.
 #[test]
-fn o_encerramento_e_declarado_e_nao_deduzido_pelo_nome_da_etapa() {
-    let mut encerrado = etapa(
+fn closure_is_declared_not_deduced_from_step_name() {
+    let mut closed = etapa(
         "encerrado",
         &[ActionActor::Agent],
         Vec::new(),
         vec![
-            acao_para_etapa("reabrir", None, &[], "abertura"),
-            acao_para_fim("concluir", None, "Concluído", false),
+            action_for_step("reabrir", None, &[], "abertura"),
+            action_for_end("concluir", None, "Concluído", false),
         ],
     );
-    encerrado.nome = "Encerrado".to_owned();
+    closed.nome = "Encerrado".to_owned();
     let ir = fluxo(
         "abertura",
         vec![
@@ -1442,9 +1357,9 @@ fn o_encerramento_e_declarado_e_nao_deduzido_pelo_nome_da_etapa() {
                 "abertura",
                 &[ActionActor::Agent],
                 Vec::new(),
-                vec![acao_para_etapa("seguir", None, &[], "encerrado")],
+                vec![action_for_step("seguir", None, &[], "encerrado")],
             ),
-            encerrado,
+            closed,
         ],
         Vec::new(),
     );
@@ -1454,14 +1369,14 @@ fn o_encerramento_e_declarado_e_nao_deduzido_pelo_nome_da_etapa() {
         &ir,
         &estado,
         "seguir",
-        &sem_campos(),
+        &without_fields(),
         ActionActor::Agent,
         Some("k1"),
-        &contexto(),
+        &context(),
     )
     .expect("a ação é aceita");
 
-    assert_eq!(resultado.new_state.no_atual, vai_para("encerrado"));
+    assert_eq!(resultado.new_state.no_atual, goes_for("encerrado"));
     assert_eq!(
         resultado.new_state.status,
         ExecutionStatus::Active,
@@ -1470,44 +1385,31 @@ fn o_encerramento_e_declarado_e_nao_deduzido_pelo_nome_da_etapa() {
     assert!(!resultado.ends_service);
 }
 
-// ---------------------------------------------------------------------------------------------
-// Atores (PRD §8, linha dos atores)
-// ---------------------------------------------------------------------------------------------
-
-/// Origem: PRD §8, linha dos atores — `client`, `attendant`, `agent`, `system`, `provider` e
-/// `operator` viraram `agente` e `atendente`. O cliente nunca é ator de ação (decisão D5).
 #[test]
-fn so_existem_dois_atores_de_acao() {
-    for aceito in ["agente", "atendente"] {
+fn there_are_only_two_action_actors() {
+    for accepted in ["agente", "atendente"] {
         assert!(
-            ActionActor::from_text(aceito).is_ok(),
-            "`{aceito}` é ator de ação"
+            ActionActor::from_text(accepted).is_ok(),
+            "`{accepted}` é ator de ação"
         );
     }
-    for recusado in [
+    for refused in [
         "cliente", "client", "provider", "operator", "system", "sistema",
     ] {
-        let erro =
-            ActionActor::from_text(recusado).expect_err("ator do POP Atende que o Harness não tem");
-        assert_eq!(erro.api_code(), "validation_error");
+        let error =
+            ActionActor::from_text(refused).expect_err("ator do POP Atende que o Harness não tem");
+        assert_eq!(error.api_code(), "validation_error");
         assert!(
-            erro.to_string().contains("aceitos: agente, atendente"),
-            "`{recusado}`: {erro}"
+            error.to_string().contains("aceitos: agente, atendente"),
+            "`{refused}`: {error}"
         );
     }
 }
 
-// ---------------------------------------------------------------------------------------------
-// Efeitos (PRD §8, linha dos nós "satélite")
-// ---------------------------------------------------------------------------------------------
-
-/// Origem: PRD §8, linha da notificação/encaminhamento (`notifications`/`forwards` do POP Atende,
-/// `test_department_forward.py`) — deixaram de ser nós ligados por arestas e viraram **efeitos**
-/// dentro da ação.
 #[test]
-fn notificacao_e_encaminhamento_saem_como_efeito_da_acao() {
-    let mut avisar = acao_para_fim("concluir", None, "Concluído", false);
-    avisar.effects = vec![
+fn notification_and_forwarding_come_as_action_effect() {
+    let mut notify = action_for_end("concluir", None, "Concluído", false);
+    notify.effects = vec![
         Effect::NotifyWhatsApp {
             para: "5521999990000".to_owned(),
             mensagem: "O atendimento do cliente {cliente.peer} foi concluído".to_owned(),
@@ -1522,22 +1424,22 @@ fn notificacao_e_encaminhamento_saem_como_efeito_da_acao() {
             "coleta",
             &[ActionActor::Agent],
             Vec::new(),
-            vec![avisar],
+            vec![notify],
         )],
         Vec::new(),
     );
-    let avaliador = RuleEvaluator::without_functions();
-    let contexto = Context::new(&avaliador).with_client("cli_ficticio");
+    let evaluator = RuleEvaluator::without_functions();
+    let context = Context::new(&evaluator).with_client("cli_ficticio");
     let estado = start(&ir).expect("a execução começa");
 
     let resultado = execute_action(
         &ir,
         &estado,
         "concluir",
-        &sem_campos(),
+        &without_fields(),
         ActionActor::Agent,
         Some("k1"),
-        &contexto,
+        &context,
     )
     .expect("a ação é aceita");
 
@@ -1559,25 +1461,23 @@ fn notificacao_e_encaminhamento_saem_como_efeito_da_acao() {
             departamento: "financeiro".to_owned(),
         }
     );
-    let criados = tipos(&resultado)
+    let created = kinds(&resultado)
         .into_iter()
         .filter(|tipo| *tipo == RecordEventKind::EffectCreated)
         .count();
-    assert_eq!(criados, 2);
+    assert_eq!(created, 2);
 }
 
-/// Origem: `state_engine` / templates do POP Atende (a mensagem de entrada do step, `messages`) —
-/// a etapa que fala com o cliente ao ser entrada continua existindo, agora como `ao_entrar`.
 #[test]
-fn mensagem_de_entrada_da_etapa_sai_ao_iniciar_a_execucao() {
+fn step_entry_message_comes_out_when_execution_starts() {
     let ir = fluxo(
         "abertura",
         vec![
-            etapa_com_entrada(
+            step_with_entry(
                 "abertura",
                 &[ActionActor::Agent],
                 Vec::new(),
-                vec![acao_para_fim("fechar", None, "Feito", false)],
+                vec![action_for_end("fechar", None, "Feito", false)],
                 vec![Effect::MessageToCustomer {
                     texto: "Olá, {cliente.peer}! Já vou te atender.".to_owned(),
                 }],
@@ -1586,43 +1486,36 @@ fn mensagem_de_entrada_da_etapa_sai_ao_iniciar_a_execucao() {
                 "fechamento",
                 &[ActionActor::Agent],
                 Vec::new(),
-                vec![acao_para_fim("fechar", None, "Feito", false)],
+                vec![action_for_end("fechar", None, "Feito", false)],
             ),
         ],
         Vec::new(),
     );
-    let avaliador = RuleEvaluator::without_functions();
-    let contexto = Context::new(&avaliador).with_client("cli_ficticio");
+    let evaluator = RuleEvaluator::without_functions();
+    let context = Context::new(&evaluator).with_client("cli_ficticio");
     let estado = start(&ir).expect("a execução começa");
 
-    let efeitos = entry_effects(&ir, "abertura", &estado.dados, &contexto).expect("a etapa existe");
+    let effects = entry_effects(&ir, "abertura", &estado.dados, &context).expect("a etapa existe");
 
-    assert_eq!(efeitos.len(), 1);
-    assert_eq!(efeitos[0].chave, "etapa:abertura/0");
+    assert_eq!(effects.len(), 1);
+    assert_eq!(effects[0].chave, "etapa:abertura/0");
     assert_eq!(
-        efeitos[0].effect,
+        effects[0].effect,
         Effect::MessageToCustomer {
             texto: "Olá, cli_ficticio! Já vou te atender.".to_owned(),
         }
     );
 }
 
-// ---------------------------------------------------------------------------------------------
-// Variável inexistente no texto (PRD §8, linha da variável inexistente)
-// ---------------------------------------------------------------------------------------------
-
-/// Origem: PRD §8, linha da variável inexistente — antes ela virava vazio **em silêncio**; agora
-/// vira vazio **e a publicação avisa** (`FLX59`, provado em `tests/compilador.rs`). O efeito sai
-/// mesmo assim.
 #[test]
-fn variavel_inexistente_no_texto_sai_vazia() {
+fn missing_variable_in_text_renders_empty() {
     let ir = fluxo(
         "triagem",
-        vec![etapa_com_entrada(
+        vec![step_with_entry(
             "triagem",
             &[ActionActor::Agent],
             Vec::new(),
-            vec![acao_para_fim("fechar", None, "Feito", false)],
+            vec![action_for_end("fechar", None, "Feito", false)],
             vec![
                 Effect::MessageToCustomer {
                     texto: "Endereço registrado: {triagem.cep}.".to_owned(),
@@ -1634,21 +1527,21 @@ fn variavel_inexistente_no_texto_sai_vazia() {
         )],
         Vec::new(),
     );
-    let avaliador = RuleEvaluator::without_functions();
-    let contexto = Context::new(&avaliador);
+    let evaluator = RuleEvaluator::without_functions();
+    let context = Context::new(&evaluator);
     let estado = start(&ir).expect("a execução começa");
 
-    let efeitos = entry_effects(&ir, "triagem", &estado.dados, &contexto).expect("a etapa existe");
+    let effects = entry_effects(&ir, "triagem", &estado.dados, &context).expect("a etapa existe");
 
     assert_eq!(
-        efeitos[0].effect,
+        effects[0].effect,
         Effect::MessageToCustomer {
             texto: "Endereço registrado: .".to_owned(),
         },
         "a variável que não existe sai vazia, sem quebrar o texto"
     );
     assert_eq!(
-        efeitos[1].effect,
+        effects[1].effect,
         Effect::MessageToCustomer {
             texto: "Chave sem par: {triagem.cep".to_owned(),
         },
@@ -1656,15 +1549,8 @@ fn variavel_inexistente_no_texto_sai_vazia() {
     );
 }
 
-// ---------------------------------------------------------------------------------------------
-// Início do fluxo (PRD §8, linha da etapa inicial)
-// ---------------------------------------------------------------------------------------------
-
-/// Origem: PRD §8, linha da etapa inicial — antes a primeira etapa era marcada com
-/// `is_entry: true` no JSON (e esquecer a marca quebrava o fluxo); agora o `inicio` do fluxo
-/// aponta a etapa por id, e a ordem de declaração não decide nada.
 #[test]
-fn inicio_e_declarado_no_fluxo_e_nao_marcado_na_etapa() {
+fn start_is_declared_in_flow_not_marked_on_step() {
     let ir = fluxo(
         "meio",
         vec![
@@ -1672,13 +1558,13 @@ fn inicio_e_declarado_no_fluxo_e_nao_marcado_na_etapa() {
                 "primeira_nao_e_a_de_entrada",
                 &[ActionActor::Agent],
                 Vec::new(),
-                vec![acao_para_etapa("ir", None, &[], "meio")],
+                vec![action_for_step("ir", None, &[], "meio")],
             ),
             etapa(
                 "meio",
                 &[ActionActor::Agent],
                 Vec::new(),
-                vec![acao_para_etapa(
+                vec![action_for_step(
                     "ir",
                     None,
                     &[],
@@ -1691,7 +1577,7 @@ fn inicio_e_declarado_no_fluxo_e_nao_marcado_na_etapa() {
 
     let estado = start(&ir).expect("a execução começa");
 
-    assert_eq!(estado.no_atual, vai_para("meio"));
+    assert_eq!(estado.no_atual, goes_for("meio"));
     assert_eq!(estado.status, ExecutionStatus::Active);
     assert!(estado.dados.is_empty());
     assert!(estado.actors_who_acted.is_empty());

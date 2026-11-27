@@ -60,17 +60,17 @@ Se já existe execução ativa, o turno não pergunta nada ao Jev: o bloco da et
 
 **Revisão presa.** A execução guarda a revisão com que começou. Publicar a revisão 2 não muda a execução que está na 1 (`fluxos_e2e.rs`, `revisao_antiga_acao_humana_e_dois_fluxos_na_mesma_ficha`; `flows_migration.rs`, `published_revision_cannot_be_changed_nor_deleted`). `poph flow diff` mostra quantos atendimentos estão presos em cada revisão.
 
-**Etapas e ações.** Cada etapa pede campos (com tipo) e oferece ações. Quem age é sempre o ator da ação: `agente` (ferramenta do turno, sem escolha do modelo) ou `atendente` (pela API). Ação que não existe na etapa atual é recusada com a lista das válidas, e nada é gravado: o motor não executa ações intermediárias sozinho. Etapa que exige campo não avança sem ele, e a resposta diz o que falta (`motor.rs`: `acao_valida_grava_os_campos_e_avanca_para_a_etapa_de_destino`, `campo_exigido_faltando_devolve_a_lista_do_que_falta`).
+**Etapas e ações.** Cada etapa pede campos (com tipo) e oferece ações. Quem age é sempre o ator da ação: `agente` (ferramenta do turno, sem escolha do modelo) ou `atendente` (pela API). Ação que não existe na etapa atual é recusada com a lista das válidas, e nada é gravado: o motor não executa ações intermediárias sozinho. Etapa que exige campo não avança sem ele, e a resposta diz o que falta (`engine.rs`: `action_validates_records_fields_and_advances_for_step_target`, `required_field_missing_returns_list_of_what_is_missing`).
 
-**Decisões.** Uma decisão escolhe o ramo pela regra (combinadores ou uma função `def`). Decisões encadeadas atravessam até 10 saltos numa mesma passagem (`[fluxos] max_saltos_decisao`); ciclo ou excesso leva a execução a falha (`motor_desfecho.rs`: `dez_saltos_passam_e_onze_derrubam_a_execucao`, `ciclo_de_decisoes_para_a_execucao_em_falha`).
+**Decisões.** Uma decisão escolhe o ramo pela regra (combinadores ou uma função `def`). Decisões encadeadas atravessam até 10 saltos numa mesma passagem (`[fluxos] max_saltos_decisao`); ciclo ou excesso leva a execução a falha (`engine_outcome.rs`: `ten_jumps_pass_and_eleven_crash_execution`, `decision_cycle_puts_execution_in_failure`).
 
 **Fim.** `fim(...)` conclui a execução. Com `encerra_atendimento=True`, também fecha a conversa e a Ficha (ver §2). Execução concluída, abandonada ou em falha não aceita mais ação (`closed_execution_accepts_no_transition`, em `poph-store/tests/flow_executions.rs`).
 
 **Abandono.** O agente abandona com `fluxo_abandonar(motivo)`; o atendente, com `POST .../flow-runs/{run_id}/abandon`. Abandono sem motivo é recusado.
 
-**Erro de regra.** Regra que não avalia (campo ausente, passos ou memória esgotados, prazo estourado) leva a execução a `falha`, com um código `FLXR…`, e o atendimento segue. Os limites de uma avaliação: `max_ticks_regra` (10.000 por padrão), `max_heap_regra` (1 MiB) e 200 ms de prazo (`regras.rs`, `limites.rs`).
+**Erro de regra.** Regra que não avalia (campo ausente, passos ou memória esgotados, prazo estourado) leva a execução a `falha`, com um código `FLXR…`, e o atendimento segue. Os limites de uma avaliação: `max_ticks_regra` (10.000 por padrão), `max_heap_regra` (1 MiB) e 200 ms de prazo (`rules.rs`, `limits.rs`).
 
-**Dados da execução.** O `dados_json` tem teto de 64 KB (`max_dados_bytes`). Script acima de 32 KB é recusado antes de compilar (`max_fonte_bytes`), e script com mais nós que `max_nos` também é recusado (`limites.rs`: `script_de_40_kib_e_recusado_com_o_padrao`, `teto_de_nos_da_configuracao_recusa_o_que_passa_dele`).
+**Dados da execução.** O `dados_json` tem teto de 64 KB (`max_dados_bytes`). Script acima de 32 KB é recusado antes de compilar (`max_fonte_bytes`), e script com mais nós que `max_nos` também é recusado (`limits.rs`: `script_of_40_kib_refused_with_default`, `node_cap_from_configuration_refuses_what_exceeds_it`).
 
 **Agente e atendente agindo ao mesmo tempo.** Só um vence; o outro recebe `412` (versão velha) e nada é gravado (`fichas_acoes.rs`: `corrida_atendente_com_agente_da_412_e_nao_grava_nada`; `flow_executions.rs`: `two_threads_agent_and_attendant_only_one_wins`).
 
@@ -164,10 +164,10 @@ O passo a passo para descobrir o motivo está em [RUNBOOKS.md](RUNBOOKS.md), na 
 |---|---|
 | Ficha em todo caminho de criação e fechamento | `poph-store/tests/cases_invariant.rs`, `cases_migration.rs` |
 | Esquema (tabelas, gatilhos, uma execução ativa) | `poph-store/tests/flows_migration.rs`, `flows_repo.rs` |
-| Linguagem (compilador, validador, regras, limites) | `poph-fluxos/tests/compilador.rs`, `validador.rs`, `regras.rs`, `limites.rs` |
-| Motor (início, ações, decisões, fim, efeitos) | `poph-fluxos/tests/motor.rs`, `motor_desfecho.rs`, `poph-store/tests/flow_executions.rs` |
+| Linguagem (compilador, validador, regras, limites) | `poph-fluxos/tests/compiler.rs`, `validator.rs`, `rules.rs`, `limits.rs` |
+| Motor (início, ações, decisões, fim, efeitos) | `poph-fluxos/tests/engine.rs`, `engine_outcome.rs`, `poph-store/tests/flow_executions.rs` |
 | Gate G9 e turno | `poph-jev/tests/g9_fluxo.rs`, `poph-agent/tests/flow_turn.rs`, `flow_tools.rs` |
-| Paridade com o POP Atende | `poph-fluxos/tests/paridade.rs` e [FLUXOS_PARIDADE.md](FLUXOS_PARIDADE.md) |
+| Paridade com o POP Atende | `poph-fluxos/tests/parity.rs` e [FLUXOS_PARIDADE.md](FLUXOS_PARIDADE.md) |
 | API, permissão, Fichas e ações humanas | `poph-server/tests/agente_fluxos.rs`, `fichas_leitura.rs`, `fichas_acoes.rs`, `isolamento_orgs.rs` |
 | CLI | `poph/tests/cli_flow.rs` |
 | Backup | testes de backup em `poph-store` (19), `poph-server/tests/backup_http.rs` (9) e `poph/tests/cli_backup.rs` (6) |

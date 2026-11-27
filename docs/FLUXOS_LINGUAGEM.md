@@ -1099,10 +1099,10 @@ repositório; o que foi feito e testado está em [`FLUXOS.md`](FLUXOS.md).
 
 - **Compilador (FX-10):** `poph_fluxos::compilar` monta a IR e emite os diagnósticos com linha e coluna. Os três
   exemplos compilam para a IR dourada em `tests/fluxos/ir/`. `poph_fluxos::carregar` recusa IR que não bata com o
-  texto (`ir_divergente`). Testes: `crates/poph-fluxos/tests/compilador.rs`.
+  texto (`ir_divergente`). Testes: `crates/poph-fluxos/tests/compiler.rs`.
 - **Validador (FX-11):** `poph_fluxos::validar` revalida uma IR que não veio do compilador, apontando o caminho do
-  nó; `resolver_departamentos` traduz nome em id (`FLX65`). Testes: `tests/validador.rs`.
-- **Regras (FX-12):** combinadores em Rust nativo e `def` no módulo congelado, com prazo. Testes: `tests/regras.rs`
+  nó; `resolver_departamentos` traduz nome em id (`FLX65`). Testes: `tests/validator.rs`.
+- **Regras (FX-12):** combinadores em Rust nativo e `def` no módulo congelado, com prazo. Testes: `tests/rules.rs`
   (um caso por combinador e por desfecho de erro, inclusive `"x" * 1000000000`, recursão e laço).
 - **Forma canônica e diff (FX-16, FX-17):** `tests/formatter.rs`, `tests/diff.rs`.
 - **Motor, efeitos e API:** descritos e provados em [`FLUXOS.md`](FLUXOS.md), com os testes citados em cada seção.

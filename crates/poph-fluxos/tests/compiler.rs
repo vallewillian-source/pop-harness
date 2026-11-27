@@ -1,12 +1,8 @@
-//! Testes do compilador de fluxos (FX-10): os três exemplos dourados, um caso por diagnóstico de
-//! forma (com linha e coluna), limites, determinismo e `carregar` recusando IR adulterada.
-
 use std::time::{Duration, Instant};
 
 use poph_fluxos::compilador::MAX_FONTE_BYTES;
 use poph_fluxos::{Code, Compiled, Limites, LoadFailure, compile, load};
 
-/// Fluxo mínimo e **sem nenhum diagnóstico**: é a base das mutações de cada caso.
 const BASE: &str = r#"fluxo(
     id = "teste",
     nome = "Teste",
@@ -30,37 +26,33 @@ fn limites() -> Limites {
     Limites::default()
 }
 
-fn compila(fonte: &str) -> Compiled {
+fn compiles(fonte: &str) -> Compiled {
     compile(fonte, &limites())
 }
 
-fn exemplo(nome: &str) -> String {
-    let caminho = format!(
+fn example(nome: &str) -> String {
+    let path = format!(
         "{}/../../tests/fluxos/exemplos/{nome}",
         env!("CARGO_MANIFEST_DIR")
     );
-    std::fs::read_to_string(&caminho).unwrap_or_else(|erro| panic!("{caminho}: {erro}"))
+    std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{path}: {error}"))
 }
 
-/// Fluxo base com uma decisão extra, para os diagnósticos de regra.
-fn com_regra(regra: &str) -> String {
+fn with_rule(rule: &str) -> String {
     format!(
-        "{BASE}\ndecisao(\n    id = \"escolha\",\n    se = {regra},\n    entao = \"entrada\",\n    senao = \"entrada\",\n)\n"
+        "{BASE}\ndecisao(\n    id = \"escolha\",\n    se = {rule},\n    entao = \"entrada\",\n    senao = \"entrada\",\n)\n"
     )
 }
 
-/// Um caso por código da lista fechada: o script que dispara e onde.
-struct Caso {
-    codigo: Code,
+struct Case {
+    code: Code,
     fonte: String,
     limites: Limites,
-    linha: u32,
-    coluna: u32,
+    line: u32,
+    column: u32,
 }
 
-/// Onde o diagnóstico de cada código tem de aparecer. Conferido à mão contra o texto de cada caso
-/// (o ponto é sempre o trecho que o autor tem de corrigir).
-fn posicoes() -> Vec<(Code, u32, u32)> {
+fn positions() -> Vec<(Code, u32, u32)> {
     vec![
         (Code::Syntax, 3, 1),
         (Code::SourceTooLarge, 1, 1),
@@ -105,187 +97,156 @@ fn posicoes() -> Vec<(Code, u32, u32)> {
     ]
 }
 
-fn posicao_esperada(codigo: Code) -> (u32, u32) {
-    posicoes()
+fn position_expected(code: Code) -> (u32, u32) {
+    positions()
         .into_iter()
-        .find(|(c, _, _)| *c == codigo)
-        .map(|(_, linha, coluna)| (linha, coluna))
-        .unwrap_or_else(|| panic!("{codigo} sem posição esperada"))
+        .find(|(c, _, _)| *c == code)
+        .map(|(_, line, column)| (line, column))
+        .unwrap_or_else(|| panic!("{code} sem posição esperada"))
 }
 
-/// Um caso simples, com os limites padrão.
-fn caso(codigo: Code, fonte: impl Into<String>) -> Caso {
-    let (linha, coluna) = posicao_esperada(codigo);
-    Caso {
-        codigo,
+fn case(code: Code, fonte: impl Into<String>) -> Case {
+    let (line, column) = position_expected(code);
+    Case {
+        code,
         fonte: fonte.into(),
         limites: limites(),
-        linha,
-        coluna,
+        line,
+        column,
     }
 }
 
-fn casos() -> Vec<Caso> {
-    let (linha_carga, coluna_carga) = posicao_esperada(Code::LoadLimit);
+fn cases() -> Vec<Case> {
+    let (line_load, column_load) = position_expected(Code::LoadLimit);
     vec![
-        // FLX01 — sintaxe inválida.
-        caso(Code::Syntax, "fluxo(\n    id = \"teste\",\n"),
-        // FLX02 — fonte acima de 32 KB.
-        caso(Code::SourceTooLarge, "#".repeat(MAX_FONTE_BYTES + 1)),
-        // FLX03 — construção fora do dialeto.
-        caso(
+        case(Code::Syntax, "fluxo(\n    id = \"teste\",\n"),
+        case(Code::SourceTooLarge, "#".repeat(MAX_FONTE_BYTES + 1)),
+        case(
             Code::Dialect,
             format!("load(\"outro.star\", \"ajuda\")\n{BASE}"),
         ),
-        // FLX04 — limite de carga estourado (heap apertado de propósito).
-        Caso {
-            codigo: Code::LoadLimit,
+        Case {
+            code: Code::LoadLimit,
             fonte: BASE.to_owned(),
             limites: Limites {
                 max_heap_bytes: 1,
                 ..limites()
             },
-            linha: linha_carga,
-            coluna: coluna_carga,
+            line: line_load,
+            column: column_load,
         },
-        // FLX05 — item no topo que não é declaração.
-        caso(Code::InvalidTopLevel, format!("contador = 0\n{BASE}")),
-        // FLX06 — valor com tipo errado.
-        caso(
+        case(Code::InvalidTopLevel, format!("contador = 0\n{BASE}")),
+        case(
             Code::WrongType,
             BASE.replace("obrigatorio = True", "obrigatorio = \"sim\""),
         ),
-        // FLX07 — nome que não existe no dialeto.
-        caso(
+        case(
             Code::UnknownName,
             format!("{BASE}\ndef minha(dados):\n    aberto = open(\"x.txt\")\n    return len(aberto) > 0\n"),
         ),
-        // FLX10 — falta `fluxo(...)`.
-        caso(
+        case(
             Code::MissingFlow,
             "etapa(\n    id = \"entrada\",\n    nome = \"Entrada\",\n)\n",
         ),
-        // FLX11 — argumento obrigatório ausente.
-        caso(
+        case(
             Code::MissingArgument,
             BASE.replace("    inicio = \"entrada\",\n", ""),
         ),
-        // FLX12 — argumento desconhecido.
-        caso(
+        case(
             Code::UnknownArgument,
             BASE.replace("obrigatorio = True", "obrigatorioo = True"),
         ),
-        // FLX13 — id fora do formato.
-        caso(
+        case(
             Code::InvalidId,
             BASE.replace("id = \"teste\"", "id = \"Teste Ruim\""),
         ),
-        // FLX14 — id repetido.
-        caso(
+        case(
             Code::DuplicateId,
             format!("{BASE}\netapa(\n    id = \"entrada\",\n    nome = \"Repetida\",\n    acoes = [acao(\"outra\", \"Outra\", vai_para = fim(\"repetida\"))],\n)\n"),
         ),
-        // FLX15 — destino inexistente.
-        caso(
+        case(
             Code::UnknownDestination,
             BASE.replace(
                 "vai_para = fim(\"pronto\", resultado = \"Feito\")",
                 "vai_para = \"nao_existe\"",
             ),
         ),
-        // FLX16 — mesmo `fim` com argumentos diferentes.
-        caso(
+        case(
             Code::DivergentEnd,
             format!("{BASE}\netapa(\n    id = \"outra\",\n    nome = \"Outra\",\n    acoes = [acao(\"sair\", \"Sair\", vai_para = fim(\"pronto\", resultado = \"Outro\"))],\n)\n"),
         ),
-        // FLX17 — `exige` cita campo que não existe na etapa.
-        caso(
+        case(
             Code::UnknownRequirement,
             BASE.replace("exige = [\"nome\"]", "exige = [\"cep\"]"),
         ),
-        // FLX18 — `opcao` sem opções.
-        caso(
+        case(
             Code::InvalidOptions,
             BASE.replace(
                 "campo(\"nome\", \"Nome\", obrigatorio = True)",
                 "campo(\"nome\", \"Nome\", tipo = \"opcao\", obrigatorio = True)",
             ),
         ),
-        // FLX19 — ator inválido na etapa.
-        caso(
+        case(
             Code::InvalidRuleOrActor,
             BASE.replace(
                 "    nome = \"Entrada\",\n",
                 "    nome = \"Entrada\",\n    atores = [\"cliente\"],\n",
             ),
         ),
-        // FLX20 — tipo de campo desconhecido.
-        caso(
+        case(
             Code::UnknownType,
             BASE.replace(
                 "campo(\"nome\", \"Nome\", obrigatorio = True)",
                 "campo(\"nome\", \"Nome\", tipo = \"telefone\", obrigatorio = True)",
             ),
         ),
-        // FLX21 — combinador malformado (campo sem `etapa.`).
-        caso(Code::MalformedCombinator, com_regra("igual(\"nome\", \"x\")")),
-        // FLX22 — combinador cita campo inexistente.
-        caso(Code::UnknownField, com_regra("igual(\"entrada.cep\", \"x\")")),
-        // FLX23 — ciclo entre decisões.
-        caso(
+        case(Code::MalformedCombinator, with_rule("igual(\"nome\", \"x\")")),
+        case(Code::UnknownField, with_rule("igual(\"entrada.cep\", \"x\")")),
+        case(
             Code::DecisionCycle,
             format!(
                 "{BASE}\ndecisao(\n    id = \"a\",\n    se = igual(\"entrada.nome\", \"x\"),\n    entao = \"b\",\n    senao = \"b\",\n)\n\ndecisao(\n    id = \"b\",\n    se = igual(\"entrada.nome\", \"x\"),\n    entao = \"a\",\n    senao = \"a\",\n)\n"
             ),
         ),
-        // FLX24 — `def` fora do formato.
-        caso(
+        case(
             Code::InvalidDef,
             format!("{BASE}\ndef minha(dados, extra):\n    return True\n"),
         ),
-        // FLX25 — variável com formato inválido.
-        caso(
+        case(
             Code::InvalidVariable,
             BASE.replace(
                 "    nome = \"Entrada\",\n",
                 "    nome = \"Entrada\",\n    ao_entrar = [mensagem_ao_cliente(\"Olá {cliente.nome}\")],\n",
             ),
         ),
-        // FLX26 — `{...}` em texto que não interpola.
-        caso(
+        case(
             Code::ForbiddenInterpolation,
             BASE.replace(
                 "    nome = \"Entrada\",\n",
                 "    nome = \"Entrada\",\n    instrucao = \"Veja {entrada.nome}\",\n",
             ),
         ),
-        // FLX27 — acima de 60 nós.
-        caso(Code::NodeLimit, fluxo_com_61_nos()),
-        // FLX28 — `notificar_whatsapp` com número inválido.
-        caso(
+        case(Code::NodeLimit, flow_with_61_nodes()),
+        case(
             Code::InvalidNumber,
             BASE.replace(
                 "exige = [\"nome\"], ",
                 "exige = [\"nome\"], efeitos = [notificar_whatsapp(para = \"123\", mensagem = \"Pedido {entrada.nome}\")], ",
             ),
         ),
-        // FLX51 — etapa sem nenhuma ação.
-        caso(
+        case(
             Code::StageWithoutAction,
             BASE.replace(
                 "    acoes = [acao(\"seguir\", \"Seguir\", exige = [\"nome\"], vai_para = fim(\"pronto\", resultado = \"Feito\"))],\n",
                 "",
             ),
         ),
-        // FLX52 — etapa inalcançável.
-        caso(
+        case(
             Code::Unreachable,
             format!("{BASE}\netapa(\n    id = \"ilha\",\n    nome = \"Ilha\",\n    acoes = [acao(\"sair\", \"Sair\", vai_para = fim(\"ilha_fim\"))],\n)\n"),
         ),
-        // FLX53 — campo que ninguém usa.
-        caso(Code::UnusedField, BASE.replace("exige = [\"nome\"], ", "")),
-        // FLX54 — comparação com valor fora das opções.
-        caso(
+        case(Code::UnusedField, BASE.replace("exige = [\"nome\"], ", "")),
+        case(
             Code::OutsideOptions,
             format!(
                 "{}\ndecisao(\n    id = \"escolha\",\n    se = igual(\"entrada.nome\", \"talvez\"),\n    entao = \"entrada\",\n    senao = \"entrada\",\n)\n",
@@ -295,46 +256,38 @@ fn casos() -> Vec<Caso> {
                 )
             ),
         ),
-        // FLX55 — condição que sempre dá o mesmo resultado.
-        caso(
+        case(
             Code::ContradictoryCondition,
-            com_regra("e(igual(\"entrada.nome\", \"x\"), diferente(\"entrada.nome\", \"x\"))"),
+            with_rule("e(igual(\"entrada.nome\", \"x\"), diferente(\"entrada.nome\", \"x\"))"),
         ),
-        // FLX56 — gatilho sem exemplos.
-        caso(
+        case(
             Code::TriggerWithoutExamples,
             BASE.replace("        exemplos = [\"quero testar\"],\n", ""),
         ),
-        // FLX57 — gatilho sem `nao_quando`.
-        caso(
+        case(
             Code::TriggerWithoutNegative,
             BASE.replace("        nao_quando = \"O cliente nao quer testar.\",\n", ""),
         ),
-        // FLX58 — notificação sem variável.
-        caso(
+        case(
             Code::NotificationWithoutVariable,
             BASE.replace(
                 "exige = [\"nome\"], ",
                 "exige = [\"nome\"], efeitos = [notificar_whatsapp(para = \"5521999990000\", mensagem = \"Pedido entregue\")], ",
             ),
         ),
-        // FLX59 — variável de campo que não existe no fluxo.
-        caso(
+        case(
             Code::VariableWithoutField,
             BASE.replace(
                 "    nome = \"Entrada\",\n",
                 "    nome = \"Entrada\",\n    ao_entrar = [mensagem_ao_cliente(\"Olá {entrada.cep}\")],\n",
             ),
         ),
-        // FLX60 — `maior` em campo que não é número.
-        caso(Code::TextComparison, com_regra("maior(\"entrada.nome\", \"10\")")),
-        // FLX61 — `def` definida e não usada.
-        caso(
+        case(Code::TextComparison, with_rule("maior(\"entrada.nome\", \"10\")")),
+        case(
             Code::UnusedDef,
             format!("{BASE}\ndef minha(dados):\n    return True\n"),
         ),
-        // FLX62 — ator da etapa sem nenhuma ação dele.
-        caso(
+        case(
             Code::ActorWithoutAction,
             BASE.replace(
                 "    nome = \"Entrada\",\n",
@@ -345,16 +298,14 @@ fn casos() -> Vec<Caso> {
                 "acao(\"seguir\", \"Seguir\", ator = \"agente\",",
             ),
         ),
-        // FLX63 — `ao_entrar` usa variável do próprio passo.
-        caso(
+        case(
             Code::VariableFromOwnStep,
             BASE.replace(
                 "    nome = \"Entrada\",\n",
                 "    nome = \"Entrada\",\n    ao_entrar = [mensagem_ao_cliente(\"Olá {entrada.nome}\")],\n",
             ),
         ),
-        // FLX64 — texto acima do recomendado.
-        caso(
+        case(
             Code::LongText,
             BASE.replace(
                 "    nome = \"Entrada\",\n",
@@ -364,123 +315,119 @@ fn casos() -> Vec<Caso> {
     ]
 }
 
-/// 31 etapas + 31 fins = 62 nós (o teto é 60).
-fn fluxo_com_61_nos() -> String {
+fn flow_with_61_nodes() -> String {
     let mut fonte = String::from(
         "fluxo(\n    id = \"grande\",\n    nome = \"Grande\",\n    inicio = \"e0\",\n    gatilho = gatilho(\n        quando = \"O cliente quer testar.\",\n        nao_quando = \"O cliente nao quer testar.\",\n        exemplos = [\"quero testar\"],\n    ),\n)\n\n",
     );
-    for indice in 0..31 {
+    for index in 0..31 {
         fonte.push_str(&format!(
-            "etapa(\n    id = \"e{indice}\",\n    nome = \"Etapa {indice}\",\n    acoes = [acao(\"seguir\", \"Seguir\", vai_para = fim(\"f{indice}\"))],\n)\n\n"
+            "etapa(\n    id = \"e{index}\",\n    nome = \"Etapa {index}\",\n    acoes = [acao(\"seguir\", \"Seguir\", vai_para = fim(\"f{index}\"))],\n)\n\n"
         ));
     }
     fonte
 }
 
 #[test]
-fn def_com_nome_de_declaracao_e_recusada_com_posicao() {
-    // O caso que o FX-10 deixou sem teste: `def` com nome que já é declaração da linguagem. Antes
-    // da FX-10 isso estourava em tempo de carga, com traceback; agora é erro de forma, no lugar.
+fn def_with_name_declaration_and_refused_with_position() {
     for nome in ["etapa", "fluxo"] {
         let fonte = format!("{BASE}\ndef {nome}(dados):\n    return True\n");
-        let compilado = compila(&fonte);
-        let diagnostico = compilado
+        let compiled = compiles(&fonte);
+        let diagnostic = compiled
             .diagnostics
             .iter()
             .find(|d| d.code == Code::InvalidDef)
             .unwrap_or_else(|| {
                 panic!(
                     "`def {nome}(dados)` devia dar FLX24; diagnósticos: {:?}",
-                    compilado.diagnostics
+                    compiled.diagnostics
                 )
             });
         assert_eq!(
-            (diagnostico.line, diagnostico.column),
+            (diagnostic.line, diagnostic.column),
             (Some(19), Some(1)),
-            "`def {nome}` tem de apontar o começo da declaração: {diagnostico}"
+            "`def {nome}` tem de apontar o começo da declaração: {diagnostic}"
         );
         assert!(
-            diagnostico.mensagem.contains(nome),
+            diagnostic.mensagem.contains(nome),
             "a mensagem tem de dizer qual é o nome reservado: {}",
-            diagnostico.mensagem
+            diagnostic.mensagem
         );
-        assert!(compilado.ir.is_none(), "erro de forma não gera IR");
+        assert!(compiled.ir.is_none(), "erro de forma não gera IR");
     }
 }
 
 #[test]
-fn o_fluxo_base_nao_tem_nenhum_diagnostico() {
-    let compilado = compila(BASE);
+fn base_flow_has_no_diagnostic() {
+    let compiled = compiles(BASE);
     assert!(
-        compilado.diagnostics.is_empty(),
+        compiled.diagnostics.is_empty(),
         "o fluxo base tem de passar limpo: {:?}",
-        compilado.diagnostics
+        compiled.diagnostics
     );
-    assert!(compilado.ir.is_some(), "o fluxo base tem de gerar IR");
+    assert!(compiled.ir.is_some(), "o fluxo base tem de gerar IR");
 }
 
 #[test]
-fn cada_codigo_da_lista_fechada_tem_um_caso() {
-    let mut vistos: Vec<Code> = casos().iter().map(|caso| caso.codigo).collect();
-    let total = vistos.len();
-    vistos.sort_unstable();
-    vistos.dedup();
-    assert_eq!(vistos.len(), total, "dois casos para o mesmo código");
+fn each_code_list_closed_has_case() {
+    let mut seen: Vec<Code> = cases().iter().map(|case| case.code).collect();
+    let total = seen.len();
+    seen.sort_unstable();
+    seen.dedup();
+    assert_eq!(seen.len(), total, "dois casos para o mesmo código");
     assert_eq!(
-        vistos.len(),
+        seen.len(),
         40,
         "a lista fechada tem 40 códigos do compilador"
     );
-    for codigo in Code::from_compiler() {
-        assert!(vistos.contains(&codigo), "{codigo} sem caso que o dispare");
+    for code in Code::from_compiler() {
+        assert!(seen.contains(&code), "{code} sem caso que o dispare");
     }
 }
 
 #[test]
-fn cada_diagnostico_aponta_a_linha_e_a_coluna_do_trecho() {
-    let mut falhas: Vec<String> = Vec::new();
-    for caso in casos() {
-        let compilado = compile(&caso.fonte, &caso.limites);
-        let Some(diagnostico) = compilado.diagnostics.iter().find(|d| d.code == caso.codigo) else {
-            falhas.push(format!(
+fn each_diagnostic_points_line_and_column_passage() {
+    let mut failures: Vec<String> = Vec::new();
+    for case in cases() {
+        let compiled = compile(&case.fonte, &case.limites);
+        let Some(diagnostic) = compiled.diagnostics.iter().find(|d| d.code == case.code) else {
+            failures.push(format!(
                 "{} não apareceu (diagnósticos: {:?})",
-                caso.codigo, compilado.diagnostics
+                case.code, compiled.diagnostics
             ));
             continue;
         };
-        if (diagnostico.line, diagnostico.column) != (Some(caso.linha), Some(caso.coluna)) {
-            falhas.push(format!(
+        if (diagnostic.line, diagnostic.column) != (Some(case.line), Some(case.column)) {
+            failures.push(format!(
                 "{} em {:?}:{:?} (esperado {}:{}); trecho: {}",
-                caso.codigo,
-                diagnostico.line,
-                diagnostico.column,
-                caso.linha,
-                caso.coluna,
-                diagnostico.mensagem
+                case.code,
+                diagnostic.line,
+                diagnostic.column,
+                case.line,
+                case.column,
+                diagnostic.mensagem
             ));
         }
     }
-    assert!(falhas.is_empty(), "\n{}", falhas.join("\n"));
+    assert!(failures.is_empty(), "\n{}", failures.join("\n"));
 }
 
 #[test]
-fn o_fluxo_base_nao_dispara_nenhum_dos_40_codigos() {
-    // O outro lado de cada caso: um fluxo correto não recebe nenhum dos diagnósticos.
-    let compilado = compila(BASE);
-    for codigo in Code::from_compiler() {
+fn base_flow_fires_none_of_40_codes() {
+    let compiled = compiles(BASE);
+    for code in Code::from_compiler() {
         assert!(
-            !compilado.diagnostics.iter().any(|d| d.code == codigo),
-            "{codigo} não devia aparecer num fluxo correto"
+            !compiled.diagnostics.iter().any(|d| d.code == code),
+            "{code} não devia aparecer num fluxo correto"
         );
     }
 }
 
 #[test]
-fn o_erro_bloqueia_a_ir_e_o_aviso_nao() {
-    for caso in casos() {
-        let compilado = compile(&caso.fonte, &caso.limites);
-        let erro = !matches!(
-            caso.codigo,
+fn error_blocks_ir_and_notice_does_not() {
+    for case in cases() {
+        let compiled = compile(&case.fonte, &case.limites);
+        let error = !matches!(
+            case.code,
             Code::StageWithoutAction
                 | Code::Unreachable
                 | Code::UnusedField
@@ -497,44 +444,43 @@ fn o_erro_bloqueia_a_ir_e_o_aviso_nao() {
                 | Code::LongText
         );
         assert_eq!(
-            compilado.has_error(),
-            erro,
+            compiled.has_error(),
+            error,
             "{} deveria {}bloquear a publicação",
-            caso.codigo,
-            if erro { "" } else { "não " }
+            case.code,
+            if error { "" } else { "não " }
         );
-        if erro {
+        if error {
             assert!(
-                compilado.ir.is_none(),
+                compiled.ir.is_none(),
                 "{} é erro, então não pode sair IR",
-                caso.codigo
+                case.code
             );
         }
     }
 }
 
-/// Inventário para conferir as posições à mão: `cargo test -p poph-fluxos -- --ignored inventario`.
 #[test]
 #[ignore]
 fn inventario() {
-    for caso in casos() {
-        let compilado = compile(&caso.fonte, &caso.limites);
-        match compilado.diagnostics.iter().find(|d| d.code == caso.codigo) {
+    for case in cases() {
+        let compiled = compile(&case.fonte, &case.limites);
+        match compiled.diagnostics.iter().find(|d| d.code == case.code) {
             Some(d) => {
-                let linha = caso
+                let line = case
                     .fonte
                     .lines()
                     .nth(d.line.unwrap_or(1) as usize - 1)
                     .unwrap_or("<fora do texto>");
                 println!(
                     "{} => {:?}:{:?} | {}\n    {}",
-                    caso.codigo, d.line, d.column, d.mensagem, linha
+                    case.code, d.line, d.column, d.mensagem, line
                 );
             }
             None => println!(
                 "{} => AUSENTE (tem {:?})",
-                caso.codigo,
-                compilado
+                case.code,
+                compiled
                     .diagnostics
                     .iter()
                     .map(|d| d.code)
@@ -544,104 +490,97 @@ fn inventario() {
     }
 }
 
-// ------------------------------------------------------------------ exemplos e determinismo
-
 #[test]
-fn os_tres_exemplos_compilam_para_a_ir_dourada() {
+fn three_examples_compile_to_golden_ir() {
     for nome in [
         "agendar_visita.star",
         "triagem_suporte.star",
         "confirmar_entrega.star",
     ] {
-        let fonte = exemplo(nome);
-        let compilado = compila(&fonte);
+        let fonte = example(nome);
+        let compiled = compiles(&fonte);
         assert!(
-            compilado.diagnostics.is_empty(),
+            compiled.diagnostics.is_empty(),
             "{nome} tem diagnóstico: {:?}",
-            compilado.diagnostics
+            compiled.diagnostics
         );
-        let ir = compilado.ir.expect("o exemplo tem de gerar IR");
-        let caminho = format!(
+        let ir = compiled.ir.expect("o exemplo tem de gerar IR");
+        let path = format!(
             "{}/../../tests/fluxos/ir/{}.json",
             env!("CARGO_MANIFEST_DIR"),
             nome.trim_end_matches(".star")
         );
-        let dourada = std::fs::read_to_string(&caminho).unwrap_or_else(|erro| {
-            panic!(
-                "{caminho}: {erro} — rode `cargo test -p poph-fluxos -- --ignored gera_douradas`"
-            )
+        let golden = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+            panic!("{path}: {error} — rode `cargo test -p poph-fluxos -- --ignored gera_douradas`")
         });
-        let esperada = serde_json::from_str(&dourada).expect("a dourada é JSON da IR");
-        assert_eq!(ir, esperada, "a IR de {nome} não bate com a dourada");
-        // A forma compacta é a que vai para `definicao_json`: tem de ser estável e igual.
+        let expected_ir = serde_json::from_str(&golden).expect("a dourada é JSON da IR");
+        assert_eq!(ir, expected_ir, "a IR de {nome} não bate com a dourada");
         assert_eq!(
             ir.to_json(),
-            esperada_json(&caminho),
+            expected_json(&path),
             "a forma compacta de {nome} não é a gravada"
         );
     }
 }
 
-/// A IR dourada, lida como texto compacto (é o que a comparação de `carregar` usa).
-fn esperada_json(caminho: &str) -> String {
-    let texto = std::fs::read_to_string(caminho).expect("dourada legível");
+fn expected_json(path: &str) -> String {
+    let texto = std::fs::read_to_string(path).expect("dourada legível");
     let ir: poph_fluxos::Ir = serde_json::from_str(&texto).expect("dourada é IR");
     ir.to_json()
 }
 
-/// Regrava as douradas. Roda só à mão: `cargo test -p poph-fluxos -- --ignored gera_douradas`.
 #[test]
 #[ignore]
-fn gera_douradas() {
+fn generates_golden() {
     for nome in [
         "agendar_visita.star",
         "triagem_suporte.star",
         "confirmar_entrega.star",
     ] {
-        let fonte = exemplo(nome);
-        let compilado = compila(&fonte);
+        let fonte = example(nome);
+        let compiled = compiles(&fonte);
         assert!(
-            compilado.diagnostics.is_empty(),
+            compiled.diagnostics.is_empty(),
             "{nome} tem diagnóstico: {:?}",
-            compilado.diagnostics
+            compiled.diagnostics
         );
-        let ir = compilado.ir.expect("o exemplo tem de gerar IR");
-        let caminho = format!(
+        let ir = compiled.ir.expect("o exemplo tem de gerar IR");
+        let path = format!(
             "{}/../../tests/fluxos/ir/{}.json",
             env!("CARGO_MANIFEST_DIR"),
             nome.trim_end_matches(".star")
         );
         std::fs::create_dir_all(
-            std::path::Path::new(&caminho)
+            std::path::Path::new(&path)
                 .parent()
                 .expect("a dourada tem pasta"),
         )
         .expect("criar a pasta das douradas");
-        std::fs::write(&caminho, serde_json::to_string_pretty(&ir).unwrap() + "\n")
-            .unwrap_or_else(|erro| panic!("{caminho}: {erro}"));
-        println!("gravada {caminho}");
+        std::fs::write(&path, serde_json::to_string_pretty(&ir).unwrap() + "\n")
+            .unwrap_or_else(|error| panic!("{path}: {error}"));
+        println!("gravada {path}");
     }
 }
 
 #[test]
-fn duas_compilacoes_produzem_a_mesma_ir_byte_a_byte() {
+fn two_compilations_produce_same_ir_byte_for_byte() {
     for nome in ["triagem_suporte.star", "confirmar_entrega.star"] {
-        let fonte = exemplo(nome);
-        let primeira = compila(&fonte).ir.expect("IR").to_json();
-        let segunda = compila(&fonte).ir.expect("IR").to_json();
-        assert_eq!(primeira, segunda, "{nome} não é determinístico");
+        let fonte = example(nome);
+        let first_pass = compiles(&fonte).ir.expect("IR").to_json();
+        let second_pass = compiles(&fonte).ir.expect("IR").to_json();
+        assert_eq!(first_pass, second_pass, "{nome} não é determinístico");
     }
 }
 
 #[test]
-fn duas_threads_compilam_o_mesmo_texto_com_a_mesma_ir() {
-    let fonte = exemplo("triagem_suporte.star");
-    let esperado = compila(&fonte).ir.expect("IR").to_json();
-    let resultados: Vec<String> = std::thread::scope(|escopo| {
+fn two_threads_compile_same_text_with_same_ir() {
+    let fonte = example("triagem_suporte.star");
+    let expected_json = compiles(&fonte).ir.expect("IR").to_json();
+    let results: Vec<String> = std::thread::scope(|scope| {
         let handles: Vec<_> = (0..4)
             .map(|_| {
                 let fonte = fonte.clone();
-                escopo.spawn(move || compila(&fonte).ir.expect("IR").to_json())
+                scope.spawn(move || compiles(&fonte).ir.expect("IR").to_json())
             })
             .collect();
         handles
@@ -649,17 +588,14 @@ fn duas_threads_compilam_o_mesmo_texto_com_a_mesma_ir() {
             .map(|h| h.join().expect("thread sem pânico"))
             .collect()
     });
-    for resultado in resultados {
-        assert_eq!(resultado, esperado, "a IR mudou entre threads");
+    for resultado in results {
+        assert_eq!(resultado, expected_json, "a IR mudou entre threads");
     }
 }
 
-// ------------------------------------------------------------------ limites e abuso
-
-/// Cada script patológico termina com erro, rápido e sem estourar a memória do processo.
 #[test]
-fn script_patologico_termina_com_erro_e_sem_travar() {
-    let casos: Vec<(&str, String)> = vec![
+fn pathological_script_ends_with_error_without_hanging() {
+    let cases: Vec<(&str, String)> = vec![
         ("load", format!("load(\"outro.star\", \"x\")\n{BASE}")),
         (
             "while",
@@ -693,12 +629,12 @@ fn script_patologico_termina_com_erro_e_sem_travar() {
             format!("{BASE}\ndef sorte(dados):\n    return random.random() > 0.5\n"),
         ),
     ];
-    for (nome, fonte) in casos {
-        let inicio = Instant::now();
-        let compilado = compila(&fonte);
-        let gasto = inicio.elapsed();
+    for (nome, fonte) in cases {
+        let beginning = Instant::now();
+        let compiled = compiles(&fonte);
+        let gasto = beginning.elapsed();
         assert!(
-            compilado.has_error(),
+            compiled.has_error(),
             "o caso `{nome}` tinha de terminar com erro, e passou"
         );
         assert!(
@@ -708,10 +644,9 @@ fn script_patologico_termina_com_erro_e_sem_travar() {
     }
 }
 
-/// Entrada estranha vira diagnóstico, nunca pânico.
 #[test]
-fn entrada_estranha_nao_derruba_o_compilador() {
-    let casos = [
+fn foreign_input_does_not_crash_compiler() {
+    let cases = [
         "",
         "   \n\n\t\n",
         "# só comentário\n",
@@ -723,20 +658,17 @@ fn entrada_estranha_nao_derruba_o_compilador() {
         "\\u{feff}fluxo(\n",
         "fluxo(\n    id = \"abc\",\n    nome = \"A\",\n    inicio = \"et\",\n    gatilho = gatilho(quando = \"q\"),\n)\netapa(\n    id = \"et\",\n    nome = \"E\",\n    acoes = [acao(\"ir\", \"Ir\", vai_para = fim(\"fim_ok\"))],\n)\n",
     ];
-    for fonte in casos {
-        let compilado = compila(fonte);
-        let _ = compilado.ir();
-        // O que importa: voltou (não entrou em pânico) e, se tem IR, o JSON é legível de volta.
-        if let Some(ir) = &compilado.ir {
-            let lida = poph_fluxos::Ir::from_json(&ir.to_json()).expect("a IR volta do JSON");
-            assert_eq!(&lida, ir, "ida e volta da IR em {fonte:?}");
+    for fonte in cases {
+        let compiled = compiles(fonte);
+        let _ = compiled.ir();
+        if let Some(ir) = &compiled.ir {
+            let read = poph_fluxos::Ir::from_json(&ir.to_json()).expect("a IR volta do JSON");
+            assert_eq!(&read, ir, "ida e volta da IR em {fonte:?}");
         }
     }
-    // A última entrada é um fluxo válido: tem de gerar IR.
-    assert!(compila(casos[casos.len() - 1]).ir.is_some());
-    // Fonte vazia não declara fluxo.
+    assert!(compiles(cases[cases.len() - 1]).ir.is_some());
     assert!(
-        compila("")
+        compiles("")
             .diagnostics
             .iter()
             .any(|d| d.code == Code::MissingFlow)
@@ -744,49 +676,44 @@ fn entrada_estranha_nao_derruba_o_compilador() {
 }
 
 #[test]
-fn fonte_grande_e_recusada_antes_de_compilar() {
+fn source_large_and_refused_before_compile() {
     let fonte = format!("{BASE}\n{}", "#".repeat(MAX_FONTE_BYTES));
-    let compilado = compila(&fonte);
-    assert!(compilado.has_error());
-    assert_eq!(compilado.diagnostics[0].code, Code::SourceTooLarge);
-    assert!(compilado.ir.is_none());
+    let compiled = compiles(&fonte);
+    assert!(compiled.has_error());
+    assert_eq!(compiled.diagnostics[0].code, Code::SourceTooLarge);
+    assert!(compiled.ir.is_none());
 }
 
 #[test]
-fn os_limites_de_carga_estao_ligados_de_verdade() {
-    // Prazo zero: a carga é cancelada e vira FLX04 (é o caminho de emergência, medido no FX-01).
-    let apertado = Limites {
+fn load_limits_are_really_enabled() {
+    let tight = Limites {
         load_deadline: Duration::ZERO,
         ..Limites::default()
     };
-    let compilado = compile(BASE, &apertado);
+    let compiled = compile(BASE, &tight);
     assert!(
-        compilado
+        compiled
             .diagnostics
             .iter()
             .any(|d| d.code == Code::LoadLimit),
         "prazo zero tinha de estourar o limite de carga: {:?}",
-        compilado.diagnostics
+        compiled.diagnostics
     );
-    // E o normal passa no mesmo script.
-    assert!(compila(BASE).ir.is_some());
-}
-
-// ------------------------------------------------------------------ carregar (ir_divergente)
-
-#[test]
-fn carregar_aceita_a_ir_que_veio_do_proprio_texto() {
-    let fonte = exemplo("agendar_visita.star");
-    let ir = compila(&fonte).ir.expect("IR");
-    let carregada = load(&ir, &fonte, &limites()).expect("a IR do texto tem de carregar");
-    assert_eq!(carregada, ir);
+    assert!(compiles(BASE).ir.is_some());
 }
 
 #[test]
-fn carregar_recusa_ir_adulterada_com_ir_divergente() {
-    let fonte = exemplo("agendar_visita.star");
-    let mut ir = compila(&fonte).ir.expect("IR");
-    // Adultera a mensagem de uma etapa: a IR gravada deixa de ser o que o texto diz.
+fn load_accepts_ir_that_came_from_own_text() {
+    let fonte = example("agendar_visita.star");
+    let ir = compiles(&fonte).ir.expect("IR");
+    let loaded = load(&ir, &fonte, &limites()).expect("a IR do texto tem de carregar");
+    assert_eq!(loaded, ir);
+}
+
+#[test]
+fn load_refuses_tampered_ir_with_divergent_ir() {
+    let fonte = example("agendar_visita.star");
+    let mut ir = compiles(&fonte).ir.expect("IR");
     ir.stages[1].actions[0].label = "Visita combinada (adulterado)".to_owned();
     match load(&ir, &fonte, &limites()) {
         Err(LoadFailure::Divergent { fluxo, motivo }) => {
@@ -796,35 +723,34 @@ fn carregar_recusa_ir_adulterada_com_ir_divergente() {
                 "o motivo tem de dizer o que divergiu: {motivo}"
             );
         }
-        outro => panic!("devia falhar com ir_divergente, e voltou {outro:?}"),
+        other => panic!("devia falhar com ir_divergente, e voltou {other:?}"),
     }
 }
 
 #[test]
-fn carregar_recusa_texto_que_nao_compila() {
-    let fonte = exemplo("agendar_visita.star");
-    let ir = compila(&fonte).ir.expect("IR");
+fn load_refuses_text_that_does_not_compile() {
+    let fonte = example("agendar_visita.star");
+    let ir = compiles(&fonte).ir.expect("IR");
     let quebrado = fonte.replace("inicio = \"coleta\",", "");
     match load(&ir, &quebrado, &limites()) {
-        Err(LoadFailure::Form(diagnosticos)) => {
+        Err(LoadFailure::Form(diagnostics)) => {
             assert!(
-                diagnosticos.iter().any(|d| d.code == Code::MissingArgument),
-                "esperava FLX11: {diagnosticos:?}"
+                diagnostics.iter().any(|d| d.code == Code::MissingArgument),
+                "esperava FLX11: {diagnostics:?}"
             );
-            assert_eq!(LoadFailure::Form(diagnosticos).code(), "fluxo_invalido");
+            assert_eq!(LoadFailure::Form(diagnostics).code(), "fluxo_invalido");
         }
-        outro => panic!("devia falhar por forma, e voltou {outro:?}"),
+        other => panic!("devia falhar por forma, e voltou {other:?}"),
     }
 }
 
 #[test]
-fn a_ir_ignora_campo_desconhecido_na_leitura() {
-    // Mudança aditiva: uma IR de versão mais nova tem campo que este crate não conhece.
-    let fonte = exemplo("agendar_visita.star");
-    let ir = compila(&fonte).ir.expect("IR");
+fn ir_ignores_unknown_field_on_read() {
+    let fonte = example("agendar_visita.star");
+    let ir = compiles(&fonte).ir.expect("IR");
     let mut json: serde_json::Value = serde_json::from_str(&ir.to_json()).expect("JSON");
     json["campo_do_futuro"] = serde_json::json!({"qualquer": "coisa"});
-    let lida =
+    let read =
         poph_fluxos::Ir::from_json(&json.to_string()).expect("campo desconhecido é ignorado");
-    assert_eq!(lida, ir);
+    assert_eq!(read, ir);
 }

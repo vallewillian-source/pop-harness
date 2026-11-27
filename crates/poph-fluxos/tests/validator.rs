@@ -1,10 +1,3 @@
-//! Testes do validador semântico (FX-11): revalidação de IR que **não** veio do compilador (com o
-//! caminho do nó, sem linha e coluna), resolução dos departamentos de `encaminhar` e a conferência
-//! de que as duas direções (compilador e validador) concordam.
-//!
-//! As IRs usadas aqui são as douradas do FX-10 (`tests/fluxos/ir/*.json`), mutadas **no JSON à mão**:
-//! é a melhor imitação de uma importação ou de uma revisão antiga que existe sem banco.
-
 use std::collections::BTreeSet;
 
 use poph_fluxos::{
@@ -12,239 +5,231 @@ use poph_fluxos::{
 };
 use serde_json::{Value, json};
 
-// ------------------------------------------------------------------ auxiliares
-
-fn dourada(nome: &str) -> Value {
+fn golden(nome: &str) -> Value {
     let path = format!(
         "{}/../../tests/fluxos/ir/{nome}.json",
         env!("CARGO_MANIFEST_DIR")
     );
-    let texto = std::fs::read_to_string(&path).unwrap_or_else(|erro| panic!("{path}: {erro}"));
-    serde_json::from_str(&texto).unwrap_or_else(|erro| panic!("{path}: {erro}"))
+    let texto = std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{path}: {error}"));
+    serde_json::from_str(&texto).unwrap_or_else(|error| panic!("{path}: {error}"))
 }
 
 fn ir(value: &Value) -> Ir {
     Ir::from_json(&value.to_string()).expect("a IR mutada continua sendo JSON válido")
 }
 
-fn codigos(diagnostics: &[Diagnostic]) -> BTreeSet<Code> {
+fn codes(diagnostics: &[Diagnostic]) -> BTreeSet<Code> {
     diagnostics.iter().map(|d| d.code).collect()
 }
 
-// ------------------------------------------------------------------ a IR boa passa limpa
-
 #[test]
-fn as_tres_irs_douradas_nao_tem_nenhum_diagnostico() {
-    // O outro lado de cada caso: a IR que veio do compilador é aceita pelo validador sem nenhum
-    // diagnóstico. Se as duas direções divergirem, este teste cai.
+fn three_golden_irs_have_no_diagnostic() {
     for nome in ["agendar_visita", "triagem_suporte", "confirmar_entrega"] {
-        let diagnostico = validar(&ir(&dourada(nome)));
+        let diagnostic = validar(&ir(&golden(nome)));
         assert!(
-            diagnostico.is_empty(),
-            "{nome} tem diagnóstico: {diagnostico:?}"
+            diagnostic.is_empty(),
+            "{nome} tem diagnóstico: {diagnostic:?}"
         );
     }
 }
 
-// ------------------------------------------------------------------ IR de fora, um caso por código
-
-/// Um caso de revalidação: a dourada de origem, a mutação no JSON e o código que tem de aparecer.
-struct Caso {
+struct Case {
     nome: &'static str,
     base: &'static str,
-    codigo: Code,
-    mutacao: fn(&mut Value),
-    /// Trecho que o caminho do nó tem de conter.
-    trecho: &'static str,
+    code: Code,
+    mutation: fn(&mut Value),
+    passage: &'static str,
 }
 
 fn campo(id: &str) -> Value {
     json!({"id": id, "rotulo": "Extra", "tipo": "texto", "obrigatorio": false, "opcoes": [], "ajuda": null})
 }
 
-fn casos() -> Vec<Caso> {
+fn cases() -> Vec<Case> {
     vec![
-        Caso {
+        Case {
             nome: "duas etapas com o mesmo id",
             base: "confirmar_entrega",
-            codigo: Code::DuplicateId,
-            mutacao: |v| v["etapas"][1]["id"] = json!("identificacao"),
-            trecho: "etapas[1]",
+            code: Code::DuplicateId,
+            mutation: |v| v["etapas"][1]["id"] = json!("identificacao"),
+            passage: "etapas[1]",
         },
-        Caso {
+        Case {
             nome: "dois campos com o mesmo id na etapa",
             base: "confirmar_entrega",
-            codigo: Code::DuplicateId,
-            mutacao: |v| v["etapas"][2]["campos"] = json!([campo("extra"), campo("extra")]),
-            trecho: "campos[1]",
+            code: Code::DuplicateId,
+            mutation: |v| v["etapas"][2]["campos"] = json!([campo("extra"), campo("extra")]),
+            passage: "campos[1]",
         },
-        Caso {
+        Case {
             nome: "dois fins com o mesmo id",
             base: "confirmar_entrega",
-            codigo: Code::DuplicateId,
-            mutacao: |v| {
-                let primeiro = v["fins"][0].clone();
-                v["fins"][1] = primeiro;
+            code: Code::DuplicateId,
+            mutation: |v| {
+                let first_result = v["fins"][0].clone();
+                v["fins"][1] = first_result;
             },
-            trecho: "fins[1]",
+            passage: "fins[1]",
         },
-        Caso {
+        Case {
             nome: "ação que vai para etapa inexistente",
             base: "confirmar_entrega",
-            codigo: Code::UnknownDestination,
-            mutacao: |v| v["etapas"][0]["acoes"][0]["vai_para"]["id"] = json!("nao_existe"),
-            trecho: "> vai_para",
+            code: Code::UnknownDestination,
+            mutation: |v| v["etapas"][0]["acoes"][0]["vai_para"]["id"] = json!("nao_existe"),
+            passage: "> vai_para",
         },
-        Caso {
+        Case {
             nome: "início que não é etapa",
             base: "confirmar_entrega",
-            codigo: Code::UnknownDestination,
-            mutacao: |v| v["inicio"] = json!("nao_existe"),
-            trecho: "inicio",
+            code: Code::UnknownDestination,
+            mutation: |v| v["inicio"] = json!("nao_existe"),
+            passage: "inicio",
         },
-        Caso {
+        Case {
             nome: "decisão que vai para decisão inexistente",
             base: "triagem_suporte",
-            codigo: Code::UnknownDestination,
-            mutacao: |v| v["decisoes"][0]["entao"] = json!({"tipo": "decisao", "id": "nao_existe"}),
-            trecho: "> entao",
+            code: Code::UnknownDestination,
+            mutation: |v| {
+                v["decisoes"][0]["entao"] = json!({"tipo": "decisao", "id": "nao_existe"})
+            },
+            passage: "> entao",
         },
-        Caso {
+        Case {
             nome: "destino para fim que não está declarado em fins",
             base: "confirmar_entrega",
-            codigo: Code::UnknownDestination,
-            mutacao: |v| v["etapas"][1]["acoes"][0]["vai_para"]["id"] = json!("outro_fim"),
-            trecho: "> vai_para",
+            code: Code::UnknownDestination,
+            mutation: |v| v["etapas"][1]["acoes"][0]["vai_para"]["id"] = json!("outro_fim"),
+            passage: "> vai_para",
         },
-        Caso {
+        Case {
             nome: "mesmo fim com resultado diferente do declarado",
             base: "confirmar_entrega",
-            codigo: Code::DivergentEnd,
-            mutacao: |v| v["fins"][0]["resultado"] = json!("Outra coisa"),
-            trecho: "> vai_para",
+            code: Code::DivergentEnd,
+            mutation: |v| v["fins"][0]["resultado"] = json!("Outra coisa"),
+            passage: "> vai_para",
         },
-        Caso {
+        Case {
             nome: "exige campo que a etapa não tem",
             base: "confirmar_entrega",
-            codigo: Code::UnknownRequirement,
-            mutacao: |v| v["etapas"][0]["acoes"][0]["exige"] = json!(["cep"]),
-            trecho: "> exige",
+            code: Code::UnknownRequirement,
+            mutation: |v| v["etapas"][0]["acoes"][0]["exige"] = json!(["cep"]),
+            passage: "> exige",
         },
-        Caso {
+        Case {
             nome: "campo opcao com uma opção só",
             base: "confirmar_entrega",
-            codigo: Code::InvalidOptions,
-            mutacao: |v| v["etapas"][1]["campos"][0]["opcoes"] = json!(["sim"]),
-            trecho: "campos[0]",
+            code: Code::InvalidOptions,
+            mutation: |v| v["etapas"][1]["campos"][0]["opcoes"] = json!(["sim"]),
+            passage: "campos[0]",
         },
-        Caso {
+        Case {
             nome: "campo de texto com opções",
             base: "confirmar_entrega",
-            codigo: Code::InvalidOptions,
-            mutacao: |v| v["etapas"][0]["campos"][0]["opcoes"] = json!(["sim", "nao"]),
-            trecho: "campos[0]",
+            code: Code::InvalidOptions,
+            mutation: |v| v["etapas"][0]["campos"][0]["opcoes"] = json!(["sim", "nao"]),
+            passage: "campos[0]",
         },
-        Caso {
+        Case {
             nome: "ação de ator que a etapa não permite",
             base: "confirmar_entrega",
-            codigo: Code::InvalidRuleOrActor,
-            mutacao: |v| v["etapas"][0]["acoes"][0]["ator"] = json!("atendente"),
-            trecho: "> ator",
+            code: Code::InvalidRuleOrActor,
+            mutation: |v| v["etapas"][0]["acoes"][0]["ator"] = json!("atendente"),
+            passage: "> ator",
         },
-        Caso {
+        Case {
             nome: "decisão que chama def inexistente",
             base: "triagem_suporte",
-            codigo: Code::InvalidRuleOrActor,
-            mutacao: |v| v["decisoes"][0]["se"]["args"][1]["nome"] = json!("nao_existe"),
-            trecho: "decisoes[0] (id \"classificar\") > se",
+            code: Code::InvalidRuleOrActor,
+            mutation: |v| v["decisoes"][0]["se"]["args"][1]["nome"] = json!("nao_existe"),
+            passage: "decisoes[0] (id \"classificar\") > se",
         },
-        Caso {
+        Case {
             nome: "regra que compara campo sem etapa",
             base: "triagem_suporte",
-            codigo: Code::MalformedCombinator,
-            mutacao: |v| {
+            code: Code::MalformedCombinator,
+            mutation: |v| {
                 v["decisoes"][0]["se"] =
                     json!({"tipo": "igual", "campo": "sem_ponto", "valor": "sim"})
             },
-            trecho: "> se",
+            passage: "> se",
         },
-        Caso {
+        Case {
             nome: "regra que compara campo inexistente",
             base: "triagem_suporte",
-            codigo: Code::UnknownField,
-            mutacao: |v| {
+            code: Code::UnknownField,
+            mutation: |v| {
                 v["decisoes"][0]["se"] =
                     json!({"tipo": "igual", "campo": "relato.inexistente", "valor": "sim"})
             },
-            trecho: "> se",
+            passage: "> se",
         },
-        Caso {
+        Case {
             nome: "decisão que aponta para si mesma",
             base: "triagem_suporte",
-            codigo: Code::DecisionCycle,
-            mutacao: |v| {
+            code: Code::DecisionCycle,
+            mutation: |v| {
                 v["decisoes"][0]["senao"] = json!({"tipo": "decisao", "id": "classificar"})
             },
-            trecho: "decisoes[0] (id \"classificar\")",
+            passage: "decisoes[0] (id \"classificar\")",
         },
-        Caso {
+        Case {
             nome: "fluxo acima do teto de nós",
             base: "agendar_visita",
-            codigo: Code::NodeLimit,
-            mutacao: |v| {
+            code: Code::NodeLimit,
+            mutation: |v| {
                 let modelo = v["etapas"][0].clone();
-                let lista = v["etapas"].as_array_mut().expect("etapas é lista");
+                let list = v["etapas"].as_array_mut().expect("etapas é lista");
                 for i in 0..60 {
-                    let mut nova = modelo.clone();
-                    nova["id"] = json!(format!("extra_{i}"));
-                    lista.push(nova);
+                    let mut new_stage = modelo.clone();
+                    new_stage["id"] = json!(format!("extra_{i}"));
+                    list.push(new_stage);
                 }
             },
-            trecho: "fluxo (id",
+            passage: "fluxo (id",
         },
-        Caso {
+        Case {
             nome: "etapa sem ação",
             base: "confirmar_entrega",
-            codigo: Code::StageWithoutAction,
-            mutacao: |v| v["etapas"][2]["acoes"] = json!([]),
-            trecho: "etapas[2]",
+            code: Code::StageWithoutAction,
+            mutation: |v| v["etapas"][2]["acoes"] = json!([]),
+            passage: "etapas[2]",
         },
-        Caso {
+        Case {
             nome: "etapa inalcançável",
             base: "confirmar_entrega",
-            codigo: Code::Unreachable,
-            mutacao: |v| {
-                let mut nova = v["etapas"][0].clone();
-                nova["id"] = json!("solta");
-                nova["nome"] = json!("Solta");
-                nova["acoes"][0]["id"] = json!("sair");
-                nova["acoes"][0]["vai_para"] = json!({"tipo": "fim", "id": "concluido", "resultado": "Entrega confirmada", "encerra_atendimento": true});
-                v["etapas"].as_array_mut().expect("lista").push(nova);
+            code: Code::Unreachable,
+            mutation: |v| {
+                let mut new_stage = v["etapas"][0].clone();
+                new_stage["id"] = json!("solta");
+                new_stage["nome"] = json!("Solta");
+                new_stage["acoes"][0]["id"] = json!("sair");
+                new_stage["acoes"][0]["vai_para"] = json!({"tipo": "fim", "id": "concluido", "resultado": "Entrega confirmada", "encerra_atendimento": true});
+                v["etapas"].as_array_mut().expect("lista").push(new_stage);
             },
-            trecho: "etapas[3]",
+            passage: "etapas[3]",
         },
-        Caso {
+        Case {
             nome: "campo que ninguém usa",
             base: "confirmar_entrega",
-            codigo: Code::UnusedField,
-            mutacao: |v| v["etapas"][2]["campos"] = json!([campo("extra")]),
-            trecho: "campos[0]",
+            code: Code::UnusedField,
+            mutation: |v| v["etapas"][2]["campos"] = json!([campo("extra")]),
+            passage: "campos[0]",
         },
-        Caso {
+        Case {
             nome: "comparação com valor fora das opções",
             base: "triagem_suporte",
-            codigo: Code::OutsideOptions,
-            mutacao: |v| {
+            code: Code::OutsideOptions,
+            mutation: |v| {
                 v["decisoes"][0]["se"] =
                     json!({"tipo": "igual", "campo": "relato.afeta_agora", "valor": "talvez"})
             },
-            trecho: "> se",
+            passage: "> se",
         },
-        Caso {
+        Case {
             nome: "condição que sempre dá o mesmo resultado",
             base: "triagem_suporte",
-            codigo: Code::ContradictoryCondition,
-            mutacao: |v| {
+            code: Code::ContradictoryCondition,
+            mutation: |v| {
                 v["decisoes"][0]["se"] = json!({
                     "tipo": "e",
                     "args": [
@@ -253,60 +238,60 @@ fn casos() -> Vec<Caso> {
                     ]
                 })
             },
-            trecho: "> se",
+            passage: "> se",
         },
-        Caso {
+        Case {
             nome: "maior em campo que não é número",
             base: "triagem_suporte",
-            codigo: Code::TextComparison,
-            mutacao: |v| {
+            code: Code::TextComparison,
+            mutation: |v| {
                 v["decisoes"][0]["se"] =
                     json!({"tipo": "maior", "campo": "relato.resumo", "valor": "10"})
             },
-            trecho: "> se",
+            passage: "> se",
         },
-        Caso {
+        Case {
             nome: "def que nenhuma decisão usa",
             base: "triagem_suporte",
-            codigo: Code::UnusedDef,
-            mutacao: |v| {
+            code: Code::UnusedDef,
+            mutation: |v| {
                 v["decisoes"][0]["se"] =
                     json!({"tipo": "igual", "campo": "relato.afeta_agora", "valor": "sim"})
             },
-            trecho: "defs[0] (nome \"problema_grave\")",
+            passage: "defs[0] (nome \"problema_grave\")",
         },
-        Caso {
+        Case {
             nome: "mensagem com variável de formato inválido",
             base: "confirmar_entrega",
-            codigo: Code::InvalidVariable,
-            mutacao: |v| v["etapas"][1]["ao_entrar"][0]["texto"] = json!("Olá {cliente.nome}"),
-            trecho: "etapas[1] (id \"confirmacao\") > ao_entrar[0] > texto",
+            code: Code::InvalidVariable,
+            mutation: |v| v["etapas"][1]["ao_entrar"][0]["texto"] = json!("Olá {cliente.nome}"),
+            passage: "etapas[1] (id \"confirmacao\") > ao_entrar[0] > texto",
         },
-        Caso {
+        Case {
             nome: "mensagem com variável de campo inexistente",
             base: "confirmar_entrega",
-            codigo: Code::VariableWithoutField,
-            mutacao: |v| {
+            code: Code::VariableWithoutField,
+            mutation: |v| {
                 v["etapas"][1]["ao_entrar"][0]["texto"] =
                     json!("Vou confirmar o pedido {identificacao.numero_pedido}.")
             },
-            trecho: "etapas[1] (id \"confirmacao\") > ao_entrar[0] > texto",
+            passage: "etapas[1] (id \"confirmacao\") > ao_entrar[0] > texto",
         },
-        Caso {
+        Case {
             nome: "ao_entrar com variável do próprio passo",
             base: "confirmar_entrega",
-            codigo: Code::VariableFromOwnStep,
-            mutacao: |v| {
+            code: Code::VariableFromOwnStep,
+            mutation: |v| {
                 v["etapas"][1]["ao_entrar"][0]["texto"] =
                     json!("A entrega foi recebida? {confirmacao.recebido}")
             },
-            trecho: "etapas[1] (id \"confirmacao\") > ao_entrar[0] > texto",
+            passage: "etapas[1] (id \"confirmacao\") > ao_entrar[0] > texto",
         },
-        Caso {
+        Case {
             nome: "combinador `nao` com duas condições",
             base: "triagem_suporte",
-            codigo: Code::MalformedCombinator,
-            mutacao: |v| {
+            code: Code::MalformedCombinator,
+            mutation: |v| {
                 v["decisoes"][0]["se"] = json!({
                     "tipo": "nao",
                     "args": [
@@ -315,50 +300,48 @@ fn casos() -> Vec<Caso> {
                     ]
                 })
             },
-            trecho: "decisoes[0] (id \"classificar\") > se",
+            passage: "decisoes[0] (id \"classificar\") > se",
         },
     ]
 }
 
 #[test]
-fn cada_codigo_semantico_pega_uma_ir_de_fora() {
-    let mut vistos: BTreeSet<Code> = BTreeSet::new();
-    let mut falhas: Vec<String> = Vec::new();
-    for caso in casos() {
-        let mut value = dourada(caso.base);
-        (caso.mutacao)(&mut value);
-        let diagnostico = validar(&ir(&value));
-        let Some(achado) = diagnostico.iter().find(|d| d.code == caso.codigo) else {
-            falhas.push(format!(
+fn each_code_semantic_catches_ir_outside() {
+    let mut seen: BTreeSet<Code> = BTreeSet::new();
+    let mut failures: Vec<String> = Vec::new();
+    for case in cases() {
+        let mut value = golden(case.base);
+        (case.mutation)(&mut value);
+        let diagnostic = validar(&ir(&value));
+        let Some(finding) = diagnostic.iter().find(|d| d.code == case.code) else {
+            failures.push(format!(
                 "{}: {} não apareceu (tem {:?})",
-                caso.nome,
-                caso.codigo,
-                codigos(&diagnostico)
+                case.nome,
+                case.code,
+                codes(&diagnostic)
             ));
             continue;
         };
-        let path = achado.path().unwrap_or("<sem caminho>");
-        if !path.contains(caso.trecho) {
-            falhas.push(format!(
+        let path = finding.path().unwrap_or("<sem caminho>");
+        if !path.contains(case.passage) {
+            failures.push(format!(
                 "{}: caminho `{path}` não contém `{}`",
-                caso.nome, caso.trecho
+                case.nome, case.passage
             ));
         }
-        // Diagnóstico de IR não fala de linha: não existe texto para apontar.
-        if achado.line().is_some() || achado.column().is_some() {
-            falhas.push(format!(
+        if finding.line().is_some() || finding.column().is_some() {
+            failures.push(format!(
                 "{}: {} veio com linha {:?} e coluna {:?}",
-                caso.nome,
-                caso.codigo,
-                achado.line(),
-                achado.column()
+                case.nome,
+                case.code,
+                finding.line(),
+                finding.column()
             ));
         }
-        vistos.insert(caso.codigo);
+        seen.insert(case.code);
     }
-    assert!(falhas.is_empty(), "\n{}", falhas.join("\n"));
-    // Os códigos que a revalidação de IR precisa cobrir: sem estes, uma IR de fora passaria torta.
-    for exigido in [
+    assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+    for required in [
         Code::DuplicateId,
         Code::UnknownDestination,
         Code::DivergentEnd,
@@ -381,46 +364,42 @@ fn cada_codigo_semantico_pega_uma_ir_de_fora() {
         Code::VariableFromOwnStep,
     ] {
         assert!(
-            vistos.contains(&exigido),
-            "{exigido} sem caso de IR de fora"
+            seen.contains(&required),
+            "{required} sem caso de IR de fora"
         );
     }
 }
 
 #[test]
-fn a_ordem_dos_diagnosticos_e_a_dos_nos_e_nao_muda_entre_chamadas() {
-    let mut value = dourada("confirmar_entrega");
-    // Três problemas em nós diferentes, sem mexer no grafo (para o alcance não entrar na conta):
-    // uma ação que exige campo inexistente na etapa 0, uma opção só na etapa 1, etapa sem ação na 2.
+fn diagnostics_and_nodes_order_does_not_change_between_calls() {
+    let mut value = golden("confirmar_entrega");
     value["etapas"][0]["acoes"][0]["exige"] = json!(["pedido", "cep"]);
     value["etapas"][1]["campos"][0]["opcoes"] = json!(["sim"]);
     value["etapas"][2]["acoes"] = json!([]);
 
-    let primeira = validar(&ir(&value));
-    let segunda = validar(&ir(&value));
-    assert_eq!(primeira, segunda, "mesma IR tem de dar a mesma lista");
+    let first_pass = validar(&ir(&value));
+    let second_pass = validar(&ir(&value));
+    assert_eq!(first_pass, second_pass, "mesma IR tem de dar a mesma lista");
 
-    let codigos: Vec<Code> = primeira.iter().map(|d| d.code).collect();
+    let codes: Vec<Code> = first_pass.iter().map(|d| d.code).collect();
     assert_eq!(
-        codigos,
+        codes,
         vec![
             Code::UnknownRequirement,
             Code::InvalidOptions,
             Code::StageWithoutAction,
         ],
-        "os diagnósticos saem na ordem dos nós da IR: {primeira:?}"
+        "os diagnósticos saem na ordem dos nós da IR: {first_pass:?}"
     );
-    let caminhos: Vec<&str> = primeira.iter().map(|d| d.path().unwrap_or("")).collect();
-    assert!(caminhos[0].starts_with("etapas[0]"), "{caminhos:?}");
-    assert!(caminhos[1].starts_with("etapas[1]"), "{caminhos:?}");
-    assert!(caminhos[2].starts_with("etapas[2]"), "{caminhos:?}");
+    let paths: Vec<&str> = first_pass.iter().map(|d| d.path().unwrap_or("")).collect();
+    assert!(paths[0].starts_with("etapas[0]"), "{paths:?}");
+    assert!(paths[1].starts_with("etapas[1]"), "{paths:?}");
+    assert!(paths[2].starts_with("etapas[2]"), "{paths:?}");
 }
 
 #[test]
-fn o_validador_concorda_com_os_avisos_do_compilador() {
-    // As duas direções sobre o mesmo fluxo: o compilador acha o aviso no texto, o validador acha o
-    // mesmo aviso na IR que ele gerou. É a guarda contra as duas implementações divergirem.
-    for (codigo, fonte) in [
+fn validator_agrees_with_compiler_notices() {
+    for (code, fonte) in [
         (
             Code::StageWithoutAction,
             script("", "[]", ""),
@@ -519,28 +498,27 @@ fn o_validador_concorda_com_os_avisos_do_compilador() {
             .concat(),
         ),
     ] {
-        let compilado = compile(&fonte, &Limites::default());
+        let compiled = compile(&fonte, &Limites::default());
         assert!(
-            compilado.ir.is_some(),
-            "{codigo}: o script de teste tem de gerar IR; diagnósticos: {:?}",
-            compilado.diagnostics
+            compiled.ir.is_some(),
+            "{code}: o script de teste tem de gerar IR; diagnósticos: {:?}",
+            compiled.diagnostics
         );
         assert!(
-            codigos(&compilado.diagnostics).contains(&codigo),
-            "{codigo}: o compilador não emitiu (tem {:?})",
-            codigos(&compilado.diagnostics)
+            codes(&compiled.diagnostics).contains(&code),
+            "{code}: o compilador não emitiu (tem {:?})",
+            codes(&compiled.diagnostics)
         );
-        let da_ir = validar(compilado.ir.as_ref().expect("IR"));
+        let of_ir = validar(compiled.ir.as_ref().expect("IR"));
         assert!(
-            codigos(&da_ir).contains(&codigo),
-            "{codigo}: o validador não emitiu sobre a IR (tem {:?})",
-            codigos(&da_ir)
+            codes(&of_ir).contains(&code),
+            "{code}: o validador não emitiu sobre a IR (tem {:?})",
+            codes(&of_ir)
         );
     }
 }
 
-/// Fluxo mínimo com uma etapa `entrada`, para o teste de concordância.
-fn script(campos: &str, acoes: &str, extra_etapa: &str) -> String {
+fn script(campos: &str, actions: &str, extra_step: &str) -> String {
     format!(
         r#"fluxo(
     id = "teste",
@@ -556,37 +534,35 @@ fn script(campos: &str, acoes: &str, extra_etapa: &str) -> String {
 etapa(
     id = "entrada",
     nome = "Entrada",
-    {extra_etapa}
+    {extra_step}
     campos = [{campos}],
-    acoes = {acoes},
+    acoes = {actions},
 )
 "#
     )
 }
 
-fn decisao(regra: &str) -> String {
-    format!("decisao(id = \"escolha\", se = {regra}, entao = \"entrada\", senao = \"entrada\")\n")
+fn decisao(rule: &str) -> String {
+    format!("decisao(id = \"escolha\", se = {rule}, entao = \"entrada\", senao = \"entrada\")\n")
 }
 
-// ------------------------------------------------------------------ departamentos
-
-fn encaminha_para_departamento(nome: &str) -> Ir {
-    let mut value = dourada("confirmar_entrega");
+fn forwards_for_department(nome: &str) -> Ir {
+    let mut value = golden("confirmar_entrega");
     value["etapas"][2]["acoes"][0]["efeitos"][0]["departamento"] = json!(nome);
     ir(&value)
 }
 
 #[test]
-fn resolve_o_departamento_citado_para_o_id_da_organizacao() {
-    let fluxo = ir(&dourada("confirmar_entrega"));
-    let departamentos = vec![Departamento {
+fn maps_mentioned_department_to_org_id() {
+    let fluxo = ir(&golden("confirmar_entrega"));
+    let departments = vec![Departamento {
         id: "dep_logistica".to_owned(),
         nome: "Logística".to_owned(),
     }];
-    let (resolucoes, diagnostics) = resolve_departments(&fluxo, &departamentos);
+    let (resolutions, diagnostics) = resolve_departments(&fluxo, &departments);
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
     assert_eq!(
-        resolucoes,
+        resolutions,
         vec![poph_fluxos::Resolution {
             nome: "Logística".to_owned(),
             department_id: Some("dep_logistica".to_owned()),
@@ -595,18 +571,18 @@ fn resolve_o_departamento_citado_para_o_id_da_organizacao() {
 }
 
 #[test]
-fn departamento_que_a_organizacao_nao_tem_vira_aviso_flx65_sem_id() {
-    let fluxo = ir(&dourada("confirmar_entrega"));
-    let (resolucoes, diagnostics) = resolve_departments(
+fn department_org_lacks_becomes_flx65_notice_without_id() {
+    let fluxo = ir(&golden("confirmar_entrega"));
+    let (resolutions, diagnostics) = resolve_departments(
         &fluxo,
         &[Departamento {
             id: "dep_x".to_owned(),
             nome: "Financeiro".to_owned(),
         }],
     );
-    assert_eq!(resolucoes.len(), 1);
-    assert_eq!(resolucoes[0].nome, "Logística");
-    assert_eq!(resolucoes[0].department_id, None);
+    assert_eq!(resolutions.len(), 1);
+    assert_eq!(resolutions[0].nome, "Logística");
+    assert_eq!(resolutions[0].department_id, None);
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(diagnostics[0].code, Code::UnknownDepartment);
     assert!(!diagnostics[0].is_error(), "FLX65 é aviso, não erro");
@@ -621,9 +597,9 @@ fn departamento_que_a_organizacao_nao_tem_vira_aviso_flx65_sem_id() {
 }
 
 #[test]
-fn nome_repetido_na_organizacao_vira_aviso_e_nao_resolve() {
-    let fluxo = ir(&dourada("confirmar_entrega"));
-    let departamentos = vec![
+fn repeated_name_in_org_becomes_notice_and_does_not_resolve() {
+    let fluxo = ir(&golden("confirmar_entrega"));
+    let departments = vec![
         Departamento {
             id: "dep_1".to_owned(),
             nome: "Logística".to_owned(),
@@ -633,8 +609,8 @@ fn nome_repetido_na_organizacao_vira_aviso_e_nao_resolve() {
             nome: " logística".to_owned(),
         },
     ];
-    let (resolucoes, diagnostics) = resolve_departments(&fluxo, &departamentos);
-    assert_eq!(resolucoes[0].department_id, None);
+    let (resolutions, diagnostics) = resolve_departments(&fluxo, &departments);
+    assert_eq!(resolutions[0].department_id, None);
     assert_eq!(diagnostics.len(), 1);
     assert!(
         diagnostics[0].mensagem.contains("2 departamentos"),
@@ -644,10 +620,9 @@ fn nome_repetido_na_organizacao_vira_aviso_e_nao_resolve() {
 }
 
 #[test]
-fn o_casamento_ignora_caixa_e_espacos_mas_nao_acento() {
-    // Mesmo nome com outra caixa e com espaço nas pontas casa.
-    let fluxo = encaminha_para_departamento("  LOGÍSTICA ");
-    let (resolucoes, diagnostics) = resolve_departments(
+fn matching_ignores_case_and_spaces_but_not_accent() {
+    let fluxo = forwards_for_department("  LOGÍSTICA ");
+    let (resolutions, diagnostics) = resolve_departments(
         &fluxo,
         &[Departamento {
             id: "dep_1".to_owned(),
@@ -655,77 +630,70 @@ fn o_casamento_ignora_caixa_e_espacos_mas_nao_acento() {
         }],
     );
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
-    assert_eq!(resolucoes[0].department_id.as_deref(), Some("dep_1"));
-    // Acento conta: `Logistica` não é `Logística`.
-    let fluxo = encaminha_para_departamento("Logistica");
-    let (resolucoes, diagnostics) = resolve_departments(
+    assert_eq!(resolutions[0].department_id.as_deref(), Some("dep_1"));
+    let fluxo = forwards_for_department("Logistica");
+    let (resolutions, diagnostics) = resolve_departments(
         &fluxo,
         &[Departamento {
             id: "dep_1".to_owned(),
             nome: "Logística".to_owned(),
         }],
     );
-    assert_eq!(resolucoes[0].department_id, None);
+    assert_eq!(resolutions[0].department_id, None);
     assert_eq!(diagnostics.len(), 1);
 }
 
 #[test]
-fn fluxo_sem_encaminhamento_nao_resolve_nada_e_nao_avisa() {
-    let (resolucoes, diagnostics) = resolve_departments(&ir(&dourada("agendar_visita")), &[]);
-    assert!(resolucoes.is_empty());
+fn flow_without_forwarding_has_no_effect_and_does_not_warn() {
+    let (resolutions, diagnostics) = resolve_departments(&ir(&golden("agendar_visita")), &[]);
+    assert!(resolutions.is_empty());
     assert!(diagnostics.is_empty());
 }
 
 #[test]
-fn variavel_valida_nao_vira_aviso() {
-    let mut value = dourada("confirmar_entrega");
-    // `{ficha.id}` já aparece no exemplo; `{cliente.peer}` e uma variável de campo existente têm de
-    // passar limpas, inclusive dentro de uma ação e falando de outra etapa.
+fn valid_variable_does_not_become_notice() {
+    let mut value = golden("confirmar_entrega");
     value["etapas"][1]["ao_entrar"][0]["texto"] =
         json!("Pedido {identificacao.pedido} do cliente {cliente.peer} (ficha {ficha.id}).");
     value["etapas"][1]["acoes"][0]["efeitos"][0]["mensagem"] =
         json!("Pedido {identificacao.pedido} entregue para {cliente.peer}.");
-    let diagnostico = validar(&ir(&value));
-    assert!(diagnostico.is_empty(), "{diagnostico:?}");
+    let diagnostic = validar(&ir(&value));
+    assert!(diagnostic.is_empty(), "{diagnostic:?}");
 }
 
 #[test]
-fn o_nome_citado_duas_vezes_aparece_uma_vez_so() {
-    let mut value = dourada("confirmar_entrega");
-    // O mesmo departamento no `ao_entrar` de uma etapa e nos efeitos de uma ação.
+fn name_mentioned_twice_appears_once() {
+    let mut value = golden("confirmar_entrega");
     value["etapas"][0]["ao_entrar"] = json!([{"tipo": "encaminhar", "departamento": "Logística"}]);
     let fluxo = ir(&value);
-    let (resolucoes, diagnostics) = resolve_departments(
+    let (resolutions, diagnostics) = resolve_departments(
         &fluxo,
         &[Departamento {
             id: "dep_1".to_owned(),
             nome: "Logística".to_owned(),
         }],
     );
-    assert_eq!(resolucoes.len(), 1, "{resolucoes:?}");
-    assert_eq!(resolucoes[0].department_id.as_deref(), Some("dep_1"));
+    assert_eq!(resolutions.len(), 1, "{resolutions:?}");
+    assert_eq!(resolutions[0].department_id.as_deref(), Some("dep_1"));
     assert!(diagnostics.is_empty());
-    // A ordem é a da primeira citação na IR: `ao_entrar` da etapa 0 vem antes do efeito da ação.
-    let (resolucoes, _) = resolve_departments(&fluxo, &[]);
-    assert_eq!(resolucoes.len(), 1);
+    let (resolutions, _) = resolve_departments(&fluxo, &[]);
+    assert_eq!(resolutions.len(), 1);
 }
 
-// ------------------------------------------------------------------ a lista fechada na doc
-
 #[test]
-fn todos_os_codigos_estao_documentados() {
+fn all_codes_are_documented() {
     let path = format!(
         "{}/../../docs/FLUXOS_LINGUAGEM.md",
         env!("CARGO_MANIFEST_DIR")
     );
-    let documento = std::fs::read_to_string(&path).unwrap_or_else(|erro| panic!("{path}: {erro}"));
-    let faltando: Vec<&str> = Code::ALL
+    let document = std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{path}: {error}"));
+    let missing: Vec<&str> = Code::ALL
         .iter()
-        .filter(|codigo| !documento.contains(codigo.as_text()))
-        .map(|codigo| codigo.as_text())
+        .filter(|code| !document.contains(code.as_text()))
+        .map(|code| code.as_text())
         .collect();
     assert!(
-        faltando.is_empty(),
-        "código fora do §10 do FLUXOS_LINGUAGEM.md: {faltando:?}"
+        missing.is_empty(),
+        "código fora do §10 do FLUXOS_LINGUAGEM.md: {missing:?}"
     );
 }
