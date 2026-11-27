@@ -16,11 +16,11 @@ use poph_store::{RecordFilter, Store};
 use poph_types::{OrgId, RecordId, RecordStatus};
 use serde_json::{Value, json};
 
-use crate::apoio::{
-    abrir_com_configuracao, descrever, falha, imprimir_json, pagina_de, parse_id, resolver_agente,
-    resolver_org,
-};
 use crate::config;
+use crate::support::{
+    abrir_com_configuracao, describe, failure, pagina_de, parse_id, print_json, resolve_org,
+    resolver_agente,
+};
 
 /// Versão do formato JSON desta saída (muda só se a forma mudar).
 const VERSAO_RELATORIO: u64 = 1;
@@ -80,14 +80,14 @@ pub struct MostrarArgs {
 /// Executa um subcomando de `poph ficha`.
 pub fn executar(
     flag: Option<PathBuf>,
-    ambiente: &config::Ambiente,
+    ambiente: &config::Environment,
     org: Option<&str>,
     acao: AcaoFicha,
 ) -> ExitCode {
     let resultado = abrir_com_configuracao(flag, ambiente).and_then(|(store, _configuracao)| {
         let org = org
             .ok_or_else(|| "informe --org com o id (UUID v7) ou o slug da org".to_owned())
-            .and_then(|texto| resolver_org(&store, texto))?;
+            .and_then(|texto| resolve_org(&store, texto))?;
         match acao {
             AcaoFicha::Listar(args) => listar(&store, org, args),
             AcaoFicha::Mostrar(args) => mostrar(&store, org, args),
@@ -95,7 +95,7 @@ pub fn executar(
     });
     match resultado {
         Ok(codigo) => codigo,
-        Err(mensagem) => falha(mensagem),
+        Err(mensagem) => failure(mensagem),
     }
 }
 
@@ -124,7 +124,7 @@ fn listar(store: &Store, org: OrgId, args: ListarArgs) -> Result<ExitCode, Strin
     let fichas = store
         .cases()
         .list(org, &filtro, pagina)
-        .map_err(|erro| descrever(&erro))?;
+        .map_err(|erro| describe(&erro))?;
     let next_cursor = if fichas.len() < pagina.limit as usize {
         None
     } else {
@@ -132,7 +132,7 @@ fn listar(store: &Store, org: OrgId, args: ListarArgs) -> Result<ExitCode, Strin
     };
     let itens: Vec<Value> = fichas.iter().map(case_json).collect();
     if args.json {
-        imprimir_json(&json!({
+        print_json(&json!({
             "versao_relatorio": VERSAO_RELATORIO,
             "org_id": org.to_string(),
             "items": itens,
@@ -164,13 +164,13 @@ fn mostrar(store: &Store, org: OrgId, args: MostrarArgs) -> Result<ExitCode, Str
         if erro.is_not_found() {
             format!("não existe Ficha `{}` nesta org", args.ficha)
         } else {
-            descrever(&erro)
+            describe(&erro)
         }
     })?;
     if args.json {
         let mut saida = corpo;
         saida["versao_relatorio"] = json!(VERSAO_RELATORIO);
-        imprimir_json(&saida);
+        print_json(&saida);
         return Ok(ExitCode::SUCCESS);
     }
     println!("Ficha {}", texto_de(&corpo["id"]));

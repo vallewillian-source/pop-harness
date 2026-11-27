@@ -118,8 +118,10 @@ with an org that has an encrypted secret saved).
   This is what keeps conversation → agent, message → turn and attachment → message linked.
 - **Natural key conflict**: if the destination already has an agent/product with the same **slug** (or
   category/department/group with the same name, or the org with the same slug), with a **different id**, the import
-  is refused **before writing**, with the list of what conflicted. There is no silent "merge". Importing the same
-  content (same ids) is an update, not a conflict.
+  is refused by the store with the list of what conflicted, even with `--sobrescrever`. The CLI gives the
+  natural-key diagnostic priority over the existing-row diagnostic. The database transaction commits no rows on
+  that failure. Blobs written before the transaction follow the retention rule above. Re-importing the same ids
+  counts as an update.
 - **Unknown column**: if the file carries a column this version of the schema does not have, the import is refused
   with the table and column name (a file from a newer version).
 - **Old file**: a file generated before the `origin` column (migration `0003`) does not carry `origin` or

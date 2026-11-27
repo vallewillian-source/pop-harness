@@ -17,10 +17,10 @@ use poph_store::{LibraryFile, NewLibraryFile, Page, Store};
 use poph_types::{AgentId, FileId, HarnessConfig, OrgId};
 use serde_json::{Value, json};
 
-use crate::apoio::{
-    descrever, exigir_offline, falha, imprimir_json, parse_id, resolver_org, validar_limite,
-};
 use crate::config;
+use crate::support::{
+    describe, failure, parse_id, print_json, require_offline, resolve_org, validar_limite,
+};
 
 /// Subcomandos de `poph file`.
 #[derive(Debug, Subcommand)]
@@ -107,17 +107,17 @@ pub struct ExcluirArquivo {
 /// Executa `poph file`.
 pub fn executar(
     flag: Option<PathBuf>,
-    ambiente: &config::Ambiente,
+    ambiente: &config::Environment,
     offline: bool,
     org: Option<&str>,
     acao: AcaoArquivo,
 ) -> ExitCode {
-    if let Err(erro) = exigir_offline(offline) {
-        return falha(erro);
+    if let Err(erro) = require_offline(offline) {
+        return failure(erro);
     }
     let (store, org, configuracao) = match abrir(flag, ambiente, org) {
         Ok(trio) => trio,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     match acao {
         AcaoArquivo::Upload(args) => enviar(&store, org, &configuracao, args),
@@ -129,18 +129,18 @@ pub fn executar(
 
 fn abrir(
     flag: Option<PathBuf>,
-    ambiente: &config::Ambiente,
+    ambiente: &config::Environment,
     org: Option<&str>,
 ) -> Result<(Store, OrgId, HarnessConfig), String> {
     let texto =
         org.ok_or_else(|| "informe --org com o id (UUID v7) ou o slug da org".to_owned())?;
     let pasta = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let arquivo = config::resolver_arquivo(flag.as_deref(), ambiente, &pasta);
+    let arquivo = config::resolve_file(flag.as_deref(), ambiente, &pasta);
     let configuracao =
-        config::carregar(arquivo.as_deref(), ambiente).map_err(|erro| erro.to_string())?;
+        config::load(arquivo.as_deref(), ambiente).map_err(|erro| erro.to_string())?;
     let store =
         Store::open(&configuracao).map_err(|erro| format!("não consegui abrir o banco: {erro}"))?;
-    let org = resolver_org(&store, texto)?;
+    let org = resolve_org(&store, texto)?;
     Ok((store, org, configuracao))
 }
 
@@ -153,13 +153,13 @@ fn enviar(
 ) -> ExitCode {
     let agente = match resolver_agente(store, org, &args.agent) {
         Ok(agente) => agente,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     let config = FileConfig::default(configuracao.blobs());
     // Lê no máximo um byte além do limite: arquivo gigante é recusado sem carregar tudo na memória.
     let bytes = match ler_com_teto(&args.caminho, config.byte_limit) {
         Ok(bytes) => bytes,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     let nome_arquivo = args
         .caminho
@@ -168,7 +168,7 @@ fn enviar(
         .unwrap_or_else(|| "arquivo".to_owned());
     let recebido = match poph_files::receive(&config, org, &nome_arquivo, &bytes) {
         Ok(recebido) => recebido,
-        Err(erro) => return falha(erro.to_string()),
+        Err(erro) => return failure(erro.to_string()),
     };
     let metadados = recebido.metadados;
     let nome = if args.name.trim().is_empty() {
@@ -196,29 +196,29 @@ fn enviar(
                 "Blob gravado."
             },
         ),
-        Err(erro) => falha(descrever(&erro)),
+        Err(erro) => failure(describe(&erro)),
     }
 }
 
 fn listar(store: &Store, org: OrgId, args: ListarArquivos) -> ExitCode {
     let agente = match resolver_agente(store, org, &args.agent) {
         Ok(agente) => agente,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     let pagina: Page = match validar_limite(args.limit) {
         Ok(pagina) => pagina,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     let total = match store.library().count_rows(org, agente) {
         Ok(total) => total,
-        Err(erro) => return falha(descrever(&erro)),
+        Err(erro) => return failure(describe(&erro)),
     };
     let arquivos = match store.library().list(org, agente, pagina) {
         Ok(arquivos) => arquivos,
-        Err(erro) => return falha(descrever(&erro)),
+        Err(erro) => return failure(describe(&erro)),
     };
     if args.json {
-        imprimir_json(&json!({
+        print_json(&json!({
             "versao_relatorio": 1,
             "total": total,
             "arquivos": arquivos.iter().map(json_arquivo).collect::<Vec<_>>(),
@@ -254,36 +254,36 @@ fn listar(store: &Store, org: OrgId, args: ListarArquivos) -> ExitCode {
 fn mostrar(store: &Store, org: OrgId, args: ReferenciaArquivo) -> ExitCode {
     let agente = match resolver_agente(store, org, &args.agent) {
         Ok(agente) => agente,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     let id: FileId = match parse_id(&args.id) {
         Ok(id) => id,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     match store.library().get(org, agente, id) {
         Ok(arquivo) => saida_arquivo(&arquivo, args.json, ""),
-        Err(erro) => falha(descrever(&erro)),
+        Err(erro) => failure(describe(&erro)),
     }
 }
 
 fn excluir(store: &Store, org: OrgId, args: ExcluirArquivo) -> ExitCode {
     let agente = match resolver_agente(store, org, &args.agent) {
         Ok(agente) => agente,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     let id: FileId = match parse_id(&args.id) {
         Ok(id) => id,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     let arquivo = match store.library().get(org, agente, id) {
         Ok(arquivo) => arquivo,
-        Err(erro) => return falha(descrever(&erro)),
+        Err(erro) => return failure(describe(&erro)),
     };
     if let Err(erro) = store.library().delete(org, agente, id) {
-        return falha(descrever(&erro));
+        return failure(describe(&erro));
     }
     if args.json {
-        imprimir_json(&json!({
+        print_json(&json!({
             "versao_relatorio": 1,
             "excluido": json_arquivo(&arquivo),
         }));
@@ -299,7 +299,7 @@ fn excluir(store: &Store, org: OrgId, args: ExcluirArquivo) -> ExitCode {
 
 fn saida_arquivo(arquivo: &LibraryFile, json_saida: bool, aviso: &str) -> ExitCode {
     if json_saida {
-        imprimir_json(&json!({
+        print_json(&json!({
             "versao_relatorio": 1,
             "arquivo": json_arquivo(arquivo),
         }));
@@ -371,13 +371,13 @@ fn resolver_agente(store: &Store, org: OrgId, texto: &str) -> Result<AgentId, St
             .agents()
             .get(org, id)
             .map(|agente| agente.id)
-            .map_err(|erro| descrever(&erro));
+            .map_err(|erro| describe(&erro));
     }
     store
         .agents()
         .by_slug(org, texto)
         .map(|agente| agente.id)
-        .map_err(|erro| descrever(&erro))
+        .map_err(|erro| describe(&erro))
 }
 
 #[cfg(test)]

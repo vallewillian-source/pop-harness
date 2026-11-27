@@ -1,13 +1,3 @@
-//! Carregamento da configuração: padrão < arquivo TOML < variáveis de ambiente.
-//!
-//! - Arquivo: escolhido por `--config`, depois pela variável `POPH_CONFIG`, depois `poph.toml`
-//!   na pasta atual (se existir). Sem arquivo, valem só os padrões.
-//! - Ambiente: variáveis `POPH_...` para os campos não secretos (tabela [`VARIAVEIS_DE_CONFIG`]).
-//! - Segredos: só do ambiente (ver [`segredos`]); nunca entram no arquivo nem na saída.
-//!
-//! Erros dizem a origem (arquivo ou variável) e a chave. Para isso a configuração é montada
-//! como tabela TOML, e a chave culpada é achada testando cada valor isolado.
-
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -17,556 +7,526 @@ use serde::Deserialize;
 use thiserror::Error;
 use toml::{Table, Value};
 
-/// Variáveis de ambiente, como mapa (permite testar sem mexer no ambiente do processo).
-pub type Ambiente = BTreeMap<String, String>;
+pub type Environment = BTreeMap<String, String>;
 
-/// Variável que aponta o arquivo de configuração.
 pub const VAR_CONFIG: &str = "POPH_CONFIG";
-/// Nome do arquivo procurado na pasta atual quando nada foi indicado.
-pub const ARQUIVO_PADRAO: &str = "poph.toml";
 
-/// Variável que aponta o `cluster.toml` (HR-50a).
+pub const DEFAULT_FILE: &str = "poph.toml";
+
 pub const VAR_CLUSTER: &str = "POPH_CLUSTER";
-/// Nome do arquivo de cluster procurado ao lado do `poph.toml`.
-pub const ARQUIVO_CLUSTER: &str = "cluster.toml";
-/// Segredo compartilhado entre as instâncias (HMAC do encaminhamento, HR-50b).
+
+pub const CLUSTER_FILE: &str = "cluster.toml";
+
 pub const VAR_CLUSTER_SECRET: &str = "POPH_CLUSTER_SECRET";
 
-/// Chave da cifra dos segredos guardados (AES-256-GCM, a partir da HR-07/HR-26).
-pub const VAR_CIFRA: &str = "POPH_CHAVE_CIFRA";
-/// Chave do provedor de LLM (`llm.chave_env` padrão). Mesmo nome usado pelo POP Atende.
+pub const VAR_CIPHER: &str = "POPH_CHAVE_CIFRA";
+
 pub const VAR_ANTIGRAVITY: &str = "ANTIGRAVITY_API_KEY";
-/// Chave do Jev (TypeSafe). Mesmo nome usado pelo POP Atende.
+
 pub const VAR_TYPESAFE: &str = "TYPESAFE_API_KEY";
-/// Chave da Evolution API (WhatsApp). Mesmo nome usado pelo POP Atende.
+
 pub const VAR_EVOLUTION: &str = "EVOLUTION_API_KEY";
 
-/// Erro de configuração. Cada variante diz de onde veio o problema.
 #[derive(Debug, Error)]
-pub enum ErroConfig {
-    /// Arquivo pedido explicitamente que não existe.
+pub enum ConfigError {
     #[error("arquivo de configuração não encontrado: {}", .0.display())]
-    ArquivoAusente(PathBuf),
-    /// Arquivo que existe mas não pode ser lido.
-    #[error("não consegui ler o arquivo de configuração {}: {motivo}", .arquivo.display())]
-    Leitura { arquivo: PathBuf, motivo: String },
-    /// Arquivo com erro de sintaxe TOML (a mensagem traz linha e coluna).
-    #[error("{}: erro de sintaxe no TOML: {motivo}", .arquivo.display())]
-    Sintaxe { arquivo: PathBuf, motivo: String },
-    /// Chave com valor ou nome errado, vinda do arquivo ou de uma variável.
-    #[error("{origem}: chave `{chave}` inválida: {motivo}")]
-    Chave {
-        origem: String,
-        chave: String,
-        motivo: String,
+    MissingFile(PathBuf),
+
+    #[error("não consegui ler o arquivo de configuração {}: {reason}", .file.display())]
+    Read { file: PathBuf, reason: String },
+
+    #[error("{}: erro de sintaxe no TOML: {reason}", .file.display())]
+    Syntax { file: PathBuf, reason: String },
+
+    #[error("{origin}: chave `{key}` inválida: {reason}")]
+    Key {
+        origin: String,
+        key: String,
+        reason: String,
     },
-    /// Variável de ambiente com valor que não converte para o tipo esperado.
-    #[error("{variavel}: valor inválido ({motivo})")]
-    Ambiente {
-        variavel: &'static str,
-        motivo: String,
+
+    #[error("{variable}: valor inválido ({reason})")]
+    Environment {
+        variable: &'static str,
+        reason: String,
     },
-    /// Valor convertido, mas fora da regra do domínio (ex.: porta 80).
+
     #[error("configuração inválida: {0}")]
-    Validacao(#[from] DomainError),
-    /// Falha interna de montagem (não deveria acontecer).
+    Validation(#[from] DomainError),
+
     #[error("erro interno ao montar a configuração: {0}")]
-    Interno(String),
+    Internal(String),
 }
 
-/// Segredos lidos do ambiente. Sem `Serialize`, e `Debug` oculta os valores.
 #[derive(Debug, Clone, Default)]
-pub struct Segredos {
-    /// Chave de cifra (`POPH_CHAVE_CIFRA`).
-    pub cifra: Option<Secret>,
-    /// Chave do Jev (`TYPESAFE_API_KEY`).
+pub struct Secrets {
+    pub cipher: Option<Secret>,
+
     pub typesafe: Option<Secret>,
-    /// Chave da Evolution (`EVOLUTION_API_KEY`).
+
     pub evolution: Option<Secret>,
 }
 
-/// Tipo de valor aceito numa variável de configuração.
 #[derive(Debug, Clone, Copy)]
-enum Tipo {
-    Texto,
-    Inteiro,
-    Booleano,
+enum Kind {
+    Text,
+    Integer,
+    Boolean,
 }
 
-/// Variáveis de ambiente que sobrepõem o arquivo: nome, caminho na configuração e tipo.
-const VARIAVEIS_DE_CONFIG: &[(&str, &[&str], Tipo)] = &[
+const CONFIG_VARIABLES: &[(&str, &[&str], Kind)] = &[
     (
         "POPH_SERVIDOR_ENDERECO",
         &["servidor", "endereco"],
-        Tipo::Texto,
+        Kind::Text,
     ),
-    ("POPH_SERVIDOR_PORTA", &["servidor", "porta"], Tipo::Inteiro),
-    ("POPH_DADOS_DIRETORIO", &["dados", "diretorio"], Tipo::Texto),
-    ("POPH_LOG_NIVEL", &["log", "nivel"], Tipo::Texto),
-    ("POPH_LOG_FORMATO", &["log", "formato"], Tipo::Texto),
-    ("POPH_RETENCAO_DIAS", &["retencao", "dias"], Tipo::Inteiro),
-    ("POPH_LLM_URL_BASE", &["llm", "url_base"], Tipo::Texto),
-    ("POPH_LLM_MODELO", &["llm", "modelo"], Tipo::Texto),
-    ("POPH_JEV_ATIVO", &["jev", "ativo"], Tipo::Booleano),
-    ("POPH_JEV_URL_BASE", &["jev", "url_base"], Tipo::Texto),
-    ("POPH_FLUXOS_ATIVO", &["fluxos", "ativo"], Tipo::Booleano),
+    ("POPH_SERVIDOR_PORTA", &["servidor", "porta"], Kind::Integer),
+    ("POPH_DADOS_DIRETORIO", &["dados", "diretorio"], Kind::Text),
+    ("POPH_LOG_NIVEL", &["log", "nivel"], Kind::Text),
+    ("POPH_LOG_FORMATO", &["log", "formato"], Kind::Text),
+    ("POPH_RETENCAO_DIAS", &["retencao", "dias"], Kind::Integer),
+    ("POPH_LLM_URL_BASE", &["llm", "url_base"], Kind::Text),
+    ("POPH_LLM_MODELO", &["llm", "modelo"], Kind::Text),
+    ("POPH_JEV_ATIVO", &["jev", "ativo"], Kind::Boolean),
+    ("POPH_JEV_URL_BASE", &["jev", "url_base"], Kind::Text),
+    ("POPH_FLUXOS_ATIVO", &["fluxos", "ativo"], Kind::Boolean),
     (
         "POPH_FLUXOS_MAX_FLUXOS_POR_ORG",
         &["fluxos", "max_fluxos_por_org"],
-        Tipo::Inteiro,
+        Kind::Integer,
     ),
     (
         "POPH_FLUXOS_MAX_FONTE_BYTES",
         &["fluxos", "max_fonte_bytes"],
-        Tipo::Inteiro,
+        Kind::Integer,
     ),
-    ("POPH_FLUXOS_MAX_NOS", &["fluxos", "max_nos"], Tipo::Inteiro),
+    ("POPH_FLUXOS_MAX_NOS", &["fluxos", "max_nos"], Kind::Integer),
     (
         "POPH_FLUXOS_MAX_DADOS_BYTES",
         &["fluxos", "max_dados_bytes"],
-        Tipo::Inteiro,
+        Kind::Integer,
     ),
     (
         "POPH_FLUXOS_MAX_TICKS_REGRA",
         &["fluxos", "max_ticks_regra"],
-        Tipo::Inteiro,
+        Kind::Integer,
     ),
     (
         "POPH_FLUXOS_MAX_HEAP_REGRA",
         &["fluxos", "max_heap_regra"],
-        Tipo::Inteiro,
+        Kind::Integer,
     ),
     (
         "POPH_FLUXOS_MAX_SALTOS_DECISAO",
         &["fluxos", "max_saltos_decisao"],
-        Tipo::Inteiro,
+        Kind::Integer,
     ),
     (
         "POPH_FLUXOS_CACHE_REVISOES_MB",
         &["fluxos", "cache_revisoes_mb"],
-        Tipo::Inteiro,
+        Kind::Integer,
     ),
 ];
 
-/// Uma origem de valor: arquivo ou variável, com o caminho da chave e o valor.
 #[derive(Debug, Clone)]
-struct Fonte {
-    origem: String,
-    caminho: Vec<String>,
-    valor: Value,
+struct Source {
+    origin: String,
+    path: Vec<String>,
+    value: Value,
 }
 
-/// Escolhe o arquivo de configuração: `--config`, depois `POPH_CONFIG`, depois `poph.toml` na pasta atual.
-pub fn resolver_arquivo(
+pub fn resolve_file(
     flag: Option<&Path>,
-    ambiente: &Ambiente,
-    pasta_atual: &Path,
+    environment: &Environment,
+    current_dir: &Path,
 ) -> Option<PathBuf> {
-    if let Some(caminho) = flag {
-        return Some(caminho.to_path_buf());
+    if let Some(path) = flag {
+        return Some(path.to_path_buf());
     }
-    if let Some(caminho) = ambiente
+    if let Some(path) = environment
         .get(VAR_CONFIG)
         .map(|v| v.trim())
         .filter(|v| !v.is_empty())
     {
-        return Some(PathBuf::from(caminho));
+        return Some(PathBuf::from(path));
     }
-    let padrao = pasta_atual.join(ARQUIVO_PADRAO);
-    padrao.is_file().then_some(padrao)
+    let default_path = current_dir.join(DEFAULT_FILE);
+    default_path.is_file().then_some(default_path)
 }
 
-/// Monta a configuração final: padrões, depois o arquivo (se houver), depois o ambiente.
-pub fn carregar(arquivo: Option<&Path>, ambiente: &Ambiente) -> Result<HarnessConfig, ErroConfig> {
-    let base = padrao_como_tabela()?;
-    let mut fontes = Vec::new();
-    if let Some(caminho) = arquivo {
-        fontes.extend(fontes_do_arquivo(caminho)?);
+pub fn load(file: Option<&Path>, environment: &Environment) -> Result<HarnessConfig, ConfigError> {
+    let base = defaults_as_table()?;
+    let mut sources = Vec::new();
+    if let Some(path) = file {
+        sources.extend(file_sources(path)?);
     }
-    fontes.extend(fontes_do_ambiente(ambiente)?);
+    sources.extend(environment_sources(environment)?);
 
-    let mut mesclada = base.clone();
-    for fonte in &fontes {
-        definir(&mut mesclada, &fonte.caminho, fonte.valor.clone());
+    let mut merged = base.clone();
+    for source in &sources {
+        set_value(&mut merged, &source.path, source.value.clone());
     }
-    let config = match HarnessConfig::deserialize(Value::Table(mesclada)) {
+    let config = match HarnessConfig::deserialize(Value::Table(merged)) {
         Ok(config) => config,
-        Err(_) => return Err(achar_culpado(&base, &fontes)),
+        Err(_) => return Err(find_invalid_source(&base, &sources)),
     };
     config.validar()?;
     Ok(config)
 }
 
-/// Caminho do `cluster.toml`: `POPH_CLUSTER` quando definido; senão `cluster.toml` no mesmo
-/// diretório do `poph.toml` resolvido (ou na pasta atual, quando não há arquivo de configuração).
-///
-/// O caminho é devolvido mesmo quando o arquivo não existe: é o candidato que a recarga procura.
-pub fn caminho_cluster(
-    ambiente: &Ambiente,
-    arquivo_de_configuracao: Option<&Path>,
-    pasta_atual: &Path,
+pub fn cluster_path(
+    environment: &Environment,
+    config_file: Option<&Path>,
+    current_dir: &Path,
 ) -> PathBuf {
-    if let Some(caminho) = ambiente
+    if let Some(path) = environment
         .get(VAR_CLUSTER)
         .map(|v| v.trim())
         .filter(|v| !v.is_empty())
     {
-        return PathBuf::from(caminho);
+        return PathBuf::from(path);
     }
-    let pasta = arquivo_de_configuracao
+    let directory = config_file
         .and_then(Path::parent)
-        .filter(|pasta| !pasta.as_os_str().is_empty())
-        .unwrap_or(pasta_atual);
-    pasta.join(ARQUIVO_CLUSTER)
+        .filter(|directory| !directory.as_os_str().is_empty())
+        .unwrap_or(current_dir);
+    directory.join(CLUSTER_FILE)
 }
 
-/// Segredo compartilhado do cluster (`POPH_CLUSTER_SECRET`). Vazio conta como ausente.
-pub fn segredo_cluster(ambiente: &Ambiente) -> Option<Secret> {
-    lido(ambiente, VAR_CLUSTER_SECRET)
+pub fn cluster_secret(environment: &Environment) -> Option<Secret> {
+    read_secret(environment, VAR_CLUSTER_SECRET)
 }
 
-/// Lê os segredos do ambiente. Valor vazio ou só com espaços conta como ausente.
-pub fn segredos(ambiente: &Ambiente) -> Segredos {
-    Segredos {
-        cifra: lido(ambiente, VAR_CIFRA),
-        typesafe: lido(ambiente, VAR_TYPESAFE),
-        evolution: lido(ambiente, VAR_EVOLUTION),
+pub fn secrets(environment: &Environment) -> Secrets {
+    Secrets {
+        cipher: read_secret(environment, VAR_CIPHER),
+        typesafe: read_secret(environment, VAR_TYPESAFE),
+        evolution: read_secret(environment, VAR_EVOLUTION),
     }
 }
 
-pub fn chave_llm(ambiente: &Ambiente, chave_env: &str) -> Option<Secret> {
-    lido(ambiente, chave_env)
+pub fn llm_key(environment: &Environment, key_env: &str) -> Option<Secret> {
+    read_secret(environment, key_env)
 }
 
-fn lido(ambiente: &Ambiente, variavel: &str) -> Option<Secret> {
-    ambiente
-        .get(variavel)
+fn read_secret(environment: &Environment, variable: &str) -> Option<Secret> {
+    environment
+        .get(variable)
         .map(|v| v.trim())
         .filter(|v| !v.is_empty())
         .map(|v| Secret::new(v.to_owned()))
 }
 
-fn padrao_como_tabela() -> Result<Table, ErroConfig> {
+fn defaults_as_table() -> Result<Table, ConfigError> {
     match Value::try_from(HarnessConfig::default()) {
-        Ok(Value::Table(tabela)) => Ok(tabela),
-        Ok(outro) => Err(ErroConfig::Interno(format!(
+        Ok(Value::Table(table)) => Ok(table),
+        Ok(other) => Err(ConfigError::Internal(format!(
             "padrões viraram {} em vez de tabela",
-            outro.type_str()
+            other.type_str()
         ))),
-        Err(erro) => Err(ErroConfig::Interno(erro.to_string())),
+        Err(error) => Err(ConfigError::Internal(error.to_string())),
     }
 }
 
-fn fontes_do_arquivo(caminho: &Path) -> Result<Vec<Fonte>, ErroConfig> {
-    if !caminho.exists() {
-        return Err(ErroConfig::ArquivoAusente(caminho.to_path_buf()));
+fn file_sources(path: &Path) -> Result<Vec<Source>, ConfigError> {
+    if !path.exists() {
+        return Err(ConfigError::MissingFile(path.to_path_buf()));
     }
-    let texto = fs::read_to_string(caminho).map_err(|erro| ErroConfig::Leitura {
-        arquivo: caminho.to_path_buf(),
-        motivo: erro.to_string(),
+    let text = fs::read_to_string(path).map_err(|error| ConfigError::Read {
+        file: path.to_path_buf(),
+        reason: error.to_string(),
     })?;
-    let tabela: Table = toml::from_str(&texto).map_err(|erro| ErroConfig::Sintaxe {
-        arquivo: caminho.to_path_buf(),
-        motivo: erro.to_string(),
+    let table: Table = toml::from_str(&text).map_err(|error| ConfigError::Syntax {
+        file: path.to_path_buf(),
+        reason: error.to_string(),
     })?;
-    let origem = caminho.display().to_string();
-    let mut folhas = Vec::new();
-    achatar(&tabela, &mut Vec::new(), &mut folhas);
-    Ok(folhas
+    let origin = path.display().to_string();
+    let mut leaves = Vec::new();
+    flatten(&table, &mut Vec::new(), &mut leaves);
+    Ok(leaves
         .into_iter()
-        .map(|(caminho, valor)| Fonte {
-            origem: origem.clone(),
-            caminho,
-            valor,
+        .map(|(path, value)| Source {
+            origin: origin.clone(),
+            path,
+            value,
         })
         .collect())
 }
 
-/// Vira a árvore do arquivo numa lista de (caminho, valor). Tabela vazia não gera nada.
-fn achatar(tabela: &Table, prefixo: &mut Vec<String>, saida: &mut Vec<(Vec<String>, Value)>) {
-    for (chave, valor) in tabela {
-        prefixo.push(chave.clone());
-        match valor {
-            Value::Table(sub) => achatar(sub, prefixo, saida),
-            _ => saida.push((prefixo.clone(), valor.clone())),
+fn flatten(table: &Table, prefix: &mut Vec<String>, output: &mut Vec<(Vec<String>, Value)>) {
+    for (key, value) in table {
+        prefix.push(key.clone());
+        match value {
+            Value::Table(sub) => flatten(sub, prefix, output),
+            _ => output.push((prefix.clone(), value.clone())),
         }
-        prefixo.pop();
+        prefix.pop();
     }
 }
 
-fn fontes_do_ambiente(ambiente: &Ambiente) -> Result<Vec<Fonte>, ErroConfig> {
-    let mut fontes = Vec::new();
-    for (variavel, caminho, tipo) in VARIAVEIS_DE_CONFIG {
-        let Some(texto) = ambiente
-            .get(*variavel)
+fn environment_sources(environment: &Environment) -> Result<Vec<Source>, ConfigError> {
+    let mut sources = Vec::new();
+    for (variable, path, kind) in CONFIG_VARIABLES {
+        let Some(text) = environment
+            .get(*variable)
             .map(|v| v.trim())
             .filter(|v| !v.is_empty())
         else {
             continue;
         };
-        let valor = match tipo {
-            Tipo::Texto => Value::String(texto.to_owned()),
-            Tipo::Inteiro => {
-                texto
-                    .parse::<i64>()
-                    .map(Value::Integer)
-                    .map_err(|_| ErroConfig::Ambiente {
-                        variavel,
-                        motivo: "esperado um número inteiro".to_owned(),
-                    })?
-            }
-            Tipo::Booleano => match texto {
-                "true" => Value::Boolean(true),
-                "false" => Value::Boolean(false),
-                _ => {
-                    return Err(ErroConfig::Ambiente {
-                        variavel,
-                        motivo: "use true ou false".to_owned(),
-                    });
-                }
-            },
-        };
-        fontes.push(Fonte {
-            origem: (*variavel).to_owned(),
-            caminho: caminho.iter().map(|p| (*p).to_owned()).collect(),
-            valor,
+        let value =
+            match kind {
+                Kind::Text => Value::String(text.to_owned()),
+                Kind::Integer => text.parse::<i64>().map(Value::Integer).map_err(|_| {
+                    ConfigError::Environment {
+                        variable,
+                        reason: "esperado um número inteiro".to_owned(),
+                    }
+                })?,
+                Kind::Boolean => match text {
+                    "true" => Value::Boolean(true),
+                    "false" => Value::Boolean(false),
+                    _ => {
+                        return Err(ConfigError::Environment {
+                            variable,
+                            reason: "use true ou false".to_owned(),
+                        });
+                    }
+                },
+            };
+        sources.push(Source {
+            origin: (*variable).to_owned(),
+            path: path.iter().map(|p| (*p).to_owned()).collect(),
+            value,
         });
     }
-    Ok(fontes)
+    Ok(sources)
 }
 
-/// Põe `valor` no caminho dado. Se o caminho passa por algo que não é tabela, não faz nada:
-/// o erro aparece depois, na desserialização, com a chave certa.
-fn definir(tabela: &mut Table, caminho: &[String], valor: Value) {
-    match caminho {
+fn set_value(table: &mut Table, path: &[String], value: Value) {
+    match path {
         [] => {}
-        [ultimo] => {
-            tabela.insert(ultimo.clone(), valor);
+        [last] => {
+            table.insert(last.clone(), value);
         }
-        [primeiro, resto @ ..] => {
-            let entrada = tabela
-                .entry(primeiro.clone())
+        [first, rest @ ..] => {
+            let entry = table
+                .entry(first.clone())
                 .or_insert_with(|| Value::Table(Table::new()));
-            if let Value::Table(sub) = entrada {
-                definir(sub, resto, valor);
+            if let Value::Table(sub) = entry {
+                set_value(sub, rest, value);
             }
         }
     }
 }
 
-/// Acha a primeira fonte que, sozinha sobre os padrões, já quebra a leitura.
-fn achar_culpado(base: &Table, fontes: &[Fonte]) -> ErroConfig {
-    for fonte in fontes {
-        let mut teste = base.clone();
-        definir(&mut teste, &fonte.caminho, fonte.valor.clone());
-        if let Err(erro) = HarnessConfig::deserialize(Value::Table(teste)) {
-            return ErroConfig::Chave {
-                origem: fonte.origem.clone(),
-                chave: fonte.caminho.join("."),
-                motivo: erro.to_string(),
+fn find_invalid_source(base: &Table, sources: &[Source]) -> ConfigError {
+    for source in sources {
+        let mut candidate = base.clone();
+        set_value(&mut candidate, &source.path, source.value.clone());
+        if let Err(error) = HarnessConfig::deserialize(Value::Table(candidate)) {
+            return ConfigError::Key {
+                origin: source.origin.clone(),
+                key: source.path.join("."),
+                reason: error.to_string(),
             };
         }
     }
-    ErroConfig::Interno(
+    ConfigError::Internal(
         "a configuração não leu, mas nenhuma chave isolada explica o erro".to_owned(),
     )
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use poph_types::JevGates;
 
     use super::*;
 
-    /// Pasta temporária única para os arquivos de teste (sem dependência extra).
-    fn pasta_temporaria() -> PathBuf {
-        static CONTADOR: AtomicUsize = AtomicUsize::new(0);
-        let n = CONTADOR.fetch_add(1, Ordering::Relaxed);
-        let pasta = std::env::temp_dir().join(format!("poph-config-{}-{n}", std::process::id()));
-        fs::create_dir_all(&pasta).expect("cria pasta de teste");
-        pasta
+    fn temp_dir() -> PathBuf {
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let directory =
+            std::env::temp_dir().join(format!("poph-config-{}-{n}", std::process::id()));
+        fs::create_dir_all(&directory).expect("cria pasta de teste");
+        directory
     }
 
-    fn arquivo(conteudo: &str) -> PathBuf {
-        let caminho = pasta_temporaria().join("poph.toml");
-        fs::write(&caminho, conteudo).expect("escreve arquivo de teste");
-        caminho
+    fn file(content: &str) -> PathBuf {
+        let path = temp_dir().join("poph.toml");
+        fs::write(&path, content).expect("escreve arquivo de teste");
+        path
     }
 
-    fn amb(pares: &[(&str, &str)]) -> Ambiente {
-        pares
+    fn env(pairs: &[(&str, &str)]) -> Environment {
+        pairs
             .iter()
             .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
             .collect()
     }
 
     #[test]
-    fn sem_arquivo_e_sem_ambiente_vale_o_padrao() {
-        let cfg = carregar(None, &Ambiente::new()).expect("carrega");
+    fn defaults_without_file_or_environment() {
+        let cfg = load(None, &Environment::new()).expect("carrega");
         assert_eq!(cfg, HarnessConfig::default());
     }
 
     #[test]
-    fn precedencia_padrao_menos_arquivo_menos_ambiente() {
-        let caminho = arquivo(
+    fn environment_overrides_file_and_file_overrides_defaults() {
+        let path = file(
             "[servidor]\nporta = 2000\n\n[log]\nnivel = \"debug\"\n\n[llm]\nmodelo = \"modelo-do-arquivo\"\n",
         );
-        let ambiente = amb(&[("POPH_SERVIDOR_PORTA", "3000")]);
-        let cfg = carregar(Some(&caminho), &ambiente).expect("carrega");
-        // Ambiente vence o arquivo.
+        let environment = env(&[("POPH_SERVIDOR_PORTA", "3000")]);
+        let cfg = load(Some(&path), &environment).expect("carrega");
+
         assert_eq!(cfg.server.port, 3000);
-        // Arquivo vence o padrão.
+
         assert_eq!(cfg.log.level, "debug");
         assert_eq!(cfg.llm.model, "modelo-do-arquivo");
-        // Quem não foi definido em lugar nenhum fica com o padrão.
+
         assert_eq!(cfg.retention.days, 30);
         assert_eq!(cfg.limits.concurrent_turns, 200);
     }
 
     #[test]
-    fn variavel_vazia_nao_sobrepoe_nada() {
-        let caminho = arquivo("[servidor]\nporta = 2001\n");
-        let cfg =
-            carregar(Some(&caminho), &amb(&[("POPH_SERVIDOR_PORTA", "  ")])).expect("carrega");
+    fn empty_environment_variable_does_not_override() {
+        let path = file("[servidor]\nporta = 2001\n");
+        let cfg = load(Some(&path), &env(&[("POPH_SERVIDOR_PORTA", "  ")])).expect("carrega");
         assert_eq!(cfg.server.port, 2001);
     }
 
     #[test]
-    fn sintaxe_toml_quebrada_diz_o_arquivo() {
-        let caminho = arquivo("[servidor\nporta = 2000\n");
-        match carregar(Some(&caminho), &Ambiente::new()) {
-            Err(ErroConfig::Sintaxe { arquivo, motivo }) => {
-                assert_eq!(arquivo, caminho);
-                assert!(!motivo.is_empty());
+    fn invalid_toml_syntax_reports_file() {
+        let path = file("[servidor\nporta = 2000\n");
+        match load(Some(&path), &Environment::new()) {
+            Err(ConfigError::Syntax { file, reason }) => {
+                assert_eq!(file, path);
+                assert!(!reason.is_empty());
             }
-            outro => panic!("esperado erro de sintaxe, veio {outro:?}"),
+            other => panic!("esperado erro de sintaxe, veio {other:?}"),
         }
     }
 
     #[test]
-    fn chave_desconhecida_no_arquivo_diz_arquivo_e_chave() {
-        let caminho = arquivo("[servidor]\nportaa = 2000\n");
-        match carregar(Some(&caminho), &Ambiente::new()) {
-            Err(ErroConfig::Chave { origem, chave, .. }) => {
-                assert_eq!(origem, caminho.display().to_string());
-                assert_eq!(chave, "servidor.portaa");
+    fn unknown_key_reports_file_and_key() {
+        let path = file("[servidor]\nportaa = 2000\n");
+        match load(Some(&path), &Environment::new()) {
+            Err(ConfigError::Key { origin, key, .. }) => {
+                assert_eq!(origin, path.display().to_string());
+                assert_eq!(key, "servidor.portaa");
             }
-            outro => panic!("esperado erro de chave, veio {outro:?}"),
+            other => panic!("esperado erro de chave, veio {other:?}"),
         }
     }
 
     #[test]
-    fn tipo_errado_no_arquivo_aponta_a_chave() {
-        let caminho = arquivo("[servidor]\nporta = \"abc\"\n");
-        match carregar(Some(&caminho), &Ambiente::new()) {
-            Err(ErroConfig::Chave { chave, .. }) => assert_eq!(chave, "servidor.porta"),
-            outro => panic!("esperado erro de chave, veio {outro:?}"),
+    fn invalid_file_value_type_reports_key() {
+        let path = file("[servidor]\nporta = \"abc\"\n");
+        match load(Some(&path), &Environment::new()) {
+            Err(ConfigError::Key { key, .. }) => assert_eq!(key, "servidor.porta"),
+            other => panic!("esperado erro de chave, veio {other:?}"),
         }
     }
 
     #[test]
-    fn variavel_com_numero_invalido_aponta_a_variavel() {
-        match carregar(None, &amb(&[("POPH_SERVIDOR_PORTA", "abc")])) {
-            Err(ErroConfig::Ambiente { variavel, .. }) => {
-                assert_eq!(variavel, "POPH_SERVIDOR_PORTA")
+    fn invalid_environment_integer_reports_variable() {
+        match load(None, &env(&[("POPH_SERVIDOR_PORTA", "abc")])) {
+            Err(ConfigError::Environment { variable, .. }) => {
+                assert_eq!(variable, "POPH_SERVIDOR_PORTA")
             }
-            outro => panic!("esperado erro de variável, veio {outro:?}"),
+            other => panic!("esperado erro de variável, veio {other:?}"),
         }
     }
 
     #[test]
-    fn variavel_com_porta_fora_de_faixa_cai_na_validacao() {
-        match carregar(None, &amb(&[("POPH_SERVIDOR_PORTA", "80")])) {
-            Err(ErroConfig::Validacao(DomainError::Validation { field, .. })) => {
+    fn out_of_range_environment_port_fails_validation() {
+        match load(None, &env(&[("POPH_SERVIDOR_PORTA", "80")])) {
+            Err(ConfigError::Validation(DomainError::Validation { field, .. })) => {
                 assert_eq!(field, "servidor.porta")
             }
-            outro => panic!("esperado erro de validação, veio {outro:?}"),
+            other => panic!("esperado erro de validação, veio {other:?}"),
         }
     }
 
     #[test]
-    fn arquivo_pedido_e_inexistente_e_erro_claro() {
-        let caminho = pasta_temporaria().join("nao-existe.toml");
+    fn missing_explicit_file_reports_path() {
+        let path = temp_dir().join("nao-existe.toml");
         assert!(matches!(
-            carregar(Some(&caminho), &Ambiente::new()),
-            Err(ErroConfig::ArquivoAusente(_))
+            load(Some(&path), &Environment::new()),
+            Err(ConfigError::MissingFile(_))
         ));
     }
 
     #[test]
-    fn evolution_so_existe_quando_a_secao_existe() {
-        let sem = carregar(None, &Ambiente::new()).expect("carrega");
-        assert!(sem.evolution.is_none());
-        let caminho = arquivo("[evolution]\nurl_base = \"https://evo.exemplo.test\"\n");
-        let com = carregar(Some(&caminho), &Ambiente::new()).expect("carrega");
+    fn evolution_requires_a_section() {
+        let without_section = load(None, &Environment::new()).expect("carrega");
+        assert!(without_section.evolution.is_none());
+        let path = file("[evolution]\nurl_base = \"https://evo.exemplo.test\"\n");
+        let with_section = load(Some(&path), &Environment::new()).expect("carrega");
         assert_eq!(
-            com.evolution.map(|e| e.url_base),
+            with_section.evolution.map(|e| e.url_base),
             Some("https://evo.exemplo.test".to_owned())
         );
     }
 
     #[test]
-    fn llm_sem_os_campos_novos_usa_os_padroes() {
-        let caminho = arquivo(
+    fn omitted_llm_fields_use_defaults() {
+        let path = file(
             "[llm]\nprovedor = \"openai_compativel\"\nurl_base = \"https://api.exemplo.test/v1\"\n",
         );
-        let cfg = carregar(Some(&caminho), &Ambiente::new()).expect("carrega");
+        let cfg = load(Some(&path), &Environment::new()).expect("carrega");
         assert_eq!(cfg.llm.provider, "openai_compativel");
         assert_eq!(cfg.llm.api_key_env, VAR_ANTIGRAVITY);
         assert!(cfg.llm.refuse_model_turn);
-        let chave = chave_llm(
-            &amb(&[("OUTRA_CHAVE", "valor-de-teste")]),
+        let key = llm_key(
+            &env(&[("OUTRA_CHAVE", "valor-de-teste")]),
             &cfg.llm.api_key_env,
         );
-        assert!(chave.is_none(), "a chave vem do nome configurado");
+        assert!(key.is_none(), "a chave vem do nome configurado");
     }
 
     #[test]
-    fn jev_vem_desligado_e_pode_ligar_por_ambiente() {
-        let cfg = carregar(None, &Ambiente::new()).expect("carrega");
+    fn jev_defaults_to_disabled_and_environment_can_enable_it() {
+        let cfg = load(None, &Environment::new()).expect("carrega");
         assert!(!cfg.jev.enabled);
-        let ligado = carregar(None, &amb(&[("POPH_JEV_ATIVO", "true")])).expect("carrega");
-        assert!(ligado.jev.enabled);
+        let enabled = load(None, &env(&[("POPH_JEV_ATIVO", "true")])).expect("carrega");
+        assert!(enabled.jev.enabled);
     }
 
-    /// Padrão de instalação: G3, G5, G8 e G9 ligados; G1, G2, G4, G6 e G7 desligados. Se alguém
-    /// voltar G3, G5, G8 ou G9 para `false` no padrão, ou ligar um dos outros cinco, este teste reprova.
     #[test]
-    fn gates_padrao_de_instalacao_ligam_g3_g5_g8_e_g9() {
-        let cfg = carregar(None, &Ambiente::new()).expect("carrega");
+    fn only_g3_g5_g8_and_g9_are_enabled_by_default() {
+        let cfg = load(None, &Environment::new()).expect("carrega");
         assert_eq!(cfg.jev.gates, JevGates::default_value());
         assert!(cfg.jev.gates.g3, "G3 deve vir ligado por padrão");
         assert!(cfg.jev.gates.g5, "G5 deve vir ligado por padrão");
         assert!(cfg.jev.gates.g8, "G8 deve vir ligado por padrão");
         assert!(cfg.jev.gates.g9, "G9 deve vir ligado por padrão");
-        for (nome, ligado) in [
+        for (name, enabled) in [
             ("g1", cfg.jev.gates.g1),
             ("g2", cfg.jev.gates.g2),
             ("g4", cfg.jev.gates.g4),
             ("g6", cfg.jev.gates.g6),
             ("g7", cfg.jev.gates.g7),
         ] {
-            assert!(!ligado, "{nome} deve continuar desligado por padrão");
+            assert!(!enabled, "{name} deve continuar desligado por padrão");
         }
     }
 
-    /// Arquivo que liga o Jev mas não fala de gates: G3, G5 e G8 continuam ligados.
     #[test]
-    fn arquivo_sem_a_secao_de_gates_mantem_g3_g5_e_g8_ligados() {
-        let caminho = arquivo("[jev]\nativo = true\n");
-        let cfg = carregar(Some(&caminho), &Ambiente::new()).expect("carrega");
+    fn file_without_gates_keeps_g3_g5_and_g8_enabled() {
+        let path = file("[jev]\nativo = true\n");
+        let cfg = load(Some(&path), &Environment::new()).expect("carrega");
         assert!(cfg.jev.enabled);
         assert!(cfg.jev.gates.g3 && cfg.jev.gates.g5 && cfg.jev.gates.g8);
         assert!(!cfg.jev.gates.g1 && !cfg.jev.gates.g2);
     }
 
-    /// Arquivo com `[jev.gates]` parcial: o campo que não aparece cai no padrão, campo a campo.
     #[test]
-    fn arquivo_com_gates_parcial_so_muda_o_que_escreveu() {
-        let caminho = arquivo("[jev]\nativo = true\n\n[jev.gates]\ng1 = true\n");
-        let cfg = carregar(Some(&caminho), &Ambiente::new()).expect("carrega");
+    fn partial_gates_section_overrides_only_listed_gates() {
+        let path = file("[jev]\nativo = true\n\n[jev.gates]\ng1 = true\n");
+        let cfg = load(Some(&path), &Environment::new()).expect("carrega");
         assert!(cfg.jev.gates.g1, "o que o arquivo liga, fica ligado");
         assert!(
             cfg.jev.gates.g3 && cfg.jev.gates.g5 && cfg.jev.gates.g8,
@@ -575,16 +535,14 @@ mod testes {
         assert!(!cfg.jev.gates.g2);
     }
 
-    /// Desligar G3, G5 e G8 no arquivo vale de verdade: é o que o operador usa para voltar atrás.
     #[test]
-    fn arquivo_pode_desligar_g3_g5_e_g8() {
-        let caminho =
-            arquivo("[jev]\nativo = true\n\n[jev.gates]\ng3 = false\ng5 = false\ng8 = false\n");
-        let cfg = carregar(Some(&caminho), &Ambiente::new()).expect("carrega");
+    fn file_can_disable_g3_g5_and_g8() {
+        let path = file("[jev]\nativo = true\n\n[jev.gates]\ng3 = false\ng5 = false\ng8 = false\n");
+        let cfg = load(Some(&path), &Environment::new()).expect("carrega");
         assert!(!cfg.jev.gates.g3, "g3 = false no arquivo desliga o G3");
         assert!(!cfg.jev.gates.g5, "g5 = false no arquivo desliga o G5");
         assert!(!cfg.jev.gates.g8, "g8 = false no arquivo desliga o G8");
-        // O G9 não foi mencionado no arquivo: continua no padrão de instalação.
+
         assert_eq!(
             cfg.jev.gates,
             JevGates {
@@ -595,77 +553,76 @@ mod testes {
     }
 
     #[test]
-    fn resolver_arquivo_respeita_flag_depois_variavel_depois_pasta() {
-        let pasta = pasta_temporaria();
-        let vazio = Ambiente::new();
-        assert_eq!(resolver_arquivo(None, &vazio, &pasta), None);
-        fs::write(pasta.join(ARQUIVO_PADRAO), "").expect("escreve");
+    fn file_resolution_prefers_flag_then_environment_then_current_dir() {
+        let directory = temp_dir();
+        let empty = Environment::new();
+        assert_eq!(resolve_file(None, &empty, &directory), None);
+        fs::write(directory.join(DEFAULT_FILE), "").expect("escreve");
         assert_eq!(
-            resolver_arquivo(None, &vazio, &pasta),
-            Some(pasta.join(ARQUIVO_PADRAO))
+            resolve_file(None, &empty, &directory),
+            Some(directory.join(DEFAULT_FILE))
         );
-        let por_variavel = amb(&[(VAR_CONFIG, "/tmp/outro.toml")]);
+        let from_environment = env(&[(VAR_CONFIG, "/tmp/outro.toml")]);
         assert_eq!(
-            resolver_arquivo(None, &por_variavel, &pasta),
+            resolve_file(None, &from_environment, &directory),
             Some(PathBuf::from("/tmp/outro.toml"))
         );
         assert_eq!(
-            resolver_arquivo(Some(Path::new("/tmp/flag.toml")), &por_variavel, &pasta),
+            resolve_file(
+                Some(Path::new("/tmp/flag.toml")),
+                &from_environment,
+                &directory
+            ),
             Some(PathBuf::from("/tmp/flag.toml"))
         );
     }
 
     #[test]
-    fn segredos_vem_do_ambiente_e_vazio_conta_como_ausente() {
-        let ambiente = amb(&[(VAR_CIFRA, "segredo-de-teste-cifra")]);
-        let s = segredos(&ambiente);
-        assert!(s.cifra.is_some());
+    fn secrets_come_from_environment_and_empty_values_are_absent() {
+        let environment = env(&[(VAR_CIPHER, "segredo-de-teste-cifra")]);
+        let s = secrets(&environment);
+        assert!(s.cipher.is_some());
         assert!(s.typesafe.is_none());
         assert!(!format!("{s:?}").contains("segredo-de-teste-cifra"));
     }
 
-    /// A chave do provedor é lida pelo nome configurado, e não pelo nome padrão.
     #[test]
-    fn chave_do_llm_vem_do_nome_configurado() {
-        let ambiente = amb(&[
+    fn llm_key_uses_configured_variable_name() {
+        let environment = env(&[
             (VAR_ANTIGRAVITY, "chave-padrao"),
             ("MINHA_CHAVE_LLM", "chave-propria"),
         ]);
-        let padrao = chave_llm(&ambiente, VAR_ANTIGRAVITY).expect("chave padrão");
-        assert_eq!(padrao.expose(), "chave-padrao");
-        let propria = chave_llm(&ambiente, "MINHA_CHAVE_LLM").expect("chave própria");
-        assert_eq!(propria.expose(), "chave-propria");
-        assert!(chave_llm(&ambiente, "OUTRA_CHAVE").is_none());
-        assert!(chave_llm(&ambiente, VAR_ANTIGRAVITY).is_some_and(|c| !c.expose().is_empty()));
+        let default_path = llm_key(&environment, VAR_ANTIGRAVITY).expect("chave padrão");
+        assert_eq!(default_path.expose(), "chave-padrao");
+        let custom_key = llm_key(&environment, "MINHA_CHAVE_LLM").expect("chave própria");
+        assert_eq!(custom_key.expose(), "chave-propria");
+        assert!(llm_key(&environment, "OUTRA_CHAVE").is_none());
+        assert!(llm_key(&environment, VAR_ANTIGRAVITY).is_some_and(|c| !c.expose().is_empty()));
     }
 
-    /// Sem arquivo e sem ambiente, a seção `[fluxos]` vale o padrão do PRD §9.
     #[test]
-    fn fluxos_sem_arquivo_e_sem_ambiente_vale_o_padrao() {
-        let cfg = carregar(None, &Ambiente::new()).expect("carrega");
+    fn flows_use_defaults_without_file_or_environment() {
+        let cfg = load(None, &Environment::new()).expect("carrega");
         assert_eq!(cfg.flows, poph_types::FlowsConfig::default());
     }
 
-    /// Valor lido de cada chave de `[fluxos]` que tem variável de ambiente, pelo nome da chave.
-    fn valor_de(fluxos: &poph_types::FlowsConfig, chave: &str) -> u64 {
-        match chave {
-            "max_fluxos_por_org" => u64::from(fluxos.max_flows_per_org),
-            "max_fonte_bytes" => fluxos.max_source_bytes,
-            "max_nos" => u64::from(fluxos.max_nodes),
-            "max_dados_bytes" => fluxos.max_data_bytes,
-            "max_ticks_regra" => fluxos.max_rule_ticks,
-            "max_heap_regra" => fluxos.max_rule_heap,
-            "max_saltos_decisao" => u64::from(fluxos.max_decision_hops),
-            "cache_revisoes_mb" => u64::from(fluxos.revision_cache_mb),
-            outro => panic!("chave sem leitura no teste: {outro}"),
+    fn flow_value(flows: &poph_types::FlowsConfig, key: &str) -> u64 {
+        match key {
+            "max_fluxos_por_org" => u64::from(flows.max_flows_per_org),
+            "max_fonte_bytes" => flows.max_source_bytes,
+            "max_nos" => u64::from(flows.max_nodes),
+            "max_dados_bytes" => flows.max_data_bytes,
+            "max_ticks_regra" => flows.max_rule_ticks,
+            "max_heap_regra" => flows.max_rule_heap,
+            "max_saltos_decisao" => u64::from(flows.max_decision_hops),
+            "cache_revisoes_mb" => u64::from(flows.revision_cache_mb),
+            other => panic!("chave sem leitura no teste: {other}"),
         }
     }
 
-    /// Cada chave numérica de `[fluxos]`: o arquivo define um valor, a variável define outro, e a
-    /// variável vence. Com a variável ausente, o valor do arquivo aparece.
     #[test]
-    fn variavel_de_cada_chave_de_fluxos_vence_o_arquivo() {
-        let casos = [
+    fn environment_overrides_every_numeric_flow_key() {
+        let cases = [
             (
                 "POPH_FLUXOS_MAX_FLUXOS_POR_ORG",
                 "max_fluxos_por_org",
@@ -710,93 +667,92 @@ mod testes {
                 "32",
             ),
         ];
-        for (variavel, chave, do_arquivo, do_ambiente) in casos {
-            let caminho = arquivo(&format!("[fluxos]\n{chave} = {do_arquivo}\n"));
-            let so_arquivo = carregar(Some(&caminho), &Ambiente::new()).expect("carrega");
+        for (variable, key, file_value, environment_value) in cases {
+            let path = file(&format!("[fluxos]\n{key} = {file_value}\n"));
+            let file_only = load(Some(&path), &Environment::new()).expect("carrega");
             assert_eq!(
-                valor_de(&so_arquivo.flows, chave),
-                do_arquivo.parse::<u64>().unwrap(),
-                "{chave} vem do arquivo"
+                flow_value(&file_only.flows, key),
+                file_value.parse::<u64>().unwrap(),
+                "{key} vem do arquivo"
             );
-            let vence =
-                carregar(Some(&caminho), &amb(&[(variavel, do_ambiente)])).expect("carrega");
+            let overridden =
+                load(Some(&path), &env(&[(variable, environment_value)])).expect("carrega");
             assert_eq!(
-                valor_de(&vence.flows, chave),
-                do_ambiente.parse::<u64>().unwrap(),
-                "{variavel} vence o arquivo"
+                flow_value(&overridden.flows, key),
+                environment_value.parse::<u64>().unwrap(),
+                "{variable} vence o arquivo"
             );
         }
     }
 
     #[test]
-    fn variavel_de_ativo_vence_o_arquivo_e_aceita_so_true_ou_false() {
-        let caminho = arquivo("[fluxos]\nativo = true\n");
-        let desligado =
-            carregar(Some(&caminho), &amb(&[("POPH_FLUXOS_ATIVO", "false")])).expect("carrega");
-        assert!(!desligado.flows.enabled);
-        match carregar(None, &amb(&[("POPH_FLUXOS_ATIVO", "sim")])) {
-            Err(ErroConfig::Ambiente { variavel, .. }) => assert_eq!(variavel, "POPH_FLUXOS_ATIVO"),
-            outro => panic!("esperado erro de variável, veio {outro:?}"),
-        }
-    }
-
-    #[test]
-    fn variavel_de_fluxos_com_texto_aponta_a_variavel() {
-        match carregar(None, &amb(&[("POPH_FLUXOS_MAX_NOS", "abc")])) {
-            Err(ErroConfig::Ambiente { variavel, .. }) => {
-                assert_eq!(variavel, "POPH_FLUXOS_MAX_NOS")
+    fn flow_enabled_environment_override_accepts_only_true_or_false() {
+        let path = file("[fluxos]\nativo = true\n");
+        let disabled = load(Some(&path), &env(&[("POPH_FLUXOS_ATIVO", "false")])).expect("carrega");
+        assert!(!disabled.flows.enabled);
+        match load(None, &env(&[("POPH_FLUXOS_ATIVO", "sim")])) {
+            Err(ConfigError::Environment { variable, .. }) => {
+                assert_eq!(variable, "POPH_FLUXOS_ATIVO")
             }
-            outro => panic!("esperado erro de variável, veio {outro:?}"),
+            other => panic!("esperado erro de variável, veio {other:?}"),
         }
     }
 
-    /// Número negativo não cabe no tipo: a chave culpada é `fluxos.max_nos`, e a origem é a variável.
     #[test]
-    fn variavel_de_fluxos_negativa_aponta_a_chave_e_a_variavel() {
-        match carregar(None, &amb(&[("POPH_FLUXOS_MAX_NOS", "-1")])) {
-            Err(ErroConfig::Chave { origem, chave, .. }) => {
-                assert_eq!(origem, "POPH_FLUXOS_MAX_NOS");
-                assert_eq!(chave, "fluxos.max_nos");
+    fn nonnumeric_environment_flow_value_reports_variable() {
+        match load(None, &env(&[("POPH_FLUXOS_MAX_NOS", "abc")])) {
+            Err(ConfigError::Environment { variable, .. }) => {
+                assert_eq!(variable, "POPH_FLUXOS_MAX_NOS")
             }
-            outro => panic!("esperado erro de chave, veio {outro:?}"),
+            other => panic!("esperado erro de variável, veio {other:?}"),
         }
     }
 
     #[test]
-    fn variavel_de_fluxos_fora_da_faixa_cai_na_validacao_com_a_chave() {
-        match carregar(None, &amb(&[("POPH_FLUXOS_MAX_NOS", "61")])) {
-            Err(ErroConfig::Validacao(DomainError::Validation { field, .. })) => {
+    fn negative_environment_flow_value_reports_key_and_variable() {
+        match load(None, &env(&[("POPH_FLUXOS_MAX_NOS", "-1")])) {
+            Err(ConfigError::Key { origin, key, .. }) => {
+                assert_eq!(origin, "POPH_FLUXOS_MAX_NOS");
+                assert_eq!(key, "fluxos.max_nos");
+            }
+            other => panic!("esperado erro de chave, veio {other:?}"),
+        }
+    }
+
+    #[test]
+    fn out_of_range_environment_flow_value_reports_key() {
+        match load(None, &env(&[("POPH_FLUXOS_MAX_NOS", "61")])) {
+            Err(ConfigError::Validation(DomainError::Validation { field, .. })) => {
                 assert_eq!(field, "fluxos.max_nos")
             }
-            outro => panic!("esperado erro de validação, veio {outro:?}"),
+            other => panic!("esperado erro de validação, veio {other:?}"),
         }
     }
 
     #[test]
-    fn arquivo_com_fluxos_fora_da_faixa_cai_na_validacao_com_a_chave() {
-        let caminho = arquivo("[fluxos]\nmax_saltos_decisao = 0\n");
-        match carregar(Some(&caminho), &Ambiente::new()) {
-            Err(ErroConfig::Validacao(DomainError::Validation { field, .. })) => {
+    fn out_of_range_file_flow_value_reports_key() {
+        let path = file("[fluxos]\nmax_saltos_decisao = 0\n");
+        match load(Some(&path), &Environment::new()) {
+            Err(ConfigError::Validation(DomainError::Validation { field, .. })) => {
                 assert_eq!(field, "fluxos.max_saltos_decisao")
             }
-            outro => panic!("esperado erro de validação, veio {outro:?}"),
+            other => panic!("esperado erro de validação, veio {other:?}"),
         }
     }
 
     #[test]
-    fn arquivo_com_tipo_errado_em_fluxos_aponta_a_chave() {
-        let caminho = arquivo("[fluxos]\ncache_revisoes_mb = \"muito\"\n");
-        match carregar(Some(&caminho), &Ambiente::new()) {
-            Err(ErroConfig::Chave { chave, .. }) => assert_eq!(chave, "fluxos.cache_revisoes_mb"),
-            outro => panic!("esperado erro de chave, veio {outro:?}"),
+    fn invalid_file_flow_value_type_reports_key() {
+        let path = file("[fluxos]\ncache_revisoes_mb = \"muito\"\n");
+        match load(Some(&path), &Environment::new()) {
+            Err(ConfigError::Key { key, .. }) => assert_eq!(key, "fluxos.cache_revisoes_mb"),
+            other => panic!("esperado erro de chave, veio {other:?}"),
         }
     }
 
-    /// Desligar o motor pelo arquivo vale, e o G9 segue a mesma regra dos outros gates.
     #[test]
-    fn arquivo_pode_desligar_o_motor_e_o_g9() {
-        let caminho = arquivo("[fluxos]\nativo = false\n\n[jev.gates]\ng9 = false\n");
-        let cfg = carregar(Some(&caminho), &Ambiente::new()).expect("carrega");
+    fn file_can_disable_flow_engine_and_g9() {
+        let path = file("[fluxos]\nativo = false\n\n[jev.gates]\ng9 = false\n");
+        let cfg = load(Some(&path), &Environment::new()).expect("carrega");
         assert!(!cfg.flows.enabled);
         assert!(!cfg.jev.gates.g9);
     }

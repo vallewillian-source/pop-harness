@@ -13,8 +13,8 @@ use clap::{Args, Subcommand};
 use poph_jev::{IdGate, JevClient, JevClientConfig, JevEngine, evaluate_dataset, read_dataset};
 use poph_types::BaseMetrics;
 
-use crate::apoio;
 use crate::config;
+use crate::support;
 
 /// Subcomandos do `poph jev`.
 #[derive(Debug, Subcommand)]
@@ -38,18 +38,18 @@ pub struct EvalArgs {
 }
 
 /// Executa o `poph jev`.
-pub fn executar(flag: Option<PathBuf>, ambiente: &config::Ambiente, acao: AcaoJev) -> ExitCode {
+pub fn executar(flag: Option<PathBuf>, ambiente: &config::Environment, acao: AcaoJev) -> ExitCode {
     match acao {
         AcaoJev::Eval(args) => match rodar_eval(flag, ambiente, args) {
             Ok(()) => ExitCode::SUCCESS,
-            Err(mensagem) => apoio::falha(mensagem),
+            Err(mensagem) => support::failure(mensagem),
         },
     }
 }
 
 fn rodar_eval(
     flag: Option<PathBuf>,
-    ambiente: &config::Ambiente,
+    ambiente: &config::Environment,
     args: EvalArgs,
 ) -> Result<(), String> {
     let gate = IdGate::from_text(&args.gate).ok_or_else(|| {
@@ -61,10 +61,10 @@ fn rodar_eval(
     let casos = read_dataset(&args.arquivo).map_err(|erro| erro.to_string())?;
 
     let pasta = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let arquivo = config::resolver_arquivo(flag.as_deref(), ambiente, &pasta);
-    let configuracao = config::carregar(arquivo.as_deref(), ambiente)
+    let arquivo = config::resolve_file(flag.as_deref(), ambiente, &pasta);
+    let configuracao = config::load(arquivo.as_deref(), ambiente)
         .map_err(|erro| format!("configuração inválida: {erro}"))?;
-    let chave = config::segredos(ambiente).typesafe.ok_or_else(|| {
+    let chave = config::secrets(ambiente).typesafe.ok_or_else(|| {
         "defina TYPESAFE_API_KEY no ambiente desta sessão para medir o gate no Jev de verdade"
             .to_owned()
     })?;

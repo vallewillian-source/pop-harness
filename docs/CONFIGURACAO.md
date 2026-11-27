@@ -13,6 +13,12 @@ File, in search order:
 3. `poph.toml` in the current folder, if it exists.
 
 Without a file, the defaults and the environment apply. A file that was requested and does not exist is an error.
+The cluster resolver returns its candidate path even before the file exists, so reload knows where to look.
+
+The loader flattens the file into individual key paths and overlays them on the defaults before applying the
+environment. An empty table supplies no values. If the merged table fails to deserialize, the loader tries each
+source value in isolation against the defaults and reports the first failure with its origin and key. Domain
+validation runs after deserialization.
 
 ## Configuration errors
 
@@ -212,14 +218,22 @@ poph matrix registro --saida /etc/poph/registro.yaml --url https://harness.exemp
 poph matrix registro --verificar /etc/poph/registro.yaml
 ```
 
-- Reads the `[matrix]` section and the two tokens from the environment; writes the file with **0600** permissions,
-  refuses to overwrite without `--forcar` (the flag name stays as it is), and **never** prints a token.
+- Registration works without an org context. It reads the `[matrix]` section and the two tokens from the
+  environment and writes the file with **0600** permissions on Unix, including when `--forcar` replaces an
+  existing file. Keep the generated registration out of version control. The CLI never prints either token.
 - `--url` is the address where **Synapse reaches Harness** (the section's `homeserver_url` is Synapse's address).
   Without `--url`, `POPH_MATRIX_URL_AS` is used.
 - `--id` (default `poph-matrix`) becomes the Application Service `id`; in phase 3, each instance has its own.
-- `--verificar` compares the file with the current configuration and tokens and points to the field that differs
-  (`url`, `sender_localpart`, `rate_limited`, `namespaces.*`, `as_token`, `hs_token`) without repeating any value.
-  Synapse only reads registrations at startup: after generating one, restart the environment's Synapse.
+- Registration validates the Matrix settings as enabled, including when the module is off. The registration
+  defines the Application Service for the instance independently of the module's current state.
+- The generated YAML sets `rate_limited: false` to keep Synapse from throttling bursts by the bot. The instance's
+  exclusive user and alias namespaces coexist with the non-exclusive `#dep_.*` alias shared with the Python
+  registration.
+- `--verificar` reads the generated YAML and the repository's registration template. It accepts top-level
+  scalars and the `users`, `aliases` and `rooms` namespace groups. It ignores the room list and reports
+  unsupported syntax by line where it can. It compares `url`, `sender_localpart`, `rate_limited`,
+  `namespaces.*` and both tokens. Token diagnostics identify the affected field without printing its value.
+- Synapse reads registrations at startup. Restart the environment's Synapse after generating one.
 
 ### Operating the Matrix module per org (`poph matrix estado|ligar|desligar|espaco`, MX-23)
 

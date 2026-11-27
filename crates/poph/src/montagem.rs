@@ -160,7 +160,7 @@ fn cliente_llm(
 
 fn registro_de_provedores(
     configuracao: &HarnessConfig,
-    ambiente: &config::Ambiente,
+    ambiente: &config::Environment,
     metricas: BaseMetrics,
     padrao: &Arc<dyn LlmProvider>,
 ) -> Result<(Providers, BTreeMap<String, u32>), String> {
@@ -173,7 +173,7 @@ fn registro_de_provedores(
     let mut tetos = BTreeMap::new();
     for (nome, sobreposicao) in &configuracao.providers {
         let efetivo = sobreposicao.effective(&configuracao.llm);
-        let Some(chave) = config::chave_llm(ambiente, &efetivo.api_key_env) else {
+        let Some(chave) = config::llm_key(ambiente, &efetivo.api_key_env) else {
             eprintln!(
                 "[aviso] provedor `{nome}` sem a variável {} no ambiente: agentes que apontam para ele não atendem",
                 efetivo.api_key_env
@@ -200,7 +200,7 @@ pub fn montar(
     chaves: Chaves,
     metricas: Metricas,
     fluxos: FluxosDoProcesso,
-    ambiente: &config::Ambiente,
+    ambiente: &config::Environment,
 ) -> Result<Montagem, String> {
     // O Jev (HR-28) usa o mesmo catálogo de métricas; a cópia é feita antes de entregar ao provedor.
     let metricas_jev = metricas.base.clone();
@@ -224,7 +224,7 @@ pub fn montar(
 
     let http_tools =
         poph_agent::turno::HttpToolRegistry::from_config(&configuracao.http_tools, |name| {
-            config::chave_llm(ambiente, name)
+            config::llm_key(ambiente, name)
         })?;
     let mut motor = TurnEngine::new(
         Arc::clone(&store),

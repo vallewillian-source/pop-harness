@@ -29,10 +29,14 @@ pub struct OpenapiArgs {
 }
 
 /// Executa `poph serve`.
-pub fn executar(flag: Option<PathBuf>, ambiente: &config::Ambiente, args: ServeArgs) -> ExitCode {
+pub fn executar(
+    flag: Option<PathBuf>,
+    ambiente: &config::Environment,
+    args: ServeArgs,
+) -> ExitCode {
     let pasta = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let arquivo = config::resolver_arquivo(flag.as_deref(), ambiente, &pasta);
-    let configuracao = match config::carregar(arquivo.as_deref(), ambiente) {
+    let arquivo = config::resolve_file(flag.as_deref(), ambiente, &pasta);
+    let configuracao = match config::load(arquivo.as_deref(), ambiente) {
         Ok(configuracao) => configuracao,
         Err(erro) => {
             eprintln!("{erro}");
@@ -55,8 +59,8 @@ pub fn executar(flag: Option<PathBuf>, ambiente: &config::Ambiente, args: ServeA
     // Cluster (HR-50a): o mapa estático é lido na subida e pode ser relido por
     // `POST /admin/v1/cluster/reload`. Segredo só do ambiente; arquivo inválido impede subir — o
     // operador vê o problema agora, em vez de descobrir o roteamento errado no primeiro pedido.
-    let caminho_cluster = config::caminho_cluster(ambiente, arquivo.as_deref(), &pasta);
-    let segredo_cluster = config::segredo_cluster(ambiente);
+    let caminho_cluster = config::cluster_path(ambiente, arquivo.as_deref(), &pasta);
+    let segredo_cluster = config::cluster_secret(ambiente);
     let cluster = match poph_server::cluster::load(&caminho_cluster, segredo_cluster.as_ref()) {
         Ok(config) => poph_server::cluster::LiveCluster {
             path: caminho_cluster.clone(),
@@ -78,7 +82,7 @@ pub fn executar(flag: Option<PathBuf>, ambiente: &config::Ambiente, args: ServeA
     );
     // Instâncias da Evolution (HR-26b): segredos de webhook e a chave da Evolution vêm do ambiente,
     // nunca do arquivo. O valor de nenhum deles é impresso.
-    let segredos = config::segredos(ambiente);
+    let segredos = config::secrets(ambiente);
     let canais = match poph_server::evolution::channels_from_config(
         &configuracao,
         segredos.evolution.clone(),
@@ -173,12 +177,12 @@ pub fn executar(flag: Option<PathBuf>, ambiente: &config::Ambiente, args: ServeA
 async fn ligar_turno(
     estado: ServerState,
     configuracao: &poph_types::HarnessConfig,
-    ambiente: &config::Ambiente,
+    ambiente: &config::Environment,
     store: &Arc<Store>,
 ) -> Result<ServerState, String> {
-    let segredos = config::segredos(ambiente);
+    let segredos = config::secrets(ambiente);
     let nome_da_chave = &configuracao.llm.api_key_env;
-    let Some(chave) = config::chave_llm(ambiente, nome_da_chave) else {
+    let Some(chave) = config::llm_key(ambiente, nome_da_chave) else {
         if !estado.evolution_channels.is_empty() {
             tracing::warn!(
                 target: "poph_server::turno",

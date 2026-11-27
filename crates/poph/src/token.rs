@@ -19,10 +19,10 @@ use poph_types::{AdminTokenId, OrgId};
 use rand_core::{OsRng, RngCore};
 use serde_json::{Value, json};
 
-use crate::apoio::{
-    abrir_com_org, descrever, falha, imprimir_json, parse_id, validar_limite, validar_texto,
-};
 use crate::config;
+use crate::support::{
+    abrir_com_org, describe, failure, parse_id, print_json, validar_limite, validar_texto,
+};
 
 /// Prefixo do valor gerado (ajuda a reconhecer o segredo em logs e em varreduras).
 ///
@@ -99,7 +99,7 @@ pub struct GerarGlobal {
 /// Executa um subcomando de `poph token`.
 pub fn executar(
     flag: Option<PathBuf>,
-    ambiente: &config::Ambiente,
+    ambiente: &config::Environment,
     offline: bool,
     org: Option<&str>,
     acao: AcaoToken,
@@ -110,7 +110,7 @@ pub fn executar(
     }
     let (store, org) = match abrir_com_org(flag, ambiente, offline, org) {
         Ok(par) => par,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     match acao {
         AcaoToken::Create(args) => criar(&store, org, args),
@@ -124,20 +124,20 @@ pub fn executar(
 fn criar(store: &Store, org: OrgId, args: CriarToken) -> ExitCode {
     let rotulo = match validar_texto("rótulo", &args.label, 80) {
         Ok(rotulo) => rotulo,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     // O segredo é gerado antes do registro: o valor final é `poph_<uuid>_<segredo>`, e o uuid
     // só existe depois de criar. O hash guardado cobre o segredo (a parte aleatória).
     let segredo = gerar_segredo();
     let hash = match gerar_hash(&segredo) {
         Ok(hash) => hash,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     match store.tokens().create(Some(org), &rotulo, &hash) {
         Ok(registro) => {
             let valor = format!("{PREFIXO}{}_{segredo}", registro.id);
             if args.json {
-                imprimir_json(&json!({
+                print_json(&json!({
                     "versao_relatorio": 1,
                     "org_id": org.to_string(),
                     "token": json_token(&registro),
@@ -154,7 +154,7 @@ fn criar(store: &Store, org: OrgId, args: CriarToken) -> ExitCode {
             }
             ExitCode::SUCCESS
         }
-        Err(erro) => falha(descrever(&erro)),
+        Err(erro) => failure(describe(&erro)),
     }
 }
 
@@ -162,18 +162,18 @@ fn criar(store: &Store, org: OrgId, args: CriarToken) -> ExitCode {
 fn gerar_global(args: GerarGlobal) -> ExitCode {
     let rotulo = match validar_texto("rótulo", &args.label, 80) {
         Ok(rotulo) => rotulo,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     let valor = format!("{PREFIXO_GLOBAL}{}", gerar_segredo());
     let hash = match gerar_hash(&valor) {
         Ok(hash) => hash,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     let bloco = format!(
         "[admin]\ntokens_globais = [\n  {{ label = \"{rotulo}\", hash = \"{hash}\" }},\n]\n"
     );
     if args.json {
-        imprimir_json(&json!({
+        print_json(&json!({
             "versao_relatorio": 1,
             "label": rotulo,
             "valor_do_token": valor,
@@ -197,13 +197,13 @@ fn gerar_global(args: GerarGlobal) -> ExitCode {
 fn listar(store: &Store, org: OrgId, args: ListarTokens) -> ExitCode {
     let pagina: Page = match validar_limite(args.limit) {
         Ok(pagina) => pagina,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     match store.tokens().list(org, pagina) {
         Ok(tokens) => {
             if args.json {
                 let itens: Vec<Value> = tokens.iter().map(json_token).collect();
-                imprimir_json(&json!({
+                print_json(&json!({
                     "versao_relatorio": 1,
                     "org_id": org.to_string(),
                     "total": itens.len(),
@@ -219,17 +219,17 @@ fn listar(store: &Store, org: OrgId, args: ListarTokens) -> ExitCode {
             }
             ExitCode::SUCCESS
         }
-        Err(erro) => falha(descrever(&erro)),
+        Err(erro) => failure(describe(&erro)),
     }
 }
 
 fn mostrar(store: &Store, org: OrgId, args: ReferenciaToken) -> ExitCode {
     let token = match obter(store, org, &args.token) {
         Ok(token) => token,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     if args.json {
-        imprimir_json(&json!({
+        print_json(&json!({
             "versao_relatorio": 1,
             "org_id": org.to_string(),
             "token": json_token(&token),
@@ -245,14 +245,14 @@ fn mostrar(store: &Store, org: OrgId, args: ReferenciaToken) -> ExitCode {
 fn revogar(store: &Store, org: OrgId, args: ReferenciaToken) -> ExitCode {
     let token = match obter(store, org, &args.token) {
         Ok(token) => token,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     let ja_estava_revogado = token.revoked_at.is_some();
     if let Err(erro) = store.tokens().revoke(org, token.id) {
-        return falha(descrever(&erro));
+        return failure(describe(&erro));
     }
     if args.json {
-        imprimir_json(&json!({
+        print_json(&json!({
             "versao_relatorio": 1,
             "org_id": org.to_string(),
             "token_id": token.id.to_string(),
@@ -276,7 +276,7 @@ fn obter(store: &Store, org: OrgId, texto: &str) -> Result<TokenAdmin, String> {
     match store.tokens().get(org, id) {
         Ok(token) => Ok(token),
         Err(erro) if erro.is_not_found() => Err(format!("não existe token `{texto}` nesta org")),
-        Err(erro) => Err(descrever(&erro)),
+        Err(erro) => Err(describe(&erro)),
     }
 }
 

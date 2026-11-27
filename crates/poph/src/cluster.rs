@@ -51,11 +51,15 @@ pub struct ConferirCluster {
 }
 
 /// Executa `poph cluster …`.
-pub fn executar(flag: Option<PathBuf>, ambiente: &config::Ambiente, acao: AcaoCluster) -> ExitCode {
+pub fn executar(
+    flag: Option<PathBuf>,
+    ambiente: &config::Environment,
+    acao: AcaoCluster,
+) -> ExitCode {
     let pasta = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let arquivo = config::resolver_arquivo(flag.as_deref(), ambiente, &pasta);
-    let caminho = config::caminho_cluster(ambiente, arquivo.as_deref(), &pasta);
-    let segredo = config::segredo_cluster(ambiente);
+    let arquivo = config::resolve_file(flag.as_deref(), ambiente, &pasta);
+    let caminho = config::cluster_path(ambiente, arquivo.as_deref(), &pasta);
+    let segredo = config::cluster_secret(ambiente);
     match acao {
         AcaoCluster::Show(args) => mostrar(&caminho, segredo.as_ref(), args),
         AcaoCluster::Check(args) => conferir(&caminho, segredo.as_ref(), args),

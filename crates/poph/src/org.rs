@@ -13,12 +13,12 @@ use poph_store::{NewOrg, Org, OrgChange, Store};
 use serde_json::{Value, json};
 
 use crate::agente::{derivar_slug, slug_valido};
-use crate::apoio::{
-    abrir_banco, contar_todos, descrever, exigir_offline, falha, imprimir_json, json_de_texto,
-    resolver_org, status_de_texto, status_em_portugues, validar_config_json, validar_limite,
+use crate::config;
+use crate::support::{
+    abrir_banco, contar_todos, describe, failure, json_de_texto, print_json, require_offline,
+    resolve_org, status_de_texto, status_em_portugues, validar_config_json, validar_limite,
     validar_texto,
 };
-use crate::config;
 
 /// Subcomandos de `poph org`.
 #[derive(Debug, Subcommand)]
@@ -119,16 +119,16 @@ pub struct ExcluirOrg {
 /// Executa um subcomando de `poph org`.
 pub fn executar(
     flag: Option<PathBuf>,
-    ambiente: &config::Ambiente,
+    ambiente: &config::Environment,
     offline: bool,
     acao: AcaoOrg,
 ) -> ExitCode {
-    if let Err(erro) = exigir_offline(offline) {
-        return falha(erro);
+    if let Err(erro) = require_offline(offline) {
+        return failure(erro);
     }
     let store = match abrir_banco(flag, ambiente) {
         Ok(store) => store,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     match acao {
         AcaoOrg::Create(args) => criar(&store, args),
@@ -142,18 +142,18 @@ pub fn executar(
 fn criar(store: &Store, args: CriarOrg) -> ExitCode {
     let nome = match validar_texto("nome", &args.name, 120) {
         Ok(nome) => nome,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     let slug = args.slug.clone().unwrap_or_else(|| derivar_slug(&nome));
     if !slug_valido(&slug) {
-        return falha(format!(
+        return failure(format!(
             "slug `{slug}` inválido: use de 3 a 64 caracteres, só a-z, 0-9 e `-`"
         ));
     }
     match store.orgs().by_slug(&slug) {
-        Ok(_) => return falha(format!("já existe uma org com o slug `{slug}`")),
+        Ok(_) => return failure(format!("já existe uma org com o slug `{slug}`")),
         Err(erro) if erro.is_not_found() => {}
-        Err(erro) => return falha(descrever(&erro)),
+        Err(erro) => return failure(describe(&erro)),
     }
     let nova = NewOrg {
         name: nome,
@@ -162,20 +162,20 @@ fn criar(store: &Store, args: CriarOrg) -> ExitCode {
     };
     match store.orgs().create(nova) {
         Ok(org) => saida(&org, args.json, "org criada", None),
-        Err(erro) => falha(descrever(&erro)),
+        Err(erro) => failure(describe(&erro)),
     }
 }
 
 fn listar(store: &Store, args: ListarOrgs) -> ExitCode {
     let pagina = match validar_limite(args.limit) {
         Ok(pagina) => pagina,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     match store.orgs().list(pagina) {
         Ok(orgs) => {
             if args.json {
                 let itens: Vec<Value> = orgs.iter().map(json_org).collect();
-                imprimir_json(&json!({
+                print_json(&json!({
                     "versao_relatorio": 1,
                     "total": itens.len(),
                     "orgs": itens,
@@ -196,30 +196,30 @@ fn listar(store: &Store, args: ListarOrgs) -> ExitCode {
             }
             ExitCode::SUCCESS
         }
-        Err(erro) => falha(descrever(&erro)),
+        Err(erro) => failure(describe(&erro)),
     }
 }
 
 fn mostrar(store: &Store, args: ReferenciaOrg) -> ExitCode {
-    let id = match resolver_org(store, &args.org) {
+    let id = match resolve_org(store, &args.org) {
         Ok(id) => id,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     let org = match store.orgs().get(id) {
         Ok(org) => org,
-        Err(erro) => return falha(descrever(&erro)),
+        Err(erro) => return failure(describe(&erro)),
     };
     let agentes = match contar_agentes(store, id) {
         Ok(total) => total,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     saida(&org, args.json, "", Some(agentes))
 }
 
 fn atualizar(store: &Store, args: AtualizarOrg) -> ExitCode {
-    let id = match resolver_org(store, &args.org) {
+    let id = match resolve_org(store, &args.org) {
         Ok(id) => id,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     let nome = match args
         .name
@@ -228,11 +228,11 @@ fn atualizar(store: &Store, args: AtualizarOrg) -> ExitCode {
         .transpose()
     {
         Ok(nome) => nome,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     let status = match args.status.as_deref().map(status_de_texto).transpose() {
         Ok(status) => status,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     let config_json = match args
         .config_json
@@ -241,10 +241,10 @@ fn atualizar(store: &Store, args: AtualizarOrg) -> ExitCode {
         .transpose()
     {
         Ok(config) => config,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     if nome.is_none() && status.is_none() && config_json.is_none() {
-        return falha("nada a alterar: informe --name, --status ou --config-json");
+        return failure("nada a alterar: informe --name, --status ou --config-json");
     }
     let mudanca = OrgChange {
         name: nome,
@@ -253,21 +253,21 @@ fn atualizar(store: &Store, args: AtualizarOrg) -> ExitCode {
     };
     match store.orgs().update(id, args.if_match, mudanca) {
         Ok(org) => saida(&org, args.json, "org alterada", None),
-        Err(erro) => falha(descrever(&erro)),
+        Err(erro) => failure(describe(&erro)),
     }
 }
 
 fn excluir(store: &Store, args: ExcluirOrg) -> ExitCode {
-    let id = match resolver_org(store, &args.org) {
+    let id = match resolve_org(store, &args.org) {
         Ok(id) => id,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     let conteudo = match conteudo_da_org(store, id) {
         Ok(conteudo) => conteudo,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     if conteudo.total() > 0 && !args.force {
-        return falha(format!(
+        return failure(format!(
             "a org tem conteúdo ({}). Excluir a org apaga tudo isso junto, e os produtos das \
              categorias. Para confirmar, repita o comando com --force",
             conteudo.resumo()
@@ -277,7 +277,7 @@ fn excluir(store: &Store, args: ExcluirOrg) -> ExitCode {
         store
             .orgs()
             .delete_forced(id)
-            .map_err(|erro| descrever(&erro))
+            .map_err(|erro| describe(&erro))
     } else {
         store.orgs().delete(id).map(|()| 0u64).map_err(|erro| {
             if matches!(
@@ -286,14 +286,14 @@ fn excluir(store: &Store, args: ExcluirOrg) -> ExitCode {
             ) {
                 "a org tem agentes: exclua os agentes antes, ou repita com --force".to_owned()
             } else {
-                descrever(&erro)
+                describe(&erro)
             }
         })
     };
     match resultado {
         Ok(agentes_removidos) => {
             if args.json {
-                imprimir_json(&json!({
+                print_json(&json!({
                     "versao_relatorio": 1,
                     "removida": true,
                     "org_id": id.to_string(),
@@ -307,7 +307,7 @@ fn excluir(store: &Store, args: ExcluirOrg) -> ExitCode {
             }
             ExitCode::SUCCESS
         }
-        Err(erro) => falha(erro),
+        Err(erro) => failure(erro),
     }
 }
 
@@ -364,7 +364,7 @@ fn saida(org: &Org, json: bool, mensagem: &str, agentes: Option<usize>) -> ExitC
         if let (Some(total), Value::Object(mapa)) = (agentes, &mut valor) {
             mapa.insert("agents_count".to_owned(), json!(total));
         }
-        imprimir_json(&json!({
+        print_json(&json!({
             "versao_relatorio": 1,
             "org": valor,
         }));

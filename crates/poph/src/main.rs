@@ -6,7 +6,6 @@
 //! corrigir; 2 sem comando.
 
 mod agente;
-mod apoio;
 mod arquivo;
 mod backup;
 mod categoria;
@@ -29,6 +28,8 @@ mod produto;
 mod rag;
 mod retencao;
 mod servidor;
+#[path = "apoio.rs"]
+mod support;
 mod token;
 
 use std::path::PathBuf;
@@ -121,14 +122,14 @@ enum Comando {
     Retention(retencao::AcaoRetencao),
     /// Exporta uma org inteira num arquivo único e reconstrói a partir dele (HR-53).
     #[command(subcommand)]
-    Backup(backup::AcaoBackup),
+    Backup(backup::BackupAction),
     /// Roteamento entre instâncias: mostra e confere o `cluster.toml` (HR-50a).
     #[command(subcommand)]
     Cluster(cluster::AcaoCluster),
     /// Módulo Matrix: registro do Application Service (`registro`) e, por org (`--offline --org`),
     /// `estado`, `ligar`, `desligar` e `espaco`.
     #[command(subcommand)]
-    Matrix(matrix::AcaoMatrix),
+    Matrix(matrix::MatrixAction),
     /// Sobe o servidor HTTP (API administrativa, `/healthz` e `/metrics`).
     Serve(servidor::ServeArgs),
     /// Imprime o documento OpenAPI (base do cliente TypeScript do Console).
@@ -185,10 +186,10 @@ fn main() -> ExitCode {
         Comando::Retention(acao) => {
             retencao::executar(cli.config, &ambiente, cli.org.as_deref(), acao)
         }
-        Comando::Backup(acao) => backup::executar(cli.config, &ambiente, cli.offline, acao),
+        Comando::Backup(acao) => backup::run(cli.config, &ambiente, cli.offline, acao),
         Comando::Cluster(acao) => cluster::executar(cli.config, &ambiente, acao),
         Comando::Matrix(acao) => {
-            matrix::executar(cli.config, &ambiente, cli.offline, cli.org.as_deref(), acao)
+            matrix::run(cli.config, &ambiente, cli.offline, cli.org.as_deref(), acao)
         }
         Comando::Kb(acao) => {
             kb::executar(cli.config, &ambiente, cli.offline, cli.org.as_deref(), acao)
@@ -209,7 +210,7 @@ fn main() -> ExitCode {
 }
 
 /// Variáveis do processo como mapa de texto (valores que não são UTF-8 viram texto aproximado).
-fn ambiente_do_processo() -> config::Ambiente {
+fn ambiente_do_processo() -> config::Environment {
     std::env::vars_os()
         .map(|(chave, valor)| {
             (
@@ -223,12 +224,12 @@ fn ambiente_do_processo() -> config::Ambiente {
 /// `poph migrate`: cria/atualiza os dois bancos e mostra o que foi aplicado.
 fn executar_migrate(
     flag: Option<PathBuf>,
-    ambiente: &config::Ambiente,
+    ambiente: &config::Environment,
     args: MigrateArgs,
 ) -> ExitCode {
     let pasta = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let arquivo = config::resolver_arquivo(flag.as_deref(), ambiente, &pasta);
-    let config = match config::carregar(arquivo.as_deref(), ambiente) {
+    let arquivo = config::resolve_file(flag.as_deref(), ambiente, &pasta);
+    let config = match config::load(arquivo.as_deref(), ambiente) {
         Ok(config) => config,
         Err(erro) => {
             eprintln!("{erro}");
@@ -284,12 +285,12 @@ fn json_migracao(relatorios: &poph_store::MigrationReports) -> String {
 
 fn executar_doctor(
     flag: Option<PathBuf>,
-    ambiente: &config::Ambiente,
+    ambiente: &config::Environment,
     args: DoctorArgs,
 ) -> ExitCode {
     let pasta = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let arquivo = config::resolver_arquivo(flag.as_deref(), ambiente, &pasta);
-    let carregada = config::carregar(arquivo.as_deref(), ambiente);
+    let arquivo = config::resolve_file(flag.as_deref(), ambiente, &pasta);
+    let carregada = config::load(arquivo.as_deref(), ambiente);
 
     // Se a configuração não carregou, os logs usam o padrão; o erro aparece no relatório.
     let log = carregada
@@ -301,12 +302,12 @@ fn executar_doctor(
         return ExitCode::from(1);
     }
 
-    let segredos = config::segredos(ambiente);
+    let segredos = config::secrets(ambiente);
     let nome_da_chave = carregada
         .as_ref()
         .map(|config| config.llm.api_key_env.clone())
         .unwrap_or_else(|_| config::VAR_ANTIGRAVITY.to_owned());
-    let chave_llm = config::chave_llm(ambiente, &nome_da_chave);
+    let chave_llm = config::llm_key(ambiente, &nome_da_chave);
     let agentes_por_provedor = carregada
         .as_ref()
         .ok()

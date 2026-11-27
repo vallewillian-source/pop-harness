@@ -20,8 +20,8 @@ use poph_store::Store;
 use poph_types::HarnessConfig;
 use serde_json::{Value, json};
 
-use crate::apoio::{falha, imprimir_json, resolver_org};
 use crate::config;
+use crate::support::{failure, print_json, resolve_org};
 
 /// Versão do formato JSON desta saída (muda só se a forma mudar).
 const VERSAO_RELATORIO: u64 = 1;
@@ -57,13 +57,13 @@ pub struct ShowArgs {
 /// Executa `poph retention`.
 pub fn executar(
     flag: Option<PathBuf>,
-    ambiente: &config::Ambiente,
+    ambiente: &config::Environment,
     org: Option<&str>,
     acao: AcaoRetencao,
 ) -> ExitCode {
     let (store, configuracao) = match abrir(flag, ambiente) {
         Ok(par) => par,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     match acao {
         AcaoRetencao::Run(args) => executar_run(&store, &configuracao, org, args),
@@ -74,11 +74,11 @@ pub fn executar(
 /// Abre a configuração e o banco (migrando se preciso), como os outros comandos.
 fn abrir(
     flag: Option<PathBuf>,
-    ambiente: &config::Ambiente,
+    ambiente: &config::Environment,
 ) -> Result<(Store, HarnessConfig), String> {
     let pasta = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let arquivo = config::resolver_arquivo(flag.as_deref(), ambiente, &pasta);
-    let configuracao = config::carregar(arquivo.as_deref(), ambiente)
+    let arquivo = config::resolve_file(flag.as_deref(), ambiente, &pasta);
+    let configuracao = config::load(arquivo.as_deref(), ambiente)
         .map_err(|erro| format!("configuração inválida: {erro}"))?;
     let store =
         Store::open(&configuracao).map_err(|erro| format!("não consegui abrir o banco: {erro}"))?;
@@ -96,7 +96,7 @@ fn executar_run(
     let opcoes = Options::new(agora, configuracao.retention.days, args.dry_run, "cli");
 
     let resultado = match org {
-        Some(texto) => resolver_org(store, texto)
+        Some(texto) => resolve_org(store, texto)
             .and_then(|id| run_org(&armazem, id, &opcoes).map_err(|erro| erro.to_string()))
             .map(|relatorio| ExecutionReport {
                 now_ms: agora,
@@ -107,11 +107,11 @@ fn executar_run(
     };
     let relatorio = match resultado {
         Ok(relatorio) => relatorio,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
 
     if args.json {
-        imprimir_json(&json_run(&relatorio));
+        print_json(&json_run(&relatorio));
     } else {
         imprimir_run(&relatorio);
     }
@@ -134,18 +134,18 @@ fn executar_show(
 ) -> ExitCode {
     let armazem = HarnessDatabase::new(store, configuracao.blobs());
     let orgs = match org {
-        Some(texto) => match resolver_org(store, texto).and_then(|id| {
+        Some(texto) => match resolve_org(store, texto).and_then(|id| {
             armazem
                 .org(id)
                 .map(|org| vec![org])
                 .map_err(|erro| erro.to_string())
         }) {
             Ok(orgs) => orgs,
-            Err(erro) => return falha(erro),
+            Err(erro) => return failure(erro),
         },
         None => match armazem.orgs() {
             Ok(orgs) => orgs,
-            Err(erro) => return falha(erro.to_string()),
+            Err(erro) => return failure(erro.to_string()),
         },
     };
 
@@ -175,7 +175,7 @@ fn executar_show(
     let com_erro = linhas.iter().any(|linha| !linha["erro"].is_null());
 
     if args.json {
-        imprimir_json(&json!({
+        print_json(&json!({
             "versao_relatorio": VERSAO_RELATORIO,
             "padrao_dias": padrao,
             "orgs": linhas,

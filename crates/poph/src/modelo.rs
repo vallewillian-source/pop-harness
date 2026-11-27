@@ -27,7 +27,11 @@ pub struct InstallArgs {
 }
 
 /// Executa a ação escolhida. Saída: 0 quando o modelo está instalado; 1 com erro.
-pub fn executar(flag: Option<PathBuf>, ambiente: &config::Ambiente, acao: AcaoModelo) -> ExitCode {
+pub fn executar(
+    flag: Option<PathBuf>,
+    ambiente: &config::Environment,
+    acao: AcaoModelo,
+) -> ExitCode {
     match acao {
         AcaoModelo::Install(args) => executar_install(flag, ambiente, args),
     }
@@ -35,12 +39,12 @@ pub fn executar(flag: Option<PathBuf>, ambiente: &config::Ambiente, acao: AcaoMo
 
 fn executar_install(
     flag: Option<PathBuf>,
-    ambiente: &config::Ambiente,
+    ambiente: &config::Environment,
     args: InstallArgs,
 ) -> ExitCode {
     let pasta = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let arquivo = config::resolver_arquivo(flag.as_deref(), ambiente, &pasta);
-    let config = match config::carregar(arquivo.as_deref(), ambiente) {
+    let arquivo = config::resolve_file(flag.as_deref(), ambiente, &pasta);
+    let config = match config::load(arquivo.as_deref(), ambiente) {
         Ok(config) => config,
         Err(erro) => {
             eprintln!("{erro}");

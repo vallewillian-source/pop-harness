@@ -282,7 +282,7 @@ pub struct ListarInstrucoes {
 /// Executa um subcomando de `poph agent`.
 pub fn executar_agente(
     flag: Option<PathBuf>,
-    ambiente: &config::Ambiente,
+    ambiente: &config::Environment,
     org: Option<&str>,
     acao: AcaoAgente,
 ) -> ExitCode {
@@ -328,7 +328,7 @@ pub fn executar_agente(
 /// Executa um subcomando de `poph instructions`.
 pub fn executar_instrucoes(
     flag: Option<PathBuf>,
-    ambiente: &config::Ambiente,
+    ambiente: &config::Environment,
     org: Option<&str>,
     acao: AcaoInstrucoes,
 ) -> ExitCode {
@@ -765,15 +765,15 @@ fn listar_instrucoes(store: &Store, org: OrgId, args: ListarInstrucoes) -> ExitC
 /// Abre a configuração e o banco, e resolve a org do contexto.
 fn abrir(
     flag: Option<PathBuf>,
-    ambiente: &config::Ambiente,
+    ambiente: &config::Environment,
     org: Option<&str>,
 ) -> Result<(Store, OrgId, HarnessConfig), String> {
     let Some(texto_org) = org else {
         return Err("informe --org com o id (UUID v7) ou o slug da org".to_owned());
     };
     let pasta = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let arquivo = config::resolver_arquivo(flag.as_deref(), ambiente, &pasta);
-    let configuracao = config::carregar(arquivo.as_deref(), ambiente)
+    let arquivo = config::resolve_file(flag.as_deref(), ambiente, &pasta);
+    let configuracao = config::load(arquivo.as_deref(), ambiente)
         .map_err(|erro| format!("configuração inválida: {erro}"))?;
     let store =
         Store::open(&configuracao).map_err(|erro| format!("não consegui abrir o banco: {erro}"))?;

@@ -19,7 +19,7 @@ use serde_json::Value;
 use crate::config;
 
 /// Recusa o comando quando `--offline` não foi passado.
-pub fn exigir_offline(offline: bool) -> Result<(), String> {
+pub fn require_offline(offline: bool) -> Result<(), String> {
     if offline {
         Ok(())
     } else {
@@ -32,10 +32,10 @@ pub fn exigir_offline(offline: bool) -> Result<(), String> {
 }
 
 /// Abre a configuração e o banco (migrando se preciso).
-pub fn abrir_banco(flag: Option<PathBuf>, ambiente: &config::Ambiente) -> Result<Store, String> {
+pub fn abrir_banco(flag: Option<PathBuf>, ambiente: &config::Environment) -> Result<Store, String> {
     let pasta = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let arquivo = config::resolver_arquivo(flag.as_deref(), ambiente, &pasta);
-    let configuracao = config::carregar(arquivo.as_deref(), ambiente)
+    let arquivo = config::resolve_file(flag.as_deref(), ambiente, &pasta);
+    let configuracao = config::load(arquivo.as_deref(), ambiente)
         .map_err(|erro| format!("configuração inválida: {erro}"))?;
     Store::open(&configuracao).map_err(|erro| format!("não consegui abrir o banco: {erro}"))
 }
@@ -44,11 +44,11 @@ pub fn abrir_banco(flag: Option<PathBuf>, ambiente: &config::Ambiente) -> Result
 /// configuração `[fluxos]` (tetos e tamanho do cache) além do banco.
 pub fn abrir_com_configuracao(
     flag: Option<PathBuf>,
-    ambiente: &config::Ambiente,
+    ambiente: &config::Environment,
 ) -> Result<(Store, HarnessConfig), String> {
     let pasta = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let arquivo = config::resolver_arquivo(flag.as_deref(), ambiente, &pasta);
-    let configuracao = config::carregar(arquivo.as_deref(), ambiente)
+    let arquivo = config::resolve_file(flag.as_deref(), ambiente, &pasta);
+    let configuracao = config::load(arquivo.as_deref(), ambiente)
         .map_err(|erro| format!("configuração inválida: {erro}"))?;
     let store =
         Store::open(&configuracao).map_err(|erro| format!("não consegui abrir o banco: {erro}"))?;
@@ -71,7 +71,7 @@ pub fn resolver_agente(
         if erro.is_not_found() {
             format!("não existe agente `{texto}` nesta org")
         } else {
-            descrever(&erro)
+            describe(&erro)
         }
     })
 }
@@ -88,7 +88,7 @@ pub fn resolver_fluxo(store: &Store, org: OrgId, texto: &str) -> Result<Fluxo, S
         Ok(Some(fluxo)) => Ok(fluxo),
         Ok(None) => Err(format!("não existe fluxo `{texto}` nesta org")),
         Err(erro) if erro.is_not_found() => Err(format!("não existe fluxo `{texto}` nesta org")),
-        Err(erro) => Err(descrever(&erro)),
+        Err(erro) => Err(describe(&erro)),
     }
 }
 
@@ -108,33 +108,33 @@ pub fn pagina_de(limite: u32, cursor: Option<&str>) -> Result<Page, String> {
 /// Para os comandos que trabalham dentro de uma org: exige `--offline` e `--org`, e resolve a org.
 pub fn abrir_com_org(
     flag: Option<PathBuf>,
-    ambiente: &config::Ambiente,
+    ambiente: &config::Environment,
     offline: bool,
     org: Option<&str>,
 ) -> Result<(Store, OrgId), String> {
-    exigir_offline(offline)?;
+    require_offline(offline)?;
     let texto =
         org.ok_or_else(|| "informe --org com o id (UUID v7) ou o slug da org".to_owned())?;
     let store = abrir_banco(flag, ambiente)?;
-    let id = resolver_org(&store, texto)?;
+    let id = resolve_org(&store, texto)?;
     Ok((store, id))
 }
 
 /// Acha a org pelo id (UUID v7) ou pelo slug. Um texto com cara de UUID que não é v7 é recusado
 /// com o motivo, em vez de ser tratado como slug.
-pub fn resolver_org(store: &Store, texto: &str) -> Result<OrgId, String> {
+pub fn resolve_org(store: &Store, texto: &str) -> Result<OrgId, String> {
     if uuid::Uuid::parse_str(texto).is_ok() {
         let id: OrgId = parse_id(texto)?;
         return match store.orgs().get(id) {
             Ok(org) => Ok(org.id),
             Err(erro) if erro.is_not_found() => Err(format!("não existe org com o id `{texto}`")),
-            Err(erro) => Err(descrever(&erro)),
+            Err(erro) => Err(describe(&erro)),
         };
     }
     match store.orgs().by_slug(texto) {
         Ok(org) => Ok(org.id),
         Err(erro) if erro.is_not_found() => Err(format!("não existe org com o slug `{texto}`")),
-        Err(erro) => Err(descrever(&erro)),
+        Err(erro) => Err(describe(&erro)),
     }
 }
 
@@ -147,7 +147,7 @@ where
 }
 
 /// Traduz erro do banco para uma frase que o operador entende.
-pub fn descrever(erro: &StoreError) -> String {
+pub fn describe(erro: &StoreError) -> String {
     match erro {
         StoreError::Domain(DomainError::VersionConflict {
             expected: esperada,
@@ -226,7 +226,7 @@ pub fn contar_todos<T>(
             after: apos,
             limit: 200,
         })
-        .map_err(|erro| descrever(&erro))?;
+        .map_err(|erro| describe(&erro))?;
         total += lote.len();
         if lote.len() < 200 {
             return Ok(total);
@@ -249,7 +249,7 @@ pub fn json_de_texto(texto: &str) -> Value {
 }
 
 /// Imprime o JSON bonito no stdout.
-pub fn imprimir_json(valor: &Value) {
+pub fn print_json(valor: &Value) {
     println!(
         "{}",
         serde_json::to_string_pretty(valor).unwrap_or_else(|_| valor.to_string())
@@ -257,7 +257,7 @@ pub fn imprimir_json(valor: &Value) {
 }
 
 /// Mensagem no erro padrão e código de saída 1.
-pub fn falha(mensagem: impl AsRef<str>) -> ExitCode {
+pub fn failure(mensagem: impl AsRef<str>) -> ExitCode {
     eprintln!("{}", mensagem.as_ref());
     ExitCode::from(1)
 }
@@ -307,8 +307,8 @@ mod testes {
 
     #[test]
     fn exigir_offline_recusa_sem_a_flag() {
-        assert!(exigir_offline(true).is_ok());
-        assert!(exigir_offline(false).unwrap_err().contains("--offline"));
+        assert!(require_offline(true).is_ok());
+        assert!(require_offline(false).unwrap_err().contains("--offline"));
     }
 
     #[test]
@@ -319,7 +319,7 @@ mod testes {
             expected: 2,
             current: 5,
         });
-        let texto = descrever(&erro);
+        let texto = describe(&erro);
         assert!(texto.contains("informou a versão 2"), "{texto}");
         assert!(texto.contains("versão 5"), "{texto}");
     }

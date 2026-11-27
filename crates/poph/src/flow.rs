@@ -25,11 +25,11 @@ use poph_store::{FlowFilter, Store};
 use poph_types::{HarnessConfig, OrgId};
 use serde_json::{Value, json};
 
-use crate::apoio::{
-    abrir_com_configuracao, descrever, falha, imprimir_json, pagina_de, resolver_agente,
-    resolver_fluxo, resolver_org, status_de_texto,
-};
 use crate::config;
+use crate::support::{
+    abrir_com_configuracao, describe, failure, pagina_de, print_json, resolve_org, resolver_agente,
+    resolver_fluxo, status_de_texto,
+};
 
 /// Versão do formato JSON desta saída (muda só se a forma mudar).
 const VERSAO_RELATORIO: u64 = 1;
@@ -169,7 +169,7 @@ struct Sessao {
 }
 
 impl Sessao {
-    fn abrir(flag: Option<PathBuf>, ambiente: &config::Ambiente) -> Result<Self, String> {
+    fn abrir(flag: Option<PathBuf>, ambiente: &config::Environment) -> Result<Self, String> {
         let (store, config) = abrir_com_configuracao(flag, ambiente)?;
         let cache = RevisionCache::new(
             usize::try_from(config.flows.revision_cache_mb).unwrap_or(usize::MAX),
@@ -188,14 +188,14 @@ impl Sessao {
     fn org(&self, texto: Option<&str>) -> Result<OrgId, String> {
         let texto =
             texto.ok_or_else(|| "informe --org com o id (UUID v7) ou o slug da org".to_owned())?;
-        resolver_org(&self.store, texto)
+        resolve_org(&self.store, texto)
     }
 }
 
 /// Executa um subcomando de `poph flow`.
 pub fn executar(
     flag: Option<PathBuf>,
-    ambiente: &config::Ambiente,
+    ambiente: &config::Environment,
     org: Option<&str>,
     acao: AcaoFluxo,
 ) -> ExitCode {
@@ -227,22 +227,22 @@ pub fn executar(
     };
     match resultado {
         Ok(codigo) => codigo,
-        Err(mensagem) => falha(mensagem),
+        Err(mensagem) => failure(mensagem),
     }
 }
 
 fn validar(sessao: &Sessao, org: Option<&str>, args: ArquivoArgs) -> Result<ExitCode, String> {
     let fonte = ler_script(&args.arquivo)?;
     let org = match org {
-        Some(texto) => Some(resolver_org(&sessao.store, texto)?),
+        Some(texto) => Some(resolve_org(&sessao.store, texto)?),
         None => None,
     };
     let validacao = sessao
         .operacoes()
         .validate(org, &fonte)
-        .map_err(|erro| descrever(&erro))?;
+        .map_err(|erro| describe(&erro))?;
     if args.json {
-        imprimir_json(&com_versao(validation_json(&validacao)));
+        print_json(&com_versao(validation_json(&validacao)));
     } else {
         if validacao.is_valid() {
             println!("{}: script válido.", args.arquivo.display());
@@ -281,7 +281,7 @@ fn formatar(sessao: &Sessao, args: FormatarArgs) -> Result<ExitCode, String> {
             .map_err(|erro| format!("não consegui gravar `{}`: {erro}", args.arquivo.display()))?;
     }
     if args.json {
-        imprimir_json(&json!({
+        print_json(&json!({
             "versao_relatorio": VERSAO_RELATORIO,
             "source": texto,
             "written": args.escrever,
@@ -322,7 +322,7 @@ fn publicar(sessao: &Sessao, org: Option<&str>, args: PublicarArgs) -> Result<Ex
         .store
         .flows()
         .by_slug(org, &ir.fluxo.id)
-        .map_err(|erro| descrever(&erro))?;
+        .map_err(|erro| describe(&erro))?;
     match existente {
         None => {
             let criacao = ops
@@ -333,7 +333,7 @@ fn publicar(sessao: &Sessao, org: Option<&str>, args: PublicarArgs) -> Result<Ex
                 .as_ref()
                 .ok_or_else(|| "erro interno: a criação não publicou a revisão 1".to_owned())?;
             if args.json {
-                imprimir_json(&json!({
+                print_json(&json!({
                     "versao_relatorio": VERSAO_RELATORIO,
                     "created": true,
                     "flow": flow_with_draft_json(&criacao.flow),
@@ -362,7 +362,7 @@ fn publicar(sessao: &Sessao, org: Option<&str>, args: PublicarArgs) -> Result<Ex
             // O rascunho e a auditoria da publicação já são gravados por `publicar_revisao`, na mesma
             // escrita que cria a revisão: aqui não há segunda gravação nem auditoria duplicada.
             if args.json {
-                imprimir_json(&json!({
+                print_json(&json!({
                     "versao_relatorio": VERSAO_RELATORIO,
                     "created": false,
                     "flow_id": fluxo.id.to_string(),
@@ -392,7 +392,7 @@ fn listar(sessao: &Sessao, org: Option<&str>, args: ListarArgs) -> Result<ExitCo
         .store
         .flows()
         .list(org, &filtro, pagina)
-        .map_err(|erro| descrever(&erro))?;
+        .map_err(|erro| describe(&erro))?;
     let next_cursor = if fluxos.len() < pagina.limit as usize {
         None
     } else {
@@ -400,7 +400,7 @@ fn listar(sessao: &Sessao, org: Option<&str>, args: ListarArgs) -> Result<ExitCo
     };
     let itens: Vec<Value> = fluxos.iter().map(flow_json).collect();
     if args.json {
-        imprimir_json(&json!({
+        print_json(&json!({
             "versao_relatorio": VERSAO_RELATORIO,
             "org_id": org.to_string(),
             "items": itens,
@@ -434,11 +434,11 @@ fn mostrar(sessao: &Sessao, org: Option<&str>, args: ReferenciaArgs) -> Result<E
         .store
         .revisions()
         .current(org, fluxo.id)
-        .map_err(|erro| descrever(&erro))?;
+        .map_err(|erro| describe(&erro))?;
     let mut corpo = flow_with_draft_json(&fluxo);
     corpo["revision"] = revisao.as_ref().map_or(Value::Null, revision_summary_json);
     if args.json {
-        imprimir_json(&com_versao(corpo));
+        print_json(&com_versao(corpo));
         return Ok(ExitCode::SUCCESS);
     }
     println!("fluxo `{}` — {}", fluxo.slug, fluxo.name);
@@ -464,7 +464,7 @@ fn diff(sessao: &Sessao, org: Option<&str>, args: DiffArgs) -> Result<ExitCode, 
         .compare(org, &fluxo, args.de, args.para)
         .map_err(|erro| erro.to_string())?;
     if args.json {
-        imprimir_json(&com_versao(comparison_json(fluxo.id, &comparacao)));
+        print_json(&com_versao(comparison_json(fluxo.id, &comparacao)));
         return Ok(ExitCode::SUCCESS);
     }
     println!(
@@ -497,7 +497,7 @@ fn permissao(
     } else {
         sessao.store.flows().revoke(org, agente.id, fluxo.id)
     };
-    resultado.map_err(|erro| descrever(&erro))?;
+    resultado.map_err(|erro| describe(&erro))?;
     audit(
         &sessao.store,
         org,
@@ -506,10 +506,10 @@ fn permissao(
         "agent",
         agente.id.to_string(),
     )
-    .map_err(|erro| descrever(&erro))?;
+    .map_err(|erro| describe(&erro))?;
     let acao = if liberar { "liberado" } else { "retirado" };
     if args.json {
-        imprimir_json(&json!({
+        print_json(&json!({
             "versao_relatorio": VERSAO_RELATORIO,
             "org_id": org.to_string(),
             "agent_id": agente.id.to_string(),

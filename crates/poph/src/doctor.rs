@@ -17,7 +17,7 @@ use serde::Serialize;
 use tracing::debug;
 
 use crate::config::{
-    self, ErroConfig, Segredos, VAR_ANTIGRAVITY, VAR_CIFRA, VAR_EVOLUTION, VAR_TYPESAFE,
+    self, ConfigError, Secrets, VAR_ANTIGRAVITY, VAR_CIPHER, VAR_EVOLUTION, VAR_TYPESAFE,
 };
 
 /// Versão do formato do `--json`. Muda só se a forma do JSON mudar.
@@ -74,13 +74,13 @@ pub struct Relatorio {
 #[derive(Debug, Clone, Copy)]
 pub struct Entrada<'a> {
     /// Configuração carregada, ou o erro que impediu carregar.
-    pub config: Result<&'a HarnessConfig, &'a ErroConfig>,
+    pub config: Result<&'a HarnessConfig, &'a ConfigError>,
     /// Arquivo de configuração usado, se houver.
     pub arquivo: Option<&'a Path>,
     /// Segredos lidos do ambiente (só a presença é conferida).
-    pub segredos: &'a Segredos,
+    pub segredos: &'a Secrets,
     pub chave_llm: Option<&'a Secret>,
-    pub ambiente: Option<&'a crate::config::Ambiente>,
+    pub ambiente: Option<&'a crate::config::Environment>,
     pub agentes_por_provedor: Option<&'a [(String, u64)]>,
 }
 
@@ -112,8 +112,8 @@ pub fn gerar(entrada: Entrada<'_>) -> Relatorio {
     let evolution_configurada = matches!(entrada.config, Ok(config) if config.evolution.is_some());
 
     verificacoes.push(variavel_obrigatoria(
-        VAR_CIFRA,
-        entrada.segredos.cifra.is_some(),
+        VAR_CIPHER,
+        entrada.segredos.cipher.is_some(),
     ));
     let nome_da_chave_llm = match entrada.config {
         Ok(config) => config.llm.api_key_env.as_str(),
@@ -235,7 +235,7 @@ fn provedores_verificacoes(config: &HarnessConfig, entrada: Entrada<'_>) -> Vec<
     for (nome, sobreposicao) in &config.providers {
         let efetivo = sobreposicao.effective(&config.llm);
         let chave = match entrada.ambiente {
-            Some(ambiente) => config::chave_llm(ambiente, &efetivo.api_key_env),
+            Some(ambiente) => config::llm_key(ambiente, &efetivo.api_key_env),
             None => None,
         };
         let (nivel, chave_texto) = match (entrada.ambiente, chave.is_some()) {
@@ -444,7 +444,7 @@ fn variavel_obrigatoria(nome: &str, presente: bool) -> Verificacao {
 mod testes {
     use std::path::PathBuf;
 
-    use crate::config::Ambiente;
+    use crate::config::Environment;
 
     use super::*;
 
@@ -468,9 +468,9 @@ mod testes {
         config
     }
 
-    fn segredos_completos() -> Segredos {
-        crate::config::segredos(&Ambiente::from([
-            (VAR_CIFRA.to_owned(), "SEGREDO-CIFRA-XYZ-1".to_owned()),
+    fn segredos_completos() -> Secrets {
+        crate::config::secrets(&Environment::from([
+            (VAR_CIPHER.to_owned(), "SEGREDO-CIFRA-XYZ-1".to_owned()),
             (VAR_ANTIGRAVITY.to_owned(), "SEGREDO-LLM-XYZ-2".to_owned()),
         ]))
     }
@@ -516,8 +516,8 @@ mod testes {
                 ..poph_types::ProviderConfig::default()
             },
         );
-        let ambiente = Ambiente::from([
-            (VAR_CIFRA.to_owned(), "SEGREDO-CIFRA-XYZ-1".to_owned()),
+        let ambiente = Environment::from([
+            (VAR_CIPHER.to_owned(), "SEGREDO-CIFRA-XYZ-1".to_owned()),
             (VAR_ANTIGRAVITY.to_owned(), "SEGREDO-LLM-XYZ-2".to_owned()),
         ]);
         let agentes = vec![
@@ -618,7 +618,7 @@ mod testes {
     fn variavel_ausente_vira_erro_que_diz_o_nome_da_variavel() {
         let pasta = pasta_temporaria("sem-cifra");
         let config = config_em(&pasta);
-        let segredos = crate::config::segredos(&Ambiente::from([(
+        let segredos = crate::config::secrets(&Environment::from([(
             VAR_ANTIGRAVITY.to_owned(),
             "SEGREDO-LLM-XYZ-2".to_owned(),
         )]));
@@ -779,10 +779,10 @@ mod testes {
 
     #[test]
     fn erro_de_configuracao_aparece_no_relatorio() {
-        let erro = ErroConfig::Chave {
-            origem: "poph.toml".to_owned(),
-            chave: "servidor.portaa".to_owned(),
-            motivo: "unknown field".to_owned(),
+        let erro = ConfigError::Key {
+            origin: "poph.toml".to_owned(),
+            key: "servidor.portaa".to_owned(),
+            reason: "unknown field".to_owned(),
         };
         let relatorio = gerar(Entrada {
             config: Err(&erro),

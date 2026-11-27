@@ -18,11 +18,11 @@ use poph_store::{NewProduct, Page, Product, ProductChange, Store};
 use poph_types::{AgentId, HarnessConfig, OrgId, ProductCategoryId, ProductId};
 use serde_json::{Value, json};
 
-use crate::apoio::{
-    descrever, falha, imprimir_json, parse_id, status_de_texto, status_em_portugues,
-    validar_limite, validar_texto,
-};
 use crate::config;
+use crate::support::{
+    describe, failure, parse_id, print_json, status_de_texto, status_em_portugues, validar_limite,
+    validar_texto,
+};
 
 /// Subcomandos de `poph product` (todos exigem `--org`).
 #[derive(Debug, Subcommand)]
@@ -221,17 +221,17 @@ pub struct ReindexProdutos {
 /// Executa um subcomando de `poph product`.
 pub fn executar(
     flag: Option<PathBuf>,
-    ambiente: &config::Ambiente,
+    ambiente: &config::Environment,
     offline: bool,
     org: Option<&str>,
     acao: AcaoProduto,
 ) -> ExitCode {
-    if let Err(erro) = crate::apoio::exigir_offline(offline) {
-        return falha(erro);
+    if let Err(erro) = crate::support::require_offline(offline) {
+        return failure(erro);
     }
     let (store, org, configuracao) = match abrir(flag, ambiente, org) {
         Ok(par) => par,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     match acao {
         AcaoProduto::Create(args) => criar(&configuracao, &store, org, args),
@@ -245,19 +245,19 @@ pub fn executar(
 
 fn abrir(
     flag: Option<PathBuf>,
-    ambiente: &config::Ambiente,
+    ambiente: &config::Environment,
     org: Option<&str>,
 ) -> Result<(Arc<Store>, OrgId, HarnessConfig), String> {
     let texto =
         org.ok_or_else(|| "informe --org com o id (UUID v7) ou o slug da org".to_owned())?;
     let pasta = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let arquivo = config::resolver_arquivo(flag.as_deref(), ambiente, &pasta);
+    let arquivo = config::resolve_file(flag.as_deref(), ambiente, &pasta);
     let configuracao =
-        config::carregar(arquivo.as_deref(), ambiente).map_err(|erro| format!("{erro}"))?;
+        config::load(arquivo.as_deref(), ambiente).map_err(|erro| format!("{erro}"))?;
     let store = Arc::new(
         Store::open(&configuracao).map_err(|erro| format!("não consegui abrir o banco: {erro}"))?,
     );
-    let org = crate::apoio::resolver_org(&store, texto)?;
+    let org = crate::support::resolve_org(&store, texto)?;
     Ok((store, org, configuracao))
 }
 
@@ -269,11 +269,11 @@ fn criar(
 ) -> ExitCode {
     let nome = match validar_texto("nome", &args.name, 160) {
         Ok(nome) => nome,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     let categoria = match resolver_categoria(store, org, &args.category) {
         Ok(categoria) => categoria,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     let novo = NewProduct {
         category_id: Some(categoria),
@@ -294,14 +294,14 @@ fn criar(
             aviso_de_indice(reindexar_org(configuracao, store, org));
             saida(&produto, args.json, "produto criado")
         }
-        Err(erro) => falha(descrever(&erro)),
+        Err(erro) => failure(describe(&erro)),
     }
 }
 
 fn listar(store: &Arc<Store>, org: OrgId, args: ListarProdutos) -> ExitCode {
     let pagina = match validar_limite(args.limit) {
         Ok(pagina) => pagina,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     let resultado = if args.all {
         store.products().list(org, pagina)
@@ -312,7 +312,7 @@ fn listar(store: &Arc<Store>, org: OrgId, args: ListarProdutos) -> ExitCode {
         Ok(produtos) => {
             if args.json {
                 let itens: Vec<Value> = produtos.iter().map(json_produto).collect();
-                imprimir_json(&json!({
+                print_json(&json!({
                     "versao_relatorio": 1,
                     "org_id": org.to_string(),
                     "total": itens.len(),
@@ -334,14 +334,14 @@ fn listar(store: &Arc<Store>, org: OrgId, args: ListarProdutos) -> ExitCode {
             }
             ExitCode::SUCCESS
         }
-        Err(erro) => falha(descrever(&erro)),
+        Err(erro) => failure(describe(&erro)),
     }
 }
 
 fn mostrar(store: &Arc<Store>, org: OrgId, args: ReferenciaProduto) -> ExitCode {
     let produto = match obter(store, org, &args.produto) {
         Ok(produto) => produto,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     saida(&produto, args.json, "")
 }
@@ -354,19 +354,19 @@ fn atualizar(
 ) -> ExitCode {
     let atual = match obter(store, org, &args.produto) {
         Ok(produto) => produto,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     let categoria = match args.category.as_deref() {
         Some(texto) => match resolver_categoria(store, org, texto) {
             Ok(categoria) => Some(categoria),
-            Err(erro) => return falha(erro),
+            Err(erro) => return failure(erro),
         },
         None => None,
     };
     let status = match args.status.as_deref() {
         Some(texto) => match status_de_texto(texto) {
             Ok(status) => Some(status),
-            Err(erro) => return falha(erro),
+            Err(erro) => return failure(erro),
         },
         None => None,
     };
@@ -393,7 +393,7 @@ fn atualizar(
             aviso_de_indice(reindexar_org(configuracao, store, org));
             saida(&produto, args.json, "produto alterado")
         }
-        Err(erro) => falha(descrever(&erro)),
+        Err(erro) => failure(describe(&erro)),
     }
 }
 
@@ -405,16 +405,16 @@ fn excluir(
 ) -> ExitCode {
     let produto = match obter(store, org, &args.produto) {
         Ok(produto) => produto,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     // Conta antes de apagar: a exclusão faz os itens de carrinho ficarem sem produto (com o preço
     // gravado), e a recusa e a saída precisam dizer quantos foram.
     let refs = match store.products().references(org, produto.id) {
         Ok(refs) => refs,
-        Err(erro) => return falha(descrever(&erro)),
+        Err(erro) => return failure(describe(&erro)),
     };
     if !args.force {
-        return falha(if refs.cart_items > 0 {
+        return failure(if refs.cart_items > 0 {
             format!(
                 "a exclusão apaga o produto do catálogo e deixa {} item(ns) de {} carrinho(s) como \"produto removido do catálogo\"; confirme com --force",
                 refs.cart_items, refs.carts
@@ -427,7 +427,7 @@ fn excluir(
         Ok(()) => {
             aviso_de_indice(reindexar_org(configuracao, store, org));
             if args.json {
-                imprimir_json(&json!({
+                print_json(&json!({
                     "versao_relatorio": 1,
                     "org_id": org.to_string(),
                     "deleted": produto.id.to_string(),
@@ -444,7 +444,7 @@ fn excluir(
             }
             ExitCode::SUCCESS
         }
-        Err(erro) => falha(descrever(&erro)),
+        Err(erro) => failure(describe(&erro)),
     }
 }
 
@@ -456,14 +456,14 @@ fn reindexar(
 ) -> ExitCode {
     let catalogo = match abrir_catalogo(configuracao, store) {
         Ok(catalogo) => catalogo,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
     {
         Ok(runtime) => runtime,
-        Err(erro) => return falha(format!("não consegui iniciar o runtime: {erro}")),
+        Err(erro) => return failure(format!("não consegui iniciar o runtime: {erro}")),
     };
     let resultado = runtime.block_on(async {
         match args.agent.as_deref() {
@@ -497,7 +497,7 @@ fn reindexar(
                         })
                     })
                     .collect();
-                imprimir_json(&json!({
+                print_json(&json!({
                     "versao_relatorio": 1,
                     "org_id": org.to_string(),
                     "agents": itens,
@@ -518,7 +518,7 @@ fn reindexar(
             }
             ExitCode::SUCCESS
         }
-        Err(erro) => falha(erro),
+        Err(erro) => failure(erro),
     }
 }
 
@@ -555,7 +555,7 @@ fn abrir_catalogo(
     configuracao: &HarnessConfig,
     store: &Arc<Store>,
 ) -> Result<Arc<ProductCatalog>, String> {
-    crate::rag::abrir_catalogo(configuracao, Arc::clone(store))
+    crate::rag::open_catalog(configuracao, Arc::clone(store))
 }
 
 /// Acha o produto por id (UUID v7) ou slug, dentro da org.
@@ -565,12 +565,12 @@ fn obter(store: &Store, org: OrgId, texto: &str) -> Result<Product, String> {
         return store
             .products()
             .get(org, id)
-            .map_err(|erro| descrever(&erro));
+            .map_err(|erro| describe(&erro));
     }
     store
         .products()
         .by_slug(org, texto)
-        .map_err(|erro| descrever(&erro))
+        .map_err(|erro| describe(&erro))
 }
 
 /// Categoria pelo id (UUID v7) ou pelo nome exato (sem diferenciar maiúsculas).
@@ -585,14 +585,14 @@ fn resolver_categoria(store: &Store, org: OrgId, texto: &str) -> Result<ProductC
             .categories()
             .get(org, id)
             .map(|categoria| categoria.id)
-            .map_err(|erro| descrever(&erro));
+            .map_err(|erro| describe(&erro));
     }
     let mut pagina = Page::with_limit(200);
     loop {
         let lote = store
             .categories()
             .list(org, pagina)
-            .map_err(|erro| descrever(&erro))?;
+            .map_err(|erro| describe(&erro))?;
         if lote.is_empty() {
             return Err(format!("não existe categoria `{limpo}` na org"));
         }
@@ -614,18 +614,18 @@ fn resolver_agente(store: &Store, org: OrgId, texto: &str) -> Result<AgentId, St
             .agents()
             .get(org, id)
             .map(|agente| agente.id)
-            .map_err(|erro| descrever(&erro));
+            .map_err(|erro| describe(&erro));
     }
     store
         .agents()
         .by_slug(org, texto)
         .map(|agente| agente.id)
-        .map_err(|erro| descrever(&erro))
+        .map_err(|erro| describe(&erro))
 }
 
 fn saida(produto: &Product, json_saida: bool, aviso: &str) -> ExitCode {
     if json_saida {
-        imprimir_json(&json!({
+        print_json(&json!({
             "versao_relatorio": 1,
             "product": json_produto(produto),
         }));

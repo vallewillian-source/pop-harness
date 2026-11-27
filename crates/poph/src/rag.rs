@@ -41,7 +41,7 @@ pub fn abrir_base(config: &HarnessConfig, store: Arc<Store>) -> Result<Arc<Knowl
 }
 
 /// Abre o catálogo de produtos (store + o mesmo índice de embedding da base).
-pub fn abrir_catalogo(
+pub fn open_catalog(
     config: &HarnessConfig,
     store: Arc<Store>,
 ) -> Result<Arc<ProductCatalog>, String> {
@@ -63,7 +63,7 @@ pub enum AcaoRag {
 /// implementações do mesmo índice.
 pub fn executar(
     flag: Option<std::path::PathBuf>,
-    ambiente: &crate::config::Ambiente,
+    ambiente: &crate::config::Environment,
     offline: bool,
     org: Option<&str>,
     acao: AcaoRag,
@@ -85,7 +85,7 @@ pub fn executar(
 /// [`poph_rag::EmbedderDaFila`], então cada trecho entra na vaga da org (limite de pedidos
 /// simultâneos e rodízio entre orgs). Numa reindexação grande, uma org não ocupa o modelo de todas
 /// as outras. A busca de uma consulta continua indo direto ao modelo ([`abrir_base`]).
-pub fn abrir_base_com_fila(
+pub fn open_queued_knowledge_base(
     config: &HarnessConfig,
     store: Arc<Store>,
     org: poph_types::OrgId,

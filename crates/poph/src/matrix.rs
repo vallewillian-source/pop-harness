@@ -1,18 +1,3 @@
-//! `poph matrix`: gera e confere o registro do Application Service do módulo Matrix (MX-21).
-//!
-//! O Synapse só conhece um Application Service pelo arquivo de registro. Esse arquivo é **gerado**,
-//! nunca versionado (PRD §6.2): ele carrega os dois tokens, e token não entra em git.
-//!
-//! - `poph matrix registro --saida <arquivo> [--url <base>]` escreve o registro com permissão 0600,
-//!   recusa sobrescrever sem `--forcar` e nunca imprime token (nem em erro).
-//! - `poph matrix registro --verificar <arquivo>` relê o arquivo e compara com a seção `[matrix]`
-//!   atual (prefixo, url, `sender_localpart`, namespaces, `rate_limited`) e com os tokens do
-//!   ambiente; divergência é erro que **nomeia o campo**, sem repetir valor.
-//!
-//! O YAML é escrito à mão: o workspace não tem crate de YAML, e o formato é o mesmo do modelo da
-//! MX-01 (`tests/matrix/registro-teste.yaml.template`), pequeno e estável. A leitura do `--verificar`
-//! é um leitor igualmente simples do mesmo formato — não é um parser de YAML genérico de propósito.
-
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
@@ -24,130 +9,138 @@ use poph_matrix::{MatrixSecrets, VAR_AS_TOKEN, VAR_HS_TOKEN};
 use poph_types::MatrixConfig;
 
 use crate::config;
-use crate::matrix_admin::{self, EspacoArgs, SaidaArgs};
+use crate::matrix_admin::{self, OutputArgs, SpaceArgs};
 
-/// Id do Application Service quando `--id` não é dado.
-pub const ID_PADRAO: &str = "poph-matrix";
+pub const DEFAULT_ID: &str = "poph-matrix";
 
-/// Variável de ambiente que serve de padrão para a `url` do registro (`--url` vence).
-///
-/// A seção `[matrix]` guarda o endereço do **Synapse** (`homeserver_url`), não o do Harness: quem
-/// diz por onde o Synapse alcança o Harness é esta variável ou `--url`.
 pub const VAR_URL_AS: &str = "POPH_MATRIX_URL_AS";
 
-/// Alias compartilhado com o registro do Python, não exclusivo (PRD §6.2).
-pub const ALIAS_COMPARTILHADO: &str = "#dep_.*";
+pub const SHARED_ALIAS: &str = "#dep_.*";
 
-/// Subcomandos de `poph matrix`.
-///
-/// `registro` não precisa de org. Os outros quatro operam numa org (`--org`) direto no banco
-/// (`--offline`), como os demais comandos administrativos; a regra fica em `matrix_admin.rs`.
 #[derive(Debug, Subcommand)]
-pub enum AcaoMatrix {
-    /// Gera (`--saida`) ou confere (`--verificar`) o registro do Application Service.
-    Registro(RegistroArgs),
-    /// Estado do módulo na org: ligado, corte do backfill, atraso, falhas (`--offline --org`).
-    Estado(SaidaArgs),
-    /// Liga o módulo na org; grava o corte do backfill na primeira vez (`--offline --org`).
-    Ligar(SaidaArgs),
-    /// Desliga o módulo na org; preserva o corte e não apaga nada no Element (`--offline --org`).
-    Desligar(SaidaArgs),
-    /// Espaços por departamento: lista, cria ou liga (`--departamento`) e `desligar` (`--offline --org`).
-    Espaco(EspacoArgs),
+pub enum MatrixAction {
+    #[command(
+        name = "registro",
+        about = "Gera (`--saida`) ou confere (`--verificar`) o registro do Application Service"
+    )]
+    Registration(RegistrationArgs),
+    #[command(
+        name = "estado",
+        about = "Estado do módulo na org: ligado, corte do backfill, atraso, falhas (`--offline --org`)"
+    )]
+    Status(OutputArgs),
+    #[command(
+        name = "ligar",
+        about = "Liga o módulo na org; grava o corte do backfill na primeira vez (`--offline --org`)"
+    )]
+    Enable(OutputArgs),
+    #[command(
+        name = "desligar",
+        about = "Desliga o módulo na org; preserva o corte e não apaga nada no Element (`--offline --org`)"
+    )]
+    Disable(OutputArgs),
+    #[command(
+        name = "espaco",
+        about = "Espaços por departamento: lista, cria ou liga (`--departamento`) e `desligar` (`--offline --org`)"
+    )]
+    Space(SpaceArgs),
 }
 
-/// Opções de `poph matrix registro`.
 #[derive(Debug, Args)]
-pub struct RegistroArgs {
-    /// Arquivo a gerar, com permissão 0600. Recusa sobrescrever sem `--forcar`.
-    #[arg(long, value_name = "ARQUIVO")]
-    pub saida: Option<PathBuf>,
+pub struct RegistrationArgs {
+    #[arg(
+        long = "saida",
+        value_name = "ARQUIVO",
+        help = "Arquivo a gerar, com permissão 0600. Recusa sobrescrever sem `--forcar`"
+    )]
+    pub output: Option<PathBuf>,
 
-    /// Arquivo existente a conferir contra a seção `[matrix]` e os tokens do ambiente.
-    #[arg(long, value_name = "ARQUIVO")]
-    pub verificar: Option<PathBuf>,
+    #[arg(
+        long = "verificar",
+        value_name = "ARQUIVO",
+        help = "Arquivo existente a conferir contra a seção `[matrix]` e os tokens do ambiente"
+    )]
+    pub verify: Option<PathBuf>,
 
-    /// Endereço por onde o Synapse alcança o Harness (padrão: variável `POPH_MATRIX_URL_AS`).
-    #[arg(long, value_name = "BASE")]
+    #[arg(
+        long,
+        value_name = "BASE",
+        help = "Endereço por onde o Synapse alcança o Harness (padrão: variável `POPH_MATRIX_URL_AS`)"
+    )]
     pub url: Option<String>,
 
-    /// Id do Application Service no registro (muda por instância na fase 3).
-    #[arg(long, value_name = "ID", default_value = ID_PADRAO)]
+    #[arg(long, value_name = "ID", default_value = DEFAULT_ID, help = "Id do Application Service no registro (muda por instância na fase 3)")]
     pub id: String,
 
-    /// Sobrescreve o arquivo existente.
-    #[arg(long)]
-    pub forcar: bool,
+    #[arg(long = "forcar", help = "Sobrescreve o arquivo existente")]
+    pub force: bool,
 }
 
-/// Executa `poph matrix …`.
-pub fn executar(
+pub fn run(
     flag: Option<PathBuf>,
-    ambiente: &config::Ambiente,
+    environment: &config::Environment,
     offline: bool,
     org: Option<&str>,
-    acao: AcaoMatrix,
+    action: MatrixAction,
 ) -> ExitCode {
-    match acao {
-        AcaoMatrix::Registro(args) => executar_registro(flag, ambiente, args),
-        AcaoMatrix::Estado(args) => matrix_admin::state(flag, ambiente, offline, org, &args),
-        AcaoMatrix::Ligar(args) => {
-            matrix_admin::ligar_ou_desligar(flag, ambiente, offline, org, true, &args)
+    match action {
+        MatrixAction::Registration(args) => run_registration(flag, environment, args),
+        MatrixAction::Status(args) => matrix_admin::state(flag, environment, offline, org, &args),
+        MatrixAction::Enable(args) => {
+            matrix_admin::set_enabled(flag, environment, offline, org, true, &args)
         }
-        AcaoMatrix::Desligar(args) => {
-            matrix_admin::ligar_ou_desligar(flag, ambiente, offline, org, false, &args)
+        MatrixAction::Disable(args) => {
+            matrix_admin::set_enabled(flag, environment, offline, org, false, &args)
         }
-        AcaoMatrix::Espaco(args) => matrix_admin::space(flag, ambiente, offline, org, &args),
+        MatrixAction::Space(args) => matrix_admin::space(flag, environment, offline, org, &args),
     }
 }
 
-/// Executa `poph matrix registro`.
-fn executar_registro(
+fn run_registration(
     flag: Option<PathBuf>,
-    ambiente: &config::Ambiente,
-    args: RegistroArgs,
+    environment: &config::Environment,
+    args: RegistrationArgs,
 ) -> ExitCode {
-    match (args.saida.as_deref(), args.verificar.as_deref()) {
+    match (args.output.as_deref(), args.verify.as_deref()) {
         (Some(_), Some(_)) => error("use --saida (gerar) ou --verificar (conferir), não os dois"),
         (None, None) => {
             error("informe --saida <arquivo> para gerar ou --verificar <arquivo> para conferir")
         }
-        (Some(destino), None) => gerar(flag, ambiente, &args, destino),
-        (None, Some(arquivo)) => conferir(flag, ambiente, &args, arquivo),
+        (Some(target), None) => generate(flag, environment, &args, target),
+        (None, Some(file)) => check(flag, environment, &args, file),
     }
 }
 
-/// `poph matrix registro --saida`: monta e grava o registro.
-fn gerar(
+fn generate(
     flag: Option<PathBuf>,
-    ambiente: &config::Ambiente,
-    args: &RegistroArgs,
-    destino: &Path,
+    environment: &config::Environment,
+    args: &RegistrationArgs,
+    target: &Path,
 ) -> ExitCode {
-    let (config, secrets) = match ler_ambiente(flag, ambiente) {
-        Ok(par) => par,
+    let (config, secrets) = match read_environment(flag, environment) {
+        Ok(pair) => pair,
         Err(message) => return error(&message),
     };
-    let url = match url_do_registro(args, ambiente, &config) {
+    let url = match registration_url(args, environment, &config) {
         Ok(url) => url,
         Err(message) => return error(&message),
     };
 
     let text = yaml(&args.id, &url, &config.prefix, &secrets);
 
-    if let Err(message) = gravar(destino, &text, args.forcar) {
+    if let Err(message) = write_registration(target, &text, args.force) {
         return error(&message);
     }
 
     println!(
         "registro do Application Service gravado: {}",
-        destino.display()
+        target.display()
     );
     println!("  id:               {}", args.id);
     println!("  url:              {url}");
     println!("  sender_localpart: {}", sender_localpart(&config.prefix));
     println!(
-        "  namespaces:       @{}_.* e #{}_.* (exclusivos), {ALIAS_COMPARTILHADO} (compartilhado)",
+        "  namespaces:       @{}_.* e #{}_.* (exclusivos), {SHARED_ALIAS} (compartilhado)",
         config.prefix, config.prefix
     );
     println!("  rate_limited:     false");
@@ -161,50 +154,49 @@ fn gerar(
     ExitCode::SUCCESS
 }
 
-/// `poph matrix registro --verificar`: relê o arquivo e aponta cada divergência.
-fn conferir(
+fn check(
     flag: Option<PathBuf>,
-    ambiente: &config::Ambiente,
-    args: &RegistroArgs,
-    arquivo: &Path,
+    environment: &config::Environment,
+    args: &RegistrationArgs,
+    file: &Path,
 ) -> ExitCode {
-    let (config, secrets) = match ler_ambiente(flag, ambiente) {
-        Ok(par) => par,
+    let (config, secrets) = match read_environment(flag, environment) {
+        Ok(pair) => pair,
         Err(message) => return error(&message),
     };
-    let url = match url_do_registro(args, ambiente, &config) {
+    let url = match registration_url(args, environment, &config) {
         Ok(url) => url,
         Err(message) => return error(&message),
     };
-    let text = match fs::read_to_string(arquivo) {
+    let text = match fs::read_to_string(file) {
         Ok(text) => text,
         Err(reason) => {
             return error(&format!(
                 "não consegui ler o registro {}: {reason}",
-                arquivo.display()
+                file.display()
             ));
         }
     };
-    let lido = match ler(&text) {
-        Ok(lido) => lido,
+    let parsed = match parse_registration(&text) {
+        Ok(parsed) => parsed,
         Err(message) => {
-            return error(&format!("{}: {message}", arquivo.display()));
+            return error(&format!("{}: {message}", file.display()));
         }
     };
 
-    let esperado = Esperado {
+    let expected = ExpectedRegistration {
         url: &url,
         prefix: &config.prefix,
         secrets: &secrets,
     };
-    let divergencias = comparar(&lido, &esperado);
-    if !divergencias.is_empty() {
+    let divergences = compare(&parsed, &expected);
+    if !divergences.is_empty() {
         eprintln!(
             "{}: registro divergente da configuração atual:",
-            arquivo.display()
+            file.display()
         );
-        for divergencia in &divergencias {
-            eprintln!("  {divergencia}");
+        for divergence in &divergences {
+            eprintln!("  {divergence}");
         }
         eprintln!(
             "\nGere de novo com `poph matrix registro --saida <arquivo> --forcar` ou ajuste a seção [matrix]."
@@ -212,7 +204,7 @@ fn conferir(
         return ExitCode::from(1);
     }
 
-    println!("registro em dia: {}", arquivo.display());
+    println!("registro em dia: {}", file.display());
     println!("  url:              {url}");
     println!("  sender_localpart: {}", sender_localpart(&config.prefix));
     println!("  rate_limited:     false");
@@ -220,44 +212,40 @@ fn conferir(
     ExitCode::SUCCESS
 }
 
-/// Configuração efetiva e os tokens: o que o registro gerado precisa ter.
-fn ler_ambiente(
+fn read_environment(
     flag: Option<PathBuf>,
-    ambiente: &config::Ambiente,
+    environment: &config::Environment,
 ) -> Result<(MatrixConfig, MatrixSecrets), String> {
-    let pasta = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let arquivo = config::resolver_arquivo(flag.as_deref(), ambiente, &pasta);
-    let config =
-        config::carregar(arquivo.as_deref(), ambiente).map_err(|error| error.to_string())?;
-    let Some(secao) = config.matrix.as_ref() else {
+    let directory = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let file = config::resolve_file(flag.as_deref(), environment, &directory);
+    let config = config::load(file.as_deref(), environment).map_err(|error| error.to_string())?;
+    let Some(section) = config.matrix.as_ref() else {
         return Err(
             "seção [matrix] ausente na configuração: declare-a no poph.toml (ou por --config) antes de \
              gerar o registro"
                 .to_owned(),
         );
     };
-    // O registro descreve a instância mesmo quando o módulo ainda está desligado: validamos a seção
-    // como se estivesse ligada, para não gerar registro com prefixo ou url inválidos.
-    let mut efetiva = secao.clone();
-    efetiva.enabled = true;
-    efetiva.validar().map_err(|error| error.to_string())?;
-    let secrets =
-        MatrixSecrets::of(|name| ambiente.get(name).cloned()).map_err(|error| error.to_string())?;
-    Ok((efetiva, secrets))
+
+    let mut effective = section.clone();
+    effective.enabled = true;
+    effective.validar().map_err(|error| error.to_string())?;
+    let secrets = MatrixSecrets::of(|name| environment.get(name).cloned())
+        .map_err(|error| error.to_string())?;
+    Ok((effective, secrets))
 }
 
-/// `--url` vence; sem ela, `POPH_MATRIX_URL_AS`; sem as duas, erro que explica o que é.
-fn url_do_registro(
-    args: &RegistroArgs,
-    ambiente: &config::Ambiente,
+fn registration_url(
+    args: &RegistrationArgs,
+    environment: &config::Environment,
     _config: &MatrixConfig,
 ) -> Result<String, String> {
-    let bruta = args
+    let raw = args
         .url
         .clone()
-        .or_else(|| ambiente.get(VAR_URL_AS).cloned())
+        .or_else(|| environment.get(VAR_URL_AS).cloned())
         .unwrap_or_default();
-    let url = bruta.trim().trim_end_matches('/');
+    let url = raw.trim().trim_end_matches('/');
     if url.is_empty() {
         return Err(format!(
             "informe a url do Harness com --url (ou defina {VAR_URL_AS}): é o endereço por onde o \
@@ -274,12 +262,10 @@ fn url_do_registro(
     Ok(url.to_owned())
 }
 
-/// `sender_localpart` do registro: `<prefixo>_as_bot`, como no modelo da MX-01.
 pub fn sender_localpart(prefix: &str) -> String {
     format!("{prefix}_as_bot")
 }
 
-/// Monta o YAML do registro. Os tokens saem só daqui para o arquivo (nunca para a saída padrão).
 pub fn yaml(id: &str, url: &str, prefix: &str, secrets: &MatrixSecrets) -> String {
     let mut text = String::new();
     text.push_str(
@@ -291,266 +277,255 @@ pub fn yaml(id: &str, url: &str, prefix: &str, secrets: &MatrixSecrets) -> Strin
          # O Synapse só lê registros na subida: reinicie o Synapse para carregar alterações.\n\
          # ═══════════════════════════════════════════════════════════════════════════\n",
     );
-    text.push_str(&format!("id: {}\n", escalar(id)));
-    text.push_str(&format!("url: {}\n", escalar(url)));
+    text.push_str(&format!("id: {}\n", quote_scalar(id)));
+    text.push_str(&format!("url: {}\n", quote_scalar(url)));
     text.push_str(&format!(
         "as_token: {}\n",
-        escalar(secrets.as_token.expose())
+        quote_scalar(secrets.as_token.expose())
     ));
     text.push_str(&format!(
         "hs_token: {}\n",
-        escalar(secrets.hs_token.expose())
+        quote_scalar(secrets.hs_token.expose())
     ));
-    // MX-02 (item 7): sem `rate_limited: false` o Synapse limita o bot em rajada.
+
     text.push_str("rate_limited: false\n");
     text.push_str(&format!(
         "sender_localpart: {}\n",
-        escalar(&sender_localpart(prefix))
+        quote_scalar(&sender_localpart(prefix))
     ));
     text.push_str("namespaces:\n");
     text.push_str("  users:\n");
     text.push_str("    - exclusive: true\n");
     text.push_str(&format!(
         "      regex: {}\n",
-        escalar(&format!("@{prefix}_.*"))
+        quote_scalar(&format!("@{prefix}_.*"))
     ));
     text.push_str("  aliases:\n");
     text.push_str("    - exclusive: true\n");
     text.push_str(&format!(
         "      regex: {}\n",
-        escalar(&format!("#{prefix}_.*"))
+        quote_scalar(&format!("#{prefix}_.*"))
     ));
     text.push_str("    - exclusive: false\n");
-    text.push_str(&format!("      regex: {}\n", escalar(ALIAS_COMPARTILHADO)));
+    text.push_str(&format!("      regex: {}\n", quote_scalar(SHARED_ALIAS)));
     text.push_str("  rooms: []\n");
     text
 }
 
-/// Valor escalar em YAML entre aspas duplas, com escape do que o formato exige.
-///
-/// Tokens gerados são hexadecimais, mas a url e o id vêm de fora: nunca confie no formato.
-fn escalar(valor: &str) -> String {
-    let mut saida = String::with_capacity(valor.len() + 2);
-    saida.push('"');
-    for caractere in valor.chars() {
-        match caractere {
-            '"' => saida.push_str("\\\""),
-            '\\' => saida.push_str("\\\\"),
-            '\n' => saida.push_str("\\n"),
-            '\r' => saida.push_str("\\r"),
-            '\t' => saida.push_str("\\t"),
-            outro => saida.push(outro),
+fn quote_scalar(value: &str) -> String {
+    let mut output = String::with_capacity(value.len() + 2);
+    output.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => output.push_str("\\\""),
+            '\\' => output.push_str("\\\\"),
+            '\n' => output.push_str("\\n"),
+            '\r' => output.push_str("\\r"),
+            '\t' => output.push_str("\\t"),
+            other => output.push(other),
         }
     }
-    saida.push('"');
-    saida
+    output.push('"');
+    output
 }
 
-/// Grava o arquivo com permissão 0600, sem sobrescrever sem `--forcar`.
-fn gravar(destino: &Path, text: &str, forcar: bool) -> Result<(), String> {
-    if destino.exists() && !forcar {
+fn write_registration(target: &Path, text: &str, force: bool) -> Result<(), String> {
+    if target.exists() && !force {
         return Err(format!(
             "o arquivo {} já existe: use --forcar para sobrescrever",
-            destino.display()
+            target.display()
         ));
     }
-    let mut arquivo = abrir_0600(destino, forcar).map_err(|error| {
+    let mut file = open_0600(target, force).map_err(|error| {
         format!(
             "não consegui criar o registro {}: {error}",
-            destino.display()
+            target.display()
         )
     })?;
-    arquivo.write_all(text.as_bytes()).map_err(|error| {
+    file.write_all(text.as_bytes()).map_err(|error| {
         format!(
             "não consegui escrever o registro {}: {error}",
-            destino.display()
+            target.display()
         )
     })?;
-    arquivo.flush().map_err(|error| {
+    file.flush().map_err(|error| {
         format!(
             "não consegui terminar de escrever o registro {}: {error}",
-            destino.display()
+            target.display()
         )
     })?;
     Ok(())
 }
 
 #[cfg(unix)]
-fn abrir_0600(destino: &Path, forcar: bool) -> std::io::Result<fs::File> {
+fn open_0600(target: &Path, force: bool) -> std::io::Result<fs::File> {
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
-    let mut opcoes = fs::OpenOptions::new();
-    opcoes.write(true).mode(0o600);
-    if forcar {
-        opcoes.create(true).truncate(true);
+    let mut options = fs::OpenOptions::new();
+    options.write(true).mode(0o600);
+    if force {
+        options.create(true).truncate(true);
     } else {
-        opcoes.create_new(true);
+        options.create_new(true);
     }
-    let arquivo = opcoes.open(destino)?;
-    // Arquivo que já existia com permissão larga também fica 0600 depois do --forcar.
-    arquivo.set_permissions(fs::Permissions::from_mode(0o600))?;
-    Ok(arquivo)
+    let file = options.open(target)?;
+
+    file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    Ok(file)
 }
 
 #[cfg(not(unix))]
-fn abrir_0600(destino: &Path, forcar: bool) -> std::io::Result<fs::File> {
-    let mut opcoes = fs::OpenOptions::new();
-    opcoes.write(true);
-    if forcar {
-        opcoes.create(true).truncate(true);
+fn open_0600(target: &Path, force: bool) -> std::io::Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.write(true);
+    if force {
+        options.create(true).truncate(true);
     } else {
-        opcoes.create_new(true);
+        options.create_new(true);
     }
-    opcoes.open(destino)
+    options.open(target)
 }
 
-// ─────────────────────────── leitura do registro (--verificar) ───────────────────────────
-
-/// Um item de namespace de lista: `exclusive` e o `regex`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ItemNamespace {
-    /// `exclusive: true` = só este Application Service usa o namespace.
-    pub exclusivo: bool,
-    /// Expressão regular do namespace.
+pub struct NamespaceItem {
+    pub exclusive: bool,
+
     pub regex: String,
 }
 
-/// O registro relido: os campos escalares, os namespaces de usuários e os de aliases.
 #[derive(Debug, Default, PartialEq, Eq)]
-pub struct RegistroLido {
-    /// Campos escalares do topo, sem as aspas (`id`, `url`, `as_token`, …).
-    pub escalares: BTreeMap<String, String>,
-    /// `namespaces.users`, na ordem do arquivo.
-    pub users: Vec<ItemNamespace>,
-    /// `namespaces.aliases`, na ordem do arquivo.
-    pub aliases: Vec<ItemNamespace>,
+pub struct ParsedRegistration {
+    pub scalars: BTreeMap<String, String>,
+
+    pub users: Vec<NamespaceItem>,
+
+    pub aliases: Vec<NamespaceItem>,
 }
 
-/// Lê o formato que este comando gera (e o do modelo da MX-01).
-///
-/// Não é um leitor de YAML genérico: aceita exatamente escalares no topo, `namespaces.users`,
-/// `namespaces.aliases` e `namespaces.rooms` (lista vazia ou simples, ignorada). Qualquer outra
-/// coisa é erro que nomeia a linha, para não conferir um arquivo que não entendeu.
-pub fn ler(text: &str) -> Result<RegistroLido, String> {
+pub fn parse_registration(text: &str) -> Result<ParsedRegistration, String> {
     #[derive(Default)]
-    struct Estado {
-        dentro_de_namespaces: bool,
-        lista: Option<&'static str>,
-        item: Option<ItemNamespace>,
-        exclusive_lido: bool,
+    struct ReaderState {
+        in_namespaces: bool,
+        list: Option<&'static str>,
+        item: Option<NamespaceItem>,
+        exclusive_seen: bool,
     }
 
-    fn fechar(lido: &mut RegistroLido, state: &mut Estado) -> Result<(), String> {
+    fn finish_item(parsed: &mut ParsedRegistration, state: &mut ReaderState) -> Result<(), String> {
         let Some(item) = state.item.take() else {
             return Ok(());
         };
-        if !state.exclusive_lido || item.regex.is_empty() {
+        if !state.exclusive_seen || item.regex.is_empty() {
             return Err(format!(
                 "namespaces.{}: item sem `exclusive` e `regex`",
-                state.lista.unwrap_or("?")
+                state.list.unwrap_or("?")
             ));
         }
-        match state.lista {
-            Some("users") => lido.users.push(item),
-            Some("aliases") => lido.aliases.push(item),
+        match state.list {
+            Some("users") => parsed.users.push(item),
+            Some("aliases") => parsed.aliases.push(item),
             _ => {}
         }
-        state.exclusive_lido = false;
+        state.exclusive_seen = false;
         Ok(())
     }
 
-    let mut lido = RegistroLido::default();
-    let mut state = Estado::default();
+    let mut parsed = ParsedRegistration::default();
+    let mut state = ReaderState::default();
 
-    for (numero, bruta) in text.lines().enumerate() {
-        let linha = bruta.trim_end();
-        let conteudo = linha.trim();
-        if conteudo.is_empty() || conteudo.starts_with('#') {
+    for (number, raw) in text.lines().enumerate() {
+        let line = raw.trim_end();
+        let content = line.trim();
+        if content.is_empty() || content.starts_with('#') {
             continue;
         }
-        let recuo = linha.len() - linha.trim_start().len();
-        let onde = format!("linha {}", numero + 1);
+        let indent = line.len() - line.trim_start().len();
+        let location = format!("linha {}", number + 1);
 
-        if recuo == 0 {
-            fechar(&mut lido, &mut state)?;
-            let Some((chave, valor)) = conteudo.split_once(':') else {
+        if indent == 0 {
+            finish_item(&mut parsed, &mut state)?;
+            let Some((key, value)) = content.split_once(':') else {
                 return Err(format!(
-                    "{onde}: esperava `chave: valor`, achei `{conteudo}`"
+                    "{location}: esperava `chave: valor`, achei `{content}`"
                 ));
             };
-            let chave = chave.trim();
-            let valor = valor.trim();
-            if chave == "namespaces" {
-                if !valor.is_empty() {
-                    return Err(format!("{onde}: `namespaces` não é escalar"));
+            let key = key.trim();
+            let value = value.trim();
+            if key == "namespaces" {
+                if !value.is_empty() {
+                    return Err(format!("{location}: `namespaces` não é escalar"));
                 }
-                state.dentro_de_namespaces = true;
-                state.lista = None;
+                state.in_namespaces = true;
+                state.list = None;
                 continue;
             }
-            if valor.is_empty() {
-                return Err(format!("{onde}: campo `{chave}` sem valor"));
+            if value.is_empty() {
+                return Err(format!("{location}: campo `{key}` sem valor"));
             }
-            lido.escalares
-                .insert(chave.to_owned(), sem_aspas(valor).to_owned());
+            parsed
+                .scalars
+                .insert(key.to_owned(), unquote(value).to_owned());
             continue;
         }
 
-        if !state.dentro_de_namespaces {
-            return Err(format!("{onde}: linha recuada fora de `namespaces`"));
+        if !state.in_namespaces {
+            return Err(format!("{location}: linha recuada fora de `namespaces`"));
         }
 
-        if recuo == 2 {
-            fechar(&mut lido, &mut state)?;
-            let Some((chave, _)) = conteudo.split_once(':') else {
-                return Err(format!("{onde}: esperava `users:`, `aliases:` ou `rooms:`"));
+        if indent == 2 {
+            finish_item(&mut parsed, &mut state)?;
+            let Some((key, _)) = content.split_once(':') else {
+                return Err(format!(
+                    "{location}: esperava `users:`, `aliases:` ou `rooms:`"
+                ));
             };
-            state.lista = match chave.trim() {
+            state.list = match key.trim() {
                 "users" => Some("users"),
                 "aliases" => Some("aliases"),
                 "rooms" => None,
-                outra => {
+                other => {
                     return Err(format!(
-                        "{onde}: namespaces desconhecido `{outra}` (esperava users, aliases ou rooms)"
+                        "{location}: namespaces desconhecido `{other}` (esperava users, aliases ou rooms)"
                     ));
                 }
             };
             continue;
         }
 
-        if state.lista.is_none() {
-            return Err(format!("{onde}: item em `namespaces.rooms` não esperado"));
+        if state.list.is_none() {
+            return Err(format!(
+                "{location}: item em `namespaces.rooms` não esperado"
+            ));
         }
 
-        if let Some(resto) = conteudo.strip_prefix('-') {
-            fechar(&mut lido, &mut state)?;
-            let resto = resto.trim();
-            if resto.is_empty() {
-                // `-` sozinho: o item começa na linha seguinte (estilo bloco).
-                state.item = Some(ItemNamespace {
-                    exclusivo: false,
+        if let Some(rest) = content.strip_prefix('-') {
+            finish_item(&mut parsed, &mut state)?;
+            let rest = rest.trim();
+            if rest.is_empty() {
+                state.item = Some(NamespaceItem {
+                    exclusive: false,
                     regex: String::new(),
                 });
                 continue;
             }
-            let Some((chave, valor)) = resto.split_once(':') else {
-                return Err(format!("{onde}: esperava `- exclusive: true|false`"));
+            let Some((key, value)) = rest.split_once(':') else {
+                return Err(format!("{location}: esperava `- exclusive: true|false`"));
             };
-            let chave = chave.trim();
-            let valor = sem_aspas(valor.trim());
-            let mut new = ItemNamespace {
-                exclusivo: false,
+            let key = key.trim();
+            let value = unquote(value.trim());
+            let mut new = NamespaceItem {
+                exclusive: false,
                 regex: String::new(),
             };
-            match chave {
+            match key {
                 "exclusive" => {
-                    new.exclusivo = exclusividade(chave, valor, &onde)?;
-                    state.exclusive_lido = true;
+                    new.exclusive = parse_exclusivity(key, value, &location)?;
+                    state.exclusive_seen = true;
                 }
-                "regex" => new.regex = valor.to_owned(),
-                outra => {
+                "regex" => new.regex = value.to_owned(),
+                other => {
                     return Err(format!(
-                        "{onde}: chave desconhecida no item: `{outra}` (esperava exclusive ou regex)"
+                        "{location}: chave desconhecida no item: `{other}` (esperava exclusive ou regex)"
                     ));
                 }
             }
@@ -558,267 +533,262 @@ pub fn ler(text: &str) -> Result<RegistroLido, String> {
             continue;
         }
 
-        let Some((chave, valor)) = conteudo.split_once(':') else {
-            return Err(format!("{onde}: esperava `regex: ...` dentro do item"));
+        let Some((key, value)) = content.split_once(':') else {
+            return Err(format!("{location}: esperava `regex: ...` dentro do item"));
         };
-        match chave.trim() {
+        match key.trim() {
             "regex" => {
                 let Some(item) = state.item.as_mut() else {
-                    return Err(format!("{onde}: `regex` sem item"));
+                    return Err(format!("{location}: `regex` sem item"));
                 };
-                item.regex = sem_aspas(valor.trim()).to_owned();
+                item.regex = unquote(value.trim()).to_owned();
             }
             "exclusive" => {
-                let exclusivo = exclusividade("exclusive", sem_aspas(valor.trim()), &onde)?;
+                let exclusive = parse_exclusivity("exclusive", unquote(value.trim()), &location)?;
                 let Some(item) = state.item.as_mut() else {
-                    return Err(format!("{onde}: `exclusive` sem item"));
+                    return Err(format!("{location}: `exclusive` sem item"));
                 };
-                item.exclusivo = exclusivo;
-                state.exclusive_lido = true;
+                item.exclusive = exclusive;
+                state.exclusive_seen = true;
             }
-            outra => return Err(format!("{onde}: chave desconhecida no item: `{outra}`")),
+            other => return Err(format!("{location}: chave desconhecida no item: `{other}`")),
         }
     }
-    fechar(&mut lido, &mut state)?;
-    if lido.escalares.is_empty() {
+    finish_item(&mut parsed, &mut state)?;
+    if parsed.scalars.is_empty() {
         return Err("arquivo sem nenhum campo do registro".to_owned());
     }
-    Ok(lido)
+    Ok(parsed)
 }
 
-fn exclusividade(chave: &str, valor: &str, onde: &str) -> Result<bool, String> {
-    match valor {
+fn parse_exclusivity(key: &str, value: &str, location: &str) -> Result<bool, String> {
+    match value {
         "true" => Ok(true),
         "false" => Ok(false),
-        outro => Err(format!(
-            "{onde}: `{chave}` esperava true ou false, achei `{outro}`"
+        other => Err(format!(
+            "{location}: `{key}` esperava true ou false, achei `{other}`"
         )),
     }
 }
 
-/// Tira as aspas duplas de um valor escalar, se houver, e desfaz os escapes que geramos.
-fn sem_aspas(valor: &str) -> &str {
-    let Some(sem_primeira) = valor.strip_prefix('"') else {
-        return valor;
+fn unquote(value: &str) -> &str {
+    let Some(without_opening_quote) = value.strip_prefix('"') else {
+        return value;
     };
-    sem_primeira.strip_suffix('"').unwrap_or(valor)
+    without_opening_quote.strip_suffix('"').unwrap_or(value)
 }
 
-// ─────────────────────────────── comparação com a configuração ───────────────────────────────
-
-/// O que o registro deveria dizer, segundo a seção `[matrix]` e o ambiente.
-struct Esperado<'a> {
+struct ExpectedRegistration<'a> {
     url: &'a str,
     prefix: &'a str,
     secrets: &'a MatrixSecrets,
 }
 
-/// Lista de divergências, cada uma nomeando o campo. Vazia = registro em dia.
-fn comparar(lido: &RegistroLido, esperado: &Esperado<'_>) -> Vec<String> {
-    let mut divergencias = Vec::new();
-    let mut comparar_campo =
-        |campo: &str, encontrado: Option<&str>, devia_ser: &str| match encontrado {
-            Some(encontrado) if encontrado == devia_ser => {}
-            Some(encontrado) => divergencias.push(format!(
-                "campo {campo}: esperado `{devia_ser}`, encontrado `{encontrado}`"
-            )),
-            None => divergencias.push(format!("campo {campo}: ausente (esperado `{devia_ser}`)")),
-        };
+fn compare(parsed: &ParsedRegistration, expected: &ExpectedRegistration<'_>) -> Vec<String> {
+    let mut divergences = Vec::new();
+    let mut compare_field = |field: &str, found: Option<&str>, expected_value: &str| match found {
+        Some(found) if found == expected_value => {}
+        Some(found) => divergences.push(format!(
+            "campo {field}: esperado `{expected_value}`, encontrado `{found}`"
+        )),
+        None => divergences.push(format!(
+            "campo {field}: ausente (esperado `{expected_value}`)"
+        )),
+    };
 
-    comparar_campo(
+    compare_field(
         "url",
-        lido.escalares.get("url").map(String::as_str),
-        esperado.url,
+        parsed.scalars.get("url").map(String::as_str),
+        expected.url,
     );
-    comparar_campo(
+    compare_field(
         "sender_localpart",
-        lido.escalares.get("sender_localpart").map(String::as_str),
-        &sender_localpart(esperado.prefix),
+        parsed.scalars.get("sender_localpart").map(String::as_str),
+        &sender_localpart(expected.prefix),
     );
-    comparar_campo(
+    compare_field(
         "rate_limited",
-        lido.escalares.get("rate_limited").map(String::as_str),
+        parsed.scalars.get("rate_limited").map(String::as_str),
         "false",
     );
-    comparar_campo("as_token", presenca(lido, "as_token"), "presente");
-    comparar_campo("hs_token", presenca(lido, "hs_token"), "presente");
+    compare_field("as_token", presence(parsed, "as_token"), "presente");
+    compare_field("hs_token", presence(parsed, "hs_token"), "presente");
 
-    // Tokens: iguais aos do ambiente? O valor nunca sai daqui, só o nome do campo.
-    for (campo, no_arquivo, no_ambiente) in [
+    for (field, in_file, in_environment) in [
         (
             "as_token",
-            lido.escalares.get("as_token"),
-            Some(esperado.secrets.as_token.expose().as_str()),
+            parsed.scalars.get("as_token"),
+            Some(expected.secrets.as_token.expose().as_str()),
         ),
         (
             "hs_token",
-            lido.escalares.get("hs_token"),
-            Some(esperado.secrets.hs_token.expose().as_str()),
+            parsed.scalars.get("hs_token"),
+            Some(expected.secrets.hs_token.expose().as_str()),
         ),
     ] {
-        if let (Some(no_arquivo), Some(no_ambiente)) = (no_arquivo, no_ambiente)
-            && no_arquivo != no_ambiente
+        if let (Some(in_file), Some(in_environment)) = (in_file, in_environment)
+            && in_file != in_environment
         {
-            let variavel = if campo == "as_token" {
+            let variable = if field == "as_token" {
                 VAR_AS_TOKEN
             } else {
                 VAR_HS_TOKEN
             };
-            divergencias.push(format!(
-                "campo {campo}: o valor do arquivo difere de {variavel} no ambiente (gere de novo)"
+            divergences.push(format!(
+                "campo {field}: o valor do arquivo difere de {variable} no ambiente (gere de novo)"
             ));
         }
     }
 
-    let usuario_esperado = ItemNamespace {
-        exclusivo: true,
-        regex: format!("@{}_.*", esperado.prefix),
+    let expected_user = NamespaceItem {
+        exclusive: true,
+        regex: format!("@{}_.*", expected.prefix),
     };
-    if !lido.users.contains(&usuario_esperado) {
-        divergencias.push(format!(
+    if !parsed.users.contains(&expected_user) {
+        divergences.push(format!(
             "campo namespaces.users: falta o namespace exclusivo `{}`",
-            usuario_esperado.regex
+            expected_user.regex
         ));
     }
-    let alias_esperado = ItemNamespace {
-        exclusivo: true,
-        regex: format!("#{}_.*", esperado.prefix),
+    let expected_alias = NamespaceItem {
+        exclusive: true,
+        regex: format!("#{}_.*", expected.prefix),
     };
-    if !lido.aliases.contains(&alias_esperado) {
-        divergencias.push(format!(
+    if !parsed.aliases.contains(&expected_alias) {
+        divergences.push(format!(
             "campo namespaces.aliases: falta o namespace exclusivo `{}`",
-            alias_esperado.regex
+            expected_alias.regex
         ));
     }
-    let alias_compartilhado = ItemNamespace {
-        exclusivo: false,
-        regex: ALIAS_COMPARTILHADO.to_owned(),
+    let shared_alias = NamespaceItem {
+        exclusive: false,
+        regex: SHARED_ALIAS.to_owned(),
     };
-    if !lido.aliases.contains(&alias_compartilhado) {
-        divergencias.push(format!(
-            "campo namespaces.aliases: falta o alias compartilhado `{ALIAS_COMPARTILHADO}` com \
+    if !parsed.aliases.contains(&shared_alias) {
+        divergences.push(format!(
+            "campo namespaces.aliases: falta o alias compartilhado `{SHARED_ALIAS}` com \
              `exclusive: false`"
         ));
     }
-    divergencias
+    divergences
 }
 
-fn presenca<'a>(lido: &'a RegistroLido, campo: &str) -> Option<&'a str> {
-    lido.escalares
-        .get(campo)
+fn presence<'a>(parsed: &'a ParsedRegistration, field: &str) -> Option<&'a str> {
+    parsed
+        .scalars
+        .get(field)
         .map(String::as_str)
-        .filter(|valor| !valor.trim().is_empty())
+        .filter(|value| !value.trim().is_empty())
         .map(|_| "presente")
 }
 
-/// Imprime o erro (sem token) e devolve o código de saída.
 fn error(message: &str) -> ExitCode {
     eprintln!("erro: {message}");
     ExitCode::from(1)
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
     use poph_types::Sensitive;
 
-    const CANARIO_AS: &str = "CANARIO-MX21-AS-nao-pode-vazar";
-    const CANARIO_HS: &str = "CANARIO-MX21-HS-nao-pode-vazar";
+    const AS_TOKEN_CANARY: &str = "CANARIO-MX21-AS-nao-pode-vazar";
+    const HS_TOKEN_CANARY: &str = "CANARIO-MX21-HS-nao-pode-vazar";
 
     fn secrets() -> MatrixSecrets {
         MatrixSecrets {
-            as_token: Sensitive::new(CANARIO_AS.to_owned()),
-            hs_token: Sensitive::new(CANARIO_HS.to_owned()),
+            as_token: Sensitive::new(AS_TOKEN_CANARY.to_owned()),
+            hs_token: Sensitive::new(HS_TOKEN_CANARY.to_owned()),
         }
     }
 
     #[test]
-    fn yaml_gerado_relido_bate_com_a_configuracao() {
+    fn generated_yaml_round_trips_and_matches_configuration() {
         let text = yaml("poph-matrix", "http://192.168.0.123:8080", "ph", &secrets());
-        let lido = ler(&text).expect("o próprio yaml gerado tem que ser legível");
-        assert_eq!(lido.escalares["id"], "poph-matrix");
-        assert_eq!(lido.escalares["url"], "http://192.168.0.123:8080");
-        assert_eq!(lido.escalares["as_token"], CANARIO_AS);
-        assert_eq!(lido.escalares["sender_localpart"], "ph_as_bot");
-        assert_eq!(lido.escalares["rate_limited"], "false");
+        let parsed = parse_registration(&text).expect("o próprio yaml gerado tem que ser legível");
+        assert_eq!(parsed.scalars["id"], "poph-matrix");
+        assert_eq!(parsed.scalars["url"], "http://192.168.0.123:8080");
+        assert_eq!(parsed.scalars["as_token"], AS_TOKEN_CANARY);
+        assert_eq!(parsed.scalars["sender_localpart"], "ph_as_bot");
+        assert_eq!(parsed.scalars["rate_limited"], "false");
         assert_eq!(
-            lido.users,
-            vec![ItemNamespace {
-                exclusivo: true,
+            parsed.users,
+            vec![NamespaceItem {
+                exclusive: true,
                 regex: "@ph_.*".to_owned()
             }]
         );
         assert_eq!(
-            lido.aliases,
+            parsed.aliases,
             vec![
-                ItemNamespace {
-                    exclusivo: true,
+                NamespaceItem {
+                    exclusive: true,
                     regex: "#ph_.*".to_owned()
                 },
-                ItemNamespace {
-                    exclusivo: false,
+                NamespaceItem {
+                    exclusive: false,
                     regex: "#dep_.*".to_owned()
                 }
             ]
         );
 
-        let esperado = Esperado {
+        let expected = ExpectedRegistration {
             url: "http://192.168.0.123:8080",
             prefix: "ph",
             secrets: &secrets(),
         };
-        assert!(comparar(&lido, &esperado).is_empty());
+        assert!(compare(&parsed, &expected).is_empty());
     }
 
     #[test]
-    fn prefixo_trocado_aponta_os_namespaces_e_o_sender() {
+    fn prefix_mismatch_reports_namespaces_and_sender() {
         let text = yaml("poph-matrix", "http://h:1", "wa", &secrets());
-        let lido = ler(&text).expect("legível");
-        let esperado = Esperado {
+        let parsed = parse_registration(&text).expect("legível");
+        let expected = ExpectedRegistration {
             url: "http://h:1",
             prefix: "ph",
             secrets: &secrets(),
         };
-        let divergencias = comparar(&lido, &esperado);
-        let texto_das_divergencias = divergencias.join("\n");
-        assert!(texto_das_divergencias.contains("campo sender_localpart"));
-        assert!(texto_das_divergencias.contains("campo namespaces.users"));
-        assert!(texto_das_divergencias.contains("campo namespaces.aliases"));
+        let divergences = compare(&parsed, &expected);
+        let divergence_text = divergences.join("\n");
+        assert!(divergence_text.contains("campo sender_localpart"));
+        assert!(divergence_text.contains("campo namespaces.users"));
+        assert!(divergence_text.contains("campo namespaces.aliases"));
     }
 
     #[test]
-    fn valor_canario_nao_aparece_nas_divergencias() {
+    fn token_values_are_absent_from_divergences() {
         let text = yaml("poph-matrix", "http://outro:2", "ph", &secrets());
-        let lido = ler(&text).expect("legível");
-        let outros = MatrixSecrets {
+        let parsed = parse_registration(&text).expect("legível");
+        let other_secrets = MatrixSecrets {
             as_token: Sensitive::new("as-token-diferente".to_owned()),
             hs_token: Sensitive::new("hs-token-diferente".to_owned()),
         };
-        let esperado = Esperado {
+        let expected = ExpectedRegistration {
             url: "http://esperado:1",
             prefix: "ph",
-            secrets: &outros,
+            secrets: &other_secrets,
         };
-        let divergencias = comparar(&lido, &esperado).join("\n");
-        assert!(divergencias.contains("campo url"));
-        assert!(divergencias.contains(VAR_AS_TOKEN));
-        assert!(divergencias.contains(VAR_HS_TOKEN));
-        for canario in [
-            CANARIO_AS,
-            CANARIO_HS,
+        let divergences = compare(&parsed, &expected).join("\n");
+        assert!(divergences.contains("campo url"));
+        assert!(divergences.contains(VAR_AS_TOKEN));
+        assert!(divergences.contains(VAR_HS_TOKEN));
+        for canary in [
+            AS_TOKEN_CANARY,
+            HS_TOKEN_CANARY,
             "as-token-diferente",
             "hs-token-diferente",
         ] {
             assert!(
-                !divergencias.contains(canario),
-                "o valor do token não pode aparecer: {divergencias}"
+                !divergences.contains(canary),
+                "o valor do token não pode aparecer: {divergences}"
             );
         }
     }
 
     #[test]
-    fn leitor_recusa_formato_que_nao_entende() {
-        for (text, trecho) in [
+    fn parser_rejects_unsupported_format() {
+        for (text, excerpt) in [
             ("id: x\nsem dois pontos\n", "linha 2"),
             (
                 "id: x\nnamespaces:\n  users:\n    - regex: \"@ph_.*\"\n",
@@ -833,13 +803,13 @@ mod testes {
                 "esperava true ou false",
             ),
         ] {
-            let error = ler(text).expect_err("deveria recusar");
-            assert!(error.contains(trecho), "mensagem: {error}");
+            let error = parse_registration(text).expect_err("deveria recusar");
+            assert!(error.contains(excerpt), "mensagem: {error}");
         }
     }
 
     #[test]
-    fn leitor_aceita_o_modelo_da_mx01_com_comentarios() {
+    fn parser_accepts_mx01_template_with_comments() {
         let text = r##"# comentário
 id: poph-matrix-dev
 url: "http://192.168.0.123:18010/matrix"
@@ -858,14 +828,14 @@ namespaces:
       regex: "#dep_.*"
   rooms: []
 "##;
-        let lido = ler(text).expect("modelo da MX-01 tem que ser legível");
-        assert_eq!(lido.users.len(), 1);
-        assert_eq!(lido.aliases.len(), 2);
-        assert_eq!(lido.escalares["url"], "http://192.168.0.123:18010/matrix");
+        let parsed = parse_registration(text).expect("modelo da MX-01 tem que ser legível");
+        assert_eq!(parsed.users.len(), 1);
+        assert_eq!(parsed.aliases.len(), 2);
+        assert_eq!(parsed.scalars["url"], "http://192.168.0.123:18010/matrix");
     }
 
     #[test]
-    fn escalar_escapa_aspas_e_barras() {
-        assert_eq!(escalar("a\"b\\c"), "\"a\\\"b\\\\c\"");
+    fn quoted_scalars_escape_quotes_and_backslashes() {
+        assert_eq!(quote_scalar("a\"b\\c"), "\"a\\\"b\\\\c\"");
     }
 }

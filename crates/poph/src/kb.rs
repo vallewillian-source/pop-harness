@@ -20,10 +20,10 @@ use poph_store::{
 use poph_types::{AgentId, HarnessConfig, KnowledgeGroupId, KnowledgeItemId, OrgId};
 use serde_json::{Value, json};
 
-use crate::apoio::{
-    descrever, falha, parse_id, status_de_texto, status_em_portugues, validar_texto,
-};
 use crate::config;
+use crate::support::{
+    describe, failure, parse_id, status_de_texto, status_em_portugues, validar_texto,
+};
 
 /// Limite do conteúdo de um item, em caracteres (PARIDADE_AGENTE.md §3).
 const LIMITE_CONTEUDO: usize = 1000;
@@ -297,20 +297,20 @@ pub struct StatusArgs {
 /// Executa um subcomando de `poph kb`.
 pub fn executar(
     flag: Option<PathBuf>,
-    ambiente: &config::Ambiente,
+    ambiente: &config::Environment,
     offline: bool,
     org: Option<&str>,
     acao: AcaoKb,
 ) -> ExitCode {
     if !offline {
-        return falha(
+        return failure(
             "use `--offline`: a base de conhecimento é mantida direto no banco enquanto o modo \
              com servidor não existe",
         );
     }
     let (store, org, configuracao) = match abrir(flag, ambiente, org) {
         Ok(trio) => trio,
-        Err(erro) => return falha(erro),
+        Err(erro) => return failure(erro),
     };
     let contexto = Contexto {
         store,
@@ -338,19 +338,19 @@ pub fn executar(
 
 fn abrir(
     flag: Option<PathBuf>,
-    ambiente: &config::Ambiente,
+    ambiente: &config::Environment,
     org: Option<&str>,
 ) -> Result<(Arc<Store>, OrgId, HarnessConfig), String> {
     let texto =
         org.ok_or_else(|| "informe --org com o id (UUID v7) ou o slug da org".to_owned())?;
     let pasta = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let arquivo = config::resolver_arquivo(flag.as_deref(), ambiente, &pasta);
+    let arquivo = config::resolve_file(flag.as_deref(), ambiente, &pasta);
     let configuracao =
-        config::carregar(arquivo.as_deref(), ambiente).map_err(|erro| format!("{erro}"))?;
+        config::load(arquivo.as_deref(), ambiente).map_err(|erro| format!("{erro}"))?;
     let store = Arc::new(
         Store::open(&configuracao).map_err(|erro| format!("não consegui abrir o banco: {erro}"))?,
     );
-    let org = crate::apoio::resolver_org(&store, texto)?;
+    let org = crate::support::resolve_org(&store, texto)?;
     Ok((store, org, configuracao))
 }
 
@@ -394,7 +394,7 @@ impl Contexto {
     fn criar_grupo(&self, args: CriarGrupo) -> ExitCode {
         let nome = match validar_texto("nome do grupo", &args.name, 120) {
             Ok(nome) => nome,
-            Err(erro) => return falha(erro),
+            Err(erro) => return failure(erro),
         };
         match self.store.knowledge().create_group(
             self.org,
@@ -418,7 +418,7 @@ impl Contexto {
                 }
                 ExitCode::SUCCESS
             }
-            Err(erro) => falha(descrever(&erro)),
+            Err(erro) => failure(describe(&erro)),
         }
     }
 
@@ -449,14 +449,14 @@ impl Contexto {
                 }
                 ExitCode::SUCCESS
             }
-            Err(erro) => falha(descrever(&erro)),
+            Err(erro) => failure(describe(&erro)),
         }
     }
 
     fn mostrar_grupo(&self, args: RefGrupo) -> ExitCode {
         let id: KnowledgeGroupId = match parse_id(&args.grupo) {
             Ok(id) => id,
-            Err(erro) => return falha(erro),
+            Err(erro) => return failure(erro),
         };
         match self.store.knowledge().get_group(self.org, id) {
             Ok(grupo) => {
@@ -493,18 +493,18 @@ impl Contexto {
                 }
                 ExitCode::SUCCESS
             }
-            Err(erro) => falha(descrever(&erro)),
+            Err(erro) => failure(describe(&erro)),
         }
     }
 
     fn atualizar_grupo(&self, args: AtualizarGrupo) -> ExitCode {
         let id: KnowledgeGroupId = match parse_id(&args.grupo) {
             Ok(id) => id,
-            Err(erro) => return falha(erro),
+            Err(erro) => return failure(erro),
         };
         let status = match args.status.as_deref().map(status_de_texto).transpose() {
             Ok(status) => status,
-            Err(erro) => return falha(erro),
+            Err(erro) => return failure(erro),
         };
         let mudanca = KnowledgeGroupChange {
             name: args.name,
@@ -535,17 +535,17 @@ impl Contexto {
                 }
                 ExitCode::SUCCESS
             }
-            Err(erro) => falha(descrever(&erro)),
+            Err(erro) => failure(describe(&erro)),
         }
     }
 
     fn excluir_grupo(&self, args: ExcluirGrupo) -> ExitCode {
         let id: KnowledgeGroupId = match parse_id(&args.grupo) {
             Ok(id) => id,
-            Err(erro) => return falha(erro),
+            Err(erro) => return failure(erro),
         };
         if !args.force {
-            return falha(format!(
+            return failure(format!(
                 "o grupo {id} pode ter itens e agentes ligados; confirme com --force"
             ));
         }
@@ -572,7 +572,7 @@ impl Contexto {
                 }
                 ExitCode::SUCCESS
             }
-            Err(erro) => falha(descrever(&erro)),
+            Err(erro) => failure(describe(&erro)),
         }
     }
 
@@ -581,15 +581,15 @@ impl Contexto {
     fn criar_item(&self, args: CriarItem) -> ExitCode {
         let grupo: KnowledgeGroupId = match parse_id(&args.group) {
             Ok(id) => id,
-            Err(erro) => return falha(erro),
+            Err(erro) => return failure(erro),
         };
         let conteudo = match ler_conteudo(args.content.as_deref(), args.content_file.as_deref()) {
             Ok(conteudo) => conteudo,
-            Err(erro) => return falha(erro),
+            Err(erro) => return failure(erro),
         };
         let titulo = match validar_texto("título do item", &args.title, 200) {
             Ok(titulo) => titulo,
-            Err(erro) => return falha(erro),
+            Err(erro) => return failure(erro),
         };
         let novo = NewKnowledgeItem {
             group_id: grupo,
@@ -603,14 +603,14 @@ impl Contexto {
                 let estado = self.sincronizar_grupo(grupo);
                 self.saida_item(&item, args.json, "item criado", estado)
             }
-            Err(erro) => falha(descrever(&erro)),
+            Err(erro) => failure(describe(&erro)),
         }
     }
 
     fn listar_itens(&self, args: ListarItens) -> ExitCode {
         let grupo: KnowledgeGroupId = match parse_id(&args.group) {
             Ok(id) => id,
-            Err(erro) => return falha(erro),
+            Err(erro) => return failure(erro),
         };
         let pagina = Page::with_limit(args.limit);
         match self.store.knowledge().list_items(self.org, grupo, pagina) {
@@ -654,14 +654,14 @@ impl Contexto {
                 }
                 ExitCode::SUCCESS
             }
-            Err(erro) => falha(descrever(&erro)),
+            Err(erro) => failure(describe(&erro)),
         }
     }
 
     fn mostrar_item(&self, args: RefItem) -> ExitCode {
         let id: KnowledgeItemId = match parse_id(&args.item) {
             Ok(id) => id,
-            Err(erro) => return falha(erro),
+            Err(erro) => return failure(erro),
         };
         match self.store.knowledge().get_item(self.org, id) {
             Ok(item) => {
@@ -687,14 +687,14 @@ impl Contexto {
                 }
                 ExitCode::SUCCESS
             }
-            Err(erro) => falha(descrever(&erro)),
+            Err(erro) => failure(describe(&erro)),
         }
     }
 
     fn atualizar_item(&self, args: AtualizarItem) -> ExitCode {
         let id: KnowledgeItemId = match parse_id(&args.item) {
             Ok(id) => id,
-            Err(erro) => return falha(erro),
+            Err(erro) => return failure(erro),
         };
         let grupo = match args
             .group
@@ -703,18 +703,18 @@ impl Contexto {
             .transpose()
         {
             Ok(grupo) => grupo,
-            Err(erro) => return falha(erro),
+            Err(erro) => return failure(erro),
         };
         let conteudo = match (args.content.as_deref(), args.content_file.as_deref()) {
             (None, None) => None,
             (inline, arquivo) => match ler_conteudo(inline, arquivo) {
                 Ok(conteudo) => Some(conteudo),
-                Err(erro) => return falha(erro),
+                Err(erro) => return failure(erro),
             },
         };
         let status = match args.status.as_deref().map(status_de_texto).transpose() {
             Ok(status) => status,
-            Err(erro) => return falha(erro),
+            Err(erro) => return failure(erro),
         };
         let tags = (!args.tag.is_empty()).then_some(args.tag);
         let mudanca = KnowledgeItemChange {
@@ -734,14 +734,14 @@ impl Contexto {
                 let estado = self.sincronizar_grupo(item.group_id);
                 self.saida_item(&item, args.json, "item atualizado", estado)
             }
-            Err(erro) => falha(descrever(&erro)),
+            Err(erro) => failure(describe(&erro)),
         }
     }
 
     fn excluir_item(&self, args: ExcluirItem) -> ExitCode {
         let id: KnowledgeItemId = match parse_id(&args.item) {
             Ok(id) => id,
-            Err(erro) => return falha(erro),
+            Err(erro) => return failure(erro),
         };
         let grupo = self
             .store
@@ -766,7 +766,7 @@ impl Contexto {
                 }
                 ExitCode::SUCCESS
             }
-            Err(erro) => falha(descrever(&erro)),
+            Err(erro) => failure(describe(&erro)),
         }
     }
 
@@ -775,11 +775,11 @@ impl Contexto {
     fn vincular(&self, args: LinkArgs, ligar: bool) -> ExitCode {
         let grupo: KnowledgeGroupId = match parse_id(&args.grupo) {
             Ok(id) => id,
-            Err(erro) => return falha(erro),
+            Err(erro) => return failure(erro),
         };
         let agente = match self.resolver_agente(&args.agent) {
             Ok(agente) => agente,
-            Err(erro) => return falha(erro),
+            Err(erro) => return failure(erro),
         };
         let resultado = if ligar {
             self.store
@@ -815,23 +815,23 @@ impl Contexto {
                 }
                 ExitCode::SUCCESS
             }
-            Err(erro) => falha(descrever(&erro)),
+            Err(erro) => failure(describe(&erro)),
         }
     }
 
     fn reindexar(&self, args: ReindexArgs) -> ExitCode {
         let base = match self.base() {
             Ok(base) => base,
-            Err(erro) => return falha(erro),
+            Err(erro) => return failure(erro),
         };
         let agentes = match &args.agent {
             Some(referencia) => match self.resolver_agente(referencia) {
                 Ok(agente) => vec![agente],
-                Err(erro) => return falha(erro),
+                Err(erro) => return failure(erro),
             },
             None => match self.todos_os_agentes() {
                 Ok(agentes) => agentes,
-                Err(erro) => return falha(erro),
+                Err(erro) => return failure(erro),
             },
         };
         let mut relatorios = Vec::new();
@@ -841,7 +841,7 @@ impl Contexto {
                     "agent": agente.to_string(),
                     "indexed": json_indexacao(&relatorio),
                 })),
-                Err(erro) => return falha(erro),
+                Err(erro) => return failure(erro),
             }
         }
         if args.json {
@@ -869,15 +869,15 @@ impl Contexto {
     fn buscar(&self, args: SearchArgs) -> ExitCode {
         let base = match self.base() {
             Ok(base) => base,
-            Err(erro) => return falha(erro),
+            Err(erro) => return failure(erro),
         };
         let agente = match self.resolver_agente(&args.agent) {
             Ok(agente) => agente,
-            Err(erro) => return falha(erro),
+            Err(erro) => return failure(erro),
         };
         let agente_registro = match self.store.agents().get(self.org, agente) {
             Ok(agente) => agente,
-            Err(erro) => return falha(descrever(&erro)),
+            Err(erro) => return failure(describe(&erro)),
         };
         let top_k = args.top_k.unwrap_or_else(|| {
             usize::try_from(agente_registro.rag_top_k)
@@ -886,7 +886,7 @@ impl Contexto {
         });
         let runtime = match runtime() {
             Ok(runtime) => runtime,
-            Err(erro) => return falha(erro),
+            Err(erro) => return failure(erro),
         };
         let trechos = runtime.block_on(async {
             use poph_agent::{KnowledgeSearcher, SearchParameters};
@@ -929,7 +929,7 @@ impl Contexto {
                 }
                 ExitCode::SUCCESS
             }
-            Err(erro) => falha(format!("a busca falhou: {erro}")),
+            Err(erro) => failure(format!("a busca falhou: {erro}")),
         }
     }
 
@@ -938,9 +938,9 @@ impl Contexto {
             Some(texto) => match parse_id::<KnowledgeGroupId>(texto) {
                 Ok(id) => match self.store.knowledge().get_group(self.org, id) {
                     Ok(grupo) => vec![grupo],
-                    Err(erro) => return falha(descrever(&erro)),
+                    Err(erro) => return failure(describe(&erro)),
                 },
-                Err(erro) => return falha(erro),
+                Err(erro) => return failure(erro),
             },
             None => match self
                 .store
@@ -948,7 +948,7 @@ impl Contexto {
                 .list_groups(self.org, Page::with_limit(200))
             {
                 Ok(grupos) => grupos,
-                Err(erro) => return falha(descrever(&erro)),
+                Err(erro) => return failure(describe(&erro)),
             },
         };
         let base = self.base().ok();
@@ -1002,7 +1002,11 @@ impl Contexto {
     /// Base pronta para escrever e reindexar. O embedding passa pela fila da HR-15, com o limite
     /// por org: escrever um item de uma org não ocupa o modelo das outras.
     fn base(&self) -> Result<Arc<KnowledgeBase>, String> {
-        crate::rag::abrir_base_com_fila(&self.configuracao, Arc::clone(&self.store), self.org)
+        crate::rag::open_queued_knowledge_base(
+            &self.configuracao,
+            Arc::clone(&self.store),
+            self.org,
+        )
     }
 
     fn sincronizar(
@@ -1052,7 +1056,7 @@ impl Contexto {
                 .store
                 .agents()
                 .list(self.org, pagina)
-                .map_err(|erro| descrever(&erro))?;
+                .map_err(|erro| describe(&erro))?;
             if lote.is_empty() {
                 return Ok(agentes);
             }
@@ -1110,13 +1114,13 @@ impl Contexto {
                 .agents()
                 .get(self.org, id)
                 .map(|agente| agente.id)
-                .map_err(|erro| descrever(&erro));
+                .map_err(|erro| describe(&erro));
         }
         self.store
             .agents()
             .by_slug(self.org, texto)
             .map(|agente| agente.id)
-            .map_err(|erro| descrever(&erro))
+            .map_err(|erro| describe(&erro))
     }
 
     fn saida_item(

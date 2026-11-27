@@ -33,15 +33,15 @@ use poph_store::{NewAuditEntry, StateMatrixOrg, Store};
 use poph_types::{DepartmentId, HarnessConfig, OrgId};
 use serde_json::{Value, json};
 
-use crate::apoio::{descrever, exigir_offline, imprimir_json, parse_id, resolver_org};
 use crate::config;
+use crate::support::{describe, parse_id, print_json, require_offline, resolve_org};
 
 /// Código de saída quando a versão do estado mudou entre a leitura e a gravação (o `412` da API).
 pub const SAIDA_CONFLITO: u8 = 3;
 
 /// Opções comuns: só a saída em JSON.
 #[derive(Debug, Args)]
-pub struct SaidaArgs {
+pub struct OutputArgs {
     /// Saída em JSON (formato estável, `versao_relatorio` = 1).
     #[arg(long)]
     pub json: bool,
@@ -49,7 +49,7 @@ pub struct SaidaArgs {
 
 /// Opções de `poph matrix espaco`: sem `--departamento` lista; com ele cria ou liga.
 #[derive(Debug, Args)]
-pub struct EspacoArgs {
+pub struct SpaceArgs {
     /// Departamento do espaço (id UUID v7 da org). Sem ele, lista os espaços da org.
     #[arg(long = "departamento", value_name = "ID")]
     pub department: Option<String>,
@@ -100,19 +100,19 @@ struct Contexto {
 /// Abre a configuração e o banco e resolve a org. Exige `--offline` e `--org`.
 fn abrir(
     flag: Option<PathBuf>,
-    ambiente: &config::Ambiente,
+    ambiente: &config::Environment,
     offline: bool,
     org: Option<&str>,
 ) -> Result<Contexto, String> {
-    exigir_offline(offline)?;
+    require_offline(offline)?;
     let text = org.ok_or_else(|| "informe --org com o id (UUID v7) ou o slug da org".to_owned())?;
     let pasta = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let arquivo = config::resolver_arquivo(flag.as_deref(), ambiente, &pasta);
-    let config = config::carregar(arquivo.as_deref(), ambiente)
+    let arquivo = config::resolve_file(flag.as_deref(), ambiente, &pasta);
+    let config = config::load(arquivo.as_deref(), ambiente)
         .map_err(|error| format!("configuração inválida: {error}"))?;
     let store =
         Store::open(&config).map_err(|error| format!("não consegui abrir o banco: {error}"))?;
-    let org = resolver_org(&store, text)?;
+    let org = resolve_org(&store, text)?;
     Ok(Contexto {
         store: Arc::new(store),
         org,
@@ -123,10 +123,10 @@ fn abrir(
 /// Executa `poph matrix estado|ligar|desligar|espaco`.
 pub fn state(
     flag: Option<PathBuf>,
-    ambiente: &config::Ambiente,
+    ambiente: &config::Environment,
     offline: bool,
     org: Option<&str>,
-    args: &SaidaArgs,
+    args: &OutputArgs,
 ) -> ExitCode {
     let ctx = match abrir(flag, ambiente, offline, org) {
         Ok(ctx) => ctx,
@@ -136,13 +136,13 @@ pub fn state(
 }
 
 /// `poph matrix ligar` ou `desligar`.
-pub fn ligar_ou_desligar(
+pub fn set_enabled(
     flag: Option<PathBuf>,
-    ambiente: &config::Ambiente,
+    ambiente: &config::Environment,
     offline: bool,
     org: Option<&str>,
     ligar: bool,
-    args: &SaidaArgs,
+    args: &OutputArgs,
 ) -> ExitCode {
     let ctx = match abrir(flag, ambiente, offline, org) {
         Ok(ctx) => ctx,
@@ -154,10 +154,10 @@ pub fn ligar_ou_desligar(
 /// `poph matrix espaco …`.
 pub fn space(
     flag: Option<PathBuf>,
-    ambiente: &config::Ambiente,
+    ambiente: &config::Environment,
     offline: bool,
     org: Option<&str>,
-    args: &EspacoArgs,
+    args: &SpaceArgs,
 ) -> ExitCode {
     let ctx = match abrir(flag, ambiente, offline, org) {
         Ok(ctx) => ctx,
@@ -215,7 +215,7 @@ fn mostrar_estado(ctx: &Contexto, json: bool) -> Resultado {
     let slug = ler(ctx.store.orgs().get(ctx.org))?.slug;
 
     if json {
-        imprimir_json(&json!({
+        print_json(&json!({
             "versao_relatorio": 1,
             "org": slug,
             "ligado": linha.linked,
@@ -274,7 +274,7 @@ fn alterar_ligacao(ctx: &Contexto, ligar: bool, json: bool) -> Resultado {
         Ok(depois) => {
             let slug = ler(ctx.store.orgs().get(ctx.org))?.slug;
             if json {
-                imprimir_json(&json!({
+                print_json(&json!({
                     "versao_relatorio": 1,
                     "org": slug,
                     "ligado": depois.linked,
@@ -317,7 +317,7 @@ fn aplicar_ligacao(
         .store
         .matrix()
         .state(ctx.org)
-        .map_err(|error| ErroLigacao::Other(descrever(&error)))?;
+        .map_err(|error| ErroLigacao::Other(describe(&error)))?;
     if atual.updated_at != esperada {
         return Err(ErroLigacao::VersaoMudou);
     }
@@ -326,7 +326,7 @@ fn aplicar_ligacao(
     } else {
         ctx.store.matrix().disable(ctx.org)
     }
-    .map_err(|error| ErroLigacao::Other(descrever(&error)))?;
+    .map_err(|error| ErroLigacao::Other(describe(&error)))?;
     auditar(ctx, "update", "matrix", ctx.org.to_string()).map_err(ErroLigacao::Other)?;
     Ok(depois)
 }
@@ -360,7 +360,7 @@ fn listar_espacos(ctx: &Contexto, json: bool) -> Resultado {
                 })
             })
             .collect();
-        imprimir_json(&json!({ "versao_relatorio": 1, "org": slug, "espacos": lista }));
+        print_json(&json!({ "versao_relatorio": 1, "org": slug, "espacos": lista }));
     } else if itens.is_empty() {
         println!("nenhum espaço por departamento na org `{slug}`.");
     } else {
@@ -423,7 +423,7 @@ fn ensure_space(
         OrigemGravada::Linked => "linked",
     };
     if json {
-        imprimir_json(&json!({
+        print_json(&json!({
             "versao_relatorio": 1,
             "departamento": department.id.to_string(),
             "departamento_nome": department.name,
@@ -451,7 +451,7 @@ fn desligar_espaco(ctx: &Contexto, departamento_texto: &str, json: bool) -> Resu
     let desligado = ler(ctx.store.matrix().disable_space(ctx.org, department.id))?;
     auditar(ctx, "delete", "matrix_space", department.id.to_string())?;
     if json {
-        imprimir_json(&json!({
+        print_json(&json!({
             "versao_relatorio": 1,
             "departamento": department.id.to_string(),
             "removido": desligado.removed,
@@ -519,7 +519,7 @@ fn descricao_origem(origin: &str) -> &'static str {
 
 /// Converte o erro do banco na frase do operador.
 fn ler<T>(resultado: Result<T, poph_store::StoreError>) -> Result<T, String> {
-    resultado.map_err(|error| descrever(&error))
+    resultado.map_err(|error| describe(&error))
 }
 
 /// Auditoria da alteração, com ator `cli` (a API grava `admin_token`).

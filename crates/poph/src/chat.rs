@@ -20,9 +20,9 @@ use poph_store::{Conversa, Direction, NewConversation, NewMessage, Role, Store};
 use poph_types::{AgentId, BaseMetrics, ConversationId, OrgId, Registry};
 use serde_json::json;
 
-use crate::apoio;
 use crate::config;
 use crate::montagem;
+use crate::support;
 
 /// Opções do `poph chat`.
 #[derive(Debug, Args)]
@@ -43,19 +43,19 @@ pub struct ChatArgs {
 /// Executa o `poph chat`.
 pub fn executar(
     flag: Option<PathBuf>,
-    ambiente: &config::Ambiente,
+    ambiente: &config::Environment,
     org: Option<&str>,
     args: ChatArgs,
 ) -> ExitCode {
     match rodar(flag, ambiente, org, args) {
         Ok(()) => ExitCode::SUCCESS,
-        Err(mensagem) => apoio::falha(mensagem),
+        Err(mensagem) => support::failure(mensagem),
     }
 }
 
 fn rodar(
     flag: Option<PathBuf>,
-    ambiente: &config::Ambiente,
+    ambiente: &config::Environment,
     org: Option<&str>,
     args: ChatArgs,
 ) -> Result<(), String> {
@@ -63,18 +63,18 @@ fn rodar(
         "informe --org com o id (UUID v7) ou o slug da org para abrir a conversa".to_owned()
     })?;
     let pasta = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let arquivo = config::resolver_arquivo(flag.as_deref(), ambiente, &pasta);
+    let arquivo = config::resolve_file(flag.as_deref(), ambiente, &pasta);
     let configuracao =
-        config::carregar(arquivo.as_deref(), ambiente).map_err(|erro| format!("{erro}"))?;
+        config::load(arquivo.as_deref(), ambiente).map_err(|erro| format!("{erro}"))?;
     let store = Arc::new(
         Store::open(&configuracao).map_err(|erro| format!("não consegui abrir o banco: {erro}"))?,
     );
-    let org = apoio::resolver_org(&store, texto_org)?;
+    let org = support::resolve_org(&store, texto_org)?;
     let agente = resolver_agente(&store, org, &args.agente)?;
     let conversa = resolver_conversa(&store, org, &agente.id, &args)?;
 
     let nome_da_chave = configuracao.llm.api_key_env.clone();
-    let chave = config::chave_llm(ambiente, &nome_da_chave).ok_or_else(|| {
+    let chave = config::llm_key(ambiente, &nome_da_chave).ok_or_else(|| {
         format!("defina {nome_da_chave} no ambiente desta sessão para conversar com o modelo")
     })?;
     let registro = Registry::new();
@@ -86,7 +86,7 @@ fn rodar(
         Arc::clone(&store),
         montagem::Chaves {
             llm: chave,
-            jev: config::segredos(ambiente).typesafe,
+            jev: config::secrets(ambiente).typesafe,
         },
         montagem::Metricas::proprias(metricas_base),
         montagem::FluxosDoProcesso::default(),
@@ -276,16 +276,16 @@ async fn ler_linha() -> Option<String> {
 /// Acha o agente pelo id (UUID v7) ou pelo slug, dentro da org.
 fn resolver_agente(store: &Store, org: OrgId, texto: &str) -> Result<poph_store::Agente, String> {
     if uuid::Uuid::parse_str(texto).is_ok() {
-        let id: AgentId = apoio::parse_id(texto)?;
+        let id: AgentId = support::parse_id(texto)?;
         return store
             .agents()
             .get(org, id)
-            .map_err(|erro| apoio::descrever(&erro));
+            .map_err(|erro| support::describe(&erro));
     }
     store
         .agents()
         .by_slug(org, texto)
-        .map_err(|erro| apoio::descrever(&erro))
+        .map_err(|erro| support::describe(&erro))
 }
 
 /// Retoma a conversa pedida ou abre uma nova com memória zerada.
@@ -297,11 +297,11 @@ fn resolver_conversa(
 ) -> Result<Conversa, String> {
     match &args.conversa {
         Some(texto) => {
-            let id: ConversationId = apoio::parse_id(texto)?;
+            let id: ConversationId = support::parse_id(texto)?;
             let conversa = store
                 .conversations()
                 .get(org, id)
-                .map_err(|erro| apoio::descrever(&erro))?;
+                .map_err(|erro| support::describe(&erro))?;
             if conversa.agent_id != *agente {
                 return Err(format!(
                     "a conversa {id} é de outro agente; abra uma conversa nova ou passe o agente \

@@ -1,18 +1,3 @@
-//! `poph backup`: exporta e importa uma org num arquivo único (HR-53).
-//!
-//! O arquivo é JSON, com versão de formato declarada, a org de origem identificada, as linhas das
-//! tabelas da org e os blobs (biblioteca e anexos) em base64 — deduplicados por sha256. A leitura
-//! e a escrita das tabelas ficam no `poph-store` (`backup::RetratoOrg`); aqui ficam o arquivo, os
-//! blobs (`poph-files`) e a reindexação depois da importação.
-//!
-//! Regras que valem aqui:
-//! - segredo nunca sai: de integração o arquivo leva só os **nomes** dos campos preenchidos e a
-//!   marca `tem_segredo`; o valor cifrado fica no banco (`secrets_enc`) e não entra no arquivo;
-//! - caminho de blob nunca sai: o arquivo guarda `sha256` e os bytes, e o caminho é recalculado
-//!   na importação (`<org de destino>/<sha256>`);
-//! - os dois comandos exigem `--offline` (rodam direto no banco, com o servidor parado);
-//! - o arquivo é escrito numa pasta temporária ao lado e renomeado no fim: não fica pela metade.
-
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -28,146 +13,155 @@ use poph_store::backup_document;
 use poph_types::{HarnessConfig, OrgId};
 use serde_json::{Map, Value, json};
 
-use crate::apoio::{exigir_offline, falha, imprimir_json, parse_id, resolver_org};
 use crate::config;
+use crate::support::{failure, parse_id, print_json, require_offline, resolve_org};
 
-/// Subcomandos de `poph backup`.
 #[derive(Debug, Subcommand)]
-pub enum AcaoBackup {
-    /// Exporta uma org inteira num arquivo único.
-    Export(ExportarOrg),
-    /// Reconstrói a org a partir de um arquivo de `backup export`.
-    Import(ImportarOrg),
+pub enum BackupAction {
+    #[command(about = "Exporta uma org inteira num arquivo único")]
+    Export(ExportOrg),
+    #[command(about = "Reconstrói a org a partir de um arquivo de `backup export`")]
+    Import(ImportOrg),
 }
 
-/// `poph backup export <org> --out <arquivo>`.
 #[derive(Debug, Args)]
-pub struct ExportarOrg {
-    /// Org a exportar: id (UUID v7) ou slug.
+pub struct ExportOrg {
+    #[arg(help = "Org a exportar: id (UUID v7) ou slug")]
     pub org: String,
 
-    /// Arquivo de saída (um só, com tudo dentro).
-    #[arg(long, value_name = "ARQUIVO")]
+    #[arg(
+        long,
+        value_name = "ARQUIVO",
+        help = "Arquivo de saída (um só, com tudo dentro)"
+    )]
     pub out: PathBuf,
 
-    /// Inclui conversas, mensagens, turnos, as duas filas e os carrinhos.
-    #[arg(long)]
-    pub com_conversas: bool,
+    #[arg(
+        long = "com-conversas",
+        help = "Inclui conversas, mensagens, turnos, as duas filas e os carrinhos"
+    )]
+    pub with_conversations: bool,
 
-    /// Sobrescreve o arquivo se ele já existir.
-    #[arg(long)]
-    pub sobrescrever: bool,
+    #[arg(
+        long = "sobrescrever",
+        help = "Sobrescreve o arquivo se ele já existir"
+    )]
+    pub overwrite: bool,
 
-    /// Saída em JSON (formato estável, sem segredo e sem caminho de blob).
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Saída em JSON (formato estável, sem segredo e sem caminho de blob)"
+    )]
     pub json: bool,
 }
 
-/// `poph backup import <arquivo>`.
 #[derive(Debug, Args)]
-pub struct ImportarOrg {
-    /// Arquivo gerado por `poph backup export`.
-    pub arquivo: PathBuf,
+pub struct ImportOrg {
+    #[arg(
+        value_name = "ARQUIVO",
+        help = "Arquivo gerado por `poph backup export`"
+    )]
+    pub file: PathBuf,
 
-    /// Org de destino já existente (id ou slug). Sem ele, vale a org de origem do arquivo.
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Org de destino já existente (id ou slug). Sem ele, vale a org de origem do arquivo"
+    )]
     pub org: Option<String>,
 
-    /// Autoriza atualizar linhas que já existem no destino (padrão: a importação recusa).
-    #[arg(long)]
-    pub sobrescrever: bool,
+    #[arg(
+        long = "sobrescrever",
+        help = "Autoriza atualizar linhas que já existem no destino (padrão: a importação recusa)"
+    )]
+    pub overwrite: bool,
 
-    /// Saída em JSON (formato estável).
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON (formato estável)")]
     pub json: bool,
 }
 
-/// Executa `poph backup`.
-pub fn executar(
+pub fn run(
     flag: Option<PathBuf>,
-    ambiente: &config::Ambiente,
+    environment: &config::Environment,
     offline: bool,
-    acao: AcaoBackup,
+    action: BackupAction,
 ) -> ExitCode {
-    if let Err(erro) = exigir_offline(offline) {
-        return falha(erro);
+    if let Err(error) = require_offline(offline) {
+        return failure(error);
     }
-    match acao {
-        AcaoBackup::Export(args) => exportar(flag, ambiente, args),
-        AcaoBackup::Import(args) => importar(flag, ambiente, args),
+    match action {
+        BackupAction::Export(args) => export(flag, environment, args),
+        BackupAction::Import(args) => import(flag, environment, args),
     }
 }
 
-// ───────────────────────────────── Exportar ─────────────────────────────────
-
-fn exportar(flag: Option<PathBuf>, ambiente: &config::Ambiente, args: ExportarOrg) -> ExitCode {
-    if args.out.exists() && !args.sobrescrever {
-        return falha(format!(
+fn export(flag: Option<PathBuf>, environment: &config::Environment, args: ExportOrg) -> ExitCode {
+    if args.out.exists() && !args.overwrite {
+        return failure(format!(
             "o arquivo {} já existe; escolha outro caminho ou use --sobrescrever",
             args.out.display()
         ));
     }
-    let (store, configuracao) = match abrir(flag, ambiente) {
-        Ok(par) => par,
-        Err(erro) => return falha(erro),
+    let (store, configuration) = match open_store(flag, environment) {
+        Ok(pair) => pair,
+        Err(error) => return failure(error),
     };
-    let org = match resolver_org(&store, &args.org) {
+    let org = match resolve_org(&store, &args.org) {
         Ok(org) => org,
-        Err(erro) => return falha(erro),
+        Err(error) => return failure(error),
     };
-    let retrato = match store.org_snapshot(org, args.com_conversas) {
-        Ok(retrato) => retrato,
-        Err(erro) => return falha(crate::apoio::descrever(&erro)),
+    let snapshot = match store.org_snapshot(org, args.with_conversations) {
+        Ok(snapshot) => snapshot,
+        Err(error) => return failure(crate::support::describe(&error)),
     };
 
-    let pasta_blobs = configuracao.blobs();
-    let limite = FileConfig::default(&pasta_blobs).byte_limit;
-    let blobs = match ler_blobs(&retrato, org, &pasta_blobs, limite) {
+    let blob_dir = configuration.blobs();
+    let limit = FileConfig::default(&blob_dir).byte_limit;
+    let blobs = match read_blobs(&snapshot, org, &blob_dir, limit) {
         Ok(blobs) => blobs,
-        Err(erro) => return falha(erro),
+        Err(error) => return failure(error),
     };
 
-    let chave = config::segredos(ambiente)
-        .cifra
+    let key = config::secrets(environment)
+        .cipher
         .as_ref()
-        .and_then(|valor| CipherKey::derive(valor.expose()).ok());
-    // A chave só serve para ler os **nomes** dos campos de segredo preenchidos; o valor nunca sai.
-    let nomes_do_segredo = |blob: &[u8]| -> Option<Vec<String>> {
-        let mapa = chave.as_ref()?.decifrar(blob).ok()?;
-        Some(mapa.keys().cloned().collect())
+        .and_then(|value| CipherKey::derive(value.expose()).ok());
+
+    let secret_names = |blob: &[u8]| -> Option<Vec<String>> {
+        let map = key.as_ref()?.decifrar(blob).ok()?;
+        Some(map.keys().cloned().collect())
     };
-    let documento = backup_document::document(
-        &retrato,
-        args.com_conversas,
+    let document = backup_document::document(
+        &snapshot,
+        args.with_conversations,
         store.now(),
         &blobs,
-        &nomes_do_segredo,
+        &secret_names,
     );
-    let bytes = match serde_json::to_vec(&documento) {
+    let bytes = match serde_json::to_vec(&document) {
         Ok(bytes) => bytes,
-        Err(erro) => return falha(format!("não consegui montar o arquivo: {erro}")),
+        Err(error) => return failure(format!("não consegui montar o arquivo: {error}")),
     };
-    if let Err(erro) = escrever_atomico(&args.out, &bytes) {
-        return falha(erro);
+    if let Err(error) = write_atomically(&args.out, &bytes) {
+        return failure(error);
     }
 
-    let tamanho = bytes.len() as u64;
-    let contagens: Map<String, Value> = retrato
+    let size = bytes.len() as u64;
+    let counts: Map<String, Value> = snapshot
         .tables
         .iter()
-        .map(|(nome, linhas)| (nome.clone(), Value::from(linhas.len())))
+        .map(|(name, rows)| (name.clone(), Value::from(rows.len())))
         .collect();
     if args.json {
-        imprimir_json(&json!({
+        print_json(&json!({
             "versao_relatorio": 1,
             "arquivo": args.out.display().to_string(),
-            "tamanho_bytes": tamanho,
-            "com_conversas": args.com_conversas,
+            "tamanho_bytes": size,
+            "com_conversas": args.with_conversations,
             "org": {
-                "id": retrato.org.get("id").cloned().unwrap_or(Value::Null),
-                "slug": retrato.org.get("slug").cloned().unwrap_or(Value::Null),
+                "id": snapshot.org.get("id").cloned().unwrap_or(Value::Null),
+                "slug": snapshot.org.get("slug").cloned().unwrap_or(Value::Null),
             },
-            "tabelas": contagens,
+            "tabelas": counts,
             "blobs": blobs.len(),
         }));
         return ExitCode::SUCCESS;
@@ -175,12 +169,12 @@ fn exportar(flag: Option<PathBuf>, ambiente: &config::Ambiente, args: ExportarOr
     println!(
         "Org exportada para {} ({} KB).",
         args.out.display(),
-        tamanho.div_ceil(1024)
+        size.div_ceil(1024)
     );
     println!();
-    for (nome, linhas) in &retrato.tables {
-        if !linhas.is_empty() {
-            println!("  {nome}: {}", linhas.len());
+    for (name, rows) in &snapshot.tables {
+        if !rows.is_empty() {
+            println!("  {name}: {}", rows.len());
         }
     }
     println!();
@@ -188,243 +182,223 @@ fn exportar(flag: Option<PathBuf>, ambiente: &config::Ambiente, args: ExportarOr
         "Blobs no arquivo: {} (um por sha256; o caminho é recalculado na importação).",
         blobs.len()
     );
-    if !args.com_conversas {
+    if !args.with_conversations {
         println!("Conversas não entraram (use --com-conversas para levá-las).");
     }
     ExitCode::SUCCESS
 }
 
-/// Lê do disco o conteúdo de cada blob citado no retrato (biblioteca e anexos).
-fn ler_blobs(
-    retrato: &OrgSnapshot,
+fn read_blobs(
+    snapshot: &OrgSnapshot,
     org: OrgId,
-    pasta_blobs: &Path,
-    limite: u64,
+    blob_dir: &Path,
+    limit: u64,
 ) -> Result<BTreeMap<String, Vec<u8>>, String> {
-    let mut nomes = BTreeMap::new();
-    for tabela in ["file_library", "attachments"] {
-        for linha in retrato.tables.get(tabela).into_iter().flatten() {
-            let (Some(sha), Some(nome)) = (
-                linha.get("sha256").and_then(Value::as_str),
-                linha.get("name").and_then(Value::as_str),
+    let mut names = BTreeMap::new();
+    for table in ["file_library", "attachments"] {
+        for row in snapshot.tables.get(table).into_iter().flatten() {
+            let (Some(sha), Some(name)) = (
+                row.get("sha256").and_then(Value::as_str),
+                row.get("name").and_then(Value::as_str),
             ) else {
                 continue;
             };
-            nomes
+            names
                 .entry(sha.to_owned())
-                .or_insert_with(|| nome.to_owned());
+                .or_insert_with(|| name.to_owned());
         }
     }
     let mut blobs = BTreeMap::new();
-    for (sha, nome) in nomes {
-        let bytes = poph_files::blob::read(pasta_blobs, org, &sha, limite).map_err(|erro| {
-            format!("o conteúdo do arquivo `{nome}` (sha256 {sha}) não está disponível: {erro}")
+    for (sha, name) in names {
+        let bytes = poph_files::blob::read(blob_dir, org, &sha, limit).map_err(|error| {
+            format!("o conteúdo do arquivo `{name}` (sha256 {sha}) não está disponível: {error}")
         })?;
         blobs.insert(sha, bytes);
     }
     Ok(blobs)
 }
 
-// ───────────────────────────────── Importar ─────────────────────────────────
-
-fn importar(flag: Option<PathBuf>, ambiente: &config::Ambiente, args: ImportarOrg) -> ExitCode {
-    let (store, configuracao) = match abrir(flag, ambiente) {
-        Ok(par) => par,
-        Err(erro) => return falha(erro),
+fn import(flag: Option<PathBuf>, environment: &config::Environment, args: ImportOrg) -> ExitCode {
+    let (store, configuration) = match open_store(flag, environment) {
+        Ok(pair) => pair,
+        Err(error) => return failure(error),
     };
-    let bytes = match fs::read(&args.arquivo) {
+    let bytes = match fs::read(&args.file) {
         Ok(bytes) => bytes,
-        Err(erro) => {
-            return falha(format!(
-                "não consegui ler {}: {erro}",
-                args.arquivo.display()
-            ));
+        Err(error) => {
+            return failure(format!("não consegui ler {}: {error}", args.file.display()));
         }
     };
-    let (retrato, blobs) = match backup_document::read_document(&bytes) {
-        Ok(documento) => (documento.snapshot, documento.blobs),
-        Err(poph_store::backup_document::DocumentError::Json(motivo)) => {
-            return falha(format!(
-                "o arquivo {} não é um backup do POP Harness (JSON inválido: {motivo})",
-                args.arquivo.display()
+    let (snapshot, blobs) = match backup_document::read_document(&bytes) {
+        Ok(document) => (document.snapshot, document.blobs),
+        Err(poph_store::backup_document::DocumentError::Json(reason)) => {
+            return failure(format!(
+                "o arquivo {} não é um backup do POP Harness (JSON inválido: {reason})",
+                args.file.display()
             ));
         }
-        Err(erro) => return falha(erro.to_string()),
+        Err(error) => return failure(error.to_string()),
     };
 
-    let destino = match &args.org {
-        Some(texto) => match resolver_org(&store, texto) {
+    let target = match &args.org {
+        Some(text) => match resolve_org(&store, text) {
             Ok(org) => ImportTarget::Existing(org),
-            Err(erro) => return falha(erro),
+            Err(error) => return failure(error),
         },
         None => ImportTarget::Origin,
     };
-    let org_destino = match destino {
+    let target_org = match target {
         ImportTarget::Existing(org) => org,
-        ImportTarget::Origin => match org_do_retrato(&retrato) {
+        ImportTarget::Origin => match snapshot_org(&snapshot) {
             Ok(org) => org,
-            Err(erro) => return falha(erro),
+            Err(error) => return failure(error),
         },
     };
 
-    // Recusa de sobrescrita antes de gravar qualquer coisa (nem blob): só `--sobrescrever` autoriza
-    // a importação a regravar linhas que já existem no destino. Conflito de chave natural (mesmo
-    // slug com outro id) tem precedência na mensagem e é recusado mesmo com o flag.
-    if !args.sobrescrever
-        && let Err(erro) = recusar_sobrescrita(&store, &retrato, destino)
+    if !args.overwrite
+        && let Err(error) = refuse_overwrite(&store, &snapshot, target)
     {
-        return falha(erro);
+        return failure(error);
     }
 
-    // Blobs primeiro: são content-addressed (regravar o mesmo hash não muda nada) e ficam no disco
-    // mesmo se a gravação no banco falhar — a retenção apaga órfão depois.
-    let pasta_blobs = configuracao.blobs();
-    for (sha, conteudo) in &blobs {
-        match poph_files::blob::write(&pasta_blobs, org_destino, conteudo) {
-            Ok(gravado) if gravado.sha256 == *sha => {}
+    let blob_dir = configuration.blobs();
+    for (sha, content) in &blobs {
+        match poph_files::blob::write(&blob_dir, target_org, content) {
+            Ok(written) if written.sha256 == *sha => {}
             Ok(_) => {
-                return falha(format!(
+                return failure(format!(
                     "o conteúdo do blob {sha} foi gravado com outro sha256; nada foi importado"
                 ));
             }
-            Err(erro) => {
-                return falha(format!(
-                    "não consegui gravar o conteúdo de um arquivo do backup: {erro}"
+            Err(error) => {
+                return failure(format!(
+                    "não consegui gravar o conteúdo de um arquivo do backup: {error}"
                 ));
             }
         }
     }
 
     let store = Arc::new(store);
-    let relatorio = match store.import_snapshot(retrato, destino) {
-        Ok(relatorio) => relatorio,
-        Err(erro) => return falha(crate::apoio::descrever(&erro)),
+    let report = match store.import_snapshot(snapshot, target) {
+        Ok(report) => report,
+        Err(error) => return failure(crate::support::describe(&error)),
     };
 
-    let (indice, aviso) = reindexar(&configuracao, &store, relatorio.org);
+    let (index, notice) = reindex(&configuration, &store, report.org);
 
     if args.json {
-        imprimir_json(&json!({
+        print_json(&json!({
             "versao_relatorio": 1,
-            "arquivo": args.arquivo.display().to_string(),
+            "arquivo": args.file.display().to_string(),
             "org": {
-                "id": relatorio.org.to_string(),
-                "criada": relatorio.created_org,
+                "id": report.org.to_string(),
+                "criada": report.created_org,
             },
-            "tabelas": relatorio.tables.iter().map(|(nome, gravado)| {
-                (nome.clone(), json!({"inseridas": gravado.inserted, "atualizadas": gravado.updated}))
+            "tabelas": report.tables.iter().map(|(name, written)| {
+                (name.clone(), json!({"inseridas": written.inserted, "atualizadas": written.updated}))
             }).collect::<Map<String, Value>>(),
-            "total": relatorio.total(),
-            "segredos_a_redigitar": relatorio.secrets_to_reenter,
-            "indice": indice,
-            "aviso": aviso,
+            "total": report.total(),
+            "segredos_a_redigitar": report.secrets_to_reenter,
+            "indice": index,
+            "aviso": notice,
         }));
         return ExitCode::SUCCESS;
     }
 
     println!(
         "Org {} {}.",
-        relatorio.org,
-        if relatorio.created_org {
+        report.org,
+        if report.created_org {
             "criada"
         } else {
             "atualizada"
         }
     );
     println!();
-    for (nome, gravado) in &relatorio.tables {
-        if gravado.inserted + gravado.updated > 0 {
+    for (name, written) in &report.tables {
+        if written.inserted + written.updated > 0 {
             println!(
-                "  {nome}: {} nova(s), {} atualizada(s)",
-                gravado.inserted, gravado.updated
+                "  {name}: {} nova(s), {} atualizada(s)",
+                written.inserted, written.updated
             );
         }
     }
-    if relatorio.secrets_to_reenter > 0 {
+    if report.secrets_to_reenter > 0 {
         println!();
         println!(
             "{} integração(ões) vieram sem o segredo: o valor não entra no arquivo. \
              Digite o segredo de novo na aba Integrações do Console.",
-            relatorio.secrets_to_reenter
+            report.secrets_to_reenter
         );
     }
     println!();
     println!(
         "Índice: base de conhecimento com {} trecho(s) em {} agente(s); produtos com {} trecho(s).",
-        indice["base_conhecimento"]["trechos"],
-        indice["base_conhecimento"]["agentes"],
-        indice["produtos"]["trechos"]
+        index["base_conhecimento"]["trechos"],
+        index["base_conhecimento"]["agentes"],
+        index["produtos"]["trechos"]
     );
-    if let Some(aviso) = aviso {
-        eprintln!("[aviso] {aviso}");
+    if let Some(notice) = notice {
+        eprintln!("[aviso] {notice}");
     }
     ExitCode::SUCCESS
 }
 
-/// Valida o documento (formato, versão, org, tabelas) — só para os testes locais da CLI.
 #[cfg(test)]
-fn retrato_do_documento(documento: &Value) -> Result<poph_store::backup::OrgSnapshot, String> {
-    backup_document::document_snapshot(documento).map_err(|erro| erro.to_string())
+fn snapshot_from_document(document: &Value) -> Result<poph_store::backup::OrgSnapshot, String> {
+    backup_document::document_snapshot(document).map_err(|error| error.to_string())
 }
 
-/// Decodifica e confere os blobs — só para os testes locais da CLI.
 #[cfg(test)]
-fn blobs_do_documento(documento: &Value) -> Result<BTreeMap<String, Vec<u8>>, String> {
-    backup_document::document_blobs(documento).map_err(|erro| erro.to_string())
+fn blobs_from_document(document: &Value) -> Result<BTreeMap<String, Vec<u8>>, String> {
+    backup_document::document_blobs(document).map_err(|error| error.to_string())
 }
 
-/// Marca os segredos — só para os testes locais da CLI.
 #[cfg(test)]
-fn marcar_segredos(
-    tabelas: &mut BTreeMap<String, Vec<Value>>,
-    cifrados: &BTreeMap<String, Vec<u8>>,
-    chave: Option<&CipherKey>,
+fn mark_secrets(
+    tables: &mut BTreeMap<String, Vec<Value>>,
+    encrypted: &BTreeMap<String, Vec<u8>>,
+    key: Option<&CipherKey>,
 ) {
-    let nomes = |blob: &[u8]| -> Option<Vec<String>> {
-        let mapa = chave?.decifrar(blob).ok()?;
-        Some(mapa.keys().cloned().collect())
+    let names = |blob: &[u8]| -> Option<Vec<String>> {
+        let map = key?.decifrar(blob).ok()?;
+        Some(map.keys().cloned().collect())
     };
-    backup_document::mark_secrets(tabelas, cifrados, &nomes);
+    backup_document::mark_secrets(tables, encrypted, &names);
 }
 
-/// Recusa a importação quando ela atualizaria linha que já existe no destino.
-///
-/// Conflito de chave natural vem primeiro: se o destino tem o mesmo slug com outro id, a mensagem
-/// é a do conflito (a importação seria recusada de qualquer forma). Sem conflito, a mensagem diz
-/// quantas linhas, em quais tabelas e até cinco exemplos, e como autorizar.
-fn recusar_sobrescrita(
+fn refuse_overwrite(
     store: &Store,
-    retrato: &OrgSnapshot,
-    destino: ImportTarget,
+    snapshot: &OrgSnapshot,
+    target: ImportTarget,
 ) -> Result<(), String> {
-    let atualizacoes = store
-        .check_import_updates(retrato, destino)
-        .map_err(|erro| crate::apoio::descrever(&erro))?;
-    if atualizacoes.empty() {
+    let updates = store
+        .check_import_updates(snapshot, target)
+        .map_err(|error| crate::support::describe(&error))?;
+    if updates.empty() {
         return Ok(());
     }
-    let conflitos = store
-        .check_import_conflicts(retrato, destino)
-        .map_err(|erro| crate::apoio::descrever(&erro))?;
-    if !conflitos.is_empty() {
-        // A gravação recusa com a mensagem de conflito, que é mais específica.
+    let conflicts = store
+        .check_import_conflicts(snapshot, target)
+        .map_err(|error| crate::support::describe(&error))?;
+    if !conflicts.is_empty() {
         return Ok(());
     }
-    let mut exemplos = atualizacoes.examples.join("; ");
-    let resto = atualizacoes.total - atualizacoes.examples.len() as u64;
-    if resto > 0 {
-        exemplos.push_str(&format!("; e mais {resto}"));
+    let mut examples = updates.examples.join("; ");
+    let remaining = updates.total - updates.examples.len() as u64;
+    if remaining > 0 {
+        examples.push_str(&format!("; e mais {remaining}"));
     }
     Err(format!(
-        "a importação atualizaria {} linha(s) que já existem no destino ({}): {exemplos}. \
+        "a importação atualizaria {} linha(s) que já existem no destino ({}): {examples}. \
          Nada foi gravado. Se é isso que você quer, repita com --sobrescrever",
-        atualizacoes.total,
-        atualizacoes.summary(),
+        updates.total,
+        updates.summary(),
     ))
 }
 
-fn org_do_retrato(retrato: &OrgSnapshot) -> Result<OrgId, String> {
-    let id = retrato
+fn snapshot_org(snapshot: &OrgSnapshot) -> Result<OrgId, String> {
+    let id = snapshot
         .org
         .get("id")
         .and_then(Value::as_str)
@@ -432,36 +406,34 @@ fn org_do_retrato(retrato: &OrgSnapshot) -> Result<OrgId, String> {
     parse_id(id)
 }
 
-// ───────────────────────────────── Reindexação ─────────────────────────────────
-
-fn reindexar(
-    configuracao: &HarnessConfig,
+fn reindex(
+    configuration: &HarnessConfig,
     store: &Arc<Store>,
     org: OrgId,
 ) -> (Value, Option<String>) {
-    let pendente = json!({
+    let pending = json!({
         "base_conhecimento": {"agentes": 0, "trechos": 0},
         "produtos": {"trechos": 0},
     });
-    let base = match crate::rag::abrir_base_com_fila(configuracao, Arc::clone(store), org) {
+    let base = match crate::rag::open_queued_knowledge_base(configuration, Arc::clone(store), org) {
         Ok(base) => base,
-        Err(erro) => {
+        Err(error) => {
             return (
-                pendente,
+                pending,
                 Some(format!(
-                    "{erro}. O material foi importado, mas o índice não ficou pronto: rode \
+                    "{error}. O material foi importado, mas o índice não ficou pronto: rode \
                      `poph kb reindex` e `poph product reindex` quando o modelo estiver disponível"
                 )),
             );
         }
     };
-    let catalogo = match crate::rag::abrir_catalogo(configuracao, Arc::clone(store)) {
-        Ok(catalogo) => catalogo,
-        Err(erro) => {
+    let catalog = match crate::rag::open_catalog(configuration, Arc::clone(store)) {
+        Ok(catalog) => catalog,
+        Err(error) => {
             return (
-                pendente,
+                pending,
                 Some(format!(
-                    "{erro}. O material foi importado, mas o índice de produtos não ficou pronto: \
+                    "{error}. O material foi importado, mas o índice de produtos não ficou pronto: \
                      rode `poph product reindex` quando o modelo estiver disponível"
                 )),
             );
@@ -472,35 +444,35 @@ fn reindexar(
         .build()
     {
         Ok(runtime) => runtime,
-        Err(erro) => {
+        Err(error) => {
             return (
-                pendente,
+                pending,
                 Some(format!(
-                    "não consegui iniciar o runtime da reindexação ({erro}); rode `poph kb \
+                    "não consegui iniciar o runtime da reindexação ({error}); rode `poph kb \
                      reindex` e `poph product reindex`"
                 )),
             );
         }
     };
     let base = match runtime.block_on(base.synchronise_org(org)) {
-        Ok(relatorios) => relatorios,
-        Err(erro) => {
+        Ok(reports) => reports,
+        Err(error) => {
             return (
-                pendente,
+                pending,
                 Some(format!(
-                    "não consegui reindexar a base de conhecimento ({erro}); rode `poph kb \
+                    "não consegui reindexar a base de conhecimento ({error}); rode `poph kb \
                      reindex`"
                 )),
             );
         }
     };
-    let produtos = match runtime.block_on(catalogo.synchronise_org(org)) {
-        Ok(relatorios) => relatorios,
-        Err(erro) => {
+    let products = match runtime.block_on(catalog.synchronise_org(org)) {
+        Ok(reports) => reports,
+        Err(error) => {
             return (
-                pendente,
+                pending,
                 Some(format!(
-                    "não consegui reindexar os produtos ({erro}); rode `poph product reindex`"
+                    "não consegui reindexar os produtos ({error}); rode `poph product reindex`"
                 )),
             );
         }
@@ -509,131 +481,128 @@ fn reindexar(
         json!({
             "base_conhecimento": {
                 "agentes": base.len(),
-                "trechos": base.iter().map(|(_, relatorio)| relatorio.stored_chunks).sum::<usize>(),
+                "trechos": base.iter().map(|(_, report)| report.stored_chunks).sum::<usize>(),
             },
             "produtos": {
-                "trechos": produtos.iter().map(|(_, relatorio)| relatorio.stored_chunks).sum::<usize>(),
+                "trechos": products.iter().map(|(_, report)| report.stored_chunks).sum::<usize>(),
             },
         }),
         None,
     )
 }
 
-// ───────────────────────────────── Apoio ─────────────────────────────────
-
-fn abrir(
+fn open_store(
     flag: Option<PathBuf>,
-    ambiente: &config::Ambiente,
+    environment: &config::Environment,
 ) -> Result<(Store, HarnessConfig), String> {
-    let pasta = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let arquivo = config::resolver_arquivo(flag.as_deref(), ambiente, &pasta);
-    let configuracao =
-        config::carregar(arquivo.as_deref(), ambiente).map_err(|erro| erro.to_string())?;
-    let store =
-        Store::open(&configuracao).map_err(|erro| format!("não consegui abrir o banco: {erro}"))?;
-    Ok((store, configuracao))
+    let directory = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let file = config::resolve_file(flag.as_deref(), environment, &directory);
+    let configuration =
+        config::load(file.as_deref(), environment).map_err(|error| error.to_string())?;
+    let store = Store::open(&configuration)
+        .map_err(|error| format!("não consegui abrir o banco: {error}"))?;
+    Ok((store, configuration))
 }
 
-/// Grava o arquivo inteiro num temporário ao lado e renomeia no fim.
-fn escrever_atomico(destino: &Path, bytes: &[u8]) -> Result<(), String> {
-    let pasta = destino
+fn write_atomically(target: &Path, bytes: &[u8]) -> Result<(), String> {
+    let directory = target
         .parent()
-        .filter(|pasta| !pasta.as_os_str().is_empty())
+        .filter(|directory| !directory.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    let nome = destino
+    let name = target
         .file_name()
-        .map(|nome| nome.to_string_lossy().into_owned())
+        .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "backup".to_owned());
-    let temporario = pasta.join(format!(".{nome}.{}.tmp", std::process::id()));
-    fs::write(&temporario, bytes)
-        .map_err(|erro| format!("não consegui escrever {}: {erro}", temporario.display()))?;
-    fs::rename(&temporario, destino).map_err(|erro| {
-        let _ = fs::remove_file(&temporario);
+    let temporary = directory.join(format!(".{name}.{}.tmp", std::process::id()));
+    fs::write(&temporary, bytes)
+        .map_err(|error| format!("não consegui escrever {}: {error}", temporary.display()))?;
+    fs::rename(&temporary, target).map_err(|error| {
+        let _ = fs::remove_file(&temporary);
         format!(
-            "não consegui renomear o arquivo para {}: {erro}",
-            destino.display()
+            "não consegui renomear o arquivo para {}: {error}",
+            target.display()
         )
     })
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
     use poph_store::backup::BACKUP_FORMAT;
     use poph_store::backup_document::{descodificar, encode};
 
     #[test]
-    fn base64_vai_e_volta() {
-        let casos: &[&[u8]] = &[
+    fn base64_round_trips() {
+        let cases: &[&[u8]] = &[
             b"",
             b"f",
             b"fo",
             b"foo",
             "conteudo de um arquivo maior, com acentos: ação".as_bytes(),
         ];
-        for caso in casos {
-            let texto = encode(caso);
-            let voltou = descodificar(&texto).expect("decodifica");
-            assert_eq!(&voltou, caso, "base64 de {:?}", caso);
+        for case in cases {
+            let text = encode(case);
+            let decoded = descodificar(&text).expect("decodifica");
+            assert_eq!(&decoded, case, "base64 de {:?}", case);
         }
     }
 
     #[test]
-    fn base64_recusa_entrada_invalida() {
-        for texto in ["Zm9vYg", "Zm9v-YI==", "Zg==Zg==", "Zm9=v"] {
-            assert!(descodificar(texto).is_err(), "{texto} devia ser recusado");
+    fn base64_rejects_invalid_input() {
+        for text in ["Zm9vYg", "Zm9v-YI==", "Zg==Zg==", "Zm9=v"] {
+            assert!(descodificar(text).is_err(), "{text} devia ser recusado");
         }
     }
 
     #[test]
-    fn documento_de_outro_formato_e_recusado() {
-        let documento = json!({"formato": "outra-coisa", "versao_formato": 1});
-        assert!(retrato_do_documento(&documento).is_err());
+    fn document_with_other_format_is_rejected() {
+        let document = json!({"formato": "outra-coisa", "versao_formato": 1});
+        assert!(snapshot_from_document(&document).is_err());
     }
 
     #[test]
-    fn versao_de_formato_desconhecida_e_recusada() {
-        let documento = json!({"formato": BACKUP_FORMAT, "versao_formato": 99, "org": {}});
-        let erro = retrato_do_documento(&documento).expect_err("devia recusar");
-        assert!(erro.contains("versão de formato"), "{erro}");
+    fn unknown_format_version_is_rejected() {
+        let document = json!({"formato": BACKUP_FORMAT, "versao_formato": 99, "org": {}});
+        let error = snapshot_from_document(&document).expect_err("devia recusar");
+        assert!(error.contains("versão de formato"), "{error}");
     }
 
     #[test]
-    fn blob_com_conteudo_adulterado_e_recusado() {
-        let documento = json!({
+    fn tampered_blob_is_rejected() {
+        let document = json!({
             "blobs": [{
                 "sha256": "0".repeat(64),
                 "conteudo_base64": encode(b"conteudo"),
             }],
         });
-        let erro = blobs_do_documento(&documento).expect_err("devia recusar");
-        assert!(erro.contains("não confere"), "{erro}");
+        let error = blobs_from_document(&document).expect_err("devia recusar");
+        assert!(error.contains("não confere"), "{error}");
     }
 
     #[test]
-    fn segredo_legivel_vira_nomes_e_ilegivel_vira_nulo() {
-        let chave = CipherKey::derive("chave-do-teste").expect("deriva");
-        let mut mapa = std::collections::BTreeMap::new();
-        mapa.insert("token".to_owned(), "valor-secreto".to_owned());
-        let blob = chave.cifrar(&mapa).expect("cifra");
-        let mut cifrados = BTreeMap::new();
-        cifrados.insert("integ-1".to_owned(), blob.clone());
-        cifrados.insert("integ-2".to_owned(), vec![1, 2, 3]);
-        let mut tabelas: BTreeMap<String, Vec<Value>> = BTreeMap::new();
-        tabelas.insert(
+    fn readable_secret_yields_names_and_unreadable_secret_yields_null() {
+        let key = CipherKey::derive("chave-do-teste").expect("deriva");
+        let mut map = std::collections::BTreeMap::new();
+        map.insert("token".to_owned(), "valor-secreto".to_owned());
+        let blob = key.cifrar(&map).expect("cifra");
+        let mut encrypted = BTreeMap::new();
+        encrypted.insert("integ-1".to_owned(), blob.clone());
+        encrypted.insert("integ-2".to_owned(), vec![1, 2, 3]);
+        let mut tables: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+        tables.insert(
             "integrations".to_owned(),
             vec![
                 json!({"id": "integ-1", "tem_segredo": true}),
                 json!({"id": "integ-2", "tem_segredo": true}),
             ],
         );
-        marcar_segredos(&mut tabelas, &cifrados, Some(&chave));
-        let linhas = &tabelas["integrations"];
-        assert_eq!(linhas[0]["segredos_campos"], json!(["token"]));
-        assert!(linhas[1]["segredos_campos"].is_null());
-        // O valor do segredo não aparece em nenhum lugar do que vai para o arquivo.
+        mark_secrets(&mut tables, &encrypted, Some(&key));
+        let rows = &tables["integrations"];
+        assert_eq!(rows[0]["segredos_campos"], json!(["token"]));
+        assert!(rows[1]["segredos_campos"].is_null());
+
         assert!(
-            !serde_json::to_string(&tabelas)
+            !serde_json::to_string(&tables)
                 .unwrap()
                 .contains("valor-secreto")
         );
