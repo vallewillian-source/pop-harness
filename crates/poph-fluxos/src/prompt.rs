@@ -224,14 +224,14 @@ fn destination_in_words(ir: &Ir, destination: &Destination) -> String {
         }
         Destination::Fim {
             resultado,
-            ends_service: encerra_atendimento,
+            ends_service,
             ..
         } => {
             let mut sentence = "Encerra o fluxo".to_owned();
             if let Some(texto) = resultado {
                 let _ = write!(sentence, " com o resultado \"{texto}\"");
             }
-            if *encerra_atendimento {
+            if *ends_service {
                 sentence.push_str(" e o atendimento");
             }
             sentence.push('.');

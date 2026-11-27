@@ -13,7 +13,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use poph_fluxos::{
-    Compiled, Departamento, Ir, Limites, RevisionKey, compile, diff, formatar_com,
+    Compiled, Departamento, Ir, Limites, RevisionKey, compile, diff, format_with,
     resolve_departments, stage_block, validar,
 };
 
@@ -247,8 +247,8 @@ impl<'a> Operacoes<'a> {
 
     /// Devolve o script na forma canônica, ou os diagnósticos se ele não compila.
     pub fn formatar(&self, fonte: &str) -> Result<String, FalhaFluxo> {
-        formatar_com(fonte, &self.limites)
-            .map_err(|falha| FalhaFluxo::ScriptInvalido(falha.diagnosticos))
+        format_with(fonte, &self.limites)
+            .map_err(|falha| FalhaFluxo::ScriptInvalido(falha.diagnostics))
     }
 
     /// Cria o fluxo a partir do script (o `id` do script vira o slug). Com `publicar`, grava também a

@@ -3,7 +3,7 @@
 //! Cada chave com efeito no compilador ou na avaliação tem um teste que muda o valor e prova que
 //! o limite de fato muda (`Limites::from_config`, `RuleLimits::from_config`, `compile`).
 
-use poph_fluxos::{Code, Limites, RuleLimits, Severity, compile, formatar_com};
+use poph_fluxos::{Code, Limites, RuleLimits, Severity, compile, format_with};
 use poph_types::config::FlowsConfig;
 
 /// Um dos exemplos do repositório: script válido que o compilador aceita com o padrão.
@@ -148,10 +148,10 @@ fn formatar_com_usa_o_mesmo_teto_do_compilador() {
         max_source_bytes: 32_768,
         ..FlowsConfig::default()
     };
-    assert!(formatar_com(&fonte, &Limites::from_config(&cfg)).is_err());
+    assert!(format_with(&fonte, &Limites::from_config(&cfg)).is_err());
     let subido = FlowsConfig {
         max_source_bytes: 65_536,
         ..FlowsConfig::default()
     };
-    assert!(formatar_com(&fonte, &Limites::from_config(&subido)).is_ok());
+    assert!(format_with(&fonte, &Limites::from_config(&subido)).is_ok());
 }

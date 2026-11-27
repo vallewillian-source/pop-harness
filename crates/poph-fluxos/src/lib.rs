@@ -4,7 +4,7 @@ pub mod cache;
 pub mod compilador;
 pub mod diagnostics;
 pub mod diff;
-pub mod formatador;
+pub mod formatter;
 pub mod ir;
 pub mod language;
 pub mod motor;
@@ -19,7 +19,7 @@ pub use cache::{
 pub use compilador::{Compiled, Limites, LoadFailure, compile, load};
 pub use diagnostics::{Code, Diagnostic, Severity};
 pub use diff::{Change, ChangeType, Impact, diff};
-pub use formatador::{FalhaDeFormato, LARGURA, formatar, formatar_com, imprimir};
+pub use formatter::{FormatFailure, WIDTH, format, format_with, print};
 pub use ir::Ir;
 pub use motor::{
     Campos, Context, Estado, Evento, MAX_SALTOS_DECISAO, ProducedEffect, Receipt, Resultado,

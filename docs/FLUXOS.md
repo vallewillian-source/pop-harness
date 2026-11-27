@@ -189,7 +189,7 @@ library (Starlark) only, and imports no other workspace crate.
 | `motor` | one run of an execution: start, record fields, run an action, advance, resolve decisions, reach the end, abandon and produce effects. |
 | `prompt` | the step block of the prompt and its rendering. |
 | `diff` | difference between revisions in plain language. |
-| `formatador` | canonical form of the script (script ⇄ structure). |
+| `formatter` | canonical form of the script (script ⇄ structure). |
 | `cache` | cache of compiled revisions (LRU with an MB cap, single-flight and fail-closed). |
 | `ir`, `language`, `diagnostics` | the compiled structure, the dialect and the closed diagnostic list. |
 
@@ -438,6 +438,41 @@ marks the dependency as used, because the Rust `unused_dependencies` lint breaks
   a step without fields (the engine neither fixes nor accuses data that is not its own); who may
   abandon an execution (agent or attendant) is the caller's rule, and the engine only records who
   did it.
+
+### 8.9 Canonical formatter (`formatter`)
+
+- Entry points: `format(source)` and `format_with(source, limits)` compile the text (FX-10) and
+  reprint the structure; `print(&ir)` goes the other way (IR → script). All three are **pure**: no
+  database, clock, network or file. A script that does not compile returns `FormatFailure` with its
+  diagnostics and **never partial text** ("it formatted as far as it could" does not exist); a
+  warning does not block formatting. The same IR gives the same text byte for byte.
+- One declaration per block, separated by one blank line and with one trailing newline, in the order
+  **`fluxo`, `def`, `etapa`, `decisao`**. Every `def` goes before its users — the `funcao("name")`
+  of a decision and the calls between `def`s only resolve upward — so a `def` written at the end of
+  the source moves up, and this is the one rule that supersedes the older "def at the end" line in
+  [FLUXOS_LINGUAGEM.md](FLUXOS_LINGUAGEM.md) §9. Stage and decision order follows the IR.
+- Inside a top-level declaration, one argument per line with a 4-space indent. A nested call fits on
+  one line when it fits in `WIDTH` (112 columns) and opens otherwise. Three deliberate exceptions:
+  `campos`, `acoes` and `ao_entrar` of a stage are **always** open (they are the stage structure,
+  one item per line, and that is what makes a review diff readable; `efeitos` of an action does not
+  follow it and fits on the line when short); the composed combinators `e`, `ou` and `nao` are
+  always open (a composed rule reads as a list); and text is never split, because breaking a literal
+  would change the value.
+- Optional arguments at their default are not written: without `atores` the stage is `["agente"]`,
+  without `obrigatorio` the field is optional, without `opcoes` the field is not `opcao`, and an
+  empty list is not written. The three examples under `tests/fluxos/exemplos/` fit in `WIDTH` and
+  come back identical once their `def`s are not out of place.
+- Comments: one **attached** to a declaration — the block of `#` lines whose last line is
+  immediately above the declaration — is preserved and reprinted left-aligned above it. A **loose**
+  comment (inside a declaration, at the end of a line, at the end of the file, or separated from the
+  declaration by a blank line) is discarded, so the canonical text is a fixed point after the first
+  pass. A comment inside a `def` comes for free: the IR stores the `def` text literally.
+- Known limit: the `fim(...)` order in the IR follows the first appearance. Grouping `etapa` before
+  `decisao` reorders two `fins` when a decision declares a `fim(...)` before a stage declares
+  another. The flow content is the same (same `inicio`, stages, decisions and ends); only the `fins`
+  list order changes, and it is the single case where `load` (FX-10) would report divergence after
+  formatting. Avoiding it needs an IR that keeps the position of each declaration, which is a
+  contract change.
 
 ## Medidas
 

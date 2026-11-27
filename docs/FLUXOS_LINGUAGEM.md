@@ -1104,7 +1104,7 @@ repositório; o que foi feito e testado está em [`FLUXOS.md`](FLUXOS.md).
   nó; `resolver_departamentos` traduz nome em id (`FLX65`). Testes: `tests/validador.rs`.
 - **Regras (FX-12):** combinadores em Rust nativo e `def` no módulo congelado, com prazo. Testes: `tests/regras.rs`
   (um caso por combinador e por desfecho de erro, inclusive `"x" * 1000000000`, recursão e laço).
-- **Forma canônica e diff (FX-16, FX-17):** `tests/formatador.rs`, `tests/diff.rs`.
+- **Forma canônica e diff (FX-16, FX-17):** `tests/formatter.rs`, `tests/diff.rs`.
 - **Motor, efeitos e API:** descritos e provados em [`FLUXOS.md`](FLUXOS.md), com os testes citados em cada seção.
 
 **Não testado, ou pendente:**
