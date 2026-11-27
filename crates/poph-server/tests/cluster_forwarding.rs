@@ -65,13 +65,13 @@ fn captured_logs() -> Arc<Mutex<Vec<u8>>> {
 struct TestInstance {
     base: String,
     store: Arc<Store>,
-    desligar: Option<oneshot::Sender<()>>,
+    shutdown: Option<oneshot::Sender<()>>,
 }
 
 impl Drop for TestInstance {
     fn drop(&mut self) {
-        if let Some(desligar) = self.desligar.take() {
-            let _ = desligar.send(());
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(());
         }
     }
 }
@@ -149,7 +149,7 @@ async fn start_instance(
     cluster_secret: Option<Secret>,
     channels: Vec<EvolutionChannel>,
 ) -> TestInstance {
-    let estado = ServerState::new(Arc::clone(&setup.store), setup.config)
+    let server_state = ServerState::new(Arc::clone(&setup.store), setup.config)
         .expect("estado do servidor")
         .with_cluster(LiveCluster {
             path: setup.directory.join("cluster.toml"),
@@ -157,18 +157,18 @@ async fn start_instance(
             secret: cluster_secret,
         })
         .with_evolution_channels(channels);
-    let endereco = listener.local_addr().expect("endereço local");
-    let (desligar, signal) = oneshot::channel();
+    let address = listener.local_addr().expect("endereço local");
+    let (shutdown, signal) = oneshot::channel();
     tokio::spawn(async move {
-        let _ = poph_server::serve_at(listener, estado, async {
+        let _ = poph_server::serve_at(listener, server_state, async {
             let _ = signal.await;
         })
         .await;
     });
     let instance = TestInstance {
-        base: format!("http://{endereco}"),
+        base: format!("http://{address}"),
         store: setup.store,
-        desligar: Some(desligar),
+        shutdown: Some(shutdown),
     };
     let client = client();
     for _ in 0..500 {
@@ -196,8 +196,8 @@ async fn bind_listener() -> (tokio::net::TcpListener, String) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("porta efêmera");
-    let endereco = listener.local_addr().expect("endereço local");
-    (listener, format!("http://{endereco}"))
+    let address = listener.local_addr().expect("endereço local");
+    (listener, format!("http://{address}"))
 }
 
 fn now() -> i64 {
@@ -241,8 +241,8 @@ async fn request(
     if let Some(token) = token {
         request = request.header("authorization", format!("Bearer {token}"));
     }
-    for (nome, value) in extras {
-        request = request.header(*nome, value);
+    for (display_name, value) in extras {
+        request = request.header(*display_name, value);
     }
     if let Some(body) = body {
         request = request
@@ -486,8 +486,8 @@ async fn admin_and_webhook_calls_reach_org_owner() {
     );
 
     let logs = captured_logs();
-    let texto = String::from_utf8_lossy(&logs.lock().unwrap()).to_string();
-    assert!(!texto.contains(SECRET), "segredo no log: {texto}");
+    let text = String::from_utf8_lossy(&logs.lock().unwrap()).to_string();
+    assert!(!text.contains(SECRET), "segredo no log: {text}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -806,8 +806,12 @@ async fn nonce_distinguishes_requests_and_prevents_replay() {
         &fingerprint,
     );
     assert_ne!(
-        first.iter().find(|(nome, _)| *nome == NONCE_HEADER),
-        second.iter().find(|(nome, _)| *nome == NONCE_HEADER),
+        first
+            .iter()
+            .find(|(display_name, _)| *display_name == NONCE_HEADER),
+        second
+            .iter()
+            .find(|(display_name, _)| *display_name == NONCE_HEADER),
         "cada pedido tem de levar um nonce próprio"
     );
     let um = request(Method::GET, &url, Some(TOKEN_GLOBAL), None, &first).await;
@@ -848,7 +852,7 @@ async fn nonce_distinguishes_requests_and_prevents_replay() {
         &fingerprint,
     )
     .into_iter()
-    .filter(|(nome, _)| *nome != NONCE_HEADER)
+    .filter(|(display_name, _)| *display_name != NONCE_HEADER)
     .collect();
     let missing = request(Method::GET, &url, Some(TOKEN_GLOBAL), None, &without_nonce).await;
     assert_eq!(missing.status, StatusCode::UNAUTHORIZED, "{}", missing.raw);
@@ -1225,7 +1229,7 @@ async fn flow_and_case_routes_are_forwarded_to_owner() {
         .as_array()
         .expect("lista de Fichas");
     assert_eq!(items.len(), 1, "a conversa de teste abriu uma Ficha");
-    let ficha = items[0]["id"].as_str().expect("id da Ficha").to_owned();
+    let service_case = items[0]["id"].as_str().expect("id da Ficha").to_owned();
     let cases_on_owner = request(
         Method::GET,
         &format!("{}{root}/fichas", b.base),
@@ -1238,7 +1242,7 @@ async fn flow_and_case_routes_are_forwarded_to_owner() {
 
     let closed = request(
         Method::POST,
-        &format!("{}{root}/fichas/{ficha}/close", a.base),
+        &format!("{}{root}/fichas/{service_case}/close", a.base),
         Some(TOKEN_GLOBAL),
         None,
         &[("if-match", "1".to_owned())],
@@ -1249,7 +1253,7 @@ async fn flow_and_case_routes_are_forwarded_to_owner() {
     let on_owner = b
         .store
         .cases()
-        .get(org, ficha.parse().expect("id da Ficha"))
+        .get(org, service_case.parse().expect("id da Ficha"))
         .expect("Ficha em b");
     assert_eq!(on_owner.status, RecordStatus::Closed);
     assert_eq!(
