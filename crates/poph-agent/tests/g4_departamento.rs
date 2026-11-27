@@ -18,12 +18,12 @@ use poph_store::{
 };
 use poph_types::{AgentId, ConversationId, DepartmentId, JevGates, MessageId, OrgId};
 
-const RESPOSTA_DO_MODELO: &str = "Olá! Como posso ajudar?";
+const REPLY_MODEL: &str = "Olá! Como posso ajudar?";
 
-struct SemEspera;
+struct NoWait;
 
-impl Pause for SemEspera {
-    fn wait(&self, _duracao: Duration) -> FuturePause {
+impl Pause for NoWait {
+    fn wait(&self, _duration: Duration) -> FuturePause {
         Box::pin(async {})
     }
 }
@@ -95,7 +95,7 @@ impl Scenario {
             )
             .expect("liga o handoff");
         let provedor = Arc::new(FakeProvider::with_scripts(
-            (0..8).map(|_| roteiro(RESPOSTA_DO_MODELO)).collect(),
+            (0..8).map(|_| script(REPLY_MODEL)).collect(),
         ));
         Self {
             folder,
@@ -120,7 +120,7 @@ impl Scenario {
             .id
     }
 
-    fn departamento_em(&self, org: OrgId, nome: &str) -> DepartmentId {
+    fn department(&self, org: OrgId, nome: &str) -> DepartmentId {
         self.store
             .departments()
             .create(
@@ -134,7 +134,7 @@ impl Scenario {
             .id
     }
 
-    fn outra_org(&self) -> OrgId {
+    fn other_org(&self) -> OrgId {
         self.store
             .orgs()
             .create(NewOrg {
@@ -166,14 +166,14 @@ impl Scenario {
             .expect("desativa o departamento");
     }
 
-    fn apagar(&self, departamento: DepartmentId) {
+    fn delete(&self, departamento: DepartmentId) {
         self.store
             .departments()
             .delete(self.org, departamento)
             .expect("apaga o departamento");
     }
 
-    fn definir_padrao(&self, departamento: DepartmentId) {
+    fn define_default(&self, departamento: DepartmentId) {
         let current = self
             .store
             .agents()
@@ -210,7 +210,7 @@ impl Scenario {
             .id
     }
 
-    fn falar(&self, conversa: ConversationId, texto: &str) -> MessageId {
+    fn say(&self, conversa: ConversationId, texto: &str) -> MessageId {
         self.store
             .messages()
             .write(
@@ -246,7 +246,7 @@ impl Scenario {
             TurnOptions::default(),
             MetricsTurn::own(),
         )
-        .with_pause(Arc::new(SemEspera))
+        .with_pause(Arc::new(NoWait))
         .with_handoff(HandoffGuidance::default());
         if let Some(jev) = jev {
             engine = engine.with_jev(jev);
@@ -269,14 +269,14 @@ impl Scenario {
             .expect("o turno roda")
     }
 
-    fn conversa_gravada(&self, conversa: ConversationId) -> poph_store::Conversa {
+    fn conversation_recorded(&self, conversa: ConversationId) -> poph_store::Conversa {
         self.store
             .conversations()
             .get(self.org, conversa)
             .expect("lê a conversa")
     }
 
-    fn ultimo_turno(&self, conversa: ConversationId) -> poph_store::Turno {
+    fn last_turn(&self, conversa: ConversationId) -> poph_store::Turno {
         self.store
             .turns()
             .list(self.org, conversa, Page::with_limit(20))
@@ -286,7 +286,7 @@ impl Scenario {
             .expect("há um turno gravado")
     }
 
-    fn auditoria_da_transferencia(&self) -> serde_json::Value {
+    fn audit_transfer(&self) -> serde_json::Value {
         let registro = self
             .store
             .audit()
@@ -305,7 +305,7 @@ impl Drop for Scenario {
     }
 }
 
-fn roteiro(texto: &str) -> Script {
+fn script(texto: &str) -> Script {
     Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
         LlmEvent::Usage(Usage {
@@ -328,9 +328,9 @@ fn response(choice: &str, confidence: f64) -> JevResponse {
 
 fn jev(departamento: Option<(&'static str, f64)>, veio_o_g4: bool) -> Arc<FakeJev> {
     Arc::new(FakeJev::new(move |request: &JevRequest| {
-        let mut respostas = BTreeMap::new();
+        let mut replies = BTreeMap::new();
         if request.questions.contains_key(IdGate::G1.question_id()) {
-            respostas.insert(
+            replies.insert(
                 IdGate::G1.question_id().to_owned(),
                 response(G1_TRANSFER, 0.96),
             );
@@ -339,39 +339,39 @@ fn jev(departamento: Option<(&'static str, f64)>, veio_o_g4: bool) -> Arc<FakeJe
             && request.questions.contains_key(IdGate::G4.question_id())
             && let Some((nome, confidence)) = departamento
         {
-            respostas.insert(
+            replies.insert(
                 IdGate::G4.question_id().to_owned(),
                 response(nome, confidence),
             );
         }
         Ok(BatchResponse {
-            answers: respostas,
+            answers: replies,
             tokens: 11,
             ..BatchResponse::default()
         })
     }))
 }
 
-fn motor_jev(jev: Arc<FakeJev>, com_g4: bool) -> Arc<JevEngine> {
+fn engine_judge(jev: Arc<FakeJev>, with_g4: bool) -> Arc<JevEngine> {
     let gates = JevGates {
         g1: true,
-        g4: com_g4,
+        g4: with_g4,
         ..JevGates::default()
     };
     Arc::new(JevEngine::new(jev, gates, "jev-latest"))
 }
 
 #[tokio::test]
-async fn g4_manda_a_conversa_para_o_departamento_escolhido() {
+async fn g4_sends_conversation_for_department_chosen() {
     let scenario = Scenario::new("escolha-valida");
     let default = scenario.departamento("Atendimento humano");
-    let escolhido = scenario.departamento("Financeiro");
-    scenario.definir_padrao(default);
+    let selected = scenario.departamento("Financeiro");
+    scenario.define_default(default);
     let conversa = scenario.conversa();
     let jev = jev(Some(("Financeiro", 0.93)), true);
-    let engine = scenario.engine(Some(motor_jev(jev, true)));
+    let engine = scenario.engine(Some(engine_judge(jev, true)));
 
-    let gatilho = scenario.falar(conversa, "vocês cobraram duas vezes no meu cartão");
+    let gatilho = scenario.say(conversa, "vocês cobraram duas vezes no meu cartão");
     let summary = scenario.turno(&engine, conversa, gatilho).await;
 
     assert_eq!(summary.estado, TurnState::Completed);
@@ -379,22 +379,22 @@ async fn g4_manda_a_conversa_para_o_departamento_escolhido() {
         scenario.provedor.received().is_empty(),
         "transferida não chama o modelo"
     );
-    let stored = scenario.conversa_gravada(conversa);
+    let stored = scenario.conversation_recorded(conversa);
     assert_eq!(stored.status, poph_store::ConversationStatus::Transferred);
-    assert_eq!(stored.target_department, Some(escolhido));
+    assert_eq!(stored.target_department, Some(selected));
 
-    let detalhe = scenario.auditoria_da_transferencia();
-    assert_eq!(detalhe["departamento_origem"], "g4");
-    assert_eq!(detalhe["departamento_escolhido_pelo_jev"], "Financeiro");
-    assert_eq!(detalhe["departamento"], escolhido.to_string());
-    assert_eq!(detalhe["departamento_motivo"], serde_json::Value::Null);
+    let detail = scenario.audit_transfer();
+    assert_eq!(detail["departamento_origem"], "g4");
+    assert_eq!(detail["departamento_escolhido_pelo_jev"], "Financeiro");
+    assert_eq!(detail["departamento"], selected.to_string());
+    assert_eq!(detail["departamento_motivo"], serde_json::Value::Null);
 
-    let turno = scenario.ultimo_turno(conversa);
+    let turno = scenario.last_turn(conversa);
     let stored: serde_json::Value = serde_json::from_str(&turno.jev_json).expect("JSON");
     assert_eq!(stored["transferencia"]["origem"], "g4");
     assert_eq!(
         stored["transferencia"]["departamento"],
-        escolhido.to_string()
+        selected.to_string()
     );
     let g4 = stored["decisoes"]
         .as_array()
@@ -406,90 +406,96 @@ async fn g4_manda_a_conversa_para_o_departamento_escolhido() {
 }
 
 #[tokio::test]
-async fn escolha_igual_ao_padrao_continua_vindo_do_g4() {
+async fn choice_equal_default_continues_coming_g4() {
     let scenario = Scenario::new("escolha-igual");
     let default = scenario.departamento("Suporte");
     scenario.departamento("Comercial");
-    scenario.definir_padrao(default);
+    scenario.define_default(default);
     let conversa = scenario.conversa();
-    let engine = scenario.engine(Some(motor_jev(jev(Some(("Suporte", 0.9)), true), true)));
-    let gatilho = scenario.falar(conversa, "o produto chegou quebrado");
+    let engine = scenario.engine(Some(engine_judge(jev(Some(("Suporte", 0.9)), true), true)));
+    let gatilho = scenario.say(conversa, "o produto chegou quebrado");
     scenario.turno(&engine, conversa, gatilho).await;
 
-    let detalhe = scenario.auditoria_da_transferencia();
-    assert_eq!(detalhe["departamento_origem"], "g4");
-    assert_eq!(detalhe["departamento"], default.to_string());
+    let detail = scenario.audit_transfer();
+    assert_eq!(detail["departamento_origem"], "g4");
+    assert_eq!(detail["departamento"], default.to_string());
 }
 
 #[tokio::test]
-async fn departamento_de_outra_org_cai_no_padrao() {
+async fn department_other_org_falls_default() {
     let scenario = Scenario::new("outra-org");
     let default = scenario.departamento("Atendimento humano");
     scenario.departamento("Comercial");
-    scenario.definir_padrao(default);
-    scenario.departamento_em(scenario.outra_org(), "Jurídico");
+    scenario.define_default(default);
+    scenario.department(scenario.other_org(), "Jurídico");
 
     let conversa = scenario.conversa();
-    let engine = scenario.engine(Some(motor_jev(jev(Some(("Jurídico", 0.97)), true), true)));
-    let gatilho = scenario.falar(conversa, "quero falar do contrato");
+    let engine = scenario.engine(Some(engine_judge(
+        jev(Some(("Jurídico", 0.97)), true),
+        true,
+    )));
+    let gatilho = scenario.say(conversa, "quero falar do contrato");
     scenario.turno(&engine, conversa, gatilho).await;
 
-    let stored = scenario.conversa_gravada(conversa);
+    let stored = scenario.conversation_recorded(conversa);
     assert_eq!(stored.status, poph_store::ConversationStatus::Transferred);
     assert_eq!(stored.target_department, Some(default));
-    let detalhe = scenario.auditoria_da_transferencia();
-    assert_eq!(detalhe["departamento_origem"], "padrao");
+    let detail = scenario.audit_transfer();
+    assert_eq!(detail["departamento_origem"], "padrao");
     assert!(
-        detalhe["departamento_motivo"]
+        detail["departamento_motivo"]
             .as_str()
             .unwrap_or_default()
             .contains("não é um departamento ativo"),
-        "motivo: {detalhe}"
+        "motivo: {detail}"
     );
 }
 
 #[tokio::test]
-async fn departamento_inativo_cai_no_padrao() {
+async fn department_inactive_falls_default() {
     let scenario = Scenario::new("inativo");
     let default = scenario.departamento("Atendimento humano");
     let desativado = scenario.departamento("Fiscal");
     scenario.departamento("Comercial");
-    scenario.definir_padrao(default);
+    scenario.define_default(default);
     scenario.desativar(desativado);
 
     let conversa = scenario.conversa();
-    let engine = scenario.engine(Some(motor_jev(jev(Some(("Fiscal", 0.95)), true), true)));
-    let gatilho = scenario.falar(conversa, "preciso da nota fiscal da compra");
+    let engine = scenario.engine(Some(engine_judge(jev(Some(("Fiscal", 0.95)), true), true)));
+    let gatilho = scenario.say(conversa, "preciso da nota fiscal da compra");
     scenario.turno(&engine, conversa, gatilho).await;
 
     assert_eq!(
-        scenario.conversa_gravada(conversa).target_department,
+        scenario.conversation_recorded(conversa).target_department,
         Some(default)
     );
 }
 
 #[tokio::test]
-async fn departamento_apagado_cai_no_padrao() {
+async fn department_deleted_falls_default() {
     let scenario = Scenario::new("apagado");
     let default = scenario.departamento("Atendimento humano");
-    let apagado = scenario.departamento("Logística");
+    let deleted = scenario.departamento("Logística");
     scenario.departamento("Comercial");
-    scenario.definir_padrao(default);
-    scenario.apagar(apagado);
+    scenario.define_default(default);
+    scenario.delete(deleted);
 
     let conversa = scenario.conversa();
-    let engine = scenario.engine(Some(motor_jev(jev(Some(("Logística", 0.95)), true), true)));
-    let gatilho = scenario.falar(conversa, "meu pedido não chegou");
+    let engine = scenario.engine(Some(engine_judge(
+        jev(Some(("Logística", 0.95)), true),
+        true,
+    )));
+    let gatilho = scenario.say(conversa, "meu pedido não chegou");
     scenario.turno(&engine, conversa, gatilho).await;
 
     assert_eq!(
-        scenario.conversa_gravada(conversa).target_department,
+        scenario.conversation_recorded(conversa).target_department,
         Some(default)
     );
 }
 
 #[test]
-fn o_banco_nao_deixa_dois_departamentos_com_o_mesmo_nome() {
+fn database_not_leaves_two_departments_with_same_name() {
     let scenario = Scenario::new("nome-unico");
     scenario.departamento("Financeiro");
     let error = scenario
@@ -510,44 +516,44 @@ fn o_banco_nao_deixa_dois_departamentos_com_o_mesmo_nome() {
 }
 
 #[tokio::test]
-async fn abstencao_do_g4_cai_no_padrao_sem_travar_o_turno() {
-    type Caso = (&'static str, Option<(&'static str, f64)>, bool);
-    let casos: [Caso; 3] = [
+async fn abstention_g4_falls_default_without_lock_turn() {
+    type Case = (&'static str, Option<(&'static str, f64)>, bool);
+    let cases: [Case; 3] = [
         ("fora-das-opcoes", Some(("Marketing", 0.99)), true),
         ("sem-resposta", None, false),
         ("confianca-baixa", Some(("Comercial", 0.41)), true),
     ];
-    for (label, departamento, veio) in casos {
+    for (label, departamento, veio) in cases {
         let scenario = Scenario::new(label);
         let default = scenario.departamento("Atendimento humano");
         scenario.departamento("Comercial");
-        scenario.definir_padrao(default);
+        scenario.define_default(default);
         let conversa = scenario.conversa();
-        let engine = scenario.engine(Some(motor_jev(jev(departamento, veio), true)));
-        let gatilho = scenario.falar(conversa, "quero falar com alguém sobre o pedido");
+        let engine = scenario.engine(Some(engine_judge(jev(departamento, veio), true)));
+        let gatilho = scenario.say(conversa, "quero falar com alguém sobre o pedido");
         let summary = scenario.turno(&engine, conversa, gatilho).await;
 
         assert_eq!(summary.estado, TurnState::Completed, "caso {label}");
         assert_eq!(
-            scenario.conversa_gravada(conversa).target_department,
+            scenario.conversation_recorded(conversa).target_department,
             Some(default),
             "caso {label}"
         );
-        let detalhe = scenario.auditoria_da_transferencia();
-        assert_eq!(detalhe["departamento_origem"], "padrao", "caso {label}");
+        let detail = scenario.audit_transfer();
+        assert_eq!(detail["departamento_origem"], "padrao", "caso {label}");
         assert!(
-            detalhe["departamento_motivo"].as_str().is_some(),
+            detail["departamento_motivo"].as_str().is_some(),
             "caso {label} precisa registrar o motivo da recusa"
         );
     }
 }
 
 #[tokio::test]
-async fn jev_fora_do_ar_nao_trava_o_turno() {
+async fn judge_out_ar_not_locks_turn() {
     let scenario = Scenario::new("jev-fora");
     let default = scenario.departamento("Atendimento humano");
     scenario.departamento("Comercial");
-    scenario.definir_padrao(default);
+    scenario.define_default(default);
     let conversa = scenario.conversa();
 
     let jev = Arc::new(
@@ -573,51 +579,51 @@ async fn jev_fora_do_ar_nao_trava_o_turno() {
         }),
     );
     let engine = scenario.engine(Some(evaluator));
-    let gatilho = scenario.falar(conversa, "quero falar com um atendente");
+    let gatilho = scenario.say(conversa, "quero falar com um atendente");
     let summary = scenario.turno(&engine, conversa, gatilho).await;
 
     assert_eq!(summary.estado, TurnState::Completed);
     assert_eq!(
-        scenario.conversa_gravada(conversa).status,
+        scenario.conversation_recorded(conversa).status,
         poph_store::ConversationStatus::Open
     );
-    assert_eq!(summary.texto, RESPOSTA_DO_MODELO);
+    assert_eq!(summary.texto, REPLY_MODEL);
 }
 
 #[tokio::test]
-async fn g4_desligado_e_o_comportamento_de_hoje() {
+async fn g4_disabled_behaviour_today() {
     let scenario = Scenario::new("desligado");
     let default = scenario.departamento("Atendimento humano");
     scenario.departamento("Comercial");
-    scenario.definir_padrao(default);
+    scenario.define_default(default);
     let conversa = scenario.conversa();
     let jev = jev(Some(("Comercial", 0.99)), true);
-    let evaluator = motor_jev(Arc::clone(&jev), false);
+    let evaluator = engine_judge(Arc::clone(&jev), false);
     let engine = scenario.engine(Some(evaluator));
 
-    let gatilho = scenario.falar(conversa, "quero falar com um atendente");
+    let gatilho = scenario.say(conversa, "quero falar com um atendente");
     scenario.turno(&engine, conversa, gatilho).await;
 
-    let stored = scenario.conversa_gravada(conversa);
+    let stored = scenario.conversation_recorded(conversa);
     assert_eq!(stored.status, poph_store::ConversationStatus::Transferred);
     assert_eq!(stored.target_department, Some(default));
 
-    let pedidos = jev.requests();
+    let requests = jev.requests();
     assert!(
-        pedidos
+        requests
             .iter()
             .all(|request| !request.questions.contains_key(IdGate::G4.question_id())),
         "G4 desligado não pode perguntar o departamento"
     );
-    let detalhe = scenario.auditoria_da_transferencia();
-    assert_eq!(detalhe["departamento"], default.to_string());
-    assert_eq!(detalhe["departamento_origem"], "padrao");
+    let detail = scenario.audit_transfer();
+    assert_eq!(detail["departamento"], default.to_string());
+    assert_eq!(detail["departamento_origem"], "padrao");
     assert_eq!(
-        detalhe["departamento_escolhido_pelo_jev"],
+        detail["departamento_escolhido_pelo_jev"],
         serde_json::Value::Null
     );
 
-    let turno = scenario.ultimo_turno(conversa);
+    let turno = scenario.last_turn(conversa);
     let stored: serde_json::Value = serde_json::from_str(&turno.jev_json).expect("JSON");
     let gates: Vec<&str> = stored["decisoes"]
         .as_array()
@@ -636,16 +642,16 @@ async fn g4_desligado_e_o_comportamento_de_hoje() {
 }
 
 #[tokio::test]
-async fn sem_padrao_configurado_transfere_sem_departamento() {
+async fn without_default_configured_transfers_without_department() {
     let scenario = Scenario::new("sem-padrao");
     scenario.departamento("Comercial");
     let conversa = scenario.conversa();
-    for (label, com_g4) in [("desligado", false), ("ligado-recusado", true)] {
+    for (label, with_g4) in [("desligado", false), ("ligado-recusado", true)] {
         let jev = jev(Some(("Marketing", 0.97)), true);
-        let engine = scenario.engine(Some(motor_jev(jev, com_g4)));
-        let gatilho = scenario.falar(conversa, "quero falar com uma pessoa");
+        let engine = scenario.engine(Some(engine_judge(jev, with_g4)));
+        let gatilho = scenario.say(conversa, "quero falar com uma pessoa");
         scenario.turno(&engine, conversa, gatilho).await;
-        let stored = scenario.conversa_gravada(conversa);
+        let stored = scenario.conversation_recorded(conversa);
         assert_eq!(
             stored.status,
             poph_store::ConversationStatus::Transferred,
@@ -661,14 +667,17 @@ async fn sem_padrao_configurado_transfere_sem_departamento() {
 }
 
 #[tokio::test]
-async fn a_escolha_do_departamento_nao_muda_o_texto_ao_cliente() {
+async fn choice_department_not_changes_text_client() {
     let scenario = Scenario::new("texto");
     let default = scenario.departamento("Atendimento humano");
     scenario.departamento("Financeiro");
-    scenario.definir_padrao(default);
+    scenario.define_default(default);
     let conversa = scenario.conversa();
-    let engine = scenario.engine(Some(motor_jev(jev(Some(("Financeiro", 0.95)), true), true)));
-    let gatilho = scenario.falar(conversa, "quero falar com um atendente sobre a cobrança");
+    let engine = scenario.engine(Some(engine_judge(
+        jev(Some(("Financeiro", 0.95)), true),
+        true,
+    )));
+    let gatilho = scenario.say(conversa, "quero falar com um atendente sobre a cobrança");
     let summary = scenario.turno(&engine, conversa, gatilho).await;
     assert_eq!(
         summary.texto,

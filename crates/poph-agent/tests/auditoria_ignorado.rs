@@ -10,7 +10,7 @@ use poph_store::{ConversationStatus, NewAgent, NewConversation, NewOrg, Page, St
 use poph_types::{AgentId, ConversationId, OrgId};
 
 #[tokio::test]
-async fn turno_ignorado_grava_auditoria_com_ator_system() {
+async fn turn_ignored_records_audit_with_actor_system() {
     let folder: PathBuf = std::env::temp_dir().join(format!(
         "poph-auditoria-ignorado-{}-{}",
         std::process::id(),
@@ -107,18 +107,18 @@ async fn turno_ignorado_grava_auditoria_com_ator_system() {
         .expect("o turno roda");
     assert_eq!(summary.estado.as_text(), "skipped");
 
-    let registros = store
+    let records = store
         .audit()
         .list(org, Page::with_limit(50))
         .expect("lê a auditoria");
-    let turno_ignorado = registros
+    let turn_ignored = records
         .iter()
         .find(|registro| registro.acao == "skip")
         .expect("a linha de turno ignorado foi gravada");
-    assert_eq!(turno_ignorado.ator_tipo, "system");
-    assert_eq!(turno_ignorado.entity, "turn");
+    assert_eq!(turn_ignored.ator_tipo, "system");
+    assert_eq!(turn_ignored.entity, "turn");
     assert_eq!(
-        turno_ignorado.entity_id.as_deref(),
+        turn_ignored.entity_id.as_deref(),
         Some(summary.turno.to_string().as_str())
     );
 

@@ -14,10 +14,10 @@ use poph_store::{
 };
 use poph_types::{ConversationId, MessageId, OrgId, StructuredInstructions};
 
-pub struct SemEspera;
+pub struct NoWait;
 
-impl Pause for SemEspera {
-    fn wait(&self, _duracao: Duration) -> FuturePause {
+impl Pause for NoWait {
+    fn wait(&self, _duration: Duration) -> FuturePause {
         Box::pin(async {})
     }
 }
@@ -31,35 +31,35 @@ pub struct Scenario {
     pub metrics: MetricsTurn,
 }
 
-pub struct Anexo {
+pub struct Attachment {
     pub nome: String,
     pub mime: String,
     pub bytes: Vec<u8>,
-    pub sem_blob: bool,
-    pub tamanho_declarado: Option<u64>,
-    pub texto_extraido: Option<String>,
+    pub without_blob: bool,
+    pub size_declared: Option<u64>,
+    pub text_extracted: Option<String>,
 }
 
-impl Anexo {
-    pub fn imagem(nome: &str, bytes: &[u8]) -> Self {
+impl Attachment {
+    pub fn image(nome: &str, bytes: &[u8]) -> Self {
         Self {
             nome: nome.to_owned(),
             mime: "image/png".to_owned(),
             bytes: bytes.to_vec(),
-            sem_blob: false,
-            tamanho_declarado: None,
-            texto_extraido: None,
+            without_blob: false,
+            size_declared: None,
+            text_extracted: None,
         }
     }
 
-    pub fn documento(nome: &str, texto: &str) -> Self {
+    pub fn document(nome: &str, texto: &str) -> Self {
         Self {
             nome: nome.to_owned(),
             mime: "application/pdf".to_owned(),
             bytes: b"%PDF-1.4 de teste".to_vec(),
-            sem_blob: false,
-            tamanho_declarado: None,
-            texto_extraido: Some(texto.to_owned()),
+            without_blob: false,
+            size_declared: None,
+            text_extracted: Some(texto.to_owned()),
         }
     }
 }
@@ -135,29 +135,31 @@ impl Scenario {
         }
     }
 
-    pub fn falar_com_arquivos(&self, texto: &str, anexos: Vec<Anexo>) -> MessageId {
-        let mut linhas: Vec<NewChannelAttachment> = Vec::with_capacity(anexos.len());
-        for anexo in anexos {
-            let sha256 = if anexo.sem_blob {
-                poph_files::blob::sha256_hex(&anexo.bytes)
+    pub fn speak_with_files(&self, texto: &str, anexos: Vec<Attachment>) -> MessageId {
+        let mut lines: Vec<NewChannelAttachment> = Vec::with_capacity(anexos.len());
+        for attachment in anexos {
+            let sha256 = if attachment.without_blob {
+                poph_files::blob::sha256_hex(&attachment.bytes)
             } else {
-                poph_files::blob::write(&self.files.blob_folder, self.org, &anexo.bytes)
+                poph_files::blob::write(&self.files.blob_folder, self.org, &attachment.bytes)
                     .expect("grava o blob")
                     .sha256
             };
-            let status_extracao = if anexo.mime.starts_with("image/") {
+            let status_extraction = if attachment.mime.starts_with("image/") {
                 "skipped"
             } else {
                 "ok"
             };
-            linhas.push(NewChannelAttachment {
-                name: anexo.nome,
-                mime: anexo.mime,
-                size_bytes: anexo.tamanho_declarado.unwrap_or(anexo.bytes.len() as u64),
+            lines.push(NewChannelAttachment {
+                name: attachment.nome,
+                mime: attachment.mime,
+                size_bytes: attachment
+                    .size_declared
+                    .unwrap_or(attachment.bytes.len() as u64),
                 sha256,
                 blob_path: format!("orgs/{}/{}", self.org, "sha-de-teste"),
-                extracted_text: anexo.texto_extraido,
-                extraction_status: status_extracao,
+                extracted_text: attachment.text_extracted,
+                extraction_status: status_extraction,
             });
         }
         self.store
@@ -175,14 +177,14 @@ impl Scenario {
                     origin: poph_store::Origin::Agente,
                     author_name: None,
                 },
-                &linhas,
+                &lines,
             )
             .expect("grava a mensagem com anexos")
             .id
     }
 
-    pub fn engine(&self, com_arquivos: bool) -> (TurnEngine, Arc<FakeProvider>) {
-        let fake = Arc::new(FakeProvider::with_scripts(vec![roteiro_texto(
+    pub fn engine(&self, with_files: bool) -> (TurnEngine, Arc<FakeProvider>) {
+        let fake = Arc::new(FakeProvider::with_scripts(vec![script_text(
             "recebi o arquivo",
         )]));
         let config = ConfigHot::new(
@@ -199,12 +201,12 @@ impl Scenario {
             TurnOptions::default(),
             self.metrics.clone(),
         )
-        .with_pause(Arc::new(SemEspera))
+        .with_pause(Arc::new(NoWait))
         .with_summary(poph_agent::summary::SummaryOptions {
             ativo: false,
             ..poph_agent::summary::SummaryOptions::default()
         });
-        if com_arquivos {
+        if with_files {
             engine = engine.with_files(self.files.clone());
         }
         (engine, fake)
@@ -230,11 +232,11 @@ impl Drop for Scenario {
 fn fastrand() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|tempo| tempo.as_nanos() as u64)
+        .map(|time| time.as_nanos() as u64)
         .unwrap_or(0)
 }
 
-fn roteiro_texto(texto: &str) -> Script {
+fn script_text(texto: &str) -> Script {
     Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
         LlmEvent::Usage(Usage {

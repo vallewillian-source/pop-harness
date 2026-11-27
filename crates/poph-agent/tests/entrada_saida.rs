@@ -75,7 +75,7 @@ impl Scenario {
         }
     }
 
-    fn reabrir(&mut self) {
+    fn reopen(&mut self) {
         self.store = Arc::new(
             Store::open_at(&self.folder.join("harness.db"), &self.folder.join("rag.db"))
                 .expect("reabre o banco"),
@@ -98,24 +98,24 @@ impl Drop for Scenario {
     }
 }
 
-struct ProcessadorDeTeste {
+struct ProcessorTest {
     registro: Arc<Registro>,
     fluxo: Arc<OnceLock<Fluxo>>,
 }
 
 #[derive(Default)]
 struct Registro {
-    recebidas: Mutex<Vec<Task>>,
+    arrived: Mutex<Vec<Task>>,
     wait: Duration,
 }
 
 impl Registro {
     fn quantity(&self) -> usize {
-        self.recebidas.lock().expect("sem veneno").len()
+        self.arrived.lock().expect("sem veneno").len()
     }
 }
 
-impl Processor for ProcessadorDeTeste {
+impl Processor for ProcessorTest {
     fn process(&self, task: Task) -> BoxFuture {
         let registro = Arc::clone(&self.registro);
         let fluxo = Arc::clone(&self.fluxo);
@@ -123,7 +123,7 @@ impl Processor for ProcessadorDeTeste {
             if !registro.wait.is_zero() {
                 tokio::time::sleep(registro.wait).await;
             }
-            registro.recebidas.lock().expect("sem veneno").push(task);
+            registro.arrived.lock().expect("sem veneno").push(task);
             if let (Some(entry), Some(fluxo)) = (task.entry, fluxo.get()) {
                 fluxo.concluir_entry(task.org, entry, None)?;
             }
@@ -132,39 +132,39 @@ impl Processor for ProcessadorDeTeste {
     }
 }
 
-struct SemProcessar;
+struct NoProcess;
 
-impl Processor for SemProcessar {
-    fn process(&self, _tarefa: Task) -> BoxFuture {
+impl Processor for NoProcess {
+    fn process(&self, _task: Task) -> BoxFuture {
         Box::pin(async { Ok(()) })
     }
 }
 
-fn montar_fluxo(
+fn build_flow(
     scenario: &Scenario,
     options: FlowOptions,
-    opcoes_atores: ActorOptions,
+    options_actors: ActorOptions,
     wait: Duration,
 ) -> (Fluxo, Actors, Arc<Registro>) {
     let registro = Arc::new(Registro {
-        recebidas: Mutex::new(Vec::new()),
+        arrived: Mutex::new(Vec::new()),
         wait,
     });
-    let fluxo_guardado: Arc<OnceLock<Fluxo>> = Arc::new(OnceLock::new());
+    let flow_stored: Arc<OnceLock<Fluxo>> = Arc::new(OnceLock::new());
     let actors = Actors::new(
-        Arc::new(ProcessadorDeTeste {
+        Arc::new(ProcessorTest {
             registro: Arc::clone(&registro),
-            fluxo: Arc::clone(&fluxo_guardado),
+            fluxo: Arc::clone(&flow_stored),
         }),
-        opcoes_atores,
+        options_actors,
         MetricsMemory::own(),
     );
     let fluxo = Fluxo::new(Arc::clone(&scenario.store), actors.clone(), options);
-    let _ = fluxo_guardado.set(fluxo.clone());
+    let _ = flow_stored.set(fluxo.clone());
     (fluxo, actors, registro)
 }
 
-fn opcoes_rapidas() -> FlowOptions {
+fn options_fast() -> FlowOptions {
     FlowOptions {
         backoff: Backoff {
             base: Duration::ZERO,
@@ -175,51 +175,51 @@ fn opcoes_rapidas() -> FlowOptions {
     }
 }
 
-fn opcoes_atores(teto_fila: usize) -> ActorOptions {
+fn options_actors(cap_queue: usize) -> ActorOptions {
     ActorOptions {
         ociosidade: Duration::from_secs(60),
-        queue_by_conversation: teto_fila,
+        queue_by_conversation: cap_queue,
         max_actors: 32,
     }
 }
 
-struct TransporteDeTeste {
-    envios: AtomicUsize,
+struct TransportTest {
+    sends: AtomicUsize,
     received: Mutex<Vec<OutboxItem>>,
     failure: Mutex<Option<SendFailure>>,
     wait: Duration,
 }
 
-impl TransporteDeTeste {
+impl TransportTest {
     fn new() -> Arc<Self> {
         Arc::new(Self {
-            envios: AtomicUsize::new(0),
+            sends: AtomicUsize::new(0),
             received: Mutex::new(Vec::new()),
             failure: Mutex::new(None),
             wait: Duration::ZERO,
         })
     }
 
-    fn com_espera(wait: Duration) -> Arc<Self> {
+    fn with_wait(wait: Duration) -> Arc<Self> {
         let mut transport = Self::new();
         Arc::get_mut(&mut transport).expect("recém-criado").wait = wait;
         transport
     }
 
-    fn com_falha(failure: SendFailure) -> Arc<Self> {
+    fn with_failure(failure: SendFailure) -> Arc<Self> {
         let transport = Self::new();
         *transport.failure.lock().expect("sem veneno") = Some(failure);
         transport
     }
 
-    fn envios(&self) -> usize {
-        self.envios.load(Ordering::SeqCst)
+    fn sends(&self) -> usize {
+        self.sends.load(Ordering::SeqCst)
     }
 }
 
-impl OutputTransport for TransporteDeTeste {
+impl OutputTransport for TransportTest {
     fn send(&self, item: OutboxItem) -> SendFuture {
-        self.envios.fetch_add(1, Ordering::SeqCst);
+        self.sends.fetch_add(1, Ordering::SeqCst);
         self.received.lock().expect("sem veneno").push(item);
         let failure = self.failure.lock().expect("sem veneno").clone();
         let wait = self.wait;
@@ -235,8 +235,8 @@ impl OutputTransport for TransporteDeTeste {
     }
 }
 
-fn enfileirar_texto(fluxo: &Fluxo, scenario: &Scenario, turno: TurnId, seq: u32) -> OutboxItem {
-    let (_novo, item) = fluxo
+fn enqueue_text(fluxo: &Fluxo, scenario: &Scenario, turno: TurnId, seq: u32) -> OutboxItem {
+    let (_new, item) = fluxo
         .enqueue_output(
             scenario.org,
             NewOutboxItem {
@@ -251,7 +251,7 @@ fn enfileirar_texto(fluxo: &Fluxo, scenario: &Scenario, turno: TurnId, seq: u32)
     item
 }
 
-fn gravar_mensagem(scenario: &Scenario, turno: Option<TurnId>) -> MessageId {
+fn write_message(scenario: &Scenario, turno: Option<TurnId>) -> MessageId {
     scenario
         .store
         .messages()
@@ -274,15 +274,11 @@ fn gravar_mensagem(scenario: &Scenario, turno: Option<TurnId>) -> MessageId {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn mesma_mensagem_entregue_duas_vezes_e_processada_uma_vez() {
+async fn same_message_delivered_two_times_processed_once() {
     let scenario = Scenario::new("duplicada");
-    let (fluxo, actors, registro) = montar_fluxo(
-        &scenario,
-        opcoes_rapidas(),
-        opcoes_atores(8),
-        Duration::ZERO,
-    );
-    let mensagem = gravar_mensagem(&scenario, None);
+    let (fluxo, actors, registro) =
+        build_flow(&scenario, options_fast(), options_actors(8), Duration::ZERO);
+    let mensagem = write_message(&scenario, None);
 
     let first = fluxo
         .receive_message(
@@ -302,7 +298,7 @@ async fn mesma_mensagem_entregue_duas_vezes_e_processada_uma_vez() {
         "a primeira entrega é nova"
     );
 
-    let segunda = fluxo
+    let second_one = fluxo
         .receive_message(
             scenario.org,
             ReceivedMessage {
@@ -315,20 +311,20 @@ async fn mesma_mensagem_entregue_duas_vezes_e_processada_uma_vez() {
         )
         .expect("reentrega não é erro");
     assert_eq!(
-        segunda.situation,
+        second_one.situation,
         poph_store::Received::Duplicate,
         "a segunda entrega é descartada como duplicada"
     );
     assert_eq!(
-        segunda.item.id, first.item.id,
+        second_one.item.id, first.item.id,
         "as duas entregas apontam para o mesmo item da inbox"
     );
     assert_eq!(
-        segunda.mensagem.id, first.mensagem.id,
+        second_one.mensagem.id, first.mensagem.id,
         "e para a mesma mensagem"
     );
 
-    let cru = fluxo
+    let raw = fluxo
         .receive(
             scenario.org,
             NewInboxItem {
@@ -338,7 +334,7 @@ async fn mesma_mensagem_entregue_duas_vezes_e_processada_uma_vez() {
             },
         )
         .expect("entrega crua");
-    assert_eq!(cru, poph_store::Received::Duplicate);
+    assert_eq!(raw, poph_store::Received::Duplicate);
 
     for _ in 0..3 {
         fluxo.dispatch(scenario.org).expect("despacha");
@@ -363,7 +359,7 @@ async fn mesma_mensagem_entregue_duas_vezes_e_processada_uma_vez() {
 }
 
 #[test]
-fn filho_grava_entrada_e_trava() {
+fn child_records_entry_locks() {
     let Ok(label) = std::env::var("POPH_HR12_FILHO") else {
         return;
     };
@@ -371,7 +367,7 @@ fn filho_grava_entrada_e_trava() {
         return;
     }
     let folder = PathBuf::from(std::env::var("POPH_HR12_PASTA").expect("pasta no ambiente"));
-    let marcador = PathBuf::from(std::env::var("POPH_HR12_MARCADOR").expect("marcador"));
+    let marker = PathBuf::from(std::env::var("POPH_HR12_MARCADOR").expect("marcador"));
     let org: OrgId = std::env::var("POPH_HR12_ORG")
         .expect("org")
         .parse()
@@ -388,12 +384,8 @@ fn filho_grava_entrada_e_trava() {
     let store = Arc::new(
         Store::open_at(&folder.join("harness.db"), &folder.join("rag.db")).expect("abre o banco"),
     );
-    let actors = Actors::new(
-        Arc::new(SemProcessar),
-        opcoes_atores(8),
-        MetricsMemory::own(),
-    );
-    let fluxo = Fluxo::new(store, actors, opcoes_rapidas());
+    let actors = Actors::new(Arc::new(NoProcess), options_actors(8), MetricsMemory::own());
+    let fluxo = Fluxo::new(store, actors, options_fast());
     let stored = fluxo
         .receive_message(
             org,
@@ -408,43 +400,43 @@ fn filho_grava_entrada_e_trava() {
         .expect("grava a entrada");
     assert_eq!(stored.situation, poph_store::Received::New);
 
-    std::fs::write(&marcador, "gravado").expect("escreve o marcador");
+    std::fs::write(&marker, "gravado").expect("escreve o marcador");
     std::thread::sleep(Duration::from_secs(30));
     panic!("o pai devia ter matado o filho antes disso");
 }
 
 #[test]
-fn sigkill_entre_gravar_e_processar_nao_perde_a_mensagem() {
+fn sigkill_between_write_process_not_loses_message() {
     let mut scenario = Scenario::new("sigkill-entrada");
     let org = scenario.org;
     let conversa = scenario.conversa;
     let integracao = scenario.integracao;
     let folder = scenario.folder.clone();
-    let marcador = folder.join("marcador-entrada");
+    let marker = folder.join("marcador-entrada");
     scenario.store = Arc::new(
         Store::open_at(&folder.join("harness.db"), &folder.join("rag.db")).expect("reabre"),
     );
 
-    let filho = std::process::Command::new(std::env::current_exe().expect("binário de teste"))
+    let child = std::process::Command::new(std::env::current_exe().expect("binário de teste"))
         .args([
             "--exact",
-            "filho_grava_entrada_e_trava",
+            "child_records_entry_locks",
             "--nocapture",
             "--test-threads=1",
         ])
         .env("POPH_HR12_FILHO", "entrada")
         .env("POPH_HR12_PASTA", &folder)
-        .env("POPH_HR12_MARCADOR", &marcador)
+        .env("POPH_HR12_MARCADOR", &marker)
         .env("POPH_HR12_ORG", org.to_string())
         .env("POPH_HR12_CONVERSA", conversa.to_string())
         .env("POPH_HR12_INTEGRACAO", integracao.to_string())
         .spawn()
         .expect("inicia o filho");
 
-    esperar_marcador(&marcador);
-    matar(filho);
+    wait_marker(&marker);
+    kill_child(child);
 
-    scenario.reabrir();
+    scenario.reopen();
     assert_eq!(
         scenario.store.inbox().count_pending(org).expect("conta"),
         1,
@@ -457,23 +449,19 @@ fn sigkill_entre_gravar_e_processar_nao_perde_a_mensagem() {
         .enable_all()
         .build()
         .expect("runtime");
-    let (fluxo, actors, registro) = montar_fluxo(
-        &scenario,
-        opcoes_rapidas(),
-        opcoes_atores(8),
-        Duration::ZERO,
-    );
-    let transport = TransporteDeTeste::new();
-    let retomada = runtime
+    let (fluxo, actors, registro) =
+        build_flow(&scenario, options_fast(), options_actors(8), Duration::ZERO);
+    let transport = TransportTest::new();
+    let resumed = runtime
         .block_on(async {
-            let retomada = fluxo.retomar(transport.as_ref()).await?;
+            let resumed = fluxo.retomar(transport.as_ref()).await?;
             assert!(actors.wait_queues_empty(Duration::from_secs(10)).await);
-            Ok::<_, poph_agent::AgentError>(retomada)
+            Ok::<_, poph_agent::AgentError>(resumed)
         })
         .expect("retomada");
 
     assert_eq!(
-        retomada.entry.dispatch, 1,
+        resumed.entry.dispatch, 1,
         "a retomada despachou o item pendente"
     );
     assert_eq!(registro.quantity(), 1, "processado uma vez na retomada");
@@ -496,7 +484,7 @@ fn sigkill_entre_gravar_e_processar_nao_perde_a_mensagem() {
 }
 
 #[test]
-fn filho_fica_em_sending_e_trava() {
+fn child_stays_sending_locks() {
     let Ok(label) = std::env::var("POPH_HR12_FILHO") else {
         return;
     };
@@ -504,7 +492,7 @@ fn filho_fica_em_sending_e_trava() {
         return;
     }
     let folder = PathBuf::from(std::env::var("POPH_HR12_PASTA").expect("pasta"));
-    let marcador = PathBuf::from(std::env::var("POPH_HR12_MARCADOR").expect("marcador"));
+    let marker = PathBuf::from(std::env::var("POPH_HR12_MARCADOR").expect("marcador"));
     let org: OrgId = std::env::var("POPH_HR12_ORG")
         .expect("org")
         .parse()
@@ -520,7 +508,7 @@ fn filho_fica_em_sending_e_trava() {
 
     let store =
         Arc::new(Store::open_at(&folder.join("harness.db"), &folder.join("rag.db")).expect("abre"));
-    let (_novo, item) = store
+    let (_new, item) = store
         .outbox()
         .enqueue(
             org,
@@ -537,43 +525,43 @@ fn filho_fica_em_sending_e_trava() {
         .outbox()
         .start_send(org, item.id)
         .expect("entra em sending");
-    std::fs::write(&marcador, "sending").expect("escreve o marcador");
+    std::fs::write(&marker, "sending").expect("escreve o marcador");
     std::thread::sleep(Duration::from_secs(30));
     panic!("o pai devia ter matado o filho antes disso");
 }
 
 #[test]
-fn sigkill_entre_sending_e_sent_reenvia_uma_vez() {
+fn sigkill_between_sending_sent_resends_once() {
     let mut scenario = Scenario::new("sigkill-saida");
     let org = scenario.org;
     let conversa = scenario.conversa;
     let turno = TurnId::generate();
     let folder = scenario.folder.clone();
-    let marcador = folder.join("marcador-saida");
+    let marker = folder.join("marcador-saida");
     scenario.store = Arc::new(
         Store::open_at(&folder.join("harness.db"), &folder.join("rag.db")).expect("reabre"),
     );
 
-    let filho = std::process::Command::new(std::env::current_exe().expect("binário de teste"))
+    let child = std::process::Command::new(std::env::current_exe().expect("binário de teste"))
         .args([
             "--exact",
-            "filho_fica_em_sending_e_trava",
+            "child_stays_sending_locks",
             "--nocapture",
             "--test-threads=1",
         ])
         .env("POPH_HR12_FILHO", "saida")
         .env("POPH_HR12_PASTA", &folder)
-        .env("POPH_HR12_MARCADOR", &marcador)
+        .env("POPH_HR12_MARCADOR", &marker)
         .env("POPH_HR12_ORG", org.to_string())
         .env("POPH_HR12_CONVERSA", conversa.to_string())
         .env("POPH_HR12_TURNO", turno.to_string())
         .spawn()
         .expect("inicia o filho");
 
-    esperar_marcador(&marcador);
-    matar(filho);
+    wait_marker(&marker);
+    kill_child(child);
 
-    scenario.reabrir();
+    scenario.reopen();
     assert_eq!(
         scenario
             .store
@@ -588,19 +576,15 @@ fn sigkill_entre_sending_e_sent_reenvia_uma_vez() {
         .enable_all()
         .build()
         .expect("runtime");
-    let (fluxo, actors, _registro) = montar_fluxo(
-        &scenario,
-        opcoes_rapidas(),
-        opcoes_atores(8),
-        Duration::ZERO,
-    );
-    let transport = TransporteDeTeste::new();
-    let retomada = runtime
+    let (fluxo, actors, _record) =
+        build_flow(&scenario, options_fast(), options_actors(8), Duration::ZERO);
+    let transport = TransportTest::new();
+    let resumed = runtime
         .block_on(fluxo.retomar(transport.as_ref()))
         .expect("retomada");
 
-    assert_eq!(retomada.resends, 1, "um item estava em sending");
-    assert_eq!(transport.envios(), 1, "reenviou exatamente uma vez");
+    assert_eq!(resumed.resends, 1, "um item estava em sending");
+    assert_eq!(transport.sends(), 1, "reenviou exatamente uma vez");
     assert_eq!(
         fluxo.metrics().resends_resumption.value(),
         1,
@@ -619,28 +603,28 @@ fn sigkill_entre_sending_e_sent_reenvia_uma_vez() {
         .expect("conta");
     assert_eq!(items, 1, "e o item terminou como enviado");
 
-    let segunda = runtime
+    let second_one = runtime
         .block_on(fluxo.retomar(transport.as_ref()))
         .expect("segunda retomada");
-    assert_eq!(segunda.resends, 0);
-    assert_eq!(transport.envios(), 1, "nada duplicado na segunda subida");
+    assert_eq!(second_one.resends, 0);
+    assert_eq!(transport.sends(), 1, "nada duplicado na segunda subida");
     drop(actors);
 }
 
 #[tokio::test]
-async fn falha_repetida_vai_para_failed_com_motivo_e_contador() {
+async fn failure_repeated_goes_for_failed_with_reason_counter() {
     let scenario = Scenario::new("falha-repetida");
-    let (fluxo, _atores, _registro) = montar_fluxo(
+    let (fluxo, _actors, _record) = build_flow(
         &scenario,
         FlowOptions {
             max_attempts: 3,
-            ..opcoes_rapidas()
+            ..options_fast()
         },
-        opcoes_atores(8),
+        options_actors(8),
         Duration::ZERO,
     );
-    let transport = TransporteDeTeste::com_falha(SendFailure::transient("net::ERR_CONNECTION"));
-    let item = enfileirar_texto(&fluxo, &scenario, TurnId::generate(), 0);
+    let transport = TransportTest::with_failure(SendFailure::transient("net::ERR_CONNECTION"));
+    let item = enqueue_text(&fluxo, &scenario, TurnId::generate(), 0);
 
     for _ in 0..4 {
         fluxo
@@ -664,22 +648,18 @@ async fn falha_repetida_vai_para_failed_com_motivo_e_contador() {
         Some("tentativas de envio esgotadas"),
         "o motivo fica legível no banco"
     );
-    assert_eq!(transport.envios(), 3, "não tentou depois de esgotar");
+    assert_eq!(transport.sends(), 3, "não tentou depois de esgotar");
     assert_eq!(fluxo.metrics().outputs_transient.value(), 3);
     assert_eq!(fluxo.metrics().outputs_exhausted.value(), 1);
 }
 
 #[tokio::test]
-async fn falha_definitiva_nao_retenta() {
+async fn failure_definitive_not_retries() {
     let scenario = Scenario::new("falha-definitiva");
-    let (fluxo, _atores, _registro) = montar_fluxo(
-        &scenario,
-        opcoes_rapidas(),
-        opcoes_atores(8),
-        Duration::ZERO,
-    );
-    let transport = TransporteDeTeste::com_falha(SendFailure::definitive("destinatário inválido"));
-    let item = enfileirar_texto(&fluxo, &scenario, TurnId::generate(), 0);
+    let (fluxo, _actors, _record) =
+        build_flow(&scenario, options_fast(), options_actors(8), Duration::ZERO);
+    let transport = TransportTest::with_failure(SendFailure::definitive("destinatário inválido"));
+    let item = enqueue_text(&fluxo, &scenario, TurnId::generate(), 0);
 
     fluxo
         .send_pending(scenario.org, transport.as_ref())
@@ -698,22 +678,18 @@ async fn falha_definitiva_nao_retenta() {
     assert_eq!(stored.state, OutboxState::Failed);
     assert_eq!(stored.ultimo_erro.as_deref(), Some("destinatário inválido"));
     assert_eq!(stored.attempts, 1, "erro definitivo não repete");
-    assert_eq!(transport.envios(), 1);
+    assert_eq!(transport.sends(), 1);
     assert_eq!(fluxo.metrics().outputs_definitive.value(), 1);
 }
 
 #[tokio::test]
-async fn saida_idempotente_por_turno_e_sequencia() {
+async fn output_idempotent_by_turn_sequence() {
     let scenario = Scenario::new("saida-idempotente");
-    let (fluxo, _atores, _registro) = montar_fluxo(
-        &scenario,
-        opcoes_rapidas(),
-        opcoes_atores(8),
-        Duration::ZERO,
-    );
+    let (fluxo, _actors, _record) =
+        build_flow(&scenario, options_fast(), options_actors(8), Duration::ZERO);
     let turno = TurnId::generate();
-    let first = enfileirar_texto(&fluxo, &scenario, turno, 0);
-    let (_novo, segunda) = fluxo
+    let first = enqueue_text(&fluxo, &scenario, turno, 0);
+    let (_new, second_one) = fluxo
         .enqueue_output(
             scenario.org,
             NewOutboxItem {
@@ -725,26 +701,26 @@ async fn saida_idempotente_por_turno_e_sequencia() {
             },
         )
         .expect("enfileira de novo");
-    assert_eq!(first.id, segunda.id, "a mesma chave não duplica a linha");
+    assert_eq!(first.id, second_one.id, "a mesma chave não duplica a linha");
     assert_eq!(
-        segunda.content_json, "{\"texto\":\"resposta 0\"}",
+        second_one.content_json, "{\"texto\":\"resposta 0\"}",
         "o conteúdo original é preservado"
     );
 }
 
 #[test]
-fn backoff_cresce_e_para_no_teto() {
+fn backoff_grows_for_cap() {
     let backoff = Backoff {
         base: Duration::from_millis(100),
         factor: 2,
         cap: Duration::from_secs(1),
     };
-    let esperas: Vec<u128> = (1..=8)
+    let waits: Vec<u128> = (1..=8)
         .map(|attempt| backoff.wait(attempt).as_millis())
         .collect();
-    assert_eq!(esperas, vec![100, 200, 400, 800, 1000, 1000, 1000, 1000]);
+    assert_eq!(waits, vec![100, 200, 400, 800, 1000, 1000, 1000, 1000]);
     assert!(
-        esperas.windows(2).all(|par| par[0] <= par[1]),
+        waits.windows(2).all(|pair| pair[0] <= pair[1]),
         "nunca diminui"
     );
     assert_eq!(
@@ -755,11 +731,11 @@ fn backoff_cresce_e_para_no_teto() {
 }
 
 #[tokio::test]
-async fn item_em_backoff_nao_e_reenviado_antes_da_hora() {
+async fn item_backoff_not_resent_before_hour() {
     let scenario = Scenario::new("backoff-virtual");
     let clock = Arc::new(Mutex::new(Instant::now()));
-    let relogio_para_o_fluxo = Arc::clone(&clock);
-    let (fluxo, _atores, _registro) = montar_fluxo(
+    let clock_for_flow = Arc::clone(&clock);
+    let (fluxo, _actors, _record) = build_flow(
         &scenario,
         FlowOptions {
             backoff: Backoff {
@@ -769,29 +745,29 @@ async fn item_em_backoff_nao_e_reenviado_antes_da_hora() {
             },
             ..FlowOptions::default()
         },
-        opcoes_atores(8),
+        options_actors(8),
         Duration::ZERO,
     );
     fluxo.with_clock(Arc::new(move || {
-        *relogio_para_o_fluxo.lock().expect("sem veneno")
+        *clock_for_flow.lock().expect("sem veneno")
     }));
 
-    let transport = TransporteDeTeste::com_falha(SendFailure::transient("429"));
-    enfileirar_texto(&fluxo, &scenario, TurnId::generate(), 0);
+    let transport = TransportTest::with_failure(SendFailure::transient("429"));
+    enqueue_text(&fluxo, &scenario, TurnId::generate(), 0);
 
     let first = fluxo
         .send_pending(scenario.org, transport.as_ref())
         .await
         .expect("envia");
     assert_eq!(first.failed, 1);
-    assert_eq!(transport.envios(), 1);
+    assert_eq!(transport.sends(), 1);
 
-    let adiado = fluxo
+    let deferred = fluxo
         .send_pending(scenario.org, transport.as_ref())
         .await
         .expect("envia");
-    assert_eq!(adiado.deferred, 1, "ainda dentro do backoff");
-    assert_eq!(transport.envios(), 1, "não chamou o canal de novo");
+    assert_eq!(deferred.deferred, 1, "ainda dentro do backoff");
+    assert_eq!(transport.sends(), 1, "não chamou o canal de novo");
 
     *clock.lock().expect("sem veneno") += Duration::from_secs(2);
     let second = fluxo
@@ -799,7 +775,7 @@ async fn item_em_backoff_nao_e_reenviado_antes_da_hora() {
         .await
         .expect("envia");
     assert_eq!(second.failed, 1);
-    assert_eq!(transport.envios(), 2, "repetiu depois da espera");
+    assert_eq!(transport.sends(), 2, "repetiu depois da espera");
 
     *clock.lock().expect("sem veneno") += Duration::from_secs(3);
     let ainda = fluxo
@@ -807,11 +783,11 @@ async fn item_em_backoff_nao_e_reenviado_antes_da_hora() {
         .await
         .expect("envia");
     assert_eq!(ainda.deferred, 1, "a espera dobrou");
-    assert_eq!(transport.envios(), 2);
+    assert_eq!(transport.sends(), 2);
 }
 
 #[tokio::test]
-async fn caixas_nao_cruzam_org() {
+async fn boxes_not_cross_org() {
     let scenario = Scenario::new("isolamento");
     let other = scenario
         .store
@@ -823,14 +799,10 @@ async fn caixas_nao_cruzam_org() {
         })
         .expect("cria a outra org")
         .id;
-    let (fluxo, _atores, _registro) = montar_fluxo(
-        &scenario,
-        opcoes_rapidas(),
-        opcoes_atores(8),
-        Duration::ZERO,
-    );
+    let (fluxo, _actors, _record) =
+        build_flow(&scenario, options_fast(), options_actors(8), Duration::ZERO);
 
-    let recebido = fluxo
+    let incoming = fluxo
         .receive_message(
             scenario.org,
             ReceivedMessage {
@@ -842,7 +814,7 @@ async fn caixas_nao_cruzam_org() {
             },
         )
         .expect("grava na org A");
-    let saida = enfileirar_texto(&fluxo, &scenario, TurnId::generate(), 0);
+    let saida = enqueue_text(&fluxo, &scenario, TurnId::generate(), 0);
 
     assert_eq!(
         scenario.store.inbox().count_pending(other).expect("conta"),
@@ -858,7 +830,7 @@ async fn caixas_nao_cruzam_org() {
             .is_empty()
     );
     assert!(
-        scenario.store.inbox().get(other, recebido.item.id).is_err(),
+        scenario.store.inbox().get(other, incoming.item.id).is_err(),
         "buscar o item da org A com a org B falha"
     );
     assert!(
@@ -898,18 +870,18 @@ async fn caixas_nao_cruzam_org() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn fila_cheia_adia_e_nao_perde_o_evento() {
+async fn queue_full_postpones_not_loses_event() {
     let scenario = Scenario::new("fila-cheia");
-    let (fluxo, actors, registro) = montar_fluxo(
+    let (fluxo, actors, registro) = build_flow(
         &scenario,
-        opcoes_rapidas(),
-        opcoes_atores(1),
+        options_fast(),
+        options_actors(1),
         Duration::from_millis(120),
     );
 
     let mut items = HashMap::new();
     for index in 0..3 {
-        let recebido = fluxo
+        let incoming = fluxo
             .receive_message(
                 scenario.org,
                 ReceivedMessage {
@@ -921,7 +893,7 @@ async fn fila_cheia_adia_e_nao_perde_o_evento() {
                 },
             )
             .expect("grava");
-        items.insert(index, recebido.item.id);
+        items.insert(index, incoming.item.id);
     }
 
     let first = fluxo.dispatch(scenario.org).expect("despacha");
@@ -974,14 +946,10 @@ async fn fila_cheia_adia_e_nao_perde_o_evento() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn lista_lida_antes_da_conclusao_nao_repete_item_processado() {
+async fn list_read_before_completion_not_repeats_item_processed() {
     let scenario = Scenario::new("lista-antiga");
-    let (fluxo, actors, registro) = montar_fluxo(
-        &scenario,
-        opcoes_rapidas(),
-        opcoes_atores(4),
-        Duration::ZERO,
-    );
+    let (fluxo, actors, registro) =
+        build_flow(&scenario, options_fast(), options_actors(4), Duration::ZERO);
     fluxo
         .receive_message(
             scenario.org,
@@ -995,12 +963,12 @@ async fn lista_lida_antes_da_conclusao_nao_repete_item_processado() {
         )
         .expect("grava");
 
-    let antiga = scenario
+    let previous = scenario
         .store
         .inbox()
         .list_pending(scenario.org, 10)
         .expect("lista");
-    assert_eq!(antiga.len(), 1, "a lista antiga traz o item");
+    assert_eq!(previous.len(), 1, "a lista antiga traz o item");
 
     let first = fluxo.dispatch(scenario.org).expect("despacha");
     assert_eq!(first.dispatch, 1);
@@ -1018,7 +986,7 @@ async fn lista_lida_antes_da_conclusao_nao_repete_item_processado() {
     );
 
     let report = fluxo
-        .dispatch_items(scenario.org, antiga)
+        .dispatch_items(scenario.org, previous)
         .expect("despacha a lista antiga");
     assert_eq!(
         report.dispatch, 0,
@@ -1034,12 +1002,12 @@ async fn lista_lida_antes_da_conclusao_nao_repete_item_processado() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn dois_despachos_concorrentes_nao_duplicam_o_evento() {
+async fn two_dispatches_concurrent_not_duplicate_event() {
     let scenario = Scenario::new("concorrencia-entrada");
-    let (fluxo, actors, registro) = montar_fluxo(
+    let (fluxo, actors, registro) = build_flow(
         &scenario,
-        opcoes_rapidas(),
-        opcoes_atores(64),
+        options_fast(),
+        options_actors(64),
         Duration::ZERO,
     );
     for index in 0..6 {
@@ -1058,7 +1026,7 @@ async fn dois_despachos_concorrentes_nao_duplicam_o_evento() {
     }
 
     let handle = tokio::runtime::Handle::current();
-    let resultados: Vec<poph_agent::entry_output::DispatchReport> = std::thread::scope(|scope| {
+    let results: Vec<poph_agent::entry_output::DispatchReport> = std::thread::scope(|scope| {
         let mut handles = Vec::new();
         for _ in 0..2 {
             let fluxo = fluxo.clone();
@@ -1075,7 +1043,7 @@ async fn dois_despachos_concorrentes_nao_duplicam_o_evento() {
             .collect()
     });
 
-    let dispatch: u32 = resultados.iter().map(|report| report.dispatch).sum();
+    let dispatch: u32 = results.iter().map(|report| report.dispatch).sum();
     assert_eq!(dispatch, 6, "cada item foi reservado uma única vez");
     assert!(actors.wait_queues_empty(Duration::from_secs(10)).await);
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -1083,18 +1051,14 @@ async fn dois_despachos_concorrentes_nao_duplicam_o_evento() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn dois_envios_concorrentes_nao_duplicam_a_saida() {
+async fn two_sends_concurrent_not_duplicate_output() {
     let scenario = Scenario::new("concorrencia-saida");
-    let (fluxo, _atores, _registro) = montar_fluxo(
-        &scenario,
-        opcoes_rapidas(),
-        opcoes_atores(8),
-        Duration::ZERO,
-    );
+    let (fluxo, _actors, _record) =
+        build_flow(&scenario, options_fast(), options_actors(8), Duration::ZERO);
     for _ in 0..4 {
-        enfileirar_texto(&fluxo, &scenario, TurnId::generate(), 0);
+        enqueue_text(&fluxo, &scenario, TurnId::generate(), 0);
     }
-    let transport = TransporteDeTeste::com_espera(Duration::from_millis(40));
+    let transport = TransportTest::with_wait(Duration::from_millis(40));
 
     let (first, second) = tokio::join!(
         fluxo.send_pending(scenario.org, transport.as_ref()),
@@ -1103,7 +1067,7 @@ async fn dois_envios_concorrentes_nao_duplicam_a_saida() {
     let first = first.expect("envia");
     let second = second.expect("envia");
 
-    assert_eq!(transport.envios(), 4, "cada item foi ao canal uma vez só");
+    assert_eq!(transport.sends(), 4, "cada item foi ao canal uma vez só");
     assert_eq!(
         first.sent + second.sent,
         4,
@@ -1118,10 +1082,10 @@ async fn dois_envios_concorrentes_nao_duplicam_a_saida() {
     );
 }
 
-fn esperar_marcador(marcador: &Path) {
+fn wait_marker(marker: &Path) {
     let beginning = Instant::now();
     while beginning.elapsed() < Duration::from_secs(30) {
-        if marcador.exists() {
+        if marker.exists() {
             return;
         }
         std::thread::sleep(Duration::from_millis(20));
@@ -1129,9 +1093,9 @@ fn esperar_marcador(marcador: &Path) {
     panic!("o filho não escreveu o marcador em {} s", 30);
 }
 
-fn matar(mut filho: std::process::Child) {
-    filho.kill().expect("SIGKILL no filho");
-    let saida = filho.wait().expect("espera o filho");
+fn kill_child(mut child: std::process::Child) {
+    child.kill().expect("SIGKILL no filho");
+    let saida = child.wait().expect("espera o filho");
     assert!(
         !saida.success(),
         "o filho devia ter morrido por sinal, não saído com sucesso"
@@ -1140,20 +1104,16 @@ fn matar(mut filho: std::process::Child) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "medição, não checagem"]
-async fn medir_ingestao() {
+async fn measure_ingestion() {
     const THREADS: usize = 8;
-    const POR_THREAD: usize = 1500;
+    const BY_THREAD: usize = 1500;
 
     let scenario = Scenario::new("medir-ingestao");
-    let (fluxo, _atores, _registro) = montar_fluxo(
-        &scenario,
-        opcoes_rapidas(),
-        opcoes_atores(8),
-        Duration::ZERO,
-    );
+    let (fluxo, _actors, _record) =
+        build_flow(&scenario, options_fast(), options_actors(8), Duration::ZERO);
 
     let beginning = Instant::now();
-    let mut latencias: Vec<u64> = std::thread::scope(|scope| {
+    let mut latencies: Vec<u64> = std::thread::scope(|scope| {
         let mut handles = Vec::new();
         for thread in 0..THREADS {
             let fluxo = fluxo.clone();
@@ -1161,8 +1121,8 @@ async fn medir_ingestao() {
             let integracao = scenario.integracao;
             let conversa = scenario.conversa;
             handles.push(scope.spawn(move || {
-                let mut micros = Vec::with_capacity(POR_THREAD);
-                for index in 0..POR_THREAD {
+                let mut micros = Vec::with_capacity(BY_THREAD);
+                for index in 0..BY_THREAD {
                     let id = format!("wamid-medir-{thread}-{index}");
                     let comeco = Instant::now();
                     fluxo
@@ -1182,18 +1142,18 @@ async fn medir_ingestao() {
                 micros
             }));
         }
-        let mut todas = Vec::with_capacity(THREADS * POR_THREAD);
+        let mut all = Vec::with_capacity(THREADS * BY_THREAD);
         for handle in handles {
-            todas.extend(handle.join().expect("thread de medição"));
+            all.extend(handle.join().expect("thread de medição"));
         }
-        todas
+        all
     });
     let total = beginning.elapsed();
-    latencias.sort_unstable();
+    latencies.sort_unstable();
     let p = |fracao: f64| {
-        latencias[((latencias.len() as f64 * fracao) as usize).min(latencias.len() - 1)]
+        latencies[((latencies.len() as f64 * fracao) as usize).min(latencies.len() - 1)]
     };
-    let quantity = latencias.len();
+    let quantity = latencies.len();
     println!(
         "ingestão atômica: {quantity} mensagens em {:.2} s = {:.0} msg/s; ACK p50 {} µs, p95 {} µs, p99 {} µs",
         total.as_secs_f64(),
@@ -1208,7 +1168,7 @@ async fn medir_ingestao() {
             .inbox()
             .count_pending(scenario.org)
             .expect("conta"),
-        (THREADS * POR_THREAD) as u64,
+        (THREADS * BY_THREAD) as u64,
         "todas as mensagens ficaram na fila, nenhuma duplicada nem perdida"
     );
 }

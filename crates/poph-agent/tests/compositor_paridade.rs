@@ -50,21 +50,21 @@ const FIXTURAS: &[(&str, &str, &str)] = &[
 ];
 
 #[test]
-fn paridade_byte_a_byte_com_o_pop_atende() {
+fn byte_for_byte_parity_with_pop_atende() {
     for (nome, entry, expected) in FIXTURAS {
         let dados = StructuredInstructions::from_tolerant_json(entry)
             .unwrap_or_else(|error| panic!("fixtura `{nome}` não é JSON válido: {error}"));
-        let obtido = compose_instructions(&dados);
+        let obtained = compose_instructions(&dados);
         assert_eq!(
-            obtido, *expected,
+            obtained, *expected,
             "saída diferente da referência do POP Atende na fixtura `{nome}`\n\
-             --- obtido ---\n{obtido}\n--- esperado ---\n{expected}"
+             --- obtido ---\n{obtained}\n--- esperado ---\n{expected}"
         );
     }
 }
 
 #[test]
-fn exemplo_do_documento_de_paridade_tem_658_caracteres_e_677_bytes() {
+fn example_document_parity_has_658_characters_677_bytes() {
     let (_name, entry, expected) = FIXTURAS
         .iter()
         .find(|(nome, _, _)| *nome == "exemplo_bia")
@@ -80,21 +80,21 @@ fn exemplo_do_documento_de_paridade_tem_658_caracteres_e_677_bytes() {
 }
 
 #[test]
-fn composicao_e_deterministica() {
-    for (nome, entry, _esperado) in FIXTURAS {
+fn composition_is_deterministic() {
+    for (nome, entry, _expected) in FIXTURAS {
         let dados = StructuredInstructions::from_tolerant_json(entry).unwrap();
         let first = compose_instructions(&dados);
-        let segunda = compose_instructions(&dados);
+        let second_one = compose_instructions(&dados);
         assert_eq!(
             first.as_bytes(),
-            segunda.as_bytes(),
+            second_one.as_bytes(),
             "duas composições da fixtura `{nome}` divergiram"
         );
     }
 }
 
 #[test]
-fn caso_de_borda_identity_sem_nome_nem_empresa_nao_emite_cabecalho() {
+fn case_edge_identity_without_name_nor_company_not_emits_header() {
     let dados = StructuredInstructions::from_tolerant_json(
         r#"{"identity":{"role":"atendente","company_description":"perdida"}}"#,
     )
@@ -109,7 +109,7 @@ fn caso_de_borda_identity_sem_nome_nem_empresa_nao_emite_cabecalho() {
 }
 
 #[test]
-fn caso_de_borda_empresa_sem_nome_tem_dois_espacos_no_cabecalho() {
+fn case_edge_company_without_name_has_two_spaces_header() {
     let dados =
         StructuredInstructions::from_tolerant_json(r#"{"identity":{"company":"FixProLar"}}"#)
             .unwrap();
@@ -118,7 +118,7 @@ fn caso_de_borda_empresa_sem_nome_tem_dois_espacos_no_cabecalho() {
 }
 
 #[test]
-fn caso_de_borda_ferramenta_desabilitada_nao_entra_no_markdown() {
+fn case_edge_tool_disabled_not_enters_markdown() {
     let dados = StructuredInstructions::from_tolerant_json(
         r#"{"tools":[{"name":"enviar_arquivo","enabled":false,"when_to_use":"catálogo"}]}"#,
     )
@@ -129,36 +129,36 @@ fn caso_de_borda_ferramenta_desabilitada_nao_entra_no_markdown() {
 }
 
 #[test]
-fn caso_de_borda_flow_steps_nao_alteram_a_saida() {
-    let sem_passos: StructuredInstructions =
+fn case_edge_flow_steps_not_alter_output() {
+    let without_steps: StructuredInstructions =
         StructuredInstructions::from_tolerant_json(r#"{"scope":{"does":"x"}}"#).unwrap();
-    let com_passos: StructuredInstructions = StructuredInstructions::from_tolerant_json(
+    let with_steps: StructuredInstructions = StructuredInstructions::from_tolerant_json(
         r#"{"scope":{"does":"x"},"flow_steps":[{"name":"A","description":"B"}]}"#,
     )
     .unwrap();
     assert_eq!(
-        compose_instructions(&sem_passos),
-        compose_instructions(&com_passos)
+        compose_instructions(&without_steps),
+        compose_instructions(&with_steps)
     );
 }
 
 #[test]
-fn le_o_duplo_encoding_legado_do_jsonb() {
-    let objeto = r#"{"identity":{"name":"Bia"}}"#;
-    let duplo = serde_json::to_string(&serde_json::Value::String(objeto.to_owned())).unwrap();
+fn reads_legacy_double_encoding_from_jsonb() {
+    let object = r#"{"identity":{"name":"Bia"}}"#;
+    let duplo = serde_json::to_string(&serde_json::Value::String(object.to_owned())).unwrap();
     let dados = StructuredInstructions::from_tolerant_json(&duplo).expect("lê o duplo encoding");
     assert_eq!(dados.identity.name, "Bia");
 }
 
 #[test]
-fn campo_desconhecido_e_ignorado_na_leitura() {
+fn field_unknown_ignored_read() {
     let dados = StructuredInstructions::from_tolerant_json(r#"{"linked_template_id":"tpl_1"}"#)
         .expect("ignora campo fora da V1");
     assert_eq!(dados, StructuredInstructions::default());
 }
 
 #[test]
-fn nomes_antigos_de_ferramenta_sao_recusados_na_escrita() {
+fn names_old_tool_are_refused_write() {
     let dados = StructuredInstructions::from_tolerant_json(
         r#"{"tools":[{"name":"search_knowledge_base","enabled":true}]}"#,
     )
@@ -172,7 +172,7 @@ fn nomes_antigos_de_ferramenta_sao_recusados_na_escrita() {
 }
 
 #[test]
-fn ferramentas_da_v1_sao_aceitas() {
+fn tools_v1_are_accepted() {
     let dados = StructuredInstructions::from_tolerant_json(
         r#"{"tools":[
             {"name":"consultar_base","enabled":true},
@@ -191,7 +191,7 @@ fn ferramentas_da_v1_sao_aceitas() {
 }
 
 #[test]
-fn ferramenta_sem_enabled_vem_habilitada_como_no_contrato() {
+fn tool_without_enabled_comes_enabled_as_contract() {
     let dados =
         StructuredInstructions::from_tolerant_json(r#"{"tools":[{"name":"consultar_base"}]}"#)
             .unwrap();

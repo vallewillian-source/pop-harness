@@ -11,33 +11,33 @@ use poph_store::{
 };
 use poph_types::{ConversationId, OrgId, TurnId};
 
-struct SemProcessar;
+struct NoProcess;
 
-impl Processor for SemProcessar {
-    fn process(&self, _tarefa: Task) -> BoxFuture {
+impl Processor for NoProcess {
+    fn process(&self, _task: Task) -> BoxFuture {
         Box::pin(async { Ok(()) })
     }
 }
 
 #[derive(Default)]
-struct TransporteDeTeste {
-    envios: AtomicUsize,
+struct TransportTest {
+    sends: AtomicUsize,
     received: Mutex<Vec<ConversationId>>,
 }
 
-impl TransporteDeTeste {
-    fn envios(&self) -> usize {
-        self.envios.load(Ordering::SeqCst)
+impl TransportTest {
+    fn sends(&self) -> usize {
+        self.sends.load(Ordering::SeqCst)
     }
 
-    fn conversas_enviadas(&self) -> Vec<ConversationId> {
+    fn conversations_sent(&self) -> Vec<ConversationId> {
         self.received.lock().expect("sem veneno").clone()
     }
 }
 
-impl OutputTransport for TransporteDeTeste {
+impl OutputTransport for TransportTest {
     fn send(&self, item: OutboxItem) -> SendFuture {
-        self.envios.fetch_add(1, Ordering::SeqCst);
+        self.sends.fetch_add(1, Ordering::SeqCst);
         self.received
             .lock()
             .expect("sem veneno")
@@ -130,7 +130,7 @@ impl Scenario {
 
     fn fluxo(&self) -> Fluxo {
         let actors = Actors::new(
-            Arc::new(SemProcessar),
+            Arc::new(NoProcess),
             ActorOptions {
                 ociosidade: Duration::from_secs(60),
                 queue_by_conversation: 8,
@@ -142,7 +142,7 @@ impl Scenario {
     }
 
     fn enqueue(&self, conversa: ConversationId, seq: u32) -> OutboxItem {
-        let (_novo, item) = self
+        let (_new, item) = self
             .store
             .outbox()
             .enqueue(
@@ -175,11 +175,11 @@ impl Drop for Scenario {
 }
 
 #[tokio::test]
-async fn chat_confirma_o_do_console_e_nao_toca_no_whatsapp() {
+async fn chat_confirms_console_does_not_touch_whatsapp() {
     let scenario = Scenario::new("chat");
     let do_console = scenario.enqueue(scenario.console, 0);
-    let do_whatsapp = scenario.enqueue(scenario.whatsapp, 0);
-    let transport = TransporteDeTeste::default();
+    let whatsapp_item = scenario.enqueue(scenario.whatsapp, 0);
+    let transport = TransportTest::default();
 
     let report = scenario
         .fluxo()
@@ -188,32 +188,32 @@ async fn chat_confirma_o_do_console_e_nao_toca_no_whatsapp() {
         .expect("envia o que é do console");
 
     assert_eq!(report.sent, 1, "só o do console sai");
-    assert_eq!(transport.envios(), 1, "o transporte foi chamado uma vez");
+    assert_eq!(transport.sends(), 1, "o transporte foi chamado uma vez");
     assert_eq!(
-        transport.conversas_enviadas(),
+        transport.conversations_sent(),
         vec![scenario.console],
         "a única chamada é da conversa do console"
     );
     assert_eq!(scenario.estado(&do_console), OutboxState::Sent);
     assert_eq!(
-        scenario.estado(&do_whatsapp),
+        scenario.estado(&whatsapp_item),
         OutboxState::Pending,
         "o item de WhatsApp continua pendente"
     );
     let stored = scenario
         .store
         .outbox()
-        .get(scenario.org, do_whatsapp.id)
+        .get(scenario.org, whatsapp_item.id)
         .expect("lê o item de WhatsApp");
     assert_eq!(stored.attempts, 0, "nenhuma tentativa foi gasta nele");
     assert!(stored.ultimo_erro.is_none(), "nenhum erro foi gravado nele");
 }
 
 #[tokio::test]
-async fn o_envio_geral_pegaria_o_whatsapp_e_por_isso_o_chat_nao_usa_ele() {
+async fn general_send_would_take_whatsapp_but_this_chat_does_not_use_it() {
     let scenario = Scenario::new("geral");
-    let do_whatsapp = scenario.enqueue(scenario.whatsapp, 0);
-    let transport = TransporteDeTeste::default();
+    let whatsapp_item = scenario.enqueue(scenario.whatsapp, 0);
+    let transport = TransportTest::default();
 
     scenario
         .fluxo()
@@ -221,16 +221,16 @@ async fn o_envio_geral_pegaria_o_whatsapp_e_por_isso_o_chat_nao_usa_ele() {
         .await
         .expect("envio geral");
 
-    assert_eq!(transport.envios(), 1, "o geral tocou no item de WhatsApp");
-    assert_eq!(scenario.estado(&do_whatsapp), OutboxState::Sent);
+    assert_eq!(transport.sends(), 1, "o geral tocou no item de WhatsApp");
+    assert_eq!(scenario.estado(&whatsapp_item), OutboxState::Sent);
 }
 
 #[tokio::test]
-async fn so_whatsapp_pendente_nao_chama_o_transporte() {
+async fn whatsapp_pending_does_not_call_transport() {
     let scenario = Scenario::new("so-whatsapp");
     scenario.enqueue(scenario.whatsapp, 0);
     scenario.enqueue(scenario.whatsapp, 1);
-    let transport = TransporteDeTeste::default();
+    let transport = TransportTest::default();
 
     let report = scenario
         .fluxo()
@@ -238,6 +238,6 @@ async fn so_whatsapp_pendente_nao_chama_o_transporte() {
         .await
         .expect("envio do console");
 
-    assert_eq!(transport.envios(), 0, "nenhuma chamada ao canal do chat");
+    assert_eq!(transport.sends(), 0, "nenhuma chamada ao canal do chat");
     assert_eq!(report.sent, 0);
 }

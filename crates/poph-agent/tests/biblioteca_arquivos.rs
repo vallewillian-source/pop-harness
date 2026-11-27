@@ -24,10 +24,10 @@ use poph_types::{
 use serde_json::{Value, json};
 
 #[derive(Default, Clone)]
-struct PausaFalsa;
+struct FakePause;
 
-impl Pause for PausaFalsa {
-    fn wait(&self, _duracao: Duration) -> FuturePause {
+impl Pause for FakePause {
+    fn wait(&self, _duration: Duration) -> FuturePause {
         Box::pin(async {})
     }
 }
@@ -37,7 +37,7 @@ struct Scenario {
     store: Arc<Store>,
     org: OrgId,
     agente: AgentId,
-    outro_agente: AgentId,
+    other_agent: AgentId,
     conversa: ConversationId,
     catalog: FileId,
     proposta: FileId,
@@ -65,32 +65,32 @@ impl Scenario {
             })
             .expect("cria a org")
             .id;
-        let agente = Self::criar_agente(&store, org, label, tools);
-        let outro_agente = Self::criar_agente(&store, org, &format!("{label}-2"), &[]);
+        let agente = Self::create_agent(&store, org, label, tools);
+        let other_agent = Self::create_agent(&store, org, &format!("{label}-2"), &[]);
         let catalog = Self::file(&store, org, agente, "catalogo.pdf", "catálogo de serviços");
         let proposta = Self::file(&store, org, agente, "proposta.pdf", "modelo de proposta");
-        let conversa = Self::abrir_conversa(&store, org, agente);
+        let conversa = Self::open_conversation(&store, org, agente);
         Self {
             folder,
             store,
             org,
             agente,
-            outro_agente,
+            other_agent,
             conversa,
             catalog,
             proposta,
         }
     }
 
-    fn criar_agente(store: &Store, org: OrgId, label: &str, tools: &[&str]) -> AgentId {
-        let sufixo = AgentId::generate().to_string();
+    fn create_agent(store: &Store, org: OrgId, label: &str, tools: &[&str]) -> AgentId {
+        let suffix = AgentId::generate().to_string();
         let agente = store
             .agents()
             .create(
                 org,
                 NewAgent {
                     name: format!("Bia {label}"),
-                    slug: format!("bia-{label}-{}", &sufixo[..8]),
+                    slug: format!("bia-{label}-{}", &suffix[..8]),
                     grouping_window_ms: 0,
                     ..NewAgent::default()
                 },
@@ -141,7 +141,7 @@ impl Scenario {
             .id
     }
 
-    fn abrir_conversa(store: &Store, org: OrgId, agente: AgentId) -> ConversationId {
+    fn open_conversation(store: &Store, org: OrgId, agente: AgentId) -> ConversationId {
         store
             .conversations()
             .create(
@@ -178,11 +178,11 @@ impl Scenario {
             .expect("ferramenta registrada")
     }
 
-    async fn chamar(&self, turno: TurnId, arguments: Value) -> Result<String, String> {
+    async fn invoke(&self, turno: TurnId, arguments: Value) -> Result<String, String> {
         self.tool().run(self.context(turno), arguments).await
     }
 
-    fn saidas(&self, turno: TurnId) -> Vec<OutboxItem> {
+    fn outputs(&self, turno: TurnId) -> Vec<OutboxItem> {
         self.store
             .outbox()
             .list_pending(self.org, 50)
@@ -192,8 +192,8 @@ impl Scenario {
             .collect()
     }
 
-    fn engine(&self, roteiros: Vec<Script>) -> (TurnEngine, Arc<FakeProvider>) {
-        let fake = Arc::new(FakeProvider::with_scripts(roteiros));
+    fn engine(&self, scripts: Vec<Script>) -> (TurnEngine, Arc<FakeProvider>) {
+        let fake = Arc::new(FakeProvider::with_scripts(scripts));
         let provedor: Arc<dyn LlmProvider> = fake.clone();
         let config = ConfigHot::new(
             Arc::clone(&self.store),
@@ -209,12 +209,12 @@ impl Scenario {
             TurnOptions::default(),
             MetricsTurn::own(),
         )
-        .with_pause(Arc::new(PausaFalsa));
+        .with_pause(Arc::new(FakePause));
         let engine = engine.with_tools(Arc::new(self.registro()) as Arc<dyn ToolRegistry>);
         (engine, fake)
     }
 
-    fn falar(&self, texto: &str) -> poph_types::MessageId {
+    fn say(&self, texto: &str) -> poph_types::MessageId {
         self.store
             .messages()
             .write(
@@ -235,8 +235,8 @@ impl Scenario {
             .id
     }
 
-    async fn rodar_turno(&self, engine: &TurnEngine) -> poph_agent::turno::TurnSummary {
-        let mensagem = self.falar("manda o catálogo por favor");
+    async fn run_turn(&self, engine: &TurnEngine) -> poph_agent::turno::TurnSummary {
+        let mensagem = self.say("manda o catálogo por favor");
         engine
             .run(
                 poph_agent::turno::TurnInput::new(self.org, self.conversa, mensagem),
@@ -276,28 +276,28 @@ fn file_item(item: &OutboxItem) -> Option<Value> {
 }
 
 #[tokio::test]
-async fn id_de_outro_agente_da_mesma_org_e_recusado() {
+async fn id_other_agent_same_org_refused() {
     let scenario = Scenario::new("outro-agente", &[NAME_TOOL]);
-    let alheio = Scenario::file(
+    let foreign = Scenario::file(
         &scenario.store,
         scenario.org,
-        scenario.outro_agente,
+        scenario.other_agent,
         "interno.pdf",
         "documento interno",
     );
     let turno = TurnId::generate();
     let error = scenario
-        .chamar(turno, json!({"id": alheio.to_string()}))
+        .invoke(turno, json!({"id": foreign.to_string()}))
         .await
         .expect_err("id de outro agente é recusado");
     assert!(error.contains("não existe arquivo"), "{error}");
-    assert!(scenario.saidas(turno).is_empty(), "nada foi enfileirado");
+    assert!(scenario.outputs(turno).is_empty(), "nada foi enfileirado");
 }
 
 #[tokio::test]
-async fn id_de_outra_org_e_recusado_mesmo_com_org_forjada() {
+async fn id_other_org_refused_same_with_org_forged() {
     let scenario = Scenario::new("outra-org", &[NAME_TOOL]);
-    let outra_org = scenario
+    let other_org = scenario
         .store
         .orgs()
         .create(NewOrg {
@@ -306,20 +306,17 @@ async fn id_de_outra_org_e_recusado_mesmo_com_org_forjada() {
             config_json: "{}".to_owned(),
         })
         .expect("cria a outra org");
-    let agente_alheio = Scenario::criar_agente(&scenario.store, outra_org.id, "fora", &[]);
-    let arquivo_alheio = Scenario::file(
+    let agent_foreign = Scenario::create_agent(&scenario.store, other_org.id, "fora", &[]);
+    let file_foreign = Scenario::file(
         &scenario.store,
-        outra_org.id,
-        agente_alheio,
+        other_org.id,
+        agent_foreign,
         "segredo.pdf",
         "não é desta org",
     );
 
     let error = scenario
-        .chamar(
-            TurnId::generate(),
-            json!({"id": arquivo_alheio.to_string()}),
-        )
+        .invoke(TurnId::generate(), json!({"id": file_foreign.to_string()}))
         .await
         .expect_err("arquivo de outra org é recusado");
     assert!(error.contains("não existe arquivo"), "{error}");
@@ -327,20 +324,20 @@ async fn id_de_outra_org_e_recusado_mesmo_com_org_forjada() {
     let turno = TurnId::generate();
     let tool = scenario.tool();
     let mut context = scenario.context(turno);
-    context.org = outra_org.id;
+    context.org = other_org.id;
     let error = tool
         .run(context, json!({"id": scenario.catalog.to_string()}))
         .await
         .expect_err("id do próprio agente não vale com a org trocada");
     assert!(error.contains("não existe arquivo"), "{error}");
-    assert!(scenario.saidas(turno).is_empty());
+    assert!(scenario.outputs(turno).is_empty());
 }
 
 #[tokio::test]
-async fn id_inexistente_devolve_erro_legivel_e_o_turno_segue() {
+async fn id_missing_returns_error_readable_turn_follows() {
     let scenario = Scenario::new("inexistente", &[NAME_TOOL]);
     let error = scenario
-        .chamar(
+        .invoke(
             TurnId::generate(),
             json!({"id": FileId::generate().to_string()}),
         )
@@ -353,28 +350,28 @@ async fn id_inexistente_devolve_erro_legivel_e_o_turno_segue() {
         call("c1", json!({"id": FileId::generate().to_string()})),
         response("Não achei esse arquivo; posso te mandar o catálogo."),
     ]);
-    let summary = scenario.rodar_turno(&engine).await;
+    let summary = scenario.run_turn(&engine).await;
     assert!(summary.texto.contains("catálogo"), "{}", summary.texto);
-    let saidas = scenario.saidas(summary.turno);
+    let outputs = scenario.outputs(summary.turno);
     assert!(
-        saidas.iter().all(|item| item.tipo == "text"),
-        "nenhum arquivo enfileirado: {saidas:?}"
+        outputs.iter().all(|item| item.tipo == "text"),
+        "nenhum arquivo enfileirado: {outputs:?}"
     );
 }
 
 #[tokio::test]
-async fn envio_enfileira_arquivo_na_outbox_e_repetir_nao_duplica() {
+async fn send_enqueues_file_outbox_repeat_not_duplicates() {
     let scenario = Scenario::new("envio", &[NAME_TOOL]);
     let turno = TurnId::generate();
     let first = scenario
-        .chamar(turno, json!({"id": scenario.catalog.to_string()}))
+        .invoke(turno, json!({"id": scenario.catalog.to_string()}))
         .await
         .expect("enfileira");
     assert!(first.contains("enfileirado"), "{first}");
 
-    let saidas = scenario.saidas(turno);
-    assert_eq!(saidas.len(), 1);
-    let item = &saidas[0];
+    let outputs = scenario.outputs(turno);
+    assert_eq!(outputs.len(), 1);
+    let item = &outputs[0];
     assert_eq!(item.tipo, "file");
     let payload = file_item(item).expect("conteúdo em JSON");
     assert_eq!(
@@ -385,38 +382,38 @@ async fn envio_enfileira_arquivo_na_outbox_e_repetir_nao_duplica() {
     assert_eq!(payload["mime"], json!("application/pdf"));
 
     let second = scenario
-        .chamar(turno, json!({"id": scenario.catalog.to_string()}))
+        .invoke(turno, json!({"id": scenario.catalog.to_string()}))
         .await
         .expect("repetição é aceita");
     assert!(second.contains("já estava enfileirado"), "{second}");
-    assert_eq!(scenario.saidas(turno).len(), 1);
+    assert_eq!(scenario.outputs(turno).len(), 1);
 
     scenario
-        .chamar(turno, json!({"id": scenario.proposta.to_string()}))
+        .invoke(turno, json!({"id": scenario.proposta.to_string()}))
         .await
         .expect("enfileira o segundo");
-    assert_eq!(scenario.saidas(turno).len(), 2);
+    assert_eq!(scenario.outputs(turno).len(), 2);
 }
 
 #[tokio::test]
-async fn turno_completo_envia_arquivo_e_responde() {
+async fn turn_complete_sends_file_answers() {
     let scenario = Scenario::new("turno", &[NAME_TOOL]);
     let (engine, _fake) = scenario.engine(vec![
         call("c1", json!({"id": scenario.catalog.to_string()})),
         response("Estou enviando o catálogo."),
     ]);
-    let summary = scenario.rodar_turno(&engine).await;
-    let saidas = scenario.saidas(summary.turno);
-    let tipos: Vec<&str> = saidas.iter().map(|item| item.tipo.as_str()).collect();
-    assert!(tipos.contains(&"file"), "{tipos:?}");
-    assert!(tipos.contains(&"text"), "{tipos:?}");
+    let summary = scenario.run_turn(&engine).await;
+    let outputs = scenario.outputs(summary.turno);
+    let kinds: Vec<&str> = outputs.iter().map(|item| item.tipo.as_str()).collect();
+    assert!(kinds.contains(&"file"), "{kinds:?}");
+    assert!(kinds.contains(&"text"), "{kinds:?}");
 }
 
 #[tokio::test]
-async fn agente_sem_a_ferramenta_nao_a_recebe() {
+async fn agent_without_tool_not_receives() {
     let scenario = Scenario::new("sem-ferramenta", &[]);
     let (engine, fake) = scenario.engine(vec![response("ok")]);
-    scenario.rodar_turno(&engine).await;
+    scenario.run_turn(&engine).await;
     let names: Vec<String> = fake.received()[0]
         .tools
         .iter()
@@ -426,10 +423,10 @@ async fn agente_sem_a_ferramenta_nao_a_recebe() {
 }
 
 #[tokio::test]
-async fn agente_com_a_ferramenta_ve_a_descricao_dos_arquivos() {
+async fn agent_with_tool_sees_description_files() {
     let scenario = Scenario::new("com-ferramenta", &[NAME_TOOL]);
     let (engine, fake) = scenario.engine(vec![response("ok")]);
-    scenario.rodar_turno(&engine).await;
+    scenario.run_turn(&engine).await;
     let request = &fake.received()[0];
     let tool = request
         .tools
@@ -460,7 +457,7 @@ async fn agente_com_a_ferramenta_ve_a_descricao_dos_arquivos() {
 }
 
 #[tokio::test]
-async fn biblioteca_vazia_aparece_como_tal_e_nao_quebra_o_turno() {
+async fn library_empty_appears_as_such_not_breaks_turn() {
     let scenario = Scenario::new("vazia", &[NAME_TOOL]);
     for file in [scenario.catalog, scenario.proposta] {
         scenario
@@ -470,7 +467,7 @@ async fn biblioteca_vazia_aparece_como_tal_e_nao_quebra_o_turno() {
             .expect("apaga o arquivo");
     }
     let (engine, fake) = scenario.engine(vec![response("ok")]);
-    scenario.rodar_turno(&engine).await;
+    scenario.run_turn(&engine).await;
     let received = fake.received();
     let tool = received[0]
         .tools
@@ -485,23 +482,23 @@ async fn biblioteca_vazia_aparece_como_tal_e_nao_quebra_o_turno() {
 }
 
 #[tokio::test]
-async fn argumento_alem_do_id_e_recusado() {
+async fn argument_beyond_id_refused() {
     let scenario = Scenario::new("argumentos", &[NAME_TOOL]);
     let turno = TurnId::generate();
     let error = scenario
-        .chamar(
+        .invoke(
             turno,
             json!({"id": scenario.catalog.to_string(), "caminho": "/etc/passwd"}),
         )
         .await
         .expect_err("caminho não é aceito");
     assert!(error.contains("não existe nesta ferramenta"), "{error}");
-    assert!(scenario.saidas(turno).is_empty());
-    assert!(scenario.chamar(turno, json!({"id": "  "})).await.is_err());
+    assert!(scenario.outputs(turno).is_empty());
+    assert!(scenario.invoke(turno, json!({"id": "  "})).await.is_err());
 }
 
 #[test]
-fn arquivo_da_biblioteca_traz_o_caminho_relativo_do_blob() {
+fn file_library_brings_path_relative_blob() {
     let file = LibraryFile {
         id: FileId::generate(),
         org_id: OrgId::generate(),
@@ -518,7 +515,7 @@ fn arquivo_da_biblioteca_traz_o_caminho_relativo_do_blob() {
 }
 
 #[tokio::test]
-async fn falha_do_modelo_depois_de_arquivo_enfileirado_nao_repete_o_envio() {
+async fn failure_model_after_file_enqueued_not_repeats_send() {
     let scenario = Scenario::new("falha-arquivo", &[NAME_TOOL]);
     let failure = Script::Failure(LlmError::Unavailable {
         tentativas: 3,
@@ -564,7 +561,7 @@ async fn falha_do_modelo_depois_de_arquivo_enfileirado_nao_repete_o_envio() {
             .inbox()
             .count_pending(scenario.org)
             .expect("pendentes");
-        let rodando = scenario
+        let running = scenario
             .store
             .turns()
             .list(
@@ -575,7 +572,7 @@ async fn falha_do_modelo_depois_de_arquivo_enfileirado_nao_repete_o_envio() {
             .expect("turnos")
             .iter()
             .any(|turno| turno.state == poph_store::TurnState::Running);
-        if pending == 0 && !rodando {
+        if pending == 0 && !running {
             break;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -585,7 +582,7 @@ async fn falha_do_modelo_depois_de_arquivo_enfileirado_nao_repete_o_envio() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     assert_eq!(fake.received().len(), 2, "sem repetição do turno");
-    let turnos = scenario
+    let turns = scenario
         .store
         .turns()
         .list(
@@ -594,13 +591,13 @@ async fn falha_do_modelo_depois_de_arquivo_enfileirado_nao_repete_o_envio() {
             poph_store::Page::with_limit(10),
         )
         .expect("turnos");
-    assert_eq!(turnos.len(), 1, "um turno só");
-    let saidas = scenario
+    assert_eq!(turns.len(), 1, "um turno só");
+    let outputs = scenario
         .store
         .outbox()
         .list_pending(scenario.org, 50)
         .expect("saída");
-    let files = saidas.iter().filter(|item| item.tipo == "file").count();
+    let files = outputs.iter().filter(|item| item.tipo == "file").count();
     assert_eq!(files, 1, "o arquivo sai uma vez");
     assert_eq!(
         scenario

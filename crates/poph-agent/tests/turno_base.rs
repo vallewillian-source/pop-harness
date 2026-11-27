@@ -17,10 +17,10 @@ use poph_store::{
 use poph_types::{AgentId, ConversationId, KnowledgeGroupId, MessageId, OrgId};
 
 #[derive(Default, Clone)]
-struct PausaFalsa;
+struct FakePause;
 
-impl Pause for PausaFalsa {
-    fn wait(&self, _duracao: Duration) -> FuturePause {
+impl Pause for FakePause {
+    fn wait(&self, _duration: Duration) -> FuturePause {
         Box::pin(async {})
     }
 }
@@ -149,7 +149,7 @@ impl Scenario {
             .expect("cria o item");
     }
 
-    fn falar(&self, texto: &str) -> MessageId {
+    fn say(&self, texto: &str) -> MessageId {
         self.store
             .messages()
             .write(
@@ -178,7 +178,7 @@ impl Scenario {
     }
 
     fn engine(&self) -> (TurnEngine, Arc<FakeProvider>) {
-        let roteiro = Script::Events(vec![
+        let script = Script::Events(vec![
             LlmEvent::Texto("resposta".to_owned()),
             LlmEvent::Usage(Usage {
                 input: 100,
@@ -187,9 +187,9 @@ impl Scenario {
             LlmEvent::Fim(FinishReason::Completed),
         ]);
         let fake = Arc::new(FakeProvider::with_scripts(vec![
-            roteiro.clone(),
-            roteiro.clone(),
-            roteiro,
+            script.clone(),
+            script.clone(),
+            script,
         ]));
         let provedor: Arc<dyn LlmProvider> = fake.clone();
         let config = Arc::new(ConfigHot::new(
@@ -198,9 +198,9 @@ impl Scenario {
             MetricsMemory::own(),
         ));
         let limiter = Arc::new(Limiter::new(LimitOptions::default(), MetricsMemory::own()));
-        let busca: Arc<dyn KnowledgeSearcher> =
+        let lookup: Arc<dyn KnowledgeSearcher> =
             Arc::clone(&self.base) as Arc<dyn KnowledgeSearcher>;
-        let registro = QueryKnowledge::registro(Arc::clone(&config), Arc::clone(&busca));
+        let registro = QueryKnowledge::registro(Arc::clone(&config), Arc::clone(&lookup));
         let engine = TurnEngine::new(
             Arc::clone(&self.store),
             ConfigHot::new(
@@ -213,17 +213,17 @@ impl Scenario {
             TurnOptions::default(),
             MetricsTurn::own(),
         )
-        .with_pause(Arc::new(PausaFalsa))
+        .with_pause(Arc::new(FakePause))
         .with_tools(Arc::new(registro))
-        .with_search(busca);
+        .with_search(lookup);
         (engine, fake)
     }
 
-    fn avancar(&self, ms: i64) {
+    fn advance(&self, ms: i64) {
         self.clock.fetch_add(ms, Ordering::SeqCst);
     }
 
-    fn turnos(&self) -> Vec<poph_store::Turno> {
+    fn turns(&self) -> Vec<poph_store::Turno> {
         self.store
             .turns()
             .list(self.org, self.conversa, Page::with_limit(50))
@@ -237,7 +237,7 @@ impl Drop for Scenario {
     }
 }
 
-fn textos_do_pedido(request: &poph_core::llm::Request) -> Vec<String> {
+fn texts_request(request: &poph_core::llm::Request) -> Vec<String> {
     request
         .messages
         .iter()
@@ -249,7 +249,7 @@ fn textos_do_pedido(request: &poph_core::llm::Request) -> Vec<String> {
 }
 
 #[tokio::test]
-async fn trecho_da_base_entra_no_bloco_volatil_e_o_registro_guarda_a_fonte() {
+async fn chunk_base_enters_block_volatile_record_keeps_source() {
     let scenario = Scenario::new("usa-base");
     scenario.criar_item(
         "Prazo de agendamento",
@@ -258,7 +258,7 @@ async fn trecho_da_base_entra_no_bloco_volatil_e_o_registro_guarda_a_fonte() {
     scenario.synchronise().await;
     let (engine, fake) = scenario.engine();
 
-    let gatilho = scenario.falar("Qual é o prazo para agendar a dedetização?");
+    let gatilho = scenario.say("Qual é o prazo para agendar a dedetização?");
     let summary = engine
         .run(
             poph_agent::turno::TurnInput::new(scenario.org, scenario.conversa, gatilho),
@@ -268,15 +268,15 @@ async fn trecho_da_base_entra_no_bloco_volatil_e_o_registro_guarda_a_fonte() {
         .expect("o turno roda");
     assert_eq!(summary.estado, poph_store::TurnState::Completed);
 
-    let pedidos = fake.received();
-    assert_eq!(pedidos.len(), 1, "uma chamada ao modelo");
-    let sistemas = textos_do_pedido(&pedidos[0]);
-    assert_eq!(sistemas.len(), 2, "prefixo + bloco volátil");
+    let requests = fake.received();
+    assert_eq!(requests.len(), 1, "uma chamada ao modelo");
+    let systems = texts_request(&requests[0]);
+    assert_eq!(systems.len(), 2, "prefixo + bloco volátil");
     assert_eq!(
-        sistemas[0], "# Bia\n\nVocê é a atendente da FixProLar.",
+        systems[0], "# Bia\n\nVocê é a atendente da FixProLar.",
         "o prefixo estável continua sendo exatamente o markdown do agente"
     );
-    let volatile = &sistemas[1];
+    let volatile = &systems[1];
     assert!(volatile.starts_with("<contexto_do_turno>"), "{volatile}");
     assert!(volatile.contains("<base_de_conhecimento>"), "{volatile}");
     assert!(
@@ -288,7 +288,7 @@ async fn trecho_da_base_entra_no_bloco_volatil_e_o_registro_guarda_a_fonte() {
         "o aviso de conteúdo não confiável acompanha o trecho"
     );
 
-    let turno = &scenario.turnos()[0];
+    let turno = &scenario.turns()[0];
     assert!(
         turno.passages_json.contains("Prazo de agendamento"),
         "o registro do turno guarda a fonte: {}",
@@ -298,7 +298,7 @@ async fn trecho_da_base_entra_no_bloco_volatil_e_o_registro_guarda_a_fonte() {
 }
 
 #[tokio::test]
-async fn injecao_em_item_da_base_nao_muda_o_prefixo_do_agente() {
+async fn injection_item_base_not_changes_prefix_agent() {
     let scenario = Scenario::new("injecao");
     scenario.criar_item(
         "Prazo de agendamento",
@@ -307,7 +307,7 @@ async fn injecao_em_item_da_base_nao_muda_o_prefixo_do_agente() {
     scenario.synchronise().await;
     let (engine, fake) = scenario.engine();
 
-    let gatilho = scenario.falar("Qual é o prazo para agendar a dedetização?");
+    let gatilho = scenario.say("Qual é o prazo para agendar a dedetização?");
     engine
         .run(
             poph_agent::turno::TurnInput::new(scenario.org, scenario.conversa, gatilho),
@@ -315,8 +315,8 @@ async fn injecao_em_item_da_base_nao_muda_o_prefixo_do_agente() {
         )
         .await
         .expect("o turno roda");
-    scenario.avancar(60_000);
-    let second = scenario.falar("E o prazo?");
+    scenario.advance(60_000);
+    let second = scenario.say("E o prazo?");
     engine
         .run(
             poph_agent::turno::TurnInput::new(scenario.org, scenario.conversa, second),
@@ -325,10 +325,10 @@ async fn injecao_em_item_da_base_nao_muda_o_prefixo_do_agente() {
         .await
         .expect("o segundo turno roda");
 
-    let pedidos = fake.received();
-    assert_eq!(pedidos.len(), 2);
-    let first = textos_do_pedido(&pedidos[0]);
-    let second = textos_do_pedido(&pedidos[1]);
+    let requests = fake.received();
+    assert_eq!(requests.len(), 2);
+    let first = texts_request(&requests[0]);
+    let second = texts_request(&requests[1]);
     assert_eq!(
         first[0], second[0],
         "o prefixo (prompt do agente) não muda por causa do que está na base"
@@ -354,7 +354,7 @@ async fn injecao_em_item_da_base_nao_muda_o_prefixo_do_agente() {
 }
 
 #[tokio::test]
-async fn pergunta_sem_resposta_na_base_nao_injeta_bloco() {
+async fn question_without_reply_base_not_injects_block() {
     let scenario = Scenario::new("sem-base");
     scenario.criar_item(
         "Prazo de agendamento",
@@ -382,7 +382,7 @@ async fn pergunta_sem_resposta_na_base_nao_injeta_bloco() {
         .expect("ajusta o corte");
 
     let (engine, fake) = scenario.engine();
-    let gatilho = scenario.falar("Xilofone quartzo vulcanico");
+    let gatilho = scenario.say("Xilofone quartzo vulcanico");
     engine
         .run(
             poph_agent::turno::TurnInput::new(scenario.org, scenario.conversa, gatilho),
@@ -391,21 +391,21 @@ async fn pergunta_sem_resposta_na_base_nao_injeta_bloco() {
         .await
         .expect("o turno roda");
 
-    let pedidos = fake.received();
-    let sistemas = textos_do_pedido(&pedidos[0]);
+    let requests = fake.received();
+    let systems = texts_request(&requests[0]);
     assert!(
-        !sistemas
+        !systems
             .iter()
             .any(|texto| texto.contains("<base_de_conhecimento>")),
-        "sem trecho acima do corte, o bloco nem aparece: {sistemas:?}"
+        "sem trecho acima do corte, o bloco nem aparece: {systems:?}"
     );
-    assert!(scenario.turnos()[0].passages_json == "[]");
+    assert!(scenario.turns()[0].passages_json == "[]");
 }
 
 #[tokio::test]
-async fn evento_base_avisa_as_fontes() {
-    struct Coletor(Vec<poph_agent::turno::TurnEvent>);
-    impl TurnObserver for Coletor {
+async fn event_base_notifies_sources() {
+    struct Collector(Vec<poph_agent::turno::TurnEvent>);
+    impl TurnObserver for Collector {
         fn evento(&mut self, evento: poph_agent::turno::TurnEvent) {
             self.0.push(evento);
         }
@@ -418,28 +418,28 @@ async fn evento_base_avisa_as_fontes() {
     );
     scenario.synchronise().await;
     let (engine, _) = scenario.engine();
-    let gatilho = scenario.falar("Qual é o prazo para agendar?");
-    let mut coletor = Coletor(Vec::new());
+    let gatilho = scenario.say("Qual é o prazo para agendar?");
+    let mut collector = Collector(Vec::new());
     engine
         .run(
             poph_agent::turno::TurnInput::new(scenario.org, scenario.conversa, gatilho),
-            &mut coletor,
+            &mut collector,
         )
         .await
         .expect("roda");
-    let fontes: Vec<&String> = coletor
+    let sources: Vec<&String> = collector
         .0
         .iter()
         .filter_map(|evento| match evento {
-            poph_agent::turno::TurnEvent::Base { sources: fontes } => Some(fontes),
+            poph_agent::turno::TurnEvent::Base { sources } => Some(sources),
             _ => None,
         })
         .flatten()
         .collect();
     assert!(
-        fontes
+        sources
             .iter()
             .any(|fonte| fonte.contains("Prazo de agendamento")),
-        "o evento Base leva a fonte: {fontes:?}"
+        "o evento Base leva a fonte: {sources:?}"
     );
 }

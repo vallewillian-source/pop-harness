@@ -19,7 +19,7 @@ use poph_agent::turno::{
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, ToolCall, Usage};
 use poph_jev::{
     BatchResponse, Decisao, DecisionOrigin, FakeJev, G3_NOTHING, G5_NONE, GateEvaluator,
-    GateOverrides, IdGate, JevEngine, JevError, JevOptions, JevResponse as RespostaJev, JevResult,
+    GateOverrides, IdGate, JevEngine, JevError, JevOptions, JevResponse as ReplyJudge, JevResult,
     JevState,
 };
 use poph_store::{Direction, NewAgent, NewConversation, NewMessage, NewOrg, Role, Store};
@@ -28,66 +28,66 @@ use poph_types::{
     ToolConfig,
 };
 
-const NOME_BARATAS: &str = "Dedetização de baratas";
-const PRECO_BARATAS: &str = "R$ 180,00";
-const NOME_CUPINS: &str = "Descupinização de cupins";
-const PRECO_CUPINS: &str = "R$ 350,00";
+const NAME_CHEAP: &str = "Dedetização de baratas";
+const PRICE_CHEAP: &str = "R$ 180,00";
+const NAME_TERMITES: &str = "Descupinização de cupins";
+const PRICE_TERMITES: &str = "R$ 350,00";
 
-struct SemEspera;
+struct NoWait;
 
-impl Pause for SemEspera {
-    fn wait(&self, _duracao: Duration) -> FuturePause {
+impl Pause for NoWait {
+    fn wait(&self, _duration: Duration) -> FuturePause {
         Box::pin(async {})
     }
 }
 
-struct BuscaSimples {
+struct SearchSimple {
     passages: Vec<RecoveredPassage>,
 }
 
-impl KnowledgeSearcher for BuscaSimples {
+impl KnowledgeSearcher for SearchSimple {
     fn search(
         &self,
         _org: OrgId,
         _agent: AgentId,
-        _consulta: String,
-        _parametros: SearchParameters,
+        _query: String,
+        _parameters: SearchParameters,
     ) -> SearchFuture<'_> {
         let passages = self.passages.clone();
         Box::pin(async move { Ok(passages) })
     }
 }
 
-struct CatalogoContado {
-    buscas: Arc<AtomicU64>,
+struct CatalogCounted {
+    searches: Arc<AtomicU64>,
     products: Vec<FoundProduct>,
 }
 
-impl CatalogoContado {
-    fn new(baratas: ProductId, cupins: ProductId, buscas: Arc<AtomicU64>) -> Arc<Self> {
+impl CatalogCounted {
+    fn new(cheap: ProductId, cupins: ProductId, searches: Arc<AtomicU64>) -> Arc<Self> {
         Arc::new(Self {
-            buscas,
+            searches,
             products: vec![
-                product(baratas, NOME_BARATAS, PRECO_BARATAS, 18_000),
-                product(cupins, NOME_CUPINS, PRECO_CUPINS, 35_000),
+                product(cheap, NAME_CHEAP, PRICE_CHEAP, 18_000),
+                product(cupins, NAME_TERMITES, PRICE_TERMITES, 35_000),
             ],
         })
     }
 
-    fn vazio(buscas: Arc<AtomicU64>) -> Arc<Self> {
+    fn vazio(searches: Arc<AtomicU64>) -> Arc<Self> {
         Arc::new(Self {
-            buscas,
+            searches,
             products: Vec::new(),
         })
     }
 }
 
-fn product(id: ProductId, nome: &str, preco: &str, cents: i64) -> FoundProduct {
+fn product(id: ProductId, nome: &str, price: &str, cents: i64) -> FoundProduct {
     FoundProduct {
         product: id,
         nome: nome.to_owned(),
         category: "Pragas".to_owned(),
-        price_text: preco.to_owned(),
+        price_text: price.to_owned(),
         price_cents: cents,
         unit: "por visita".to_owned(),
         includes: String::new(),
@@ -98,16 +98,16 @@ fn product(id: ProductId, nome: &str, preco: &str, cents: i64) -> FoundProduct {
     }
 }
 
-impl ProductSearcher for CatalogoContado {
+impl ProductSearcher for CatalogCounted {
     fn search(
         &self,
         _org: OrgId,
         _agent: AgentId,
-        _termo: String,
-        _categoria: Option<String>,
-        _parametros: ProductParameters,
+        _term: String,
+        _category: Option<String>,
+        _parameters: ProductParameters,
     ) -> FutureProducts<'_> {
-        self.buscas.fetch_add(1, Ordering::SeqCst);
+        self.searches.fetch_add(1, Ordering::SeqCst);
         let products = self.products.clone();
         Box::pin(async move { Ok(products) })
     }
@@ -118,15 +118,15 @@ struct Scenario {
     store: Arc<Store>,
     org: OrgId,
     conversa: ConversationId,
-    busca: Arc<dyn KnowledgeSearcher>,
+    lookup: Arc<dyn KnowledgeSearcher>,
     catalog: Arc<dyn ProductSearcher>,
-    buscas_produto: Arc<AtomicU64>,
-    baratas: ProductId,
+    searches_product: Arc<AtomicU64>,
+    cheap: ProductId,
     metrics: MetricsTurn,
 }
 
 impl Scenario {
-    fn new(label: &str, catalogo_vazio: bool) -> Self {
+    fn new(label: &str, catalog_empty: bool) -> Self {
         let folder = std::env::temp_dir().join(format!(
             "poph-hr33-{label}-{}-{}",
             std::process::id(),
@@ -200,15 +200,15 @@ impl Scenario {
             )
             .expect("abre a conversa")
             .id;
-        let baratas = ProductId::generate();
+        let cheap = ProductId::generate();
         let cupins = ProductId::generate();
-        let buscas_produto = Arc::new(AtomicU64::new(0));
-        let catalog: Arc<dyn ProductSearcher> = if catalogo_vazio {
-            CatalogoContado::vazio(Arc::clone(&buscas_produto))
+        let searches_product = Arc::new(AtomicU64::new(0));
+        let catalog: Arc<dyn ProductSearcher> = if catalog_empty {
+            CatalogCounted::vazio(Arc::clone(&searches_product))
         } else {
-            CatalogoContado::new(baratas, cupins, Arc::clone(&buscas_produto))
+            CatalogCounted::new(cheap, cupins, Arc::clone(&searches_product))
         };
-        let busca: Arc<dyn KnowledgeSearcher> = Arc::new(BuscaSimples {
+        let lookup: Arc<dyn KnowledgeSearcher> = Arc::new(SearchSimple {
             passages: vec![RecoveredPassage {
                 item: poph_types::KnowledgeItemId::generate(),
                 title: "Prazo de entrega".to_owned(),
@@ -223,19 +223,19 @@ impl Scenario {
             store,
             org,
             conversa,
-            busca,
+            lookup,
             catalog,
-            buscas_produto,
-            baratas,
+            searches_product,
+            cheap,
             metrics: MetricsTurn::own(),
         }
     }
 
-    fn catalogo_buscas(&self) -> u64 {
-        self.buscas_produto.load(Ordering::SeqCst)
+    fn catalog_searches(&self) -> u64 {
+        self.searches_product.load(Ordering::SeqCst)
     }
 
-    fn falar(&self, texto: &str) -> MessageId {
+    fn say(&self, texto: &str) -> MessageId {
         self.store
             .messages()
             .write(
@@ -258,10 +258,10 @@ impl Scenario {
 
     fn engine(
         &self,
-        roteiros: Vec<Script>,
+        scripts: Vec<Script>,
         jev: Option<Arc<dyn GateEvaluator>>,
     ) -> (TurnEngine, Arc<FakeProvider>) {
-        let fake = Arc::new(FakeProvider::with_scripts(roteiros));
+        let fake = Arc::new(FakeProvider::with_scripts(scripts));
         let config = ConfigHot::new(
             Arc::clone(&self.store),
             HotConfigOptions::default(),
@@ -276,13 +276,15 @@ impl Scenario {
             TurnOptions::default(),
             self.metrics.clone(),
         )
-        .with_pause(Arc::new(SemEspera))
-        .with_search(Arc::clone(&self.busca))
+        .with_pause(Arc::new(NoWait))
+        .with_search(Arc::clone(&self.lookup))
         .with_products(Arc::clone(&self.catalog));
         let registro =
-            QueryKnowledge::registro(Arc::clone(engine.hot_config()), Arc::clone(&self.busca)).com(
-                SearchProduct::new(Arc::clone(engine.hot_config()), Arc::clone(&self.catalog)),
-            );
+            QueryKnowledge::registro(Arc::clone(engine.hot_config()), Arc::clone(&self.lookup))
+                .com(SearchProduct::new(
+                    Arc::clone(engine.hot_config()),
+                    Arc::clone(&self.catalog),
+                ));
         engine = engine.with_tools(Arc::new(registro));
         if let Some(jev) = jev {
             engine = engine.with_jev(jev);
@@ -307,7 +309,7 @@ impl Drop for Scenario {
     }
 }
 
-fn roteiro_texto(texto: &str) -> Script {
+fn script_text(texto: &str) -> Script {
     Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
         LlmEvent::Usage(Usage {
@@ -325,22 +327,22 @@ fn so_g5() -> JevGates {
     }
 }
 
-fn motor_jev(jev: Arc<FakeJev>, gates: JevGates) -> Arc<dyn GateEvaluator> {
+fn engine_judge(jev: Arc<FakeJev>, gates: JevGates) -> Arc<dyn GateEvaluator> {
     Arc::new(JevEngine::new(jev, gates, "jev-latest"))
 }
 
-fn escolhas(items: &[(&str, &str)]) -> BTreeMap<String, String> {
+fn choices(items: &[(&str, &str)]) -> BTreeMap<String, String> {
     items
         .iter()
         .map(|(id, choice)| ((*id).to_owned(), (*choice).to_owned()))
         .collect()
 }
 
-fn nomes_das_ferramentas(request: &poph_core::llm::Request) -> Vec<String> {
+fn names_tools(request: &poph_core::llm::Request) -> Vec<String> {
     request.tools.iter().map(|tool| tool.nome.clone()).collect()
 }
 
-fn texto_do_prompt(request: &poph_core::llm::Request) -> String {
+fn text_prompt(request: &poph_core::llm::Request) -> String {
     request
         .messages
         .iter()
@@ -348,7 +350,7 @@ fn texto_do_prompt(request: &poph_core::llm::Request) -> String {
             poph_core::llm::Message::System(texto) => texto.clone(),
             poph_core::llm::Message::User(parts) => parts
                 .iter()
-                .map(|parte| match parte {
+                .map(|part| match part {
                     poph_core::llm::Part::Texto(texto) => texto.clone(),
                     _ => String::new(),
                 })
@@ -361,8 +363,8 @@ fn texto_do_prompt(request: &poph_core::llm::Request) -> String {
         .join("\n")
 }
 
-fn turnos_json(scenario: &Scenario) -> (String, String) {
-    let turnos = scenario
+fn turns_json(scenario: &Scenario) -> (String, String) {
+    let turns = scenario
         .store
         .turns()
         .list(
@@ -371,25 +373,25 @@ fn turnos_json(scenario: &Scenario) -> (String, String) {
             poph_store::Page::with_limit(5),
         )
         .expect("lista os turnos");
-    (turnos[0].passages_json.clone(), turnos[0].jev_json.clone())
+    (turns[0].passages_json.clone(), turns[0].jev_json.clone())
 }
 
 #[tokio::test]
-async fn g5_escolhe_o_produto_e_dispensa_a_ferramenta() {
+async fn g5_chooses_product_skips_tool() {
     let scenario = Scenario::new("escolhe", false);
-    let baratas = scenario.baratas.to_string();
-    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
+    let cheap = scenario.cheap.to_string();
+    let jev = Arc::new(FakeJev::with_choices(choices(&[(
         "g5_produto",
-        baratas.as_str(),
+        cheap.as_str(),
     )])));
     let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto(
+        vec![script_text(
             "A dedetização de baratas custa R$ 180,00 por visita.",
         )],
-        Some(motor_jev(Arc::clone(&jev), so_g5())),
+        Some(engine_judge(Arc::clone(&jev), so_g5())),
     );
 
-    let gatilho = scenario.falar("quanto custa para matar as baratas daqui de casa?");
+    let gatilho = scenario.say("quanto custa para matar as baratas daqui de casa?");
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(summary.estado, poph_store::TurnState::Completed);
@@ -400,34 +402,34 @@ async fn g5_escolhe_o_produto_e_dispensa_a_ferramenta() {
         "uma chamada ao modelo, sem ferramenta"
     );
     let request = &provedor.received()[0];
-    let prompt = texto_do_prompt(request);
+    let prompt = text_prompt(request);
     assert!(
-        prompt.contains(NOME_BARATAS),
+        prompt.contains(NAME_CHEAP),
         "o produto escolhido entra no prompt"
     );
-    assert!(prompt.contains(PRECO_BARATAS), "o preço vem do registro");
+    assert!(prompt.contains(PRICE_CHEAP), "o preço vem do registro");
     assert!(
-        !prompt.contains(NOME_CUPINS),
+        !prompt.contains(NAME_TERMITES),
         "só o produto escolhido entra no bloco, não a lista inteira"
     );
-    let tools = nomes_das_ferramentas(request);
+    let tools = names_tools(request);
     assert!(
         !tools.contains(&"buscar_produto".to_owned()),
         "o catálogo já foi consultado: {tools:?}"
     );
     assert!(tools.contains(&"consultar_base".to_owned()), "{tools:?}");
 
-    let (trechos_json, jev_json) = turnos_json(&scenario);
-    assert!(trechos_json.contains(&baratas), "{trechos_json}");
+    let (chunks_json, jev_json) = turns_json(&scenario);
+    assert!(chunks_json.contains(&cheap), "{chunks_json}");
     assert!(
-        trechos_json.contains("\"tipo\":\"produto\""),
-        "{trechos_json}"
+        chunks_json.contains("\"tipo\":\"produto\""),
+        "{chunks_json}"
     );
     assert!(jev_json.contains("\"gate\":\"g5\""), "{jev_json}");
-    assert!(jev_json.contains(&baratas), "{jev_json}");
+    assert!(jev_json.contains(&cheap), "{jev_json}");
     assert_eq!(scenario.metrics.products_chosen_g5.value(), 1);
     assert_eq!(
-        scenario.catalogo_buscas(),
+        scenario.catalog_searches(),
         1,
         "a busca de produtos roda uma vez, antes do modelo"
     );
@@ -438,7 +440,7 @@ struct JevInventor {
 }
 
 impl GateEvaluator for JevInventor {
-    fn effective_gates(&self, _ajuste: Option<GateOverrides>) -> JevGates {
+    fn effective_gates(&self, _adjustment: Option<GateOverrides>) -> JevGates {
         JevGates {
             g5: true,
             ..JevGates::default()
@@ -447,8 +449,8 @@ impl GateEvaluator for JevInventor {
 
     fn evaluate<'a>(
         &'a self,
-        _estado: JevState,
-        _ajuste: Option<GateOverrides>,
+        _state: JevState,
+        _adjustment: Option<GateOverrides>,
     ) -> futures::future::BoxFuture<'a, JevResult> {
         let product = self.product.clone();
         Box::pin(async move {
@@ -470,55 +472,55 @@ impl GateEvaluator for JevInventor {
 }
 
 #[tokio::test]
-async fn g5_id_fora_dos_candidatos_nunca_e_injetado_pelo_codigo() {
+async fn g5_id_out_candidates_never_injected_code() {
     let scenario = Scenario::new("fora-candidatos", false);
     let jev: Arc<dyn GateEvaluator> = Arc::new(JevInventor {
         product: "p-de-outra-org".to_owned(),
     });
     let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto("Vou confirmar o valor com a equipe.")],
+        vec![script_text("Vou confirmar o valor com a equipe.")],
         Some(jev),
     );
 
-    let gatilho = scenario.falar("quanto custa a dedetização?");
+    let gatilho = scenario.say("quanto custa a dedetização?");
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(summary.estado, poph_store::TurnState::Completed);
     let request = &provedor.received()[0];
-    let prompt = texto_do_prompt(request);
+    let prompt = text_prompt(request);
     assert!(
-        !prompt.contains(PRECO_BARATAS),
+        !prompt.contains(PRICE_CHEAP),
         "nada de produto fora dos candidatos"
     );
-    assert!(!prompt.contains(NOME_CUPINS));
-    assert!(nomes_das_ferramentas(request).contains(&"buscar_produto".to_owned()));
+    assert!(!prompt.contains(NAME_TERMITES));
+    assert!(names_tools(request).contains(&"buscar_produto".to_owned()));
     assert_eq!(scenario.metrics.products_chosen_g5.value(), 0);
 }
 
 #[tokio::test]
-async fn g5_id_inventado_mantem_o_comportamento_de_hoje() {
+async fn g5_id_invented_keeps_behaviour_today() {
     let scenario = Scenario::new("inventado", false);
-    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(choices(&[(
         "g5_produto",
         "p-produto-que-nao-existe",
     )])));
     let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto("Vou confirmar o valor com a equipe.")],
-        Some(motor_jev(Arc::clone(&jev), so_g5())),
+        vec![script_text("Vou confirmar o valor com a equipe.")],
+        Some(engine_judge(Arc::clone(&jev), so_g5())),
     );
 
-    let gatilho = scenario.falar("quanto custa a dedetização?");
+    let gatilho = scenario.say("quanto custa a dedetização?");
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(summary.estado, poph_store::TurnState::Completed);
     let request = &provedor.received()[0];
-    let prompt = texto_do_prompt(request);
+    let prompt = text_prompt(request);
     assert!(
-        !prompt.contains(NOME_BARATAS),
+        !prompt.contains(NAME_CHEAP),
         "produto inventado não entra no prompt"
     );
-    assert!(!prompt.contains(PRECO_BARATAS));
-    let tools = nomes_das_ferramentas(request);
+    assert!(!prompt.contains(PRICE_CHEAP));
+    let tools = names_tools(request);
     assert!(
         tools.contains(&"buscar_produto".to_owned()),
         "sem escolha válida, o LLM continua com a ferramenta: {tools:?}"
@@ -527,86 +529,86 @@ async fn g5_id_inventado_mantem_o_comportamento_de_hoje() {
 }
 
 #[tokio::test]
-async fn g5_nenhum_mantem_o_comportamento_de_hoje() {
+async fn g5_none_keeps_behaviour_today() {
     let scenario = Scenario::new("nenhum", false);
-    let jev = Arc::new(FakeJev::with_choices(escolhas(&[("g5_produto", G5_NONE)])));
+    let jev = Arc::new(FakeJev::with_choices(choices(&[("g5_produto", G5_NONE)])));
     let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto("Posso ajudar com o prazo e o orçamento.")],
-        Some(motor_jev(Arc::clone(&jev), so_g5())),
+        vec![script_text("Posso ajudar com o prazo e o orçamento.")],
+        Some(engine_judge(Arc::clone(&jev), so_g5())),
     );
 
-    let gatilho = scenario.falar("qual é o prazo de entrega?");
+    let gatilho = scenario.say("qual é o prazo de entrega?");
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(summary.estado, poph_store::TurnState::Completed);
     let request = &provedor.received()[0];
-    assert!(!texto_do_prompt(request).contains(PRECO_CUPINS));
-    let tools = nomes_das_ferramentas(request);
+    assert!(!text_prompt(request).contains(PRICE_TERMITES));
+    let tools = names_tools(request);
     assert!(tools.contains(&"buscar_produto".to_owned()), "{tools:?}");
 }
 
 #[tokio::test]
-async fn g5_confianca_baixa_mantem_o_comportamento_de_hoje() {
+async fn g5_confidence_low_keeps_behaviour_today() {
     let scenario = Scenario::new("confianca", false);
-    let baratas = scenario.baratas.to_string();
-    let choice = baratas.clone();
+    let cheap = scenario.cheap.to_string();
+    let choice = cheap.clone();
     let jev = Arc::new(FakeJev::new(move |request: &poph_jev::JevRequest| {
-        let mut respostas = BTreeMap::new();
+        let mut replies = BTreeMap::new();
         for id in request.questions.keys() {
-            let mut response = RespostaJev {
+            let mut response = ReplyJudge {
                 choice: Some(choice.clone()),
                 confidence: 0.4,
-                ..RespostaJev::default()
+                ..ReplyJudge::default()
             };
             response.probabilities.insert(choice.clone(), 0.4);
             response.probabilities.insert(G5_NONE.to_owned(), 0.4);
-            respostas.insert(id.clone(), response);
+            replies.insert(id.clone(), response);
         }
         Ok(BatchResponse {
-            answers: respostas,
+            answers: replies,
             tokens: 7,
             ..BatchResponse::default()
         })
     }));
     let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto("Vou verificar o valor.")],
-        Some(motor_jev(Arc::clone(&jev), so_g5())),
+        vec![script_text("Vou verificar o valor.")],
+        Some(engine_judge(Arc::clone(&jev), so_g5())),
     );
 
-    let gatilho = scenario.falar("quanto custa a dedetização?");
+    let gatilho = scenario.say("quanto custa a dedetização?");
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(summary.estado, poph_store::TurnState::Completed);
     let request = &provedor.received()[0];
-    assert!(!texto_do_prompt(request).contains(PRECO_BARATAS));
-    assert!(nomes_das_ferramentas(request).contains(&"buscar_produto".to_owned()));
+    assert!(!text_prompt(request).contains(PRICE_CHEAP));
+    assert!(names_tools(request).contains(&"buscar_produto".to_owned()));
 }
 
 #[tokio::test]
-async fn g5_jev_fora_do_ar_mantem_o_comportamento_de_hoje() {
+async fn g5_judge_out_ar_keeps_behaviour_today() {
     let scenario = Scenario::new("fora", false);
     let jev = Arc::new(FakeJev::failing(JevError::Status {
         code: 503,
         motivo: "Service Unavailable".to_owned(),
     }));
     let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto("Olá! Como posso ajudar?")],
-        Some(motor_jev(Arc::clone(&jev), so_g5())),
+        vec![script_text("Olá! Como posso ajudar?")],
+        Some(engine_judge(Arc::clone(&jev), so_g5())),
     );
 
-    let gatilho = scenario.falar("bom dia, quanto custa a dedetização?");
+    let gatilho = scenario.say("bom dia, quanto custa a dedetização?");
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(summary.estado, poph_store::TurnState::Completed);
     let request = &provedor.received()[0];
-    assert!(!texto_do_prompt(request).contains(PRECO_BARATAS));
-    assert!(nomes_das_ferramentas(request).contains(&"buscar_produto".to_owned()));
+    assert!(!text_prompt(request).contains(PRICE_CHEAP));
+    assert!(names_tools(request).contains(&"buscar_produto".to_owned()));
 }
 
 #[tokio::test]
-async fn g5_jev_que_nao_responde_em_prazo_mantem_o_comportamento_de_hoje() {
+async fn g5_judge_not_answers_deadline_keeps_behaviour_today() {
     let scenario = Scenario::new("prazo", false);
-    let jev = Arc::new(FakeJev::with_choices(escolhas(&[])).with_delay(Duration::from_millis(200)));
+    let jev = Arc::new(FakeJev::with_choices(choices(&[])).with_delay(Duration::from_millis(200)));
     let evaluator: Arc<dyn GateEvaluator> = Arc::new(
         JevEngine::new(jev, so_g5(), "jev-latest").with_options(JevOptions {
             batch_timeout: Duration::from_millis(30),
@@ -614,17 +616,17 @@ async fn g5_jev_que_nao_responde_em_prazo_mantem_o_comportamento_de_hoje() {
         }),
     );
     let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto("Vou confirmar o valor com a equipe.")],
+        vec![script_text("Vou confirmar o valor com a equipe.")],
         Some(evaluator),
     );
 
-    let gatilho = scenario.falar("quanto custa a dedetização?");
+    let gatilho = scenario.say("quanto custa a dedetização?");
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(summary.estado, poph_store::TurnState::Completed);
     let request = &provedor.received()[0];
-    assert!(!texto_do_prompt(request).contains(PRECO_BARATAS));
-    assert!(nomes_das_ferramentas(request).contains(&"buscar_produto".to_owned()));
+    assert!(!text_prompt(request).contains(PRICE_CHEAP));
+    assert!(names_tools(request).contains(&"buscar_produto".to_owned()));
     let jev = summary
         .jev
         .expect("o resultado do G5 fica registrado mesmo no fallback");
@@ -636,15 +638,15 @@ async fn g5_jev_que_nao_responde_em_prazo_mantem_o_comportamento_de_hoje() {
 }
 
 #[tokio::test]
-async fn g5_sem_candidatos_nao_pergunta() {
+async fn g5_without_candidates_not_question() {
     let scenario = Scenario::new("vazio", true);
-    let jev = Arc::new(FakeJev::with_choices(escolhas(&[])));
+    let jev = Arc::new(FakeJev::with_choices(choices(&[])));
     let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto("Não encontrei esse produto no catálogo.")],
-        Some(motor_jev(Arc::clone(&jev), so_g5())),
+        vec![script_text("Não encontrei esse produto no catálogo.")],
+        Some(engine_judge(Arc::clone(&jev), so_g5())),
     );
 
-    let gatilho = scenario.falar("vocês fazem dedetização?");
+    let gatilho = scenario.say("vocês fazem dedetização?");
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(summary.estado, poph_store::TurnState::Completed);
@@ -654,19 +656,19 @@ async fn g5_sem_candidatos_nao_pergunta() {
         jev.requests()
     );
     let request = &provedor.received()[0];
-    assert!(nomes_das_ferramentas(request).contains(&"buscar_produto".to_owned()));
+    assert!(names_tools(request).contains(&"buscar_produto".to_owned()));
 }
 
 #[tokio::test]
-async fn g5_desligado_nao_faz_busca_de_produto_nem_pergunta() {
+async fn g5_disabled_not_does_search_product_nor_question() {
     let scenario = Scenario::new("desligado", false);
-    let jev = Arc::new(FakeJev::with_choices(escolhas(&[])));
+    let jev = Arc::new(FakeJev::with_choices(choices(&[])));
     let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto("Olá! Como posso ajudar?")],
-        Some(motor_jev(Arc::clone(&jev), JevGates::default())),
+        vec![script_text("Olá! Como posso ajudar?")],
+        Some(engine_judge(Arc::clone(&jev), JevGates::default())),
     );
 
-    let gatilho = scenario.falar("quanto custa a dedetização?");
+    let gatilho = scenario.say("quanto custa a dedetização?");
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(summary.estado, poph_store::TurnState::Completed);
@@ -678,21 +680,21 @@ async fn g5_desligado_nao_faz_busca_de_produto_nem_pergunta() {
                 .is_some_and(|jev| jev.decisions.is_empty())
     );
     assert_eq!(
-        scenario.catalogo_buscas(),
+        scenario.catalog_searches(),
         0,
         "o gate desligado não faz pré-consulta"
     );
     let request = &provedor.received()[0];
-    assert!(nomes_das_ferramentas(request).contains(&"buscar_produto".to_owned()));
+    assert!(names_tools(request).contains(&"buscar_produto".to_owned()));
 }
 
 #[tokio::test]
-async fn g5_ferramenta_inventada_pelo_modelo_nao_e_executada() {
+async fn g5_tool_invented_model_not_executed() {
     let scenario = Scenario::new("inventada", false);
-    let baratas = scenario.baratas.to_string();
-    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
+    let cheap = scenario.cheap.to_string();
+    let jev = Arc::new(FakeJev::with_choices(choices(&[(
         "g5_produto",
-        baratas.as_str(),
+        cheap.as_str(),
     )])));
     let (engine, provedor) = scenario.engine(
         vec![
@@ -704,23 +706,23 @@ async fn g5_ferramenta_inventada_pelo_modelo_nao_e_executada() {
                 }),
                 LlmEvent::Fim(FinishReason::ToolCalls),
             ]),
-            roteiro_texto("A dedetização de baratas custa R$ 180,00."),
+            script_text("A dedetização de baratas custa R$ 180,00."),
         ],
-        Some(motor_jev(Arc::clone(&jev), so_g5())),
+        Some(engine_judge(Arc::clone(&jev), so_g5())),
     );
 
-    let gatilho = scenario.falar("quanto custa para matar baratas?");
+    let gatilho = scenario.say("quanto custa para matar baratas?");
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(summary.estado, poph_store::TurnState::Completed);
     assert_eq!(
-        scenario.catalogo_buscas(),
+        scenario.catalog_searches(),
         1,
         "só a pré-consulta do G5; a chamada inventada não busca de novo"
     );
-    let pedidos = provedor.received();
-    assert_eq!(pedidos.len(), 2);
-    let resultado = texto_do_prompt(&pedidos[1]);
+    let requests = provedor.received();
+    assert_eq!(requests.len(), 2);
+    let resultado = text_prompt(&requests[1]);
     assert!(
         resultado.contains("já foi consultado"),
         "o modelo recebe o erro explicando que o catálogo já foi consultado: {resultado}"
@@ -728,12 +730,12 @@ async fn g5_ferramenta_inventada_pelo_modelo_nao_e_executada() {
 }
 
 #[tokio::test]
-async fn g3_nada_dispensa_o_g5() {
+async fn g3_nothing_skips_g5() {
     let scenario = Scenario::new("g3nada", false);
-    let baratas = scenario.baratas.to_string();
-    let jev = Arc::new(FakeJev::with_choices(escolhas(&[
+    let cheap = scenario.cheap.to_string();
+    let jev = Arc::new(FakeJev::with_choices(choices(&[
         ("g3_precisa", G3_NOTHING),
-        ("g5_produto", baratas.as_str()),
+        ("g5_produto", cheap.as_str()),
     ])));
     let gates = JevGates {
         g3: true,
@@ -741,16 +743,16 @@ async fn g3_nada_dispensa_o_g5() {
         ..JevGates::default()
     };
     let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto("Oi! Tudo bem? Como posso ajudar?")],
-        Some(motor_jev(Arc::clone(&jev), gates)),
+        vec![script_text("Oi! Tudo bem? Como posso ajudar?")],
+        Some(engine_judge(Arc::clone(&jev), gates)),
     );
 
-    let gatilho = scenario.falar("oi, bom dia");
+    let gatilho = scenario.say("oi, bom dia");
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(summary.estado, poph_store::TurnState::Completed);
-    assert_eq!(scenario.catalogo_buscas(), 0);
-    let tools = nomes_das_ferramentas(&provedor.received()[0]);
+    assert_eq!(scenario.catalog_searches(), 0);
+    let tools = names_tools(&provedor.received()[0]);
     assert!(
         !tools.contains(&"buscar_produto".to_owned()),
         "o G3 em nada já tira o catálogo do turno: {tools:?}"
@@ -758,22 +760,22 @@ async fn g3_nada_dispensa_o_g5() {
 }
 
 #[test]
-fn ajuste_apenas_liga_so_o_gate_pedido() {
-    let ajuste = GateOverrides::only(IdGate::G5);
-    let efetivos = ajuste.with_base(JevGates {
+fn adjustment_only_enables_gate_request() {
+    let adjustment = GateOverrides::only(IdGate::G5);
+    let effective = adjustment.with_base(JevGates {
         g1: true,
         g3: true,
         ..JevGates::default()
     });
-    assert!(efetivos.g5);
-    assert!(!efetivos.g1 && !efetivos.g2 && !efetivos.g3 && !efetivos.g4);
+    assert!(effective.g5);
+    assert!(!effective.g1 && !effective.g2 && !effective.g3 && !effective.g4);
 }
 
 #[tokio::test]
-async fn medicao_rodadas_de_ferramenta_por_turno() {
+async fn measurement_rounds_tool_by_turn() {
     let without = Scenario::new("medicao-sem", false);
-    let jev = Arc::new(FakeJev::with_choices(escolhas(&[])));
-    let (motor_sem, _) = without.engine(
+    let jev = Arc::new(FakeJev::with_choices(choices(&[])));
+    let (engine_without, _) = without.engine(
         vec![
             Script::Events(vec![
                 LlmEvent::Tool(ToolCall {
@@ -783,64 +785,64 @@ async fn medicao_rodadas_de_ferramenta_por_turno() {
                 }),
                 LlmEvent::Fim(FinishReason::ToolCalls),
             ]),
-            roteiro_texto("A dedetização de baratas custa R$ 180,00."),
+            script_text("A dedetização de baratas custa R$ 180,00."),
         ],
-        Some(motor_jev(Arc::clone(&jev), JevGates::default())),
+        Some(engine_judge(Arc::clone(&jev), JevGates::default())),
     );
-    let gatilho = without.falar("quanto custa para matar baratas?");
-    let sem_g5 = without.turno(&motor_sem, gatilho).await;
-    assert_eq!(sem_g5.estado, poph_store::TurnState::Completed);
-    assert_eq!(sem_g5.timings.tool_rounds, 1, "sem o G5 há uma rodada");
+    let gatilho = without.say("quanto custa para matar baratas?");
+    let without_g5 = without.turno(&engine_without, gatilho).await;
+    assert_eq!(without_g5.estado, poph_store::TurnState::Completed);
+    assert_eq!(without_g5.timings.tool_rounds, 1, "sem o G5 há uma rodada");
 
     let com = Scenario::new("medicao-com", false);
-    let baratas = com.baratas.to_string();
-    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
+    let cheap = com.cheap.to_string();
+    let jev = Arc::new(FakeJev::with_choices(choices(&[(
         "g5_produto",
-        baratas.as_str(),
+        cheap.as_str(),
     )])));
-    let (motor_com, _) = com.engine(
-        vec![roteiro_texto("A dedetização de baratas custa R$ 180,00.")],
-        Some(motor_jev(Arc::clone(&jev), so_g5())),
+    let (engine_with, _) = com.engine(
+        vec![script_text("A dedetização de baratas custa R$ 180,00.")],
+        Some(engine_judge(Arc::clone(&jev), so_g5())),
     );
-    let gatilho = com.falar("quanto custa para matar baratas?");
-    let com_g5 = com.turno(&motor_com, gatilho).await;
-    assert_eq!(com_g5.estado, poph_store::TurnState::Completed);
-    assert_eq!(com_g5.timings.tool_rounds, 0, "com o G5 não há rodada");
+    let gatilho = com.say("quanto custa para matar baratas?");
+    let with_g5 = com.turno(&engine_with, gatilho).await;
+    assert_eq!(with_g5.estado, poph_store::TurnState::Completed);
+    assert_eq!(with_g5.timings.tool_rounds, 0, "com o G5 não há rodada");
 
     println!(
         "rodadas de ferramenta por turno: sem o G5 = {} · com o G5 = {}",
-        sem_g5.timings.tool_rounds, com_g5.timings.tool_rounds
+        without_g5.timings.tool_rounds, with_g5.timings.tool_rounds
     );
 }
 
 #[tokio::test]
-async fn padrao_de_instalacao_liga_o_g5_sem_configurar_o_agente() {
+async fn default_installation_enables_g5_without_configure_agent() {
     let scenario = Scenario::new("padrao-g5", false);
-    let baratas = scenario.baratas.to_string();
-    let jev = Arc::new(FakeJev::with_choices(escolhas(&[
+    let cheap = scenario.cheap.to_string();
+    let jev = Arc::new(FakeJev::with_choices(choices(&[
         ("g3_precisa", poph_jev::G3_PRODUCT),
-        ("g5_produto", baratas.as_str()),
+        ("g5_produto", cheap.as_str()),
     ])));
-    let gates_padrao = poph_types::JevConfig::default().gates;
+    let gates_default = poph_types::JevConfig::default().gates;
     let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto(
+        vec![script_text(
             "A dedetização de baratas custa R$ 180,00 por visita.",
         )],
-        Some(motor_jev(Arc::clone(&jev), gates_padrao)),
+        Some(engine_judge(Arc::clone(&jev), gates_default)),
     );
 
-    let gatilho = scenario.falar("quanto custa para matar as baratas daqui de casa?");
+    let gatilho = scenario.say("quanto custa para matar as baratas daqui de casa?");
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(summary.estado, poph_store::TurnState::Completed);
     assert_eq!(summary.timings.tool_rounds, 0, "sem rodada de ferramenta");
     let request = &provedor.received()[0];
     assert!(
-        texto_do_prompt(request).contains(NOME_BARATAS),
+        text_prompt(request).contains(NAME_CHEAP),
         "o produto escolhido entra no prompt"
     );
     assert!(
-        !nomes_das_ferramentas(request).contains(&"buscar_produto".to_owned()),
+        !names_tools(request).contains(&"buscar_produto".to_owned()),
         "com o G5 escolhido, buscar_produto sai do turno"
     );
 }

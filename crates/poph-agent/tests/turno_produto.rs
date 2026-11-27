@@ -15,10 +15,10 @@ use poph_store::{
 use poph_types::{AgentId, ConversationId, OrgId, StructuredInstructions, ToolConfig};
 
 #[derive(Default, Clone)]
-struct PausaFalsa;
+struct FakePause;
 
-impl Pause for PausaFalsa {
-    fn wait(&self, _duracao: Duration) -> FuturePause {
+impl Pause for FakePause {
+    fn wait(&self, _duration: Duration) -> FuturePause {
         Box::pin(async {})
     }
 }
@@ -143,8 +143,8 @@ impl Scenario {
         }
     }
 
-    fn engine(&self, roteiros: Vec<Script>) -> (TurnEngine, Arc<FakeProvider>) {
-        let fake = Arc::new(FakeProvider::with_scripts(roteiros));
+    fn engine(&self, scripts: Vec<Script>) -> (TurnEngine, Arc<FakeProvider>) {
+        let fake = Arc::new(FakeProvider::with_scripts(scripts));
         let provedor: Arc<dyn LlmProvider> = fake.clone();
         let config = ConfigHot::new(
             Arc::clone(&self.store),
@@ -162,13 +162,13 @@ impl Scenario {
             TurnOptions::default(),
             MetricsTurn::own(),
         )
-        .with_pause(Arc::new(PausaFalsa));
+        .with_pause(Arc::new(FakePause));
         let registro = SearchProduct::registro(Arc::clone(engine.hot_config()), catalog);
         let engine = engine.with_tools(Arc::new(registro));
         (engine, fake)
     }
 
-    fn falar(&self, texto: &str) -> poph_types::MessageId {
+    fn say(&self, texto: &str) -> poph_types::MessageId {
         self.store
             .messages()
             .write(
@@ -189,7 +189,7 @@ impl Scenario {
             .id
     }
 
-    fn turnos(&self) -> Vec<poph_store::Turno> {
+    fn turns(&self) -> Vec<poph_store::Turno> {
         self.store
             .turns()
             .list(self.org, self.conversa, Page::default())
@@ -211,7 +211,7 @@ fn response(texto: &str) -> Script {
 }
 
 #[tokio::test]
-async fn turno_grava_o_produto_usado_com_o_preco_do_registro() {
+async fn turn_records_product_used_with_price_record() {
     let scenario = Scenario::new("registro");
     scenario
         .catalog
@@ -229,7 +229,7 @@ async fn turno_grava_o_produto_usado_com_o_preco_do_registro() {
     ]);
     let (engine, fake) = scenario.engine(vec![call, response("A dedetização custa R$ 320,00.")]);
 
-    let mensagem = scenario.falar("quanto custa a dedetização de baratas?");
+    let mensagem = scenario.say("quanto custa a dedetização de baratas?");
     let summary = engine
         .run(
             poph_agent::turno::TurnInput::new(scenario.org, scenario.conversa, mensagem),
@@ -240,24 +240,24 @@ async fn turno_grava_o_produto_usado_com_o_preco_do_registro() {
     assert_eq!(summary.estado.as_text(), "done");
     assert_eq!(summary.texto, "A dedetização custa R$ 320,00.");
 
-    let pedidos = fake.received();
+    let requests = fake.received();
     assert_eq!(
-        pedidos.len(),
+        requests.len(),
         2,
         "uma rodada de ferramenta e o fecho em texto"
     );
-    let names: Vec<String> = pedidos[0]
+    let names: Vec<String> = requests[0]
         .tools
         .iter()
         .map(|tool| tool.nome.clone())
         .collect();
     assert_eq!(names, vec!["buscar_produto".to_owned()]);
 
-    let turnos = scenario.turnos();
-    assert_eq!(turnos.len(), 1);
-    let registrado: serde_json::Value =
-        serde_json::from_str(&turnos[0].passages_json).expect("JSON do registro");
-    let items = registrado.as_array().expect("lista");
+    let turns = scenario.turns();
+    assert_eq!(turns.len(), 1);
+    let registered: serde_json::Value =
+        serde_json::from_str(&turns[0].passages_json).expect("JSON do registro");
+    let items = registered.as_array().expect("lista");
     let product = items
         .iter()
         .find(|item| item["tipo"] == "produto")
@@ -269,10 +269,10 @@ async fn turno_grava_o_produto_usado_com_o_preco_do_registro() {
 }
 
 #[tokio::test]
-async fn turno_sem_produto_mantem_o_registro_vazio() {
+async fn turn_without_product_keeps_record_empty() {
     let scenario = Scenario::new("vazio");
     let (engine, _) = scenario.engine(vec![response("Olá! Como posso ajudar?")]);
-    let mensagem = scenario.falar("oi");
+    let mensagem = scenario.say("oi");
     engine
         .run(
             poph_agent::turno::TurnInput::new(scenario.org, scenario.conversa, mensagem),
@@ -280,6 +280,6 @@ async fn turno_sem_produto_mantem_o_registro_vazio() {
         )
         .await
         .expect("o turno roda");
-    let turnos = scenario.turnos();
-    assert_eq!(turnos[0].passages_json, "[]");
+    let turns = scenario.turns();
+    assert_eq!(turns[0].passages_json, "[]");
 }

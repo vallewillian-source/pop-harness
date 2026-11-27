@@ -293,7 +293,7 @@ não paga mexer na política padrão do POP Atende. Os 2 casos restantes exigiri
 
 ### Latência e frases partidas (teste automatizado)
 
-`cargo test -p poph-agent --test g2_janela -- --nocapture latencia` roda o conjunto inteiro com uma
+`cargo test -p poph-agent --test g2_janela -- --nocapture latency` roda o conjunto inteiro com uma
 pausa de relógio virtual e imprime:
 
 ```

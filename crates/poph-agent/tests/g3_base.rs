@@ -19,84 +19,84 @@ use poph_agent::turno::{
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, ToolCall, Usage};
 use poph_jev::{
     BatchResponse, FakeJev, G3_BASE, G3_NOTHING, IdGate, JevEngine, JevError,
-    JevResponse as RespostaJev,
+    JevResponse as ReplyJudge,
 };
 use poph_store::{Direction, NewAgent, NewConversation, NewMessage, NewOrg, Role, Store};
 use poph_types::{
     AgentId, ConversationId, JevGates, MessageId, OrgId, StructuredInstructions, ToolConfig,
 };
 
-const TEXTO_DO_TRECHO: &str = "Prazo de entrega: até 8 dias úteis após a confirmação.";
+const TEXT_CHUNK: &str = "Prazo de entrega: até 8 dias úteis após a confirmação.";
 
-struct SemEspera;
+struct NoWait;
 
-impl Pause for SemEspera {
-    fn wait(&self, _duracao: Duration) -> FuturePause {
+impl Pause for NoWait {
+    fn wait(&self, _duration: Duration) -> FuturePause {
         Box::pin(async {})
     }
 }
 
-struct BuscaContada {
-    buscas: Arc<AtomicU64>,
-    demora: Duration,
+struct SearchCounted {
+    searches: Arc<AtomicU64>,
+    lag: Duration,
     passages: Vec<RecoveredPassage>,
 }
 
-impl BuscaContada {
+impl SearchCounted {
     fn new() -> Arc<Self> {
-        Self::com_demora(Duration::ZERO)
+        Self::with_delay(Duration::ZERO)
     }
 
-    fn com_demora(demora: Duration) -> Arc<Self> {
+    fn with_delay(lag: Duration) -> Arc<Self> {
         Arc::new(Self {
-            buscas: Arc::new(AtomicU64::new(0)),
-            demora,
+            searches: Arc::new(AtomicU64::new(0)),
+            lag,
             passages: vec![RecoveredPassage {
                 item: poph_types::KnowledgeItemId::generate(),
                 title: "Prazo de entrega".to_owned(),
                 group: "Políticas da loja".to_owned(),
-                texto: TEXTO_DO_TRECHO.to_owned(),
+                texto: TEXT_CHUNK.to_owned(),
                 similarity: 0.82,
                 relevance: 0.5,
             }],
         })
     }
 
-    fn contador(&self) -> Arc<AtomicU64> {
-        Arc::clone(&self.buscas)
+    fn counter(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.searches)
     }
 }
 
-impl KnowledgeSearcher for BuscaContada {
+impl KnowledgeSearcher for SearchCounted {
     fn search(
         &self,
         _org: OrgId,
         _agent: AgentId,
-        _consulta: String,
-        _parametros: SearchParameters,
+        _query: String,
+        _parameters: SearchParameters,
     ) -> SearchFuture<'_> {
-        self.buscas.fetch_add(1, Ordering::SeqCst);
+        self.searches.fetch_add(1, Ordering::SeqCst);
         let passages = self.passages.clone();
-        let demora = self.demora;
+        let lag = self.lag;
         Box::pin(async move {
-            if !demora.is_zero() {
-                tokio::time::sleep(demora).await;
+            if !lag.is_zero() {
+                tokio::time::sleep(lag).await;
             }
             Ok(passages)
         })
     }
 }
 
-struct CatalogoVazio;
+struct CatalogEmpty;
 
-impl ProductSearcher for CatalogoVazio {
+impl ProductSearcher for CatalogEmpty {
     fn search(
         &self,
         _org: OrgId,
         _agent: AgentId,
-        _termo: String,
-        _categoria: Option<String>,
-        _parametros: ProductParameters,
+        _term: String,
+        _category: Option<String>,
+        _parameters: ProductParameters,
     ) -> FutureProducts<'_> {
         let vazio: Vec<FoundProduct> = Vec::new();
         Box::pin(async move { Ok(vazio) })
@@ -109,20 +109,24 @@ struct Scenario {
     org: OrgId,
     agente: AgentId,
     conversa: ConversationId,
-    busca: Arc<dyn KnowledgeSearcher>,
-    buscas: Arc<AtomicU64>,
+    lookup: Arc<dyn KnowledgeSearcher>,
+    searches: Arc<AtomicU64>,
     metrics: MetricsTurn,
 }
 
 impl Scenario {
     fn new(label: &str) -> Self {
-        let busca = BuscaContada::new();
-        let contador = busca.contador();
-        let base: Arc<dyn KnowledgeSearcher> = busca;
-        Self::com_busca(label, base, contador)
+        let lookup = SearchCounted::new();
+        let counter = lookup.counter();
+        let base: Arc<dyn KnowledgeSearcher> = lookup;
+        Self::with_search(label, base, counter)
     }
 
-    fn com_busca(label: &str, busca: Arc<dyn KnowledgeSearcher>, buscas: Arc<AtomicU64>) -> Self {
+    fn with_search(
+        label: &str,
+        lookup: Arc<dyn KnowledgeSearcher>,
+        searches: Arc<AtomicU64>,
+    ) -> Self {
         let folder = std::env::temp_dir().join(format!(
             "poph-hr31-{label}-{}-{}",
             std::process::id(),
@@ -202,17 +206,17 @@ impl Scenario {
             org,
             agente,
             conversa,
-            busca,
-            buscas,
+            lookup,
+            searches,
             metrics: MetricsTurn::own(),
         }
     }
 
-    fn buscas(&self) -> u64 {
-        self.buscas.load(Ordering::SeqCst)
+    fn searches(&self) -> u64 {
+        self.searches.load(Ordering::SeqCst)
     }
 
-    fn nova_conversa(&self) -> ConversationId {
+    fn new_conversation(&self) -> ConversationId {
         self.store
             .conversations()
             .create(
@@ -229,11 +233,11 @@ impl Scenario {
             .id
     }
 
-    fn falar(&self, texto: &str) -> MessageId {
-        self.falar_em(self.conversa, texto)
+    fn say(&self, texto: &str) -> MessageId {
+        self.say_in(self.conversa, texto)
     }
 
-    fn falar_em(&self, conversa: ConversationId, texto: &str) -> MessageId {
+    fn say_in(&self, conversa: ConversationId, texto: &str) -> MessageId {
         self.store
             .messages()
             .write(
@@ -256,17 +260,17 @@ impl Scenario {
 
     fn engine(
         &self,
-        roteiros: Vec<Script>,
+        scripts: Vec<Script>,
         jev: Option<Arc<JevEngine>>,
     ) -> (TurnEngine, Arc<FakeProvider>) {
-        let fake = Arc::new(FakeProvider::with_scripts(roteiros));
+        let fake = Arc::new(FakeProvider::with_scripts(scripts));
         let config = ConfigHot::new(
             Arc::clone(&self.store),
             HotConfigOptions::default(),
             MetricsMemory::own(),
         );
         let limiter = Arc::new(Limiter::new(LimitOptions::default(), MetricsMemory::own()));
-        let catalog: Arc<dyn ProductSearcher> = Arc::new(CatalogoVazio);
+        let catalog: Arc<dyn ProductSearcher> = Arc::new(CatalogEmpty);
         let mut engine = TurnEngine::new(
             Arc::clone(&self.store),
             config,
@@ -275,10 +279,10 @@ impl Scenario {
             TurnOptions::default(),
             self.metrics.clone(),
         )
-        .with_pause(Arc::new(SemEspera))
-        .with_search(Arc::clone(&self.busca));
+        .with_pause(Arc::new(NoWait))
+        .with_search(Arc::clone(&self.lookup));
         let registro =
-            QueryKnowledge::registro(Arc::clone(engine.hot_config()), Arc::clone(&self.busca))
+            QueryKnowledge::registro(Arc::clone(engine.hot_config()), Arc::clone(&self.lookup))
                 .com(SearchProduct::new(Arc::clone(engine.hot_config()), catalog));
         engine = engine.with_tools(Arc::new(registro));
         if let Some(jev) = jev {
@@ -288,10 +292,10 @@ impl Scenario {
     }
 
     async fn turno(&self, engine: &TurnEngine, gatilho: MessageId) -> TurnSummary {
-        self.turno_em(engine, self.conversa, gatilho).await
+        self.turn(engine, self.conversa, gatilho).await
     }
 
-    async fn turno_em(
+    async fn turn(
         &self,
         engine: &TurnEngine,
         conversa: ConversationId,
@@ -313,7 +317,7 @@ impl Drop for Scenario {
     }
 }
 
-fn roteiro_texto(texto: &str) -> Script {
+fn script_text(texto: &str) -> Script {
     Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
         LlmEvent::Usage(Usage {
@@ -331,22 +335,22 @@ fn so_g3() -> JevGates {
     }
 }
 
-fn motor_jev(jev: Arc<FakeJev>) -> Arc<JevEngine> {
+fn engine_judge(jev: Arc<FakeJev>) -> Arc<JevEngine> {
     Arc::new(JevEngine::new(jev, so_g3(), "jev-latest"))
 }
 
-fn escolhas(items: &[(&str, &str)]) -> BTreeMap<String, String> {
+fn choices(items: &[(&str, &str)]) -> BTreeMap<String, String> {
     items
         .iter()
         .map(|(id, choice)| ((*id).to_owned(), (*choice).to_owned()))
         .collect()
 }
 
-fn nomes_das_ferramentas(request: &poph_core::llm::Request) -> Vec<String> {
+fn names_tools(request: &poph_core::llm::Request) -> Vec<String> {
     request.tools.iter().map(|tool| tool.nome.clone()).collect()
 }
 
-fn texto_do_prompt(request: &poph_core::llm::Request) -> String {
+fn text_prompt(request: &poph_core::llm::Request) -> String {
     request
         .messages
         .iter()
@@ -354,7 +358,7 @@ fn texto_do_prompt(request: &poph_core::llm::Request) -> String {
             poph_core::llm::Message::System(texto) => texto.clone(),
             poph_core::llm::Message::User(parts) => parts
                 .iter()
-                .map(|parte| match parte {
+                .map(|part| match part {
                     poph_core::llm::Part::Texto(texto) => texto.clone(),
                     _ => String::new(),
                 })
@@ -368,18 +372,18 @@ fn texto_do_prompt(request: &poph_core::llm::Request) -> String {
 }
 
 #[tokio::test]
-async fn g3_nada_descarta_a_busca_e_nao_oferece_base_nem_catalogo() {
+async fn g3_nothing_discards_search_not_offers_base_nor_catalog() {
     let scenario = Scenario::new("nada");
-    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(choices(&[(
         "g3_precisa",
         G3_NOTHING,
     )])));
     let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto("Oi! Tudo bem? Como posso ajudar?")],
-        Some(motor_jev(Arc::clone(&jev))),
+        vec![script_text("Oi! Tudo bem? Como posso ajudar?")],
+        Some(engine_judge(Arc::clone(&jev))),
     );
 
-    let gatilho = scenario.falar("oi, bom dia");
+    let gatilho = scenario.say("oi, bom dia");
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(summary.estado, poph_store::TurnState::Completed);
@@ -389,14 +393,14 @@ async fn g3_nada_descarta_a_busca_e_nao_oferece_base_nem_catalogo() {
         Some(G3_NOTHING)
     );
 
-    let pedidos = provedor.received();
-    assert_eq!(pedidos.len(), 1, "uma chamada ao modelo");
-    let prompt = texto_do_prompt(&pedidos[0]);
+    let requests = provedor.received();
+    assert_eq!(requests.len(), 1, "uma chamada ao modelo");
+    let prompt = text_prompt(&requests[0]);
     assert!(
-        !prompt.contains(TEXTO_DO_TRECHO),
+        !prompt.contains(TEXT_CHUNK),
         "o trecho da base não pode entrar no prompt quando o G3 diz nada"
     );
-    let tools = nomes_das_ferramentas(&pedidos[0]);
+    let tools = names_tools(&requests[0]);
     assert!(
         !tools.contains(&"consultar_base".to_owned()),
         "consultar_base não deve ser oferecida: {tools:?}"
@@ -405,7 +409,7 @@ async fn g3_nada_descarta_a_busca_e_nao_oferece_base_nem_catalogo() {
         !tools.contains(&"buscar_produto".to_owned()),
         "buscar_produto não deve ser oferecida: {tools:?}"
     );
-    let turnos = scenario
+    let turns = scenario
         .store
         .turns()
         .list(
@@ -415,7 +419,7 @@ async fn g3_nada_descarta_a_busca_e_nao_oferece_base_nem_catalogo() {
         )
         .expect("lista os turnos");
     assert_eq!(
-        turnos[0].passages_json, "[]",
+        turns[0].passages_json, "[]",
         "o registro não guarda trecho quando o G3 diz nada"
     );
     assert_eq!(
@@ -426,9 +430,9 @@ async fn g3_nada_descarta_a_busca_e_nao_oferece_base_nem_catalogo() {
 }
 
 #[tokio::test]
-async fn g3_nada_nao_executa_ferramenta_inventada_pelo_modelo() {
+async fn g3_nothing_not_executes_tool_invented_model() {
     let scenario = Scenario::new("inventada");
-    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(choices(&[(
         "g3_precisa",
         G3_NOTHING,
     )])));
@@ -442,52 +446,52 @@ async fn g3_nada_nao_executa_ferramenta_inventada_pelo_modelo() {
                 }),
                 LlmEvent::Fim(FinishReason::ToolCalls),
             ]),
-            roteiro_texto("Tudo certo por aqui!"),
+            script_text("Tudo certo por aqui!"),
         ],
-        Some(motor_jev(Arc::clone(&jev))),
+        Some(engine_judge(Arc::clone(&jev))),
     );
 
-    let gatilho = scenario.falar("ok, obrigado");
+    let gatilho = scenario.say("ok, obrigado");
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(summary.estado, poph_store::TurnState::Completed);
     assert_eq!(
-        scenario.buscas(),
+        scenario.searches(),
         1,
         "só a busca prévia do turno rodou; a ferramenta inventada não pode consultar a base"
     );
 }
 
 #[tokio::test]
-async fn g3_base_mantem_a_busca_e_as_ferramentas() {
+async fn g3_base_keeps_search_tools() {
     let scenario = Scenario::new("base");
-    let jev = Arc::new(FakeJev::with_choices(escolhas(&[("g3_precisa", G3_BASE)])));
+    let jev = Arc::new(FakeJev::with_choices(choices(&[("g3_precisa", G3_BASE)])));
     let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto("O prazo é de até 8 dias úteis.")],
-        Some(motor_jev(Arc::clone(&jev))),
+        vec![script_text("O prazo é de até 8 dias úteis.")],
+        Some(engine_judge(Arc::clone(&jev))),
     );
 
-    let gatilho = scenario.falar("qual é o prazo de entrega para o interior?");
+    let gatilho = scenario.say("qual é o prazo de entrega para o interior?");
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(summary.estado, poph_store::TurnState::Completed);
-    let pedidos = provedor.received();
-    assert_eq!(pedidos.len(), 1);
+    let requests = provedor.received();
+    assert_eq!(requests.len(), 1);
     assert!(
-        texto_do_prompt(&pedidos[0]).contains(TEXTO_DO_TRECHO),
+        text_prompt(&requests[0]).contains(TEXT_CHUNK),
         "com o G3 em base, o trecho recuperado entra no prompt"
     );
-    let tools = nomes_das_ferramentas(&pedidos[0]);
+    let tools = names_tools(&requests[0]);
     assert!(tools.contains(&"consultar_base".to_owned()), "{tools:?}");
     assert!(tools.contains(&"buscar_produto".to_owned()), "{tools:?}");
 }
 
 #[tokio::test]
-async fn g3_desligado_nao_muda_o_comportamento() {
+async fn g3_disabled_not_changes_behaviour() {
     let scenario = Scenario::new("desligado");
-    let (engine, provedor) = scenario.engine(vec![roteiro_texto("Olá! Como posso ajudar?")], None);
+    let (engine, provedor) = scenario.engine(vec![script_text("Olá! Como posso ajudar?")], None);
 
-    let gatilho = scenario.falar("oi");
+    let gatilho = scenario.say("oi");
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(summary.estado, poph_store::TurnState::Completed);
@@ -495,143 +499,143 @@ async fn g3_desligado_nao_muda_o_comportamento() {
         summary.jev.is_none(),
         "sem gate ligado o turno não consulta o Jev"
     );
-    let pedidos = provedor.received();
-    assert!(texto_do_prompt(&pedidos[0]).contains(TEXTO_DO_TRECHO));
-    let tools = nomes_das_ferramentas(&pedidos[0]);
+    let requests = provedor.received();
+    assert!(text_prompt(&requests[0]).contains(TEXT_CHUNK));
+    let tools = names_tools(&requests[0]);
     assert!(tools.contains(&"consultar_base".to_owned()), "{tools:?}");
     assert!(tools.contains(&"buscar_produto".to_owned()), "{tools:?}");
 }
 
 #[tokio::test]
-async fn g3_sem_resposta_cai_no_comportamento_de_hoje() {
+async fn g3_without_reply_falls_behaviour_today() {
     let scenario = Scenario::new("abstencao");
     let jev = Arc::new(FakeJev::with_choices(BTreeMap::new()));
     let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto("Olá! Como posso ajudar?")],
-        Some(motor_jev(Arc::clone(&jev))),
+        vec![script_text("Olá! Como posso ajudar?")],
+        Some(engine_judge(Arc::clone(&jev))),
     );
 
-    let gatilho = scenario.falar("oi");
+    let gatilho = scenario.say("oi");
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(summary.estado, poph_store::TurnState::Completed);
-    let pedidos = provedor.received();
-    assert!(texto_do_prompt(&pedidos[0]).contains(TEXTO_DO_TRECHO));
-    let tools = nomes_das_ferramentas(&pedidos[0]);
+    let requests = provedor.received();
+    assert!(text_prompt(&requests[0]).contains(TEXT_CHUNK));
+    let tools = names_tools(&requests[0]);
     assert!(tools.contains(&"consultar_base".to_owned()), "{tools:?}");
 }
 
 #[tokio::test]
-async fn g3_confianca_baixa_cai_no_comportamento_de_hoje() {
+async fn g3_confidence_low_falls_behaviour_today() {
     let scenario = Scenario::new("confianca");
     let jev = Arc::new(FakeJev::new(|request: &poph_jev::JevRequest| {
-        let mut respostas = BTreeMap::new();
+        let mut replies = BTreeMap::new();
         for id in request.questions.keys() {
-            let mut response = RespostaJev {
+            let mut response = ReplyJudge {
                 choice: Some(G3_NOTHING.to_owned()),
                 confidence: 0.4,
-                ..RespostaJev::default()
+                ..ReplyJudge::default()
             };
             response.probabilities.insert(G3_NOTHING.to_owned(), 0.4);
             response.probabilities.insert(G3_BASE.to_owned(), 0.4);
-            respostas.insert(id.clone(), response);
+            replies.insert(id.clone(), response);
         }
         Ok(BatchResponse {
-            answers: respostas,
+            answers: replies,
             tokens: 7,
             ..BatchResponse::default()
         })
     }));
     let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto("Olá! Como posso ajudar?")],
-        Some(motor_jev(Arc::clone(&jev))),
+        vec![script_text("Olá! Como posso ajudar?")],
+        Some(engine_judge(Arc::clone(&jev))),
     );
 
-    let gatilho = scenario.falar("oi");
+    let gatilho = scenario.say("oi");
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(summary.estado, poph_store::TurnState::Completed);
-    let pedidos = provedor.received();
+    let requests = provedor.received();
     assert!(
-        texto_do_prompt(&pedidos[0]).contains(TEXTO_DO_TRECHO),
+        text_prompt(&requests[0]).contains(TEXT_CHUNK),
         "confiança baixa não pode descartar a base"
     );
 }
 
 #[tokio::test]
-async fn g3_jev_fora_do_ar_cai_no_comportamento_de_hoje() {
+async fn g3_judge_out_ar_falls_behaviour_today() {
     let scenario = Scenario::new("fora");
     let jev = Arc::new(FakeJev::failing(JevError::Status {
         code: 503,
         motivo: "Service Unavailable".to_owned(),
     }));
     let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto("Olá! Como posso ajudar?")],
-        Some(motor_jev(Arc::clone(&jev))),
+        vec![script_text("Olá! Como posso ajudar?")],
+        Some(engine_judge(Arc::clone(&jev))),
     );
 
-    let gatilho = scenario.falar("oi");
+    let gatilho = scenario.say("oi");
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(summary.estado, poph_store::TurnState::Completed);
-    let pedidos = provedor.received();
-    assert!(texto_do_prompt(&pedidos[0]).contains(TEXTO_DO_TRECHO));
-    let tools = nomes_das_ferramentas(&pedidos[0]);
+    let requests = provedor.received();
+    assert!(text_prompt(&requests[0]).contains(TEXT_CHUNK));
+    let tools = names_tools(&requests[0]);
     assert!(tools.contains(&"consultar_base".to_owned()), "{tools:?}");
 }
 
 #[tokio::test]
-async fn g3_nada_abandona_a_busca_em_andamento() {
-    let scenario = Scenario::com_busca(
+async fn g3_nothing_abandons_search_progress() {
+    let scenario = Scenario::with_search(
         "abandona",
-        BuscaContada::com_demora(Duration::from_millis(300)) as Arc<dyn KnowledgeSearcher>,
+        SearchCounted::with_delay(Duration::from_millis(300)) as Arc<dyn KnowledgeSearcher>,
         Arc::new(AtomicU64::new(0)),
     );
 
-    let jev_nada = Arc::new(FakeJev::with_choices(escolhas(&[(
+    let judge_nothing = Arc::new(FakeJev::with_choices(choices(&[(
         "g3_precisa",
         G3_NOTHING,
     )])));
     let (engine, _) = scenario.engine(
-        vec![roteiro_texto("Oi! Como posso ajudar?")],
-        Some(motor_jev(Arc::clone(&jev_nada))),
+        vec![script_text("Oi! Como posso ajudar?")],
+        Some(engine_judge(Arc::clone(&judge_nothing))),
     );
-    let gatilho = scenario.falar("oi, bom dia");
+    let gatilho = scenario.say("oi, bom dia");
     let beginning = Instant::now();
     let summary = scenario.turno(&engine, gatilho).await;
-    let com_nada = beginning.elapsed();
+    let with_nothing = beginning.elapsed();
     assert_eq!(summary.estado, poph_store::TurnState::Completed);
     assert!(
-        com_nada < Duration::from_millis(250),
-        "com o G3 em nada o turno não pode esperar a busca: levou {com_nada:?}"
+        with_nothing < Duration::from_millis(250),
+        "com o G3 em nada o turno não pode esperar a busca: levou {with_nothing:?}"
     );
 
-    let cenario_base = Scenario::com_busca(
+    let scenario_base = Scenario::with_search(
         "espera",
-        BuscaContada::com_demora(Duration::from_millis(300)) as Arc<dyn KnowledgeSearcher>,
+        SearchCounted::with_delay(Duration::from_millis(300)) as Arc<dyn KnowledgeSearcher>,
         Arc::new(AtomicU64::new(0)),
     );
-    let jev_base = Arc::new(FakeJev::with_choices(escolhas(&[("g3_precisa", G3_BASE)])));
-    let (engine, _) = cenario_base.engine(
-        vec![roteiro_texto("O prazo é de até 8 dias úteis.")],
-        Some(motor_jev(Arc::clone(&jev_base))),
+    let jev_base = Arc::new(FakeJev::with_choices(choices(&[("g3_precisa", G3_BASE)])));
+    let (engine, _) = scenario_base.engine(
+        vec![script_text("O prazo é de até 8 dias úteis.")],
+        Some(engine_judge(Arc::clone(&jev_base))),
     );
-    let gatilho = cenario_base.falar("qual é o prazo de entrega?");
+    let gatilho = scenario_base.say("qual é o prazo de entrega?");
     let beginning = Instant::now();
-    let summary = cenario_base.turno(&engine, gatilho).await;
-    let com_base = beginning.elapsed();
+    let summary = scenario_base.turno(&engine, gatilho).await;
+    let with_base = beginning.elapsed();
     assert_eq!(summary.estado, poph_store::TurnState::Completed);
     assert!(
-        com_base >= Duration::from_millis(300),
-        "com o G3 em base a busca é aguardada: levou {com_base:?}"
+        with_base >= Duration::from_millis(300),
+        "com o G3 em base a busca é aguardada: levou {with_base:?}"
     );
 }
 
 #[tokio::test]
-async fn g3_nada_com_transferencia_nao_quebra_o_turno() {
-    let scenario = Scenario::com_busca(
+async fn g3_nothing_with_transfer_not_breaks_turn() {
+    let scenario = Scenario::with_search(
         "transferencia",
-        BuscaContada::com_demora(Duration::from_millis(300)) as Arc<dyn KnowledgeSearcher>,
+        SearchCounted::with_delay(Duration::from_millis(300)) as Arc<dyn KnowledgeSearcher>,
         Arc::new(AtomicU64::new(0)),
     );
     let current = scenario
@@ -653,7 +657,7 @@ async fn g3_nada_com_transferencia_nao_quebra_o_turno() {
         )
         .expect("liga o handoff");
 
-    let jev = Arc::new(FakeJev::with_choices(escolhas(&[
+    let jev = Arc::new(FakeJev::with_choices(choices(&[
         ("g1_transferir", poph_jev::G1_TRANSFER),
         ("g3_precisa", G3_NOTHING),
     ])));
@@ -662,20 +666,20 @@ async fn g3_nada_com_transferencia_nao_quebra_o_turno() {
         g3: true,
         ..JevGates::default()
     };
-    let motor_jev = Arc::new(JevEngine::new(jev, gates, "jev-latest"));
+    let engine_judge = Arc::new(JevEngine::new(jev, gates, "jev-latest"));
     let (engine, _) = scenario.engine(
-        vec![roteiro_texto("Vou te passar para um atendente.")],
-        Some(motor_jev),
+        vec![script_text("Vou te passar para um atendente.")],
+        Some(engine_judge),
     );
 
-    let gatilho = scenario.falar("quero falar com uma pessoa de verdade");
+    let gatilho = scenario.say("quero falar com uma pessoa de verdade");
     let beginning = Instant::now();
     let summary = scenario.turno(&engine, gatilho).await;
-    let decorrido = beginning.elapsed();
+    let elapsed = beginning.elapsed();
 
     assert!(
-        decorrido < Duration::from_millis(250),
-        "a busca não devia ser aguardada: levou {decorrido:?}"
+        elapsed < Duration::from_millis(250),
+        "a busca não devia ser aguardada: levou {elapsed:?}"
     );
     assert_eq!(
         summary.jev.as_ref().and_then(|jev| jev.choice(IdGate::G1)),
@@ -688,24 +692,24 @@ async fn g3_nada_com_transferencia_nao_quebra_o_turno() {
     );
 }
 
-struct BuscaRealista {
+struct SearchRealistic {
     passages: Vec<RecoveredPassage>,
 }
 
-impl KnowledgeSearcher for BuscaRealista {
+impl KnowledgeSearcher for SearchRealistic {
     fn search(
         &self,
         _org: OrgId,
         _agent: AgentId,
-        _consulta: String,
-        _parametros: SearchParameters,
+        _query: String,
+        _parameters: SearchParameters,
     ) -> SearchFuture<'_> {
         let passages = self.passages.clone();
         Box::pin(async move { Ok(passages) })
     }
 }
 
-fn trechos_realistas() -> Vec<RecoveredPassage> {
+fn chunks_realistic() -> Vec<RecoveredPassage> {
     let texto =
         "Política da loja: o prazo de entrega para o interior é de até 8 dias úteis após a \
 confirmação do pagamento, e o frete é grátis acima de R$ 199,00. "
@@ -724,7 +728,7 @@ confirmação do pagamento, e o frete é grátis acima de R$ 199,00. "
 
 #[tokio::test]
 #[ignore = "medição da HR-31: rodar com --ignored --nocapture"]
-async fn medicao_de_tokens_e_latencia_do_g3() {
+async fn measurement_tokens_latency_g3() {
     let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/jev/g3.jsonl");
     let texto = std::fs::read_to_string(&file).expect("lê o conjunto g3.jsonl");
     let mut messages: Vec<String> = Vec::new();
@@ -733,9 +737,9 @@ async fn medicao_de_tokens_e_latencia_do_g3() {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let caso: serde_json::Value = serde_json::from_str(line).expect("caso é JSON");
-        if caso["esperado"] == "nada" {
-            let last = caso["estado"]["mensagens"]
+        let case: serde_json::Value = serde_json::from_str(line).expect("caso é JSON");
+        if case["esperado"] == "nada" {
+            let last = case["estado"]["mensagens"]
                 .as_array()
                 .and_then(|items| items.last())
                 .and_then(|item| item["texto"].as_str())
@@ -745,110 +749,107 @@ async fn medicao_de_tokens_e_latencia_do_g3() {
         }
     }
 
-    let passages = trechos_realistas();
-    let tamanho_da_base: usize = passages
+    let passages = chunks_realistic();
+    let size_base: usize = passages
         .iter()
         .map(|passage| passage.texto.chars().count())
         .sum();
 
-    let mut total_sem = 0usize;
-    let mut total_com = 0usize;
-    let mut duracao_sem = 0u128;
-    let mut duracao_com = 0u128;
-    let mut ferramentas_sem = 0usize;
-    let mut ferramentas_com = 0usize;
+    let mut total_without = 0usize;
+    let mut total_with = 0usize;
+    let mut duration_without = 0u128;
+    let mut duration_with = 0u128;
+    let mut tools_without = 0usize;
+    let mut tools_with = 0usize;
 
     for mensagem in &messages {
-        let scenario = Scenario::com_busca(
+        let scenario = Scenario::with_search(
             "medicao-sem",
-            Arc::new(BuscaRealista {
+            Arc::new(SearchRealistic {
                 passages: passages.clone(),
             }),
             Arc::new(AtomicU64::new(0)),
         );
-        let (engine, provedor) =
-            scenario.engine(vec![roteiro_texto("Oi! Como posso ajudar?")], None);
-        let conversa = scenario.nova_conversa();
-        let gatilho = scenario.falar_em(conversa, mensagem);
+        let (engine, provedor) = scenario.engine(vec![script_text("Oi! Como posso ajudar?")], None);
+        let conversa = scenario.new_conversation();
+        let gatilho = scenario.say_in(conversa, mensagem);
         let beginning = Instant::now();
-        let summary = scenario.turno_em(&engine, conversa, gatilho).await;
-        duracao_sem += beginning.elapsed().as_micros();
+        let summary = scenario.turn(&engine, conversa, gatilho).await;
+        duration_without += beginning.elapsed().as_micros();
         assert_eq!(summary.estado, poph_store::TurnState::Completed);
         let request = provedor.received().remove(0);
-        total_sem += texto_do_prompt(&request).chars().count();
-        ferramentas_sem += request.tools.len();
+        total_without += text_prompt(&request).chars().count();
+        tools_without += request.tools.len();
 
-        let scenario = Scenario::com_busca(
+        let scenario = Scenario::with_search(
             "medicao-com",
-            Arc::new(BuscaRealista {
+            Arc::new(SearchRealistic {
                 passages: passages.clone(),
             }),
             Arc::new(AtomicU64::new(0)),
         );
-        let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
+        let jev = Arc::new(FakeJev::with_choices(choices(&[(
             "g3_precisa",
             G3_NOTHING,
         )])));
         let (engine, provedor) = scenario.engine(
-            vec![roteiro_texto("Oi! Como posso ajudar?")],
-            Some(motor_jev(Arc::clone(&jev))),
+            vec![script_text("Oi! Como posso ajudar?")],
+            Some(engine_judge(Arc::clone(&jev))),
         );
-        let conversa = scenario.nova_conversa();
-        let gatilho = scenario.falar_em(conversa, mensagem);
+        let conversa = scenario.new_conversation();
+        let gatilho = scenario.say_in(conversa, mensagem);
         let beginning = Instant::now();
-        let summary = scenario.turno_em(&engine, conversa, gatilho).await;
-        duracao_com += beginning.elapsed().as_micros();
+        let summary = scenario.turn(&engine, conversa, gatilho).await;
+        duration_with += beginning.elapsed().as_micros();
         assert_eq!(summary.estado, poph_store::TurnState::Completed);
         let request = provedor.received().remove(0);
-        total_com += texto_do_prompt(&request).chars().count();
-        ferramentas_com += request.tools.len();
+        total_with += text_prompt(&request).chars().count();
+        tools_with += request.tools.len();
     }
 
-    let casos = messages.len();
-    let media_sem = total_sem / casos;
-    let media_com = total_com / casos;
-    let economia = media_sem.saturating_sub(media_com);
-    println!("\n=== Medição G3 (HR-31) — {casos} mensagens rotuladas `nada` ===");
+    let cases = messages.len();
+    let average_without = total_without / cases;
+    let average_with = total_with / cases;
+    let economia = average_without.saturating_sub(average_with);
+    println!("\n=== Medição G3 (HR-31) — {cases} mensagens rotuladas `nada` ===");
     println!(
-        "base de exemplo: {} trechos, {tamanho_da_base} caracteres no total",
+        "base de exemplo: {} trechos, {size_base} caracteres no total",
         passages.len()
     );
-    println!("prompt médio SEM o G3: {media_sem} caracteres");
-    println!("prompt médio COM o G3 em `nada`: {media_com} caracteres");
+    println!("prompt médio SEM o G3: {average_without} caracteres");
+    println!("prompt médio COM o G3 em `nada`: {average_with} caracteres");
     println!(
         "economia média: {economia} caracteres ({:.1}% do prompt) ≈ {} tokens por mensagem \
          (estimativa caracteres/4; o tokenizador do provedor não está no repositório)",
-        (economia as f64) * 100.0 / (media_sem as f64),
+        (economia as f64) * 100.0 / (average_without as f64),
         economia / 4
     );
     println!(
         "ferramentas oferecidas por turno: {:.1} sem o G3, {:.1} com o G3",
-        ferramentas_sem as f64 / casos as f64,
-        ferramentas_com as f64 / casos as f64
+        tools_without as f64 / cases as f64,
+        tools_with as f64 / cases as f64
     );
     println!(
         "duração média do turno (parte local, provedor falso): {:.2} ms sem o G3, {:.2} ms com o G3",
-        duracao_sem as f64 / casos as f64 / 1000.0,
-        duracao_com as f64 / casos as f64 / 1000.0
+        duration_without as f64 / cases as f64 / 1000.0,
+        duration_with as f64 / cases as f64 / 1000.0
     );
     assert!(economia > 0, "com o G3 em nada o prompt tem de encolher");
 }
 
 #[tokio::test]
-async fn padrao_de_instalacao_liga_o_g3_sem_configurar_o_agente() {
+async fn default_installation_enables_g3_without_configure_agent() {
     let scenario = Scenario::new("padrao-g3");
-    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(choices(&[(
         "g3_precisa",
         G3_NOTHING,
     )])));
-    let gates_padrao = poph_types::JevConfig::default().gates;
-    let evaluator = Arc::new(JevEngine::new(jev, gates_padrao, "jev-latest"));
-    let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto("Oi! Como posso ajudar?")],
-        Some(evaluator),
-    );
+    let gates_default = poph_types::JevConfig::default().gates;
+    let evaluator = Arc::new(JevEngine::new(jev, gates_default, "jev-latest"));
+    let (engine, provedor) =
+        scenario.engine(vec![script_text("Oi! Como posso ajudar?")], Some(evaluator));
 
-    let gatilho = scenario.falar("oi, bom dia");
+    let gatilho = scenario.say("oi, bom dia");
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(summary.estado, poph_store::TurnState::Completed);
@@ -857,19 +858,19 @@ async fn padrao_de_instalacao_liga_o_g3_sem_configurar_o_agente() {
         Some(G3_NOTHING),
         "sem configuração no agente, o G3 do padrão de instalação precisa perguntar"
     );
-    let pedidos = provedor.received();
+    let requests = provedor.received();
     assert!(
-        !texto_do_prompt(&pedidos[0]).contains(TEXTO_DO_TRECHO),
+        !text_prompt(&requests[0]).contains(TEXT_CHUNK),
         "com `nada`, a base não entra no prompt"
     );
     assert!(
-        !nomes_das_ferramentas(&pedidos[0]).contains(&"consultar_base".to_owned()),
+        !names_tools(&requests[0]).contains(&"consultar_base".to_owned()),
         "com `nada`, consultar_base não é oferecida"
     );
 }
 
 #[tokio::test]
-async fn agente_que_desliga_o_g3_volta_ao_comportamento_de_hoje() {
+async fn agent_disables_g3_return_behaviour_today() {
     let scenario = Scenario::new("agente-g3-off");
     let current = scenario
         .store
@@ -890,18 +891,18 @@ async fn agente_que_desliga_o_g3_volta_ao_comportamento_de_hoje() {
         )
         .expect("desliga o G3 no agente");
 
-    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(choices(&[(
         "g3_precisa",
         G3_NOTHING,
     )])));
-    let gates_padrao = poph_types::JevConfig::default().gates;
-    let evaluator = Arc::new(JevEngine::new(jev, gates_padrao, "jev-latest"));
+    let gates_default = poph_types::JevConfig::default().gates;
+    let evaluator = Arc::new(JevEngine::new(jev, gates_default, "jev-latest"));
     let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto("Olá! Como posso ajudar?")],
+        vec![script_text("Olá! Como posso ajudar?")],
         Some(evaluator),
     );
 
-    let gatilho = scenario.falar("oi");
+    let gatilho = scenario.say("oi");
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(summary.estado, poph_store::TurnState::Completed);
@@ -913,13 +914,13 @@ async fn agente_que_desliga_o_g3_volta_ao_comportamento_de_hoje() {
             .is_none(),
         "com o G3 desligado no agente, o Jev não decide o G3"
     );
-    let pedidos = provedor.received();
-    assert!(texto_do_prompt(&pedidos[0]).contains(TEXTO_DO_TRECHO));
-    assert!(nomes_das_ferramentas(&pedidos[0]).contains(&"consultar_base".to_owned()));
+    let requests = provedor.received();
+    assert!(text_prompt(&requests[0]).contains(TEXT_CHUNK));
+    assert!(names_tools(&requests[0]).contains(&"consultar_base".to_owned()));
 }
 
 #[tokio::test]
-async fn agente_com_ativo_false_nao_consulta_o_jev_nem_o_g3() {
+async fn agent_with_active_false_not_query_judge_nor_g3() {
     let scenario = Scenario::new("agente-inativo-g3");
     let current = scenario
         .store
@@ -940,18 +941,18 @@ async fn agente_com_ativo_false_nao_consulta_o_jev_nem_o_g3() {
         )
         .expect("desliga o Jev do agente");
 
-    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(choices(&[(
         "g3_precisa",
         G3_NOTHING,
     )])));
-    let gates_padrao = poph_types::JevConfig::default().gates;
-    let evaluator = Arc::new(JevEngine::new(jev, gates_padrao, "jev-latest"));
+    let gates_default = poph_types::JevConfig::default().gates;
+    let evaluator = Arc::new(JevEngine::new(jev, gates_default, "jev-latest"));
     let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto("Olá! Como posso ajudar?")],
+        vec![script_text("Olá! Como posso ajudar?")],
         Some(evaluator),
     );
 
-    let gatilho = scenario.falar("oi");
+    let gatilho = scenario.say("oi");
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert!(
@@ -961,7 +962,7 @@ async fn agente_com_ativo_false_nao_consulta_o_jev_nem_o_g3() {
             .is_none_or(|jev| jev.decisions.is_empty()),
         "agente com ativo=false não recebe decisão nenhuma do Jev"
     );
-    let pedidos = provedor.received();
-    assert!(texto_do_prompt(&pedidos[0]).contains(TEXTO_DO_TRECHO));
-    assert!(nomes_das_ferramentas(&pedidos[0]).contains(&"consultar_base".to_owned()));
+    let requests = provedor.received();
+    assert!(text_prompt(&requests[0]).contains(TEXT_CHUNK));
+    assert!(names_tools(&requests[0]).contains(&"consultar_base".to_owned()));
 }

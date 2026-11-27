@@ -22,10 +22,10 @@ use poph_store::{
 };
 use poph_types::{AgentId, ConversationId, MessageId, OrgId};
 
-struct SemEspera;
+struct NoWait;
 
-impl Pause for SemEspera {
-    fn wait(&self, _duracao: Duration) -> FuturePause {
+impl Pause for NoWait {
+    fn wait(&self, _duration: Duration) -> FuturePause {
         Box::pin(async {})
     }
 }
@@ -38,7 +38,7 @@ fn texto(i: usize) -> String {
     format!("[#{i:02}] {ENCHIMENTO}")
 }
 
-fn e_pedido_de_resumo(request: &Request) -> bool {
+fn is_summary_request(request: &Request) -> bool {
     matches!(request.messages.first(), Some(Message::System(texto)) if texto.starts_with("Você mantém o resumo"))
 }
 
@@ -47,7 +47,7 @@ fn history(request: &Request) -> Vec<String> {
         .messages
         .iter()
         .filter_map(|mensagem| match mensagem {
-            Message::User(parts) => parts.iter().find_map(|parte| match parte {
+            Message::User(parts) => parts.iter().find_map(|part| match part {
                 Part::Texto(texto) => Some(texto.clone()),
                 Part::Image { .. } => None,
             }),
@@ -64,24 +64,24 @@ fn block_volatile(request: &Request) -> Option<String> {
     })
 }
 
-fn tokens(textos: &[String]) -> u64 {
-    textos
+fn tokens(texts: &[String]) -> u64 {
+    texts
         .iter()
         .map(|texto| estimate_tokens(texto) + COST_BY_MESSAGE)
         .sum()
 }
 
-struct ProvedorLento {
-    latencia: Duration,
+struct ProviderSlow {
+    latency: Duration,
     calls: AtomicU64,
 }
 
-impl LlmProvider for ProvedorLento {
+impl LlmProvider for ProviderSlow {
     fn stream<'a>(&'a self, request: Request) -> BoxFuture<'a, Result<LlmStream, LlmError>> {
         Box::pin(async move {
-            tokio::time::sleep(self.latencia).await;
+            tokio::time::sleep(self.latency).await;
             self.calls.fetch_add(1, Ordering::SeqCst);
-            let texto = if e_pedido_de_resumo(&request) {
+            let texto = if is_summary_request(&request) {
                 "Resumo: cliente pediu orçamento e prazo.".to_owned()
             } else {
                 format!("[#zz] {ENCHIMENTO}")
@@ -224,11 +224,11 @@ impl Scenario {
             .id
     }
 
-    fn falar(&self, conversa: ConversationId, texto: String) -> MessageId {
+    fn say(&self, conversa: ConversationId, texto: String) -> MessageId {
         self.write(conversa, Role::User, texto)
     }
 
-    fn historico_inicial(&self, conversa: ConversationId, beginning: usize, n: usize) {
+    fn history_initial(&self, conversa: ConversationId, beginning: usize, n: usize) {
         for i in beginning..beginning + n {
             let role = if i % 2 == 0 {
                 Role::User
@@ -237,14 +237,14 @@ impl Scenario {
             };
             self.write(conversa, role, texto(i));
         }
-        self.avancar(1_000);
+        self.advance(1_000);
     }
 
-    fn avancar(&self, ms: i64) {
+    fn advance(&self, ms: i64) {
         self.clock.fetch_add(ms, Ordering::SeqCst);
     }
 
-    fn resumo_da_conversa(&self, conversa: ConversationId) -> Summary {
+    fn summary_conversation(&self, conversa: ConversationId) -> Summary {
         let registro = self
             .store
             .conversations()
@@ -268,7 +268,7 @@ impl Scenario {
             TurnOptions::default(),
             MetricsTurn::own(),
         )
-        .with_pause(Arc::new(SemEspera))
+        .with_pause(Arc::new(NoWait))
         .with_summary(summary)
     }
 
@@ -295,11 +295,11 @@ impl Drop for Scenario {
 }
 
 #[tokio::test]
-async fn janela_cabe_no_orcamento_e_o_resumo_e_usado_no_turno_seguinte() {
+async fn window_fits_budget_summary_used_turn_next() {
     let scenario = Scenario::new("janela");
     let conversa = scenario.conversa();
-    scenario.historico_inicial(conversa, 0, 59);
-    let gatilho = scenario.falar(conversa, texto(59));
+    scenario.history_initial(conversa, 0, 59);
+    let gatilho = scenario.say(conversa, texto(59));
 
     let fake = Arc::new(FakeProvider::with_scripts(vec![
         response(&texto(60)),
@@ -316,33 +316,33 @@ async fn janela_cabe_no_orcamento_e_o_resumo_e_usado_no_turno_seguinte() {
         "o resumo não terminou a tempo"
     );
 
-    let pedidos = fake.received();
-    assert_eq!(pedidos.len(), 2, "um pedido do turno e um do resumo");
-    let hist1 = history(&pedidos[0]);
+    let requests = fake.received();
+    assert_eq!(requests.len(), 2, "um pedido do turno e um do resumo");
+    let hist1 = history(&requests[0]);
     assert!(hist1.len() < 60, "a janela não pode ser a conversa inteira");
     assert_eq!(hist1.last().map(String::as_str), Some(texto(59).as_str()));
     assert!(tokens(&hist1) <= 1_000, "janela estourou o orçamento");
-    assert!(block_volatile(&pedidos[0]).is_none_or(|block| !block.contains("resumo da conversa")));
+    assert!(block_volatile(&requests[0]).is_none_or(|block| !block.contains("resumo da conversa")));
 
     let n = hist1.len();
     let cutoff = 60 - n;
-    let summary = scenario.resumo_da_conversa(conversa);
+    let summary = scenario.summary_conversation(conversa);
     assert_eq!(summary.texto, "Resumo: cliente pediu orçamento de produto.");
     let until = summary.until.expect("o resumo tem ponto de corte");
-    let ate_texto = scenario
+    let until_text = scenario
         .store
         .messages()
         .get(scenario.org, conversa, until)
         .expect("lê a última mensagem coberta")
         .texto;
     assert!(
-        ate_texto.starts_with(&format!("[#{cutoff:02}]")),
+        until_text.starts_with(&format!("[#{cutoff:02}]")),
         "o resumo deve parar na última mensagem que saiu da janela, veio {}",
-        &ate_texto[..8]
+        &until_text[..8]
     );
-    let pedido_resumo = &pedidos[1];
-    assert!(e_pedido_de_resumo(pedido_resumo));
-    let body = match pedido_resumo.messages.last() {
+    let summary_request = &requests[1];
+    assert!(is_summary_request(summary_request));
+    let body = match summary_request.messages.last() {
         Some(Message::User(parts)) => match parts.first() {
             Some(Part::Texto(texto)) => texto.clone(),
             _ => String::new(),
@@ -355,15 +355,15 @@ async fn janela_cabe_no_orcamento_e_o_resumo_e_usado_no_turno_seguinte() {
         "não resumir o que ainda está na janela"
     );
 
-    let gatilho2 = scenario.falar(conversa, texto(61));
-    let second = scenario.turno(&engine, conversa, gatilho2).await;
+    let trigger2 = scenario.say(conversa, texto(61));
+    let second = scenario.turno(&engine, conversa, trigger2).await;
     assert_eq!(second.estado, TurnState::Completed);
     assert!(engine.wait_for_summaries(Duration::from_secs(10)).await);
 
-    let pedidos = fake.received();
-    let pedido_turno2 = &pedidos[2];
-    let hist2 = history(pedido_turno2);
-    let block = block_volatile(pedido_turno2).expect("o turno leva o bloco volátil");
+    let requests = fake.received();
+    let request_turn2 = &requests[2];
+    let hist2 = history(request_turn2);
+    let block = block_volatile(request_turn2).expect("o turno leva o bloco volátil");
     assert!(
         block.contains("Resumo: cliente pediu orçamento de produto."),
         "resumo não chegou ao turno"
@@ -382,11 +382,11 @@ async fn janela_cabe_no_orcamento_e_o_resumo_e_usado_no_turno_seguinte() {
 }
 
 #[tokio::test]
-async fn falha_do_resumo_nao_derruba_o_turno() {
+async fn failure_summary_not_crashes_turn() {
     let scenario = Scenario::new("falha");
     let conversa = scenario.conversa();
-    scenario.historico_inicial(conversa, 0, 40);
-    let gatilho = scenario.falar(conversa, texto(40));
+    scenario.history_initial(conversa, 0, 40);
+    let gatilho = scenario.say(conversa, texto(40));
 
     let fake = Arc::new(FakeProvider::with_scripts(vec![
         response(&texto(41)),
@@ -404,22 +404,22 @@ async fn falha_do_resumo_nao_derruba_o_turno() {
     );
     assert!(engine.wait_for_summaries(Duration::from_secs(10)).await);
     assert!(
-        scenario.resumo_da_conversa(conversa).vazio(),
+        scenario.summary_conversation(conversa).vazio(),
         "falha não grava resumo"
     );
 
-    let gatilho2 = scenario.falar(conversa, texto(42));
-    let second = scenario.turno(&engine, conversa, gatilho2).await;
+    let trigger2 = scenario.say(conversa, texto(42));
+    let second = scenario.turno(&engine, conversa, trigger2).await;
     assert_eq!(second.estado, TurnState::Completed);
     assert_eq!(second.texto, texto(43));
     assert!(engine.wait_for_summaries(Duration::from_secs(10)).await);
 
-    let registros = scenario
+    let records = scenario
         .store
         .audit()
         .list(scenario.org, Page::with_limit(50))
         .expect("lê a auditoria");
-    let failures = registros
+    let failures = records
         .iter()
         .filter(|registro| registro.acao == "resumo_falhou")
         .count();
@@ -430,30 +430,30 @@ async fn falha_do_resumo_nao_derruba_o_turno() {
 }
 
 #[tokio::test]
-async fn conversa_nova_nao_herda_o_resumo() {
+async fn conversation_new_not_inherits_summary() {
     let scenario = Scenario::new("nova");
-    let antiga = scenario.conversa();
-    scenario.historico_inicial(antiga, 0, 40);
-    let gatilho = scenario.falar(antiga, texto(40));
+    let previous = scenario.conversa();
+    scenario.history_initial(previous, 0, 40);
+    let gatilho = scenario.say(previous, texto(40));
     let fake = Arc::new(FakeProvider::with_scripts(vec![
         response(&texto(41)),
         response("Resumo: cliente da conversa antiga pediu orçamento."),
     ]));
     let engine = scenario.engine(fake.clone(), SummaryOptions::default());
-    scenario.turno(&engine, antiga, gatilho).await;
+    scenario.turno(&engine, previous, gatilho).await;
     assert!(engine.wait_for_summaries(Duration::from_secs(10)).await);
     assert!(
-        !scenario.resumo_da_conversa(antiga).vazio(),
+        !scenario.summary_conversation(previous).vazio(),
         "a conversa antiga tem resumo"
     );
 
     let new = scenario.conversa();
-    let gatilho_nova = scenario.falar(new, "oi, sou um cliente novo".to_owned());
+    let trigger_new = scenario.say(new, "oi, sou um cliente novo".to_owned());
     let fake2 = Arc::new(FakeProvider::with_scripts(vec![response(
         "Olá! Como posso ajudar?",
     )]));
-    let motor2 = scenario.engine(fake2.clone(), SummaryOptions::default());
-    let resultado = scenario.turno(&motor2, new, gatilho_nova).await;
+    let engine2 = scenario.engine(fake2.clone(), SummaryOptions::default());
+    let resultado = scenario.turno(&engine2, new, trigger_new).await;
     assert_eq!(resultado.estado, TurnState::Completed);
 
     let request = &fake2.received()[0];
@@ -463,76 +463,76 @@ async fn conversa_nova_nao_herda_o_resumo() {
         "conversa nova não tem resumo"
     );
     assert!(!block.contains("cliente da conversa antiga"));
-    assert!(scenario.resumo_da_conversa(new).vazio());
+    assert!(scenario.summary_conversation(new).vazio());
 }
 
 #[tokio::test]
-async fn resumo_nao_aumenta_o_tempo_do_turno() {
-    const LATENCIA: Duration = Duration::from_millis(100);
-    const TURNOS: usize = 5;
+async fn summary_not_increases_time_turn() {
+    const LATENCY: Duration = Duration::from_millis(100);
+    const TURNS: usize = 5;
 
     let scenario = Scenario::new("medicao");
-    let provedor: Arc<dyn LlmProvider> = Arc::new(ProvedorLento {
-        latencia: LATENCIA,
+    let provedor: Arc<dyn LlmProvider> = Arc::new(ProviderSlow {
+        latency: LATENCY,
         calls: AtomicU64::new(0),
     });
 
-    let mut sem_resumo = Vec::new();
-    let mut com_resumo = Vec::new();
+    let mut without_summary = Vec::new();
+    let mut with_summary = Vec::new();
     for round in 0..2 {
-        for ligado in [false, true] {
+        for linked in [false, true] {
             let conversa = scenario.conversa();
-            scenario.historico_inicial(conversa, 0, 40);
+            scenario.history_initial(conversa, 0, 40);
             let options = SummaryOptions {
-                ativo: ligado,
+                ativo: linked,
                 ..SummaryOptions::default()
             };
             let engine = scenario.engine(Arc::clone(&provedor), options);
-            let mut tempos = Vec::new();
-            for turno in 0..TURNOS {
-                let gatilho = scenario.falar(conversa, texto(40 + turno + round * 10));
+            let mut times = Vec::new();
+            for turno in 0..TURNS {
+                let gatilho = scenario.say(conversa, texto(40 + turno + round * 10));
                 let resultado = scenario.turno(&engine, conversa, gatilho).await;
                 assert_eq!(resultado.estado, TurnState::Completed);
-                tempos.push(resultado.timings.total_ms as f64);
-                scenario.avancar(5_000);
+                times.push(resultado.timings.total_ms as f64);
+                scenario.advance(5_000);
             }
             engine.wait_for_summaries(Duration::from_secs(10)).await;
-            if ligado {
+            if linked {
                 assert!(
-                    !scenario.resumo_da_conversa(conversa).vazio(),
+                    !scenario.summary_conversation(conversa).vazio(),
                     "com o resumo ligado, a conversa tem resumo"
                 );
-                com_resumo.extend(tempos);
+                with_summary.extend(times);
             } else {
-                sem_resumo.extend(tempos);
+                without_summary.extend(times);
             }
         }
     }
 
-    let mediana_sem = mediana(&mut sem_resumo);
-    let mediana_com = mediana(&mut com_resumo);
+    let median_without = median(&mut without_summary);
+    let median_with = median(&mut with_summary);
     eprintln!(
         "medição HR-14 (latência simulada de {} ms por chamada): turno sem resumo mediana {:.1} ms; \
          turno com resumo mediana {:.1} ms; {} turnos em cada lado",
-        LATENCIA.as_millis(),
-        mediana_sem,
-        mediana_com,
-        sem_resumo.len()
+        LATENCY.as_millis(),
+        median_without,
+        median_with,
+        without_summary.len()
     );
     assert!(
-        mediana_com <= mediana_sem + 50.0,
-        "o resumo não pode atrasar o turno: sem {mediana_sem:.1} ms, com {mediana_com:.1} ms"
+        median_with <= median_without + 50.0,
+        "o resumo não pode atrasar o turno: sem {median_without:.1} ms, com {median_with:.1} ms"
     );
 }
 
 #[tokio::test]
-async fn conversa_longa_sem_resumo_alcanca_a_janela() {
+async fn conversation_long_without_summary_reaches_window() {
     let scenario = Scenario::new("longa");
     let conversa = scenario.conversa();
-    scenario.historico_inicial(conversa, 0, 300);
-    let gatilho = scenario.falar(conversa, texto(300));
-    let provedor: Arc<dyn LlmProvider> = Arc::new(ProvedorLento {
-        latencia: Duration::ZERO,
+    scenario.history_initial(conversa, 0, 300);
+    let gatilho = scenario.say(conversa, texto(300));
+    let provedor: Arc<dyn LlmProvider> = Arc::new(ProviderSlow {
+        latency: Duration::ZERO,
         calls: AtomicU64::new(0),
     });
     let engine = scenario.engine(Arc::clone(&provedor), SummaryOptions::default());
@@ -541,44 +541,44 @@ async fn conversa_longa_sem_resumo_alcanca_a_janela() {
     assert_eq!(resultado.estado, TurnState::Completed);
     assert!(engine.wait_for_summaries(Duration::from_secs(20)).await);
 
-    let todas = scenario
+    let all = scenario
         .store
         .messages()
         .last_set(scenario.org, conversa, 200)
         .expect("lê as últimas mensagens");
-    let summary = scenario.resumo_da_conversa(conversa);
+    let summary = scenario.summary_conversation(conversa);
     let until = summary.until.expect("o resumo tem ponto de corte");
-    let pos_ate = todas
+    let after_until = all
         .iter()
         .position(|mensagem| mensagem.id == until)
         .expect("a mensagem coberta está entre as últimas");
-    let assembly = summary::build(&todas, &summary, 1_000, 30);
+    let assembly = summary::build(&all, &summary, 1_000, 30);
     let first = assembly.messages[0].id;
-    let pos_primeira = todas
+    let after_first = all
         .iter()
         .position(|mensagem| mensagem.id == first)
         .expect("a primeira mensagem do prompt está entre as últimas");
     assert!(
-        pos_primeira <= pos_ate + 1,
-        "buraco entre o resumo e a janela: o prompt começa em {pos_primeira}, o resumo cobre até {pos_ate}"
+        after_first <= after_until + 1,
+        "buraco entre o resumo e a janela: o prompt começa em {after_first}, o resumo cobre até {after_until}"
     );
-    let cutoff = todas.len()
-        - summary::build(&todas, &Summary::default(), 1_000, 30)
+    let cutoff = all.len()
+        - summary::build(&all, &Summary::default(), 1_000, 30)
             .messages
             .len();
     assert!(
-        pos_ate + 5 >= cutoff && pos_ate < cutoff + 5,
-        "o resumo deve chegar perto do corte da janela (corte {cutoff}, coberto até {pos_ate})"
+        after_until + 5 >= cutoff && after_until < cutoff + 5,
+        "o resumo deve chegar perto do corte da janela (corte {cutoff}, coberto até {after_until})"
     );
-    assert!(!scenario.resumo_da_conversa(conversa).vazio());
+    assert!(!scenario.summary_conversation(conversa).vazio());
 }
 
-fn mediana(valores: &mut [f64]) -> f64 {
-    valores.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let meio = valores.len() / 2;
-    if valores.len().is_multiple_of(2) {
-        (valores[meio - 1] + valores[meio]) / 2.0
+fn median(values: &mut [f64]) -> f64 {
+    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let middle = values.len() / 2;
+    if values.len().is_multiple_of(2) {
+        (values[middle - 1] + values[middle]) / 2.0
     } else {
-        valores[meio]
+        values[middle]
     }
 }

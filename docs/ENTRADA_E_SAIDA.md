@@ -174,7 +174,7 @@ There is also `medir_ingestao`, marked `#[ignore]`: it measures the throughput a
 ACK. It does not run in CI because it is a measurement, not a check:
 
 ```
-cargo test --release -p poph-agent --test entrada_saida -- --ignored --nocapture medir_ingestao
+cargo test --release -p poph-agent --test entrada_saida -- --ignored --nocapture measure_ingestion
 ```
 
 The two `SIGKILL` tests run the same test binary again with `--exact <child name>`: the parent waits for the child to write a marker (the controlled point) and sends `SIGKILL`.

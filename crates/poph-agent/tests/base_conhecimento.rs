@@ -129,7 +129,7 @@ impl Drop for Scenario {
 }
 
 #[tokio::test]
-async fn indice_acompanha_criar_editar_e_apagar() {
+async fn index_tracks_create_edit_delete() {
     let scenario = Scenario::new("ciclo");
     let item = scenario.criar_item(
         "Prazo de agendamento",
@@ -168,8 +168,8 @@ async fn indice_acompanha_criar_editar_e_apagar() {
         .await;
     assert_eq!(new.len(), 1);
     assert!(new[0].texto.contains("aplicativo"));
-    let velho = scenario.search("Xilofone quartzo vulcanico", 0.0).await;
-    assert!(velho.is_empty() || !velho[0].texto.contains("48 horas"));
+    let old = scenario.search("Xilofone quartzo vulcanico", 0.0).await;
+    assert!(old.is_empty() || !old[0].texto.contains("48 horas"));
 
     scenario
         .store
@@ -187,7 +187,7 @@ async fn indice_acompanha_criar_editar_e_apagar() {
 }
 
 #[tokio::test]
-async fn consultar_base_respeita_a_lista_habilitada_e_devolve_fonte() {
+async fn query_base_respects_list_enabled_returns_source() {
     let scenario = Scenario::new("ferramenta");
     scenario.criar_item(
         "Região atendida",
@@ -200,13 +200,13 @@ async fn consultar_base_respeita_a_lista_habilitada_e_devolve_fonte() {
         HotConfigOptions::default(),
         MetricsMemory::own(),
     ));
-    let busca: Arc<dyn KnowledgeSearcher> =
+    let lookup: Arc<dyn KnowledgeSearcher> =
         Arc::clone(&scenario.base) as Arc<dyn KnowledgeSearcher>;
-    let registro = QueryKnowledge::registro(Arc::clone(&config), busca);
+    let registro = QueryKnowledge::registro(Arc::clone(&config), lookup);
     assert_eq!(registro.names(), vec![NAME_TOOL.to_owned()]);
 
-    let desabilitada = offered(&registro, &[]);
-    assert!(desabilitada.is_empty(), "sem habilitação, não é oferecida");
+    let disabled = offered(&registro, &[]);
+    assert!(disabled.is_empty(), "sem habilitação, não é oferecida");
     let enabled = offered(&registro, &[NAME_TOOL.to_owned()]);
     assert_eq!(enabled.len(), 1);
 
@@ -229,39 +229,42 @@ async fn consultar_base_respeita_a_lista_habilitada_e_devolve_fonte() {
     assert!(response.contains("grupo: Políticas"), "{response}");
     assert!(response.contains("ABC paulista"), "{response}");
 
-    let sem_argumento = tool.run(context, serde_json::json!({})).await;
+    let without_argument = tool.run(context, serde_json::json!({})).await;
     assert!(
-        sem_argumento.is_err(),
+        without_argument.is_err(),
         "consulta vazia devolve erro ao modelo"
     );
 }
 
 #[tokio::test]
-async fn corte_barra_trecho_sem_relacao() {
+async fn cutoff_blocks_chunk_without_relation() {
     let scenario = Scenario::new("corte");
     scenario.criar_item(
         "Prazo de agendamento",
         "O prazo para agendar a dedetização é de 48 horas úteis.",
     );
     scenario.synchronise().await;
-    let sem_corte = scenario.search("Xilofone quartzo vulcanico", 0.0).await;
-    assert!(!sem_corte.is_empty(), "sem corte, o top-k sempre volta");
-    let com_corte = scenario.search("Xilofone quartzo vulcanico", 0.4).await;
+    let without_cutoff = scenario.search("Xilofone quartzo vulcanico", 0.0).await;
     assert!(
-        com_corte.is_empty(),
-        "com corte, o trecho sem relação não é injetado: {com_corte:?}"
+        !without_cutoff.is_empty(),
+        "sem corte, o top-k sempre volta"
+    );
+    let with_cutoff = scenario.search("Xilofone quartzo vulcanico", 0.4).await;
+    assert!(
+        with_cutoff.is_empty(),
+        "com corte, o trecho sem relação não é injetado: {with_cutoff:?}"
     );
 }
 
 #[tokio::test]
-async fn busca_nao_cruza_org() {
+async fn search_does_not_cross_org() {
     let scenario = Scenario::new("orgs");
     scenario.criar_item(
         "Código interno",
         "O código interno do cliente é azul turquesa.",
     );
     scenario.synchronise().await;
-    let outra_org = scenario
+    let other_org = scenario
         .store
         .orgs()
         .create(NewOrg {
@@ -274,7 +277,7 @@ async fn busca_nao_cruza_org() {
     let findings = scenario
         .base
         .search(
-            outra_org,
+            other_org,
             scenario.agente,
             "código interno azul turquesa".to_owned(),
             SearchParameters::default(),
@@ -285,7 +288,7 @@ async fn busca_nao_cruza_org() {
 }
 
 #[tokio::test]
-async fn limite_de_mil_caracteres_e_validado_com_erro_claro() {
+async fn limit_thousand_characters_validated_with_error_clear() {
     let scenario = Scenario::new("limite");
     let mil = "a".repeat(1000);
     let item = scenario.criar_item("Item no limite", &mil);
@@ -323,7 +326,7 @@ async fn limite_de_mil_caracteres_e_validado_com_erro_claro() {
 }
 
 #[tokio::test]
-async fn item_e_grupo_inativos_saem_do_indice() {
+async fn item_group_inactive_leave_index() {
     let scenario = Scenario::new("inativo");
     let item = scenario.criar_item(
         "Prazo de agendamento",
@@ -410,9 +413,9 @@ async fn item_e_grupo_inativos_saem_do_indice() {
 }
 
 #[tokio::test]
-async fn busca_filtra_elegibilidade_mesmo_com_indice_desatualizado() {
-    struct Falha(poph_rag::FakeEmbedder);
-    impl Embedder for Falha {
+async fn search_filters_eligibility_same_with_index_outdated() {
+    struct Failure(poph_rag::FakeEmbedder);
+    impl Embedder for Failure {
         fn identity(&self) -> &poph_rag::ModelIdentity {
             self.0.identity()
         }
@@ -429,10 +432,10 @@ async fn busca_filtra_elegibilidade_mesmo_com_indice_desatualizado() {
         c.criar_item(texto, texto);
     }
     c.synchronise().await;
-    let antes = c.search("prazo entrega", 0.0).await;
-    assert_eq!(antes.len(), 3);
+    let before = c.search("prazo entrega", 0.0).await;
+    assert_eq!(before.len(), 3);
     assert_eq!(
-        antes,
+        before,
         c.search("prazo entrega", 0.0).await,
         "top-3 permanece igual"
     );
@@ -466,7 +469,7 @@ async fn busca_filtra_elegibilidade_mesmo_com_indice_desatualizado() {
             },
         )
         .unwrap();
-    assert_eq!(antes, c.search("prazo entrega", 0.0).await);
+    assert_eq!(before, c.search("prazo entrega", 0.0).await);
     let agente = c.store.agents().get(c.org, c.agente).unwrap();
     let agente = c
         .store
@@ -535,7 +538,7 @@ async fn busca_filtra_elegibilidade_mesmo_com_indice_desatualizado() {
         .unwrap();
     let (index, _) = Index::open(
         c.store.rag_path(),
-        Arc::new(Falha(FakeEmbedder::new())),
+        Arc::new(Failure(FakeEmbedder::new())),
         IndexConfig::default(),
     )
     .unwrap();

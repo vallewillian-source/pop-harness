@@ -80,7 +80,7 @@ impl Scenario {
         }
     }
 
-    fn nova_categoria(&self, nome: &str) -> ProductCategoryId {
+    fn new_category(&self, nome: &str) -> ProductCategoryId {
         self.store
             .categories()
             .create(
@@ -94,7 +94,7 @@ impl Scenario {
             .id
     }
 
-    fn criar_produto(
+    fn create_product(
         &self,
         category: ProductCategoryId,
         nome: &str,
@@ -164,9 +164,9 @@ fn context(scenario: &Scenario, usage: Arc<UseTools>) -> ToolContext {
 }
 
 #[tokio::test]
-async fn ferramenta_respeita_d04_e_devolve_preco_do_registro() {
+async fn tool_respects_d04_returns_price_record() {
     let scenario = Scenario::new("d04");
-    let product = scenario.criar_produto(
+    let product = scenario.create_product(
         scenario.category,
         "Dedetização de baratas",
         &["baratas", "barata"],
@@ -212,16 +212,19 @@ async fn ferramenta_respeita_d04_e_devolve_preco_do_registro() {
     assert_eq!(used[0].product, product.id);
     assert_eq!(used[0].price_cents, 32_000);
 
-    let sem_argumento = tool
+    let without_argument = tool
         .run(context(&scenario, usage), serde_json::json!({}))
         .await;
-    assert!(sem_argumento.is_err(), "termo vazio devolve erro ao modelo");
+    assert!(
+        without_argument.is_err(),
+        "termo vazio devolve erro ao modelo"
+    );
 }
 
 #[tokio::test]
-async fn produto_inativo_ou_arquivado_sai_da_busca_e_da_ferramenta() {
+async fn product_inactive_or_archived_leaves_search_tool() {
     let scenario = Scenario::new("inativo");
-    let product = scenario.criar_produto(
+    let product = scenario.create_product(
         scenario.category,
         "Dedetização de cupins",
         &["cupins"],
@@ -278,9 +281,9 @@ async fn produto_inativo_ou_arquivado_sai_da_busca_e_da_ferramenta() {
 }
 
 #[tokio::test]
-async fn mudar_preco_aparece_na_resposta_seguinte_sem_reindexar() {
+async fn change_price_appears_reply_next_without_reindex() {
     let scenario = Scenario::new("preco");
-    let product = scenario.criar_produto(
+    let product = scenario.create_product(
         scenario.category,
         "Desratização",
         &["ratos", "ratazanas"],
@@ -289,7 +292,7 @@ async fn mudar_preco_aparece_na_resposta_seguinte_sem_reindexar() {
     );
     scenario.synchronise().await;
 
-    let antes = scenario
+    let before = scenario
         .catalog
         .index()
         .indexed_products(scenario.org, scenario.agente)
@@ -321,7 +324,7 @@ async fn mudar_preco_aparece_na_resposta_seguinte_sem_reindexar() {
     assert_eq!(findings[0].price_cents, 27_990);
     assert_eq!(findings[0].price_text, "R$ 279,90");
     assert_eq!(
-        antes,
+        before,
         scenario
             .catalog
             .index()
@@ -332,16 +335,16 @@ async fn mudar_preco_aparece_na_resposta_seguinte_sem_reindexar() {
 }
 
 #[tokio::test]
-async fn preco_zero_e_centavos_saem_exatos() {
+async fn price_zero_cents_leave_exact() {
     let scenario = Scenario::new("precos");
-    scenario.criar_produto(
+    scenario.create_product(
         scenario.category,
         "Visita de avaliação",
         &["avaliação", "visita"],
         "",
         0,
     );
-    scenario.criar_produto(
+    scenario.create_product(
         scenario.category,
         "Desentupimento de pia",
         &["ralo entupido"],
@@ -354,15 +357,15 @@ async fn preco_zero_e_centavos_saem_exatos() {
     assert_eq!(gratis[0].price_cents, 0);
     assert_eq!(gratis[0].price_text, "R$ 0,00");
 
-    let com_centavos = scenario.search("ralo entupido").await;
-    assert_eq!(com_centavos[0].price_cents, 12_345);
-    assert_eq!(com_centavos[0].price_text, "R$ 123,45");
+    let with_cents = scenario.search("ralo entupido").await;
+    assert_eq!(with_cents[0].price_cents, 12_345);
+    assert_eq!(with_cents[0].price_text, "R$ 123,45");
 }
 
 #[tokio::test]
-async fn busca_e_leitura_nao_cruzam_org() {
+async fn search_read_not_cross_org() {
     let scenario = Scenario::new("orgs");
-    let product = scenario.criar_produto(
+    let product = scenario.create_product(
         scenario.category,
         "Dedetização de formigas",
         &["formigas"],
@@ -381,7 +384,7 @@ async fn busca_e_leitura_nao_cruzam_org() {
         })
         .expect("cria a outra org")
         .id;
-    let outro_agente = scenario
+    let other_agent = scenario
         .store
         .agents()
         .create(
@@ -396,7 +399,7 @@ async fn busca_e_leitura_nao_cruzam_org() {
         .id;
     scenario
         .catalog
-        .synchronise_agent(other, outro_agente)
+        .synchronise_agent(other, other_agent)
         .await
         .expect("sincroniza a outra org");
 
@@ -405,7 +408,7 @@ async fn busca_e_leitura_nao_cruzam_org() {
     let findings = catalog
         .search(
             other,
-            outro_agente,
+            other_agent,
             "formigas".to_owned(),
             None,
             ProductParameters {
@@ -433,18 +436,18 @@ async fn busca_e_leitura_nao_cruzam_org() {
 }
 
 #[tokio::test]
-async fn filtro_por_categoria_vinculada() {
+async fn filter_by_category_linked() {
     let scenario = Scenario::new("categorias");
     let pragas = scenario.category;
-    let hidraulica = scenario.nova_categoria("Hidráulica");
-    let baratas = scenario.criar_produto(
+    let hidraulica = scenario.new_category("Hidráulica");
+    let cheap = scenario.create_product(
         pragas,
         "Dedetização de baratas",
         &["baratas"],
         "R$ 320,00",
         32_000,
     );
-    let pia = scenario.criar_produto(
+    let pia = scenario.create_product(
         hidraulica,
         "Desentupimento de pia",
         &["pia entupida", "ralo"],
@@ -453,7 +456,7 @@ async fn filtro_por_categoria_vinculada() {
     );
     scenario.synchronise().await;
 
-    assert_eq!(scenario.search("baratas").await[0].product, baratas.id);
+    assert_eq!(scenario.search("baratas").await[0].product, cheap.id);
     assert_eq!(scenario.search("ralo").await[0].product, pia.id);
 
     let agente = scenario
@@ -470,7 +473,7 @@ async fn filtro_por_categoria_vinculada() {
 
     let findings = scenario.search("baratas").await;
     assert_eq!(findings.len(), 1, "só o produto da categoria vinculada");
-    assert_eq!(findings[0].product, baratas.id);
+    assert_eq!(findings[0].product, cheap.id);
     assert!(
         scenario
             .search("ralo")
@@ -482,7 +485,7 @@ async fn filtro_por_categoria_vinculada() {
 
     let catalog: Arc<dyn ProductSearcher> =
         Arc::clone(&scenario.catalog) as Arc<dyn ProductSearcher>;
-    let filtrado = catalog
+    let filtered = catalog
         .search(
             scenario.org,
             scenario.agente,
@@ -495,8 +498,8 @@ async fn filtro_por_categoria_vinculada() {
         )
         .await
         .expect("busca com filtro");
-    assert_eq!(filtrado.len(), 1);
-    assert_eq!(filtrado[0].product, baratas.id);
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered[0].product, cheap.id);
 
     let negado = catalog
         .search(

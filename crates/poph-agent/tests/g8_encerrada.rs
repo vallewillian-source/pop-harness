@@ -18,7 +18,7 @@ use poph_agent::turno::{
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_jev::{
-    BatchResponse, FakeJev, G8_DEFAULT_FAREWELL, JevEngine, JevError, JevResponse as RespostaJev,
+    BatchResponse, FakeJev, G8_DEFAULT_FAREWELL, JevEngine, JevError, JevResponse as ReplyJudge,
 };
 use poph_store::{
     AgentChange, ConversationStatus, Direction, NewAgent, NewConversation, NewMessage, Page, Role,
@@ -28,32 +28,32 @@ use poph_types::{
     AgentId, ConversationId, JevGates, MessageId, OrgId, StructuredInstructions, ToolConfig,
 };
 
-struct SemEspera;
+struct NoWait;
 
-impl Pause for SemEspera {
-    fn wait(&self, _duracao: Duration) -> FuturePause {
+impl Pause for NoWait {
+    fn wait(&self, _duration: Duration) -> FuturePause {
         Box::pin(async {})
     }
 }
 
-struct BuscaFalsa {
-    buscas: Arc<AtomicU64>,
-    demora: Duration,
+struct FakeSearch {
+    searches: Arc<AtomicU64>,
+    lag: Duration,
 }
 
-impl KnowledgeSearcher for BuscaFalsa {
+impl KnowledgeSearcher for FakeSearch {
     fn search(
         &self,
         _org: OrgId,
         _agent: AgentId,
-        _consulta: String,
-        _parametros: SearchParameters,
+        _query: String,
+        _parameters: SearchParameters,
     ) -> SearchFuture<'_> {
-        self.buscas.fetch_add(1, Ordering::SeqCst);
-        let demora = self.demora;
+        self.searches.fetch_add(1, Ordering::SeqCst);
+        let lag = self.lag;
         Box::pin(async move {
-            if !demora.is_zero() {
-                tokio::time::sleep(demora).await;
+            if !lag.is_zero() {
+                tokio::time::sleep(lag).await;
             }
             let passage = RecoveredPassage {
                 item: poph_types::KnowledgeItemId::generate(),
@@ -68,16 +68,16 @@ impl KnowledgeSearcher for BuscaFalsa {
     }
 }
 
-struct CatalogoVazio;
+struct CatalogEmpty;
 
-impl ProductSearcher for CatalogoVazio {
+impl ProductSearcher for CatalogEmpty {
     fn search(
         &self,
         _org: OrgId,
         _agent: AgentId,
-        _termo: String,
-        _categoria: Option<String>,
-        _parametros: ProductParameters,
+        _term: String,
+        _category: Option<String>,
+        _parameters: ProductParameters,
     ) -> FutureProducts<'_> {
         let vazio: Vec<FoundProduct> = Vec::new();
         Box::pin(async move { Ok(vazio) })
@@ -89,16 +89,16 @@ struct Scenario {
     store: Arc<Store>,
     org: OrgId,
     conversa: ConversationId,
-    busca: Arc<dyn KnowledgeSearcher>,
+    lookup: Arc<dyn KnowledgeSearcher>,
     metrics: MetricsTurn,
 }
 
 impl Scenario {
     fn new(label: &str) -> Self {
-        Self::com_demora(label, Duration::ZERO, "")
+        Self::with_delay(label, Duration::ZERO, "")
     }
 
-    fn com_demora(label: &str, demora: Duration, jev_json: &str) -> Self {
+    fn with_delay(label: &str, lag: Duration, jev_json: &str) -> Self {
         let folder = std::env::temp_dir().join(format!(
             "poph-hr36-{label}-{}-{}",
             std::process::id(),
@@ -177,21 +177,21 @@ impl Scenario {
             )
             .expect("abre a conversa")
             .id;
-        let busca: Arc<dyn KnowledgeSearcher> = Arc::new(BuscaFalsa {
-            buscas: Arc::new(AtomicU64::new(0)),
-            demora,
+        let lookup: Arc<dyn KnowledgeSearcher> = Arc::new(FakeSearch {
+            searches: Arc::new(AtomicU64::new(0)),
+            lag,
         });
         Self {
             folder,
             store,
             org,
             conversa,
-            busca,
+            lookup,
             metrics: MetricsTurn::own(),
         }
     }
 
-    fn resposta_do_agente(&self, texto: &str) {
+    fn reply_agent(&self, texto: &str) {
         self.store
             .messages()
             .write(
@@ -211,7 +211,7 @@ impl Scenario {
             .expect("grava a resposta anterior");
     }
 
-    fn falar(&self, texto: &str) -> MessageId {
+    fn say(&self, texto: &str) -> MessageId {
         self.store
             .messages()
             .write(
@@ -234,17 +234,17 @@ impl Scenario {
 
     fn engine(
         &self,
-        roteiros: Vec<Script>,
+        scripts: Vec<Script>,
         jev: Option<Arc<JevEngine>>,
     ) -> (TurnEngine, Arc<FakeProvider>) {
-        let fake = Arc::new(FakeProvider::with_scripts(roteiros));
+        let fake = Arc::new(FakeProvider::with_scripts(scripts));
         let config = ConfigHot::new(
             Arc::clone(&self.store),
             HotConfigOptions::default(),
             MetricsMemory::own(),
         );
         let limiter = Arc::new(Limiter::new(LimitOptions::default(), MetricsMemory::own()));
-        let catalog: Arc<dyn ProductSearcher> = Arc::new(CatalogoVazio);
+        let catalog: Arc<dyn ProductSearcher> = Arc::new(CatalogEmpty);
         let mut engine = TurnEngine::new(
             Arc::clone(&self.store),
             config,
@@ -253,10 +253,10 @@ impl Scenario {
             TurnOptions::default(),
             self.metrics.clone(),
         )
-        .with_pause(Arc::new(SemEspera))
-        .with_search(Arc::clone(&self.busca));
+        .with_pause(Arc::new(NoWait))
+        .with_search(Arc::clone(&self.lookup));
         let registro =
-            QueryKnowledge::registro(Arc::clone(engine.hot_config()), Arc::clone(&self.busca))
+            QueryKnowledge::registro(Arc::clone(engine.hot_config()), Arc::clone(&self.lookup))
                 .com(SearchProduct::new(Arc::clone(engine.hot_config()), catalog));
         engine = engine.with_tools(Arc::new(registro));
         if let Some(jev) = jev {
@@ -275,7 +275,7 @@ impl Scenario {
             .expect("o turno roda")
     }
 
-    fn saidas(&self) -> Vec<String> {
+    fn outputs(&self) -> Vec<String> {
         self.store
             .messages()
             .list(self.org, self.conversa, Page::with_limit(200))
@@ -286,7 +286,7 @@ impl Scenario {
             .collect()
     }
 
-    fn fila(&self) -> Vec<String> {
+    fn queue(&self) -> Vec<String> {
         self.store
             .outbox()
             .list_pending(self.org, 50)
@@ -311,7 +311,7 @@ impl Drop for Scenario {
     }
 }
 
-fn roteiro_texto(texto: &str) -> Script {
+fn script_text(texto: &str) -> Script {
     Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
         LlmEvent::Usage(Usage {
@@ -329,11 +329,11 @@ fn so_g8() -> JevGates {
     }
 }
 
-type RespostaRoteirizada = (&'static str, &'static str, f64);
-type RespostasDoTexto = Vec<(String, String, f64)>;
+type ReplyScripted = (&'static str, &'static str, f64);
+type RepliesText = Vec<(String, String, f64)>;
 
-fn jev_por_texto(tabela: &[(&str, &[RespostaRoteirizada])]) -> Arc<FakeJev> {
-    let tabela: Vec<(String, RespostasDoTexto)> = tabela
+fn judge_by_text(table: &[(&str, &[ReplyScripted])]) -> Arc<FakeJev> {
+    let table: Vec<(String, RepliesText)> = table
         .iter()
         .map(|(texto, items)| {
             (
@@ -348,29 +348,29 @@ fn jev_por_texto(tabela: &[(&str, &[RespostaRoteirizada])]) -> Arc<FakeJev> {
         })
         .collect();
     Arc::new(FakeJev::new(move |request| {
-        let last = ultima_fala_do_cliente(&request.estado);
-        let mut respostas = BTreeMap::new();
-        if let Some((_, items)) = tabela.iter().find(|(texto, _)| *texto == last) {
+        let last = last_speaks_client(&request.estado);
+        let mut replies = BTreeMap::new();
+        if let Some((_, items)) = table.iter().find(|(texto, _)| *texto == last) {
             for (id, choice, confidence) in items {
-                respostas.insert(
+                replies.insert(
                     id.clone(),
-                    RespostaJev {
+                    ReplyJudge {
                         choice: Some(choice.clone()),
                         confidence: *confidence,
-                        ..RespostaJev::default()
+                        ..ReplyJudge::default()
                     },
                 );
             }
         }
         Ok(BatchResponse {
-            answers: respostas,
+            answers: replies,
             tokens: 12,
             ..BatchResponse::default()
         })
     }))
 }
 
-fn ultima_fala_do_cliente(estado: &serde_json::Value) -> String {
+fn last_speaks_client(estado: &serde_json::Value) -> String {
     estado["conversa"]["mensagens"]
         .as_array()
         .and_then(|messages| {
@@ -384,25 +384,25 @@ fn ultima_fala_do_cliente(estado: &serde_json::Value) -> String {
         .to_owned()
 }
 
-fn motor_jev(jev: Arc<FakeJev>, gates: JevGates) -> Arc<JevEngine> {
+fn engine_judge(jev: Arc<FakeJev>, gates: JevGates) -> Arc<JevEngine> {
     Arc::new(JevEngine::new(jev, gates, "jev-latest"))
 }
 
-const ENCERRA: &str = "era só isso, obrigado";
+const ENDS: &str = "era só isso, obrigado";
 const DUVIDA: &str = "obrigado, mas ainda tenho uma dúvida: e se a praga voltar?";
-const VOLTOU: &str = "oi, voltei. preciso de um orçamento";
+const RETURNED: &str = "oi, voltei. preciso de um orçamento";
 
 #[tokio::test]
-async fn g8_encerra_sem_chamar_o_modelo_e_grava_a_despedida_padrao() {
+async fn g8_ends_without_call_model_records_farewell_default() {
     let scenario = Scenario::new("padrao");
-    scenario.resposta_do_agente("Mais alguma dúvida?");
-    let jev = jev_por_texto(&[(ENCERRA, &[("g8_encerrada", "encerrada", 1.0)])]);
+    scenario.reply_agent("Mais alguma dúvida?");
+    let jev = judge_by_text(&[(ENDS, &[("g8_encerrada", "encerrada", 1.0)])]);
     let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto("isto não deve sair")],
-        Some(motor_jev(Arc::clone(&jev), so_g8())),
+        vec![script_text("isto não deve sair")],
+        Some(engine_judge(Arc::clone(&jev), so_g8())),
     );
 
-    let gatilho = scenario.falar(ENCERRA);
+    let gatilho = scenario.say(ENDS);
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(summary.estado, TurnState::Completed);
@@ -413,11 +413,11 @@ async fn g8_encerra_sem_chamar_o_modelo_e_grava_a_despedida_padrao() {
         "o modelo de texto não é chamado"
     );
     assert_eq!(
-        scenario.saidas(),
+        scenario.outputs(),
         vec!["Mais alguma dúvida?", G8_DEFAULT_FAREWELL]
     );
     assert_eq!(
-        scenario.fila().len(),
+        scenario.queue().len(),
         1,
         "a despedida vai para a fila de saída"
     );
@@ -431,73 +431,73 @@ async fn g8_encerra_sem_chamar_o_modelo_e_grava_a_despedida_padrao() {
 }
 
 #[tokio::test]
-async fn g8_usa_a_despedida_configurada_no_agente() {
-    let scenario = Scenario::com_demora(
+async fn g8_uses_farewell_configured_agent() {
+    let scenario = Scenario::with_delay(
         "despedida",
         Duration::ZERO,
         r#"{"despedida": "Valeu, até a próxima!"}"#,
     );
-    scenario.resposta_do_agente("Mais alguma dúvida?");
-    let jev = jev_por_texto(&[(ENCERRA, &[("g8_encerrada", "encerrada", 1.0)])]);
+    scenario.reply_agent("Mais alguma dúvida?");
+    let jev = judge_by_text(&[(ENDS, &[("g8_encerrada", "encerrada", 1.0)])]);
     let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto("não sai")],
-        Some(motor_jev(jev, so_g8())),
+        vec![script_text("não sai")],
+        Some(engine_judge(jev, so_g8())),
     );
 
-    let gatilho = scenario.falar(ENCERRA);
+    let gatilho = scenario.say(ENDS);
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(summary.texto, "Valeu, até a próxima!");
     assert_eq!(provedor.received().len(), 0);
     assert_eq!(
-        scenario.saidas().last().map(String::as_str),
+        scenario.outputs().last().map(String::as_str),
         Some("Valeu, até a próxima!")
     );
 }
 
 #[tokio::test]
-async fn g8_despedida_vazia_encerra_sem_mandar_mensagem() {
-    let scenario = Scenario::com_demora("silencio", Duration::ZERO, r#"{"despedida": ""}"#);
-    scenario.resposta_do_agente("Mais alguma dúvida?");
-    let jev = jev_por_texto(&[(ENCERRA, &[("g8_encerrada", "encerrada", 1.0)])]);
+async fn g8_farewell_empty_ends_without_send_message() {
+    let scenario = Scenario::with_delay("silencio", Duration::ZERO, r#"{"despedida": ""}"#);
+    scenario.reply_agent("Mais alguma dúvida?");
+    let jev = judge_by_text(&[(ENDS, &[("g8_encerrada", "encerrada", 1.0)])]);
     let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto("não sai")],
-        Some(motor_jev(jev, so_g8())),
+        vec![script_text("não sai")],
+        Some(engine_judge(jev, so_g8())),
     );
 
-    let gatilho = scenario.falar(ENCERRA);
+    let gatilho = scenario.say(ENDS);
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(summary.estado, TurnState::Completed);
     assert!(summary.texto.is_empty());
     assert_eq!(provedor.received().len(), 0);
     assert_eq!(
-        scenario.saidas(),
+        scenario.outputs(),
         vec!["Mais alguma dúvida?"],
         "só a resposta anterior"
     );
-    assert!(scenario.fila().is_empty());
+    assert!(scenario.queue().is_empty());
     assert_eq!(scenario.metrics.closed_g8.value(), 1);
 }
 
 #[tokio::test]
-async fn g8_a_mensagem_seguinte_reabre_a_conversa_e_volta_ao_modelo() {
+async fn g8_message_next_reopens_conversation_return_model() {
     let scenario = Scenario::new("reabre");
-    scenario.resposta_do_agente("Mais alguma dúvida?");
-    let jev = jev_por_texto(&[
-        (ENCERRA, &[("g8_encerrada", "encerrada", 1.0)]),
-        (VOLTOU, &[("g8_encerrada", "continua", 0.95)]),
+    scenario.reply_agent("Mais alguma dúvida?");
+    let jev = judge_by_text(&[
+        (ENDS, &[("g8_encerrada", "encerrada", 1.0)]),
+        (RETURNED, &[("g8_encerrada", "continua", 0.95)]),
     ]);
     let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto("Claro! Qual o tamanho do imóvel?")],
-        Some(motor_jev(jev, so_g8())),
+        vec![script_text("Claro! Qual o tamanho do imóvel?")],
+        Some(engine_judge(jev, so_g8())),
     );
 
-    let first = scenario.falar(ENCERRA);
+    let first = scenario.say(ENDS);
     scenario.turno(&engine, first).await;
     assert_eq!(provedor.received().len(), 0);
 
-    let second = scenario.falar(VOLTOU);
+    let second = scenario.say(RETURNED);
     let summary = scenario.turno(&engine, second).await;
 
     assert_eq!(summary.texto, "Claro! Qual o tamanho do imóvel?");
@@ -507,51 +507,49 @@ async fn g8_a_mensagem_seguinte_reabre_a_conversa_e_volta_ao_modelo() {
         "a mensagem seguinte entra no turno normal"
     );
     assert_eq!(
-        scenario.saidas().last().map(String::as_str),
+        scenario.outputs().last().map(String::as_str),
         Some("Claro! Qual o tamanho do imóvel?")
     );
 }
 
 #[tokio::test]
-async fn g8_despedida_vazia_nao_engole_a_mensagem_seguinte() {
+async fn g8_farewell_empty_not_swallows_message_next() {
     let scenario =
-        Scenario::com_demora("silencio-seguinte", Duration::ZERO, r#"{"despedida": ""}"#);
-    scenario.resposta_do_agente("Mais alguma dúvida?");
-    let jev = jev_por_texto(&[
-        (ENCERRA, &[("g8_encerrada", "encerrada", 1.0)]),
-        (VOLTOU, &[("g8_encerrada", "continua", 0.95)]),
+        Scenario::with_delay("silencio-seguinte", Duration::ZERO, r#"{"despedida": ""}"#);
+    scenario.reply_agent("Mais alguma dúvida?");
+    let jev = judge_by_text(&[
+        (ENDS, &[("g8_encerrada", "encerrada", 1.0)]),
+        (RETURNED, &[("g8_encerrada", "continua", 0.95)]),
     ]);
     let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto("Claro, em que posso ajudar?")],
-        Some(motor_jev(jev, so_g8())),
+        vec![script_text("Claro, em que posso ajudar?")],
+        Some(engine_judge(jev, so_g8())),
     );
 
-    let first = scenario.falar(ENCERRA);
+    let first = scenario.say(ENDS);
     scenario.turno(&engine, first).await;
-    let second = scenario.falar(VOLTOU);
+    let second = scenario.say(RETURNED);
     let summary = scenario.turno(&engine, second).await;
 
     assert_eq!(summary.texto, "Claro, em que posso ajudar?");
     assert_eq!(provedor.received().len(), 1);
     assert_eq!(
-        scenario.saidas().last().map(String::as_str),
+        scenario.outputs().last().map(String::as_str),
         Some("Claro, em que posso ajudar?")
     );
 }
 
 #[tokio::test]
-async fn g8_agradecimento_com_duvida_nao_fecha() {
+async fn g8_thanks_with_doubt_not_closes() {
     let scenario = Scenario::new("duvida");
-    scenario.resposta_do_agente("O serviço tem garantia de 6 meses.");
-    let jev = jev_por_texto(&[(DUVIDA, &[("g8_encerrada", "continua", 0.95)])]);
+    scenario.reply_agent("O serviço tem garantia de 6 meses.");
+    let jev = judge_by_text(&[(DUVIDA, &[("g8_encerrada", "continua", 0.95)])]);
     let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto(
-            "Se a praga voltar, a garantia cobre a visita.",
-        )],
-        Some(motor_jev(jev, so_g8())),
+        vec![script_text("Se a praga voltar, a garantia cobre a visita.")],
+        Some(engine_judge(jev, so_g8())),
     );
 
-    let gatilho = scenario.falar(DUVIDA);
+    let gatilho = scenario.say(DUVIDA);
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(
@@ -563,18 +561,18 @@ async fn g8_agradecimento_com_duvida_nao_fecha() {
 }
 
 #[tokio::test]
-async fn g8_mensagens_agrupadas_nao_fecham() {
+async fn g8_messages_grouped_not_close() {
     let scenario = Scenario::new("agrupadas");
-    scenario.resposta_do_agente("Mais alguma dúvida?");
+    scenario.reply_agent("Mais alguma dúvida?");
     let duvida = "e a garantia, vale por quanto tempo?";
-    let jev = jev_por_texto(&[(ENCERRA, &[("g8_encerrada", "encerrada", 1.0)])]);
+    let jev = judge_by_text(&[(ENDS, &[("g8_encerrada", "encerrada", 1.0)])]);
     let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto("A garantia vale por 6 meses.")],
-        Some(motor_jev(jev, so_g8())),
+        vec![script_text("A garantia vale por 6 meses.")],
+        Some(engine_judge(jev, so_g8())),
     );
 
-    scenario.falar(duvida);
-    let gatilho = scenario.falar(ENCERRA);
+    scenario.say(duvida);
+    let gatilho = scenario.say(ENDS);
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(
@@ -586,15 +584,15 @@ async fn g8_mensagens_agrupadas_nao_fecham() {
 }
 
 #[tokio::test]
-async fn g8_primeira_mensagem_nao_pergunta_nem_fecha() {
+async fn g8_first_message_not_question_nor_closes() {
     let scenario = Scenario::new("primeira");
-    let jev = jev_por_texto(&[("obrigado", &[("g8_encerrada", "encerrada", 1.0)])]);
+    let jev = judge_by_text(&[("obrigado", &[("g8_encerrada", "encerrada", 1.0)])]);
     let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto("De nada! Como posso ajudar?")],
-        Some(motor_jev(Arc::clone(&jev), so_g8())),
+        vec![script_text("De nada! Como posso ajudar?")],
+        Some(engine_judge(Arc::clone(&jev), so_g8())),
     );
 
-    let gatilho = scenario.falar("obrigado");
+    let gatilho = scenario.say("obrigado");
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(
@@ -608,16 +606,16 @@ async fn g8_primeira_mensagem_nao_pergunta_nem_fecha() {
 }
 
 #[tokio::test]
-async fn g8_desligado_nao_pergunta_nem_fecha() {
+async fn g8_disabled_not_question_nor_closes() {
     let scenario = Scenario::new("desligado");
-    scenario.resposta_do_agente("Mais alguma dúvida?");
-    let jev = jev_por_texto(&[(ENCERRA, &[("g8_encerrada", "encerrada", 1.0)])]);
+    scenario.reply_agent("Mais alguma dúvida?");
+    let jev = judge_by_text(&[(ENDS, &[("g8_encerrada", "encerrada", 1.0)])]);
     let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto("Até mais, qualquer coisa estou aqui.")],
-        Some(motor_jev(Arc::clone(&jev), JevGates::default())),
+        vec![script_text("Até mais, qualquer coisa estou aqui.")],
+        Some(engine_judge(Arc::clone(&jev), JevGates::default())),
     );
 
-    let gatilho = scenario.falar(ENCERRA);
+    let gatilho = scenario.say(ENDS);
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(jev.calls(), 0, "com o G8 desligado nenhuma pergunta");
@@ -630,31 +628,31 @@ async fn g8_desligado_nao_pergunta_nem_fecha() {
 }
 
 #[tokio::test]
-async fn g8_falha_ou_duvida_do_jev_segue_como_hoje() {
-    let casos: Vec<(&str, Arc<FakeJev>)> = vec![
+async fn g8_failure_or_doubt_judge_follows_as_today() {
+    let cases: Vec<(&str, Arc<FakeJev>)> = vec![
         (
             "jev fora do ar",
             Arc::new(FakeJev::failing(JevError::TimedOut { ms: 8000 })),
         ),
         (
             "confiança 0,79",
-            jev_por_texto(&[(ENCERRA, &[("g8_encerrada", "encerrada", 0.79)])]),
+            judge_by_text(&[(ENDS, &[("g8_encerrada", "encerrada", 0.79)])]),
         ),
         (
             "escolha fora do contrato",
-            jev_por_texto(&[(ENCERRA, &[("g8_encerrada", "talvez", 1.0)])]),
+            judge_by_text(&[(ENDS, &[("g8_encerrada", "talvez", 1.0)])]),
         ),
-        ("sem resposta", jev_por_texto(&[])),
+        ("sem resposta", judge_by_text(&[])),
     ];
-    for (label, jev) in casos {
+    for (label, jev) in cases {
         let scenario = Scenario::new(&format!("falha-{}", label.replace(' ', "-")));
-        scenario.resposta_do_agente("Mais alguma dúvida?");
+        scenario.reply_agent("Mais alguma dúvida?");
         let (engine, provedor) = scenario.engine(
-            vec![roteiro_texto("Certo, qualquer coisa estou aqui.")],
-            Some(motor_jev(jev, so_g8())),
+            vec![script_text("Certo, qualquer coisa estou aqui.")],
+            Some(engine_judge(jev, so_g8())),
         );
 
-        let gatilho = scenario.falar(ENCERRA);
+        let gatilho = scenario.say(ENDS);
         let summary = scenario.turno(&engine, gatilho).await;
 
         assert_eq!(
@@ -664,7 +662,7 @@ async fn g8_falha_ou_duvida_do_jev_segue_como_hoje() {
         assert_eq!(provedor.received().len(), 1, "{label}: o modelo responde");
         assert_eq!(scenario.metrics.closed_g8.value(), 0, "{label}: não fecha");
         assert_eq!(
-            scenario.saidas().last().map(String::as_str),
+            scenario.outputs().last().map(String::as_str),
             Some("Certo, qualquer coisa estou aqui."),
             "{label}"
         );
@@ -672,11 +670,11 @@ async fn g8_falha_ou_duvida_do_jev_segue_como_hoje() {
 }
 
 #[tokio::test]
-async fn g8_com_transferencia_do_g1_a_transferencia_vence() {
+async fn g8_with_transfer_g1_transfer_wins() {
     let scenario = Scenario::new("g1-vence");
-    scenario.resposta_do_agente("Mais alguma dúvida?");
+    scenario.reply_agent("Mais alguma dúvida?");
     let texto = "era só isso, tchau, mas quero falar com uma pessoa";
-    let jev = jev_por_texto(&[(
+    let jev = judge_by_text(&[(
         texto,
         &[
             ("g1_transferir", "transferir_agora", 1.0),
@@ -689,9 +687,9 @@ async fn g8_com_transferencia_do_g1_a_transferencia_vence() {
         ..JevGates::default()
     };
     let (engine, provedor) =
-        scenario.engine(vec![roteiro_texto("não sai")], Some(motor_jev(jev, gates)));
+        scenario.engine(vec![script_text("não sai")], Some(engine_judge(jev, gates)));
 
-    let gatilho = scenario.falar(texto);
+    let gatilho = scenario.say(texto);
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(summary.estado, TurnState::Completed);
@@ -709,16 +707,16 @@ async fn g8_com_transferencia_do_g1_a_transferencia_vence() {
 }
 
 #[tokio::test]
-async fn g8_encerrando_nao_espera_a_busca_em_andamento() {
-    let scenario = Scenario::com_demora("abandona", Duration::from_millis(300), "");
-    scenario.resposta_do_agente("Mais alguma dúvida?");
-    let jev = jev_por_texto(&[(ENCERRA, &[("g8_encerrada", "encerrada", 1.0)])]);
+async fn g8_closing_not_wait_search_progress() {
+    let scenario = Scenario::with_delay("abandona", Duration::from_millis(300), "");
+    scenario.reply_agent("Mais alguma dúvida?");
+    let jev = judge_by_text(&[(ENDS, &[("g8_encerrada", "encerrada", 1.0)])]);
     let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto("não sai")],
-        Some(motor_jev(jev, so_g8())),
+        vec![script_text("não sai")],
+        Some(engine_judge(jev, so_g8())),
     );
 
-    let gatilho = scenario.falar(ENCERRA);
+    let gatilho = scenario.say(ENDS);
     let beginning = Instant::now();
     let summary = scenario.turno(&engine, gatilho).await;
     let levou = beginning.elapsed();
@@ -732,24 +730,24 @@ async fn g8_encerrando_nao_espera_a_busca_em_andamento() {
 }
 
 #[tokio::test]
-async fn padrao_de_instalacao_liga_o_g8_sem_configurar_o_agente() {
+async fn default_installation_enables_g8_without_configure_agent() {
     let scenario = Scenario::new("padrao-g8");
-    scenario.resposta_do_agente("Mais alguma dúvida?");
-    let jev = jev_por_texto(&[
-        (ENCERRA, &[("g8_encerrada", "encerrada", 1.0)]),
-        (VOLTOU, &[("g8_encerrada", "continua", 0.95)]),
+    scenario.reply_agent("Mais alguma dúvida?");
+    let jev = judge_by_text(&[
+        (ENDS, &[("g8_encerrada", "encerrada", 1.0)]),
+        (RETURNED, &[("g8_encerrada", "continua", 0.95)]),
     ]);
-    let gates_padrao = poph_types::JevConfig::default().gates;
-    assert!(gates_padrao.g8, "o padrão de instalação liga o G8");
+    let gates_default = poph_types::JevConfig::default().gates;
+    assert!(gates_default.g8, "o padrão de instalação liga o G8");
     let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto("Claro! Qual o tamanho do imóvel?")],
-        Some(motor_jev(jev, gates_padrao)),
+        vec![script_text("Claro! Qual o tamanho do imóvel?")],
+        Some(engine_judge(jev, gates_default)),
     );
 
-    let first = scenario.falar(ENCERRA);
-    let encerrou = scenario.turno(&engine, first).await;
+    let first = scenario.say(ENDS);
+    let closed = scenario.turno(&engine, first).await;
 
-    assert_eq!(encerrou.texto, G8_DEFAULT_FAREWELL);
+    assert_eq!(closed.texto, G8_DEFAULT_FAREWELL);
     assert_eq!(
         provedor.received().len(),
         0,
@@ -757,7 +755,7 @@ async fn padrao_de_instalacao_liga_o_g8_sem_configurar_o_agente() {
     );
     assert_eq!(scenario.metrics.closed_g8.value(), 1);
 
-    let second = scenario.falar(VOLTOU);
+    let second = scenario.say(RETURNED);
     let summary = scenario.turno(&engine, second).await;
 
     assert_eq!(summary.texto, "Claro! Qual o tamanho do imóvel?");
@@ -769,17 +767,17 @@ async fn padrao_de_instalacao_liga_o_g8_sem_configurar_o_agente() {
 }
 
 #[tokio::test]
-async fn agente_que_desliga_o_g8_volta_ao_comportamento_de_hoje() {
-    let scenario = Scenario::com_demora("agente-g8-off", Duration::ZERO, r#"{"g8": false}"#);
-    scenario.resposta_do_agente("Mais alguma dúvida?");
-    let jev = jev_por_texto(&[(ENCERRA, &[("g8_encerrada", "encerrada", 1.0)])]);
-    let gates_padrao = poph_types::JevConfig::default().gates;
+async fn agent_disables_g8_return_behaviour_today() {
+    let scenario = Scenario::with_delay("agente-g8-off", Duration::ZERO, r#"{"g8": false}"#);
+    scenario.reply_agent("Mais alguma dúvida?");
+    let jev = judge_by_text(&[(ENDS, &[("g8_encerrada", "encerrada", 1.0)])]);
+    let gates_default = poph_types::JevConfig::default().gates;
     let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto("Até mais, qualquer coisa estou aqui.")],
-        Some(motor_jev(jev, gates_padrao)),
+        vec![script_text("Até mais, qualquer coisa estou aqui.")],
+        Some(engine_judge(jev, gates_default)),
     );
 
-    let gatilho = scenario.falar(ENCERRA);
+    let gatilho = scenario.say(ENDS);
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(summary.texto, "Até mais, qualquer coisa estou aqui.");
@@ -799,7 +797,7 @@ async fn agente_que_desliga_o_g8_volta_ao_comportamento_de_hoje() {
     );
 }
 
-fn caracteres_do_pedido(request: &poph_core::llm::Request) -> usize {
+fn characters_request(request: &poph_core::llm::Request) -> usize {
     request
         .messages
         .iter()
@@ -807,7 +805,7 @@ fn caracteres_do_pedido(request: &poph_core::llm::Request) -> usize {
             poph_core::llm::Message::System(texto) => texto.chars().count(),
             poph_core::llm::Message::User(parts) => parts
                 .iter()
-                .map(|parte| match parte {
+                .map(|part| match part {
                     poph_core::llm::Part::Texto(texto) => texto.chars().count(),
                     _ => 0,
                 })
@@ -820,35 +818,35 @@ fn caracteres_do_pedido(request: &poph_core::llm::Request) -> usize {
 
 #[tokio::test]
 #[ignore]
-async fn medicao_do_encerramento() {
+async fn measurement_closure() {
     let messages = [
-        ENCERRA,
+        ENDS,
         "tchau, valeu",
         "ok, obrigado, era isso mesmo",
         "certo, muito obrigado, até mais",
     ];
-    for ligado in [false, true] {
+    for linked in [false, true] {
         let mut calls = 0_usize;
-        let mut caracteres = 0_usize;
+        let mut characters = 0_usize;
         for (index, texto) in messages.iter().enumerate() {
-            let scenario = Scenario::new(&format!("medicao-{ligado}-{index}"));
-            scenario.resposta_do_agente("Mais alguma dúvida sobre a dedetização?");
-            let jev = jev_por_texto(&[(*texto, &[("g8_encerrada", "encerrada", 1.0)])]);
-            let gates = if ligado { so_g8() } else { JevGates::default() };
+            let scenario = Scenario::new(&format!("medicao-{linked}-{index}"));
+            scenario.reply_agent("Mais alguma dúvida sobre a dedetização?");
+            let jev = judge_by_text(&[(*texto, &[("g8_encerrada", "encerrada", 1.0)])]);
+            let gates = if linked { so_g8() } else { JevGates::default() };
             let (engine, provedor) = scenario.engine(
-                vec![roteiro_texto("Certo, qualquer coisa estou aqui.")],
-                Some(motor_jev(jev, gates)),
+                vec![script_text("Certo, qualquer coisa estou aqui.")],
+                Some(engine_judge(jev, gates)),
             );
-            let gatilho = scenario.falar(texto);
+            let gatilho = scenario.say(texto);
             scenario.turno(&engine, gatilho).await;
             for request in provedor.received() {
                 calls += 1;
-                caracteres += caracteres_do_pedido(&request);
+                characters += characters_request(&request);
             }
         }
-        let label = if ligado { "G8 ligado" } else { "G8 desligado" };
+        let label = if linked { "G8 ligado" } else { "G8 desligado" };
         println!(
-            "{label}: {} mensagens de encerramento → {calls} chamadas ao modelo de texto, {caracteres} caracteres de prompt",
+            "{label}: {} mensagens de encerramento → {calls} chamadas ao modelo de texto, {characters} caracteres de prompt",
             messages.len()
         );
     }

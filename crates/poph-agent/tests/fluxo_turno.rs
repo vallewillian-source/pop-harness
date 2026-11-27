@@ -17,10 +17,10 @@ use poph_store::{
 };
 use poph_types::{AgentId, ConversationId, FlowsConfig, JevGates, MessageId, OrgId};
 
-struct SemEspera;
+struct NoWait;
 
-impl Pause for SemEspera {
-    fn wait(&self, _duracao: Duration) -> FuturePause {
+impl Pause for NoWait {
+    fn wait(&self, _duration: Duration) -> FuturePause {
         Box::pin(async {})
     }
 }
@@ -45,7 +45,7 @@ etapa(
 )
 "#;
 
-struct FluxoDoTeste {
+struct FlowTest {
     id: poph_types::FlowId,
     slug: String,
 }
@@ -111,7 +111,7 @@ impl Scenario {
         }
     }
 
-    fn fluxo(&self, agente: AgentId) -> FluxoDoTeste {
+    fn fluxo(&self, agente: AgentId) -> FlowTest {
         let fluxo = self
             .store
             .flows()
@@ -130,7 +130,7 @@ impl Scenario {
             .flows()
             .release(self.org, agente, fluxo.id)
             .expect("libera o fluxo");
-        FluxoDoTeste {
+        FlowTest {
             id: fluxo.id,
             slug: "agendar_visita".to_owned(),
         }
@@ -175,7 +175,7 @@ impl Scenario {
             .id
     }
 
-    fn falar(&self, conversa: ConversationId, texto: &str) -> MessageId {
+    fn say(&self, conversa: ConversationId, texto: &str) -> MessageId {
         self.store
             .messages()
             .write(
@@ -196,7 +196,7 @@ impl Scenario {
             .id
     }
 
-    fn ajustar_jev_do_agente(&self, agente: AgentId, jev_json: &str) {
+    fn adjust_judge_agent(&self, agente: AgentId, jev_json: &str) {
         let current = self
             .store
             .agents()
@@ -231,9 +231,9 @@ impl Scenario {
         );
         let limiter = Arc::new(Limiter::new(LimitOptions::default(), MetricsMemory::own()));
         let provedor = Arc::new(FakeProvider::with_scripts(vec![
-            roteiro("Certo! Vou anotar."),
-            roteiro("Certo! Vou anotar."),
-            roteiro("Certo! Vou anotar."),
+            script("Certo! Vou anotar."),
+            script("Certo! Vou anotar."),
+            script("Certo! Vou anotar."),
         ]));
         let mut engine = TurnEngine::new(
             Arc::clone(&self.store),
@@ -243,7 +243,7 @@ impl Scenario {
             TurnOptions::default(),
             MetricsTurn::own(),
         )
-        .with_pause(Arc::new(SemEspera))
+        .with_pause(Arc::new(NoWait))
         .with_summary(poph_agent::summary::SummaryOptions {
             ativo: false,
             ..poph_agent::summary::SummaryOptions::default()
@@ -295,7 +295,7 @@ impl Scenario {
             .expect("lê os eventos")
     }
 
-    fn ultimo_turno(&self, conversa: ConversationId) -> poph_store::Turno {
+    fn last_turn(&self, conversa: ConversationId) -> poph_store::Turno {
         self.store
             .turns()
             .list(self.org, conversa, poph_store::Page::with_limit(5))
@@ -312,7 +312,7 @@ impl Drop for Scenario {
     }
 }
 
-fn roteiro(texto: &str) -> Script {
+fn script(texto: &str) -> Script {
     Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
         LlmEvent::Usage(Usage {
@@ -330,11 +330,11 @@ fn so_g9() -> JevGates {
     }
 }
 
-fn motor_jev(jev: Arc<FakeJev>) -> Arc<JevEngine> {
+fn engine_judge(jev: Arc<FakeJev>) -> Arc<JevEngine> {
     Arc::new(JevEngine::new(jev, so_g9(), "jev-latest"))
 }
 
-fn sistemas(request: &poph_core::llm::Request) -> Vec<String> {
+fn systems(request: &poph_core::llm::Request) -> Vec<String> {
     request
         .messages
         .iter()
@@ -353,22 +353,22 @@ fn request(request: &poph_core::llm::Request, passage: &str) -> bool {
 }
 
 #[tokio::test]
-async fn inicio_acontece_antes_da_chamada_do_modelo() {
+async fn beginning_happens_before_call_model() {
     let scenario = Scenario::new("antes");
     let fluxo = scenario.fluxo(scenario.agente);
     let conversa = scenario.conversa(scenario.agente);
-    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(choices(&[(
         "g9_iniciar_fluxo",
         &fluxo.slug,
     )])));
     let (engine, provedor) = scenario.engine(
         scenario.agente,
-        Some(motor_jev(Arc::clone(&jev))),
+        Some(engine_judge(Arc::clone(&jev))),
         Some(FlowsConfig::default()),
         MetricsG9::own(),
     );
 
-    let gatilho = scenario.falar(conversa, "queria marcar uma visita técnica");
+    let gatilho = scenario.say(conversa, "queria marcar uma visita técnica");
     let summary = scenario.turno(&engine, conversa, gatilho).await;
     assert_eq!(summary.estado, poph_store::TurnState::Completed);
 
@@ -376,94 +376,94 @@ async fn inicio_acontece_antes_da_chamada_do_modelo() {
     assert_eq!(active.fluxo_id, fluxo.id);
     assert_eq!(active.no_atual, "coleta");
 
-    let pedidos = provedor.received();
-    assert_eq!(pedidos.len(), 1, "uma chamada ao modelo");
+    let requests = provedor.received();
+    assert_eq!(requests.len(), 1, "uma chamada ao modelo");
     assert!(
-        request(&pedidos[0], "Fluxo em andamento: Agendar visita."),
+        request(&requests[0], "Fluxo em andamento: Agendar visita."),
         "o prompt do modelo já nasce com o bloco da etapa de entrada"
     );
-    assert!(request(&pedidos[0], "Peça o nome e o endereço."));
+    assert!(request(&requests[0], "Peça o nome e o endereço."));
 
     let events = scenario.events(conversa);
     let started = events
         .iter()
         .find(|evento| evento.tipo == poph_types::RecordEventKind::FlowStarted)
         .expect("há o evento fluxo_iniciado");
-    let detalhe: serde_json::Value =
+    let detail: serde_json::Value =
         serde_json::from_str(&started.payload_json).expect("payload é JSON");
-    assert_eq!(detalhe["fluxo"], "agendar_visita");
-    assert_eq!(detalhe["ator"], "jev");
-    assert_eq!(detalhe["jev"]["escolha"], "agendar_visita");
+    assert_eq!(detail["fluxo"], "agendar_visita");
+    assert_eq!(detail["ator"], "jev");
+    assert_eq!(detail["jev"]["escolha"], "agendar_visita");
 }
 
 #[tokio::test]
-async fn prefixo_estavel_identico_com_e_sem_fluxo() {
+async fn prefix_stable_identical_with_without_flow() {
     let scenario = Scenario::new("prefixo");
     let fluxo = scenario.fluxo(scenario.agente);
 
-    let com_fluxo = scenario.conversa(scenario.agente);
-    let jev_com = Arc::new(FakeJev::with_choices(escolhas(&[(
+    let with_flow = scenario.conversa(scenario.agente);
+    let judge_with = Arc::new(FakeJev::with_choices(choices(&[(
         "g9_iniciar_fluxo",
         &fluxo.slug,
     )])));
-    let (motor_com, provedor_com) = scenario.engine(
+    let (engine_with, provider_with) = scenario.engine(
         scenario.agente,
-        Some(motor_jev(Arc::clone(&jev_com))),
+        Some(engine_judge(Arc::clone(&judge_with))),
         Some(FlowsConfig::default()),
         MetricsG9::own(),
     );
-    let gatilho = scenario.falar(com_fluxo, "quero marcar visita");
-    scenario.turno(&motor_com, com_fluxo, gatilho).await;
+    let gatilho = scenario.say(with_flow, "quero marcar visita");
+    scenario.turno(&engine_with, with_flow, gatilho).await;
 
     let without_flow = scenario.conversa(scenario.agente);
-    let jev_sem = Arc::new(FakeJev::with_choices(escolhas(&[(
+    let judge_without = Arc::new(FakeJev::with_choices(choices(&[(
         "g9_iniciar_fluxo",
         G9_NONE,
     )])));
-    let (motor_sem, provedor_sem) = scenario.engine(
+    let (engine_without, provider_without) = scenario.engine(
         scenario.agente,
-        Some(motor_jev(Arc::clone(&jev_sem))),
+        Some(engine_judge(Arc::clone(&judge_without))),
         Some(FlowsConfig::default()),
         MetricsG9::own(),
     );
-    let gatilho = scenario.falar(without_flow, "só queria saber o horário");
-    scenario.turno(&motor_sem, without_flow, gatilho).await;
+    let gatilho = scenario.say(without_flow, "só queria saber o horário");
+    scenario.turno(&engine_without, without_flow, gatilho).await;
 
-    let prefixo_com = sistemas(&provedor_com.received()[0])[0].clone();
-    let prefixo_sem = sistemas(&provedor_sem.received()[0])[0].clone();
+    let prefix_with = systems(&provider_with.received()[0])[0].clone();
+    let prefix_without = systems(&provider_without.received()[0])[0].clone();
     assert_eq!(
-        prefixo_com, prefixo_sem,
+        prefix_with, prefix_without,
         "o prefixo estável não pode mudar por causa do fluxo"
     );
-    assert!(!prefixo_com.contains("Fluxo em andamento"));
+    assert!(!prefix_with.contains("Fluxo em andamento"));
     assert!(
         request(
-            &provedor_com.received()[0],
+            &provider_with.received()[0],
             "Fluxo em andamento: Agendar visita."
         ),
         "o bloco do fluxo entra no bloco volátil, que é o segundo sistema"
     );
-    assert_eq!(sistemas(&provedor_com.received()[0]).len(), 2);
+    assert_eq!(systems(&provider_with.received()[0]).len(), 2);
 }
 
 #[tokio::test]
-async fn nenhum_e_limiar_baixo_nao_iniciam_e_nao_oferecem_catalogo() {
+async fn none_threshold_low_not_start_not_offer_catalog() {
     let scenario = Scenario::new("nenhum");
     let fluxo = scenario.fluxo(scenario.agente);
 
     let conversa = scenario.conversa(scenario.agente);
-    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(choices(&[(
         "g9_iniciar_fluxo",
         G9_NONE,
     )])));
     let g9 = MetricsG9::own();
     let (engine, provedor) = scenario.engine(
         scenario.agente,
-        Some(motor_jev(Arc::clone(&jev))),
+        Some(engine_judge(Arc::clone(&jev))),
         Some(FlowsConfig::default()),
         g9.clone(),
     );
-    let gatilho = scenario.falar(conversa, "bom dia, tudo bem?");
+    let gatilho = scenario.say(conversa, "bom dia, tudo bem?");
     scenario.turno(&engine, conversa, gatilho).await;
     assert!(
         scenario.active(conversa).is_none(),
@@ -474,14 +474,14 @@ async fn nenhum_e_limiar_baixo_nao_iniciam_e_nao_oferecem_catalogo() {
         "o catálogo não vai ao prompt com `nenhum`"
     );
     assert_eq!(g9.none.value(), 1);
-    let turno = scenario.ultimo_turno(conversa);
+    let turno = scenario.last_turn(conversa);
     let stored: serde_json::Value = serde_json::from_str(&turno.jev_json).expect("JSON");
     assert_eq!(stored["fluxo"]["resultado"], "nenhum");
 
     let conversa = scenario.conversa(scenario.agente);
-    let baixa = Arc::new(FakeJev::new(|_pedido| {
-        let mut respostas = std::collections::BTreeMap::new();
-        respostas.insert(
+    let low = Arc::new(FakeJev::new(|_request| {
+        let mut replies = std::collections::BTreeMap::new();
+        replies.insert(
             "g9_iniciar_fluxo".to_owned(),
             poph_jev::JevResponse {
                 choice: Some("agendar_visita".to_owned()),
@@ -490,7 +490,7 @@ async fn nenhum_e_limiar_baixo_nao_iniciam_e_nao_oferecem_catalogo() {
             },
         );
         Ok(poph_jev::BatchResponse {
-            answers: respostas,
+            answers: replies,
             tokens: 1,
             ..poph_jev::BatchResponse::default()
         })
@@ -498,11 +498,11 @@ async fn nenhum_e_limiar_baixo_nao_iniciam_e_nao_oferecem_catalogo() {
     let g9 = MetricsG9::own();
     let (engine, provedor) = scenario.engine(
         scenario.agente,
-        Some(motor_jev(Arc::clone(&baixa))),
+        Some(engine_judge(Arc::clone(&low))),
         Some(FlowsConfig::default()),
         g9.clone(),
     );
-    let gatilho = scenario.falar(conversa, "acho que queria algo de visita");
+    let gatilho = scenario.say(conversa, "acho que queria algo de visita");
     scenario.turno(&engine, conversa, gatilho).await;
     assert!(
         scenario.active(conversa).is_none(),
@@ -514,7 +514,7 @@ async fn nenhum_e_limiar_baixo_nao_iniciam_e_nao_oferecem_catalogo() {
 }
 
 #[tokio::test]
-async fn jev_fora_entrega_a_reserva() {
+async fn judge_out_delivers_reservation() {
     let scenario = Scenario::new("reserva");
     let fluxo = scenario.fluxo(scenario.agente);
     let conversa = scenario.conversa(scenario.agente);
@@ -524,41 +524,41 @@ async fn jev_fora_entrega_a_reserva() {
     let g9 = MetricsG9::own();
     let (engine, provedor) = scenario.engine(
         scenario.agente,
-        Some(motor_jev(Arc::clone(&jev))),
+        Some(engine_judge(Arc::clone(&jev))),
         Some(FlowsConfig::default()),
         g9.clone(),
     );
 
-    let gatilho = scenario.falar(conversa, "quero marcar uma visita");
+    let gatilho = scenario.say(conversa, "quero marcar uma visita");
     let summary = scenario.turno(&engine, conversa, gatilho).await;
     assert_eq!(summary.estado, poph_store::TurnState::Completed);
     assert!(
         scenario.active(conversa).is_none(),
         "Jev fora do ar não inicia nada: quem inicia é o código"
     );
-    let pedidos = provedor.received();
+    let requests = provedor.received();
     assert!(
-        request(&pedidos[0], "<fluxos_de_atendimento>"),
+        request(&requests[0], "<fluxos_de_atendimento>"),
         "a reserva põe o catálogo no prompt"
     );
     assert!(
-        request(&pedidos[0], &fluxo.slug),
+        request(&requests[0], &fluxo.slug),
         "o catálogo traz o id do fluxo"
     );
     assert!(request(
-        &pedidos[0],
+        &requests[0],
         "O cliente quer marcar uma visita técnica."
     ));
-    assert!(!request(&pedidos[0], "chame fluxo_iniciar"));
+    assert!(!request(&requests[0], "chame fluxo_iniciar"));
 
-    let turno = scenario.ultimo_turno(conversa);
+    let turno = scenario.last_turn(conversa);
     let stored: serde_json::Value = serde_json::from_str(&turno.jev_json).expect("JSON");
     assert_eq!(stored["fluxo"]["resultado"], "fallback");
     assert_eq!(g9.fallback.value(), 1);
 }
 
 #[tokio::test]
-async fn fluxo_inativo_nao_entra_nas_opcoes_nem_inicia() {
+async fn flow_inactive_not_enters_options_nor_starts() {
     let scenario = Scenario::new("inativo");
     let fluxo = scenario.fluxo(scenario.agente);
     let current = scenario
@@ -581,29 +581,29 @@ async fn fluxo_inativo_nao_entra_nas_opcoes_nem_inicia() {
         .expect("desativa o fluxo");
 
     let conversa = scenario.conversa(scenario.agente);
-    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(choices(&[(
         "g9_iniciar_fluxo",
         &fluxo.slug,
     )])));
     let (engine, provedor) = scenario.engine(
         scenario.agente,
-        Some(motor_jev(Arc::clone(&jev))),
+        Some(engine_judge(Arc::clone(&jev))),
         Some(FlowsConfig::default()),
         MetricsG9::own(),
     );
-    let gatilho = scenario.falar(conversa, "quero marcar visita");
+    let gatilho = scenario.say(conversa, "quero marcar visita");
     scenario.turno(&engine, conversa, gatilho).await;
     assert!(
         scenario.active(conversa).is_none(),
         "fluxo inativo não inicia execução nova (PRD §6.2)"
     );
-    let pedidos = provedor.received();
-    assert!(!request(&pedidos[0], "agendar_visita"));
-    assert!(!request(&pedidos[0], "<fluxos_de_atendimento>"));
+    let requests = provedor.received();
+    assert!(!request(&requests[0], "agendar_visita"));
+    assert!(!request(&requests[0], "<fluxos_de_atendimento>"));
 }
 
 #[tokio::test]
-async fn fluxo_nao_liberado_nao_entra_nas_opcoes_nem_inicia() {
+async fn flow_not_released_not_enters_options_nor_starts() {
     let scenario = Scenario::new("nao-liberado");
     let other = scenario
         .store
@@ -621,30 +621,30 @@ async fn fluxo_nao_liberado_nao_entra_nas_opcoes_nem_inicia() {
     let fluxo = scenario.fluxo(other);
 
     let conversa = scenario.conversa(scenario.agente);
-    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(choices(&[(
         "g9_iniciar_fluxo",
         &fluxo.slug,
     )])));
     let (engine, provedor) = scenario.engine(
         scenario.agente,
-        Some(motor_jev(Arc::clone(&jev))),
+        Some(engine_judge(Arc::clone(&jev))),
         Some(FlowsConfig::default()),
         MetricsG9::own(),
     );
-    let gatilho = scenario.falar(conversa, "quero marcar visita");
+    let gatilho = scenario.say(conversa, "quero marcar visita");
     scenario.turno(&engine, conversa, gatilho).await;
     assert!(
         scenario.active(conversa).is_none(),
         "sem a permissão, o fluxo não é oferecido nem iniciado"
     );
-    let pedidos = provedor.received();
-    assert!(!request(&pedidos[0], "agendar_visita"));
+    let requests = provedor.received();
+    assert!(!request(&requests[0], "agendar_visita"));
 }
 
 #[tokio::test]
-async fn fluxo_de_outra_org_nunca_inicia() {
+async fn flow_other_org_never_starts() {
     let scenario = Scenario::new("outra-org");
-    let outra_org = scenario
+    let other_org = scenario
         .store
         .orgs()
         .create(NewOrg {
@@ -654,11 +654,11 @@ async fn fluxo_de_outra_org_nunca_inicia() {
         })
         .expect("cria a org vizinha")
         .id;
-    let agente_vizinho = scenario
+    let agent_neighbor = scenario
         .store
         .agents()
         .create(
-            outra_org,
+            other_org,
             NewAgent {
                 name: "Vizinho".to_owned(),
                 slug: "vizinho".to_owned(),
@@ -667,11 +667,11 @@ async fn fluxo_de_outra_org_nunca_inicia() {
         )
         .expect("cria o agente vizinho")
         .id;
-    let fluxo_vizinho = scenario
+    let flow_neighbor = scenario
         .store
         .flows()
         .create(
-            outra_org,
+            other_org,
             NewFlow {
                 slug: "agendar_visita".to_owned(),
                 name: "Agendar visita (vizinha)".to_owned(),
@@ -683,7 +683,7 @@ async fn fluxo_de_outra_org_nunca_inicia() {
     let current = scenario
         .store
         .flows()
-        .get(outra_org, fluxo_vizinho.id)
+        .get(other_org, flow_neighbor.id)
         .expect("lê o fluxo da vizinha");
     let compiled = compile(SCRIPT, &Limites::default());
     let ir = compiled.ir().expect("compila");
@@ -691,8 +691,8 @@ async fn fluxo_de_outra_org_nunca_inicia() {
         .store
         .revisions()
         .publish_revision(
-            outra_org,
-            fluxo_vizinho.id,
+            other_org,
+            flow_neighbor.id,
             RevisionPublication {
                 expected: current.version,
                 fonte: SCRIPT.to_owned(),
@@ -707,28 +707,28 @@ async fn fluxo_de_outra_org_nunca_inicia() {
     scenario
         .store
         .flows()
-        .release(outra_org, agente_vizinho, fluxo_vizinho.id)
+        .release(other_org, agent_neighbor, flow_neighbor.id)
         .expect("libera para o vizinho");
 
     let conversa = scenario.conversa(scenario.agente);
-    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(choices(&[(
         "g9_iniciar_fluxo",
         "agendar_visita",
     )])));
     let (engine, provedor) = scenario.engine(
         scenario.agente,
-        Some(motor_jev(Arc::clone(&jev))),
+        Some(engine_judge(Arc::clone(&jev))),
         Some(FlowsConfig::default()),
         MetricsG9::own(),
     );
-    let gatilho = scenario.falar(conversa, "quero marcar visita");
+    let gatilho = scenario.say(conversa, "quero marcar visita");
     scenario.turno(&engine, conversa, gatilho).await;
     assert!(
         scenario.active(conversa).is_none(),
         "fluxo de outra org não existe para esta organização"
     );
-    let pedidos = provedor.received();
-    assert!(!request(&pedidos[0], "agendar_visita"));
+    let requests = provedor.received();
+    assert!(!request(&requests[0], "agendar_visita"));
     assert!(
         scenario
             .store
@@ -740,7 +740,7 @@ async fn fluxo_de_outra_org_nunca_inicia() {
 }
 
 #[tokio::test]
-async fn execucao_ativa_nao_pergunta_o_jev() {
+async fn execution_active_not_question_judge() {
     let scenario = Scenario::new("ativa");
     let fluxo = scenario.fluxo(scenario.agente);
     let conversa = scenario.conversa(scenario.agente);
@@ -785,40 +785,40 @@ async fn execucao_ativa_nao_pergunta_o_jev() {
     let jev = Arc::new(FakeJev::with_choices(std::collections::BTreeMap::new()));
     let (engine, provedor) = scenario.engine(
         scenario.agente,
-        Some(motor_jev(Arc::clone(&jev))),
+        Some(engine_judge(Arc::clone(&jev))),
         Some(FlowsConfig::default()),
         MetricsG9::own(),
     );
-    let gatilho = scenario.falar(conversa, "meu nome é Ana Teste");
+    let gatilho = scenario.say(conversa, "meu nome é Ana Teste");
     scenario.turno(&engine, conversa, gatilho).await;
 
     assert_eq!(jev.calls(), 0, "com execução ativa não há pergunta ao Jev");
-    let pedidos = provedor.received();
-    assert!(request(&pedidos[0], "Fluxo em andamento: Agendar visita."));
-    let turno = scenario.ultimo_turno(conversa);
+    let requests = provedor.received();
+    assert!(request(&requests[0], "Fluxo em andamento: Agendar visita."));
+    let turno = scenario.last_turn(conversa);
     let stored: serde_json::Value = serde_json::from_str(&turno.jev_json).expect("JSON");
     assert_eq!(stored["fluxo"]["resultado"], "execucao_ativa");
 }
 
 #[tokio::test]
-async fn fluxos_desligados_ignoram_tudo_e_a_ficha_segue() {
+async fn flows_disabled_ignore_all_case_follows() {
     let scenario = Scenario::new("desligado");
     let fluxo = scenario.fluxo(scenario.agente);
     let conversa = scenario.conversa(scenario.agente);
-    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(choices(&[(
         "g9_iniciar_fluxo",
         &fluxo.slug,
     )])));
     let (engine, provedor) = scenario.engine(
         scenario.agente,
-        Some(motor_jev(Arc::clone(&jev))),
+        Some(engine_judge(Arc::clone(&jev))),
         Some(FlowsConfig {
             enabled: false,
             ..FlowsConfig::default()
         }),
         MetricsG9::own(),
     );
-    let gatilho = scenario.falar(conversa, "quero marcar visita");
+    let gatilho = scenario.say(conversa, "quero marcar visita");
     scenario.turno(&engine, conversa, gatilho).await;
 
     assert!(
@@ -839,27 +839,27 @@ async fn fluxos_desligados_ignoram_tudo_e_a_ficha_segue() {
 }
 
 #[tokio::test]
-async fn painel_por_que_mostra_a_decisao() {
+async fn panel_by_shows_decision() {
     let scenario = Scenario::new("painel");
     let fluxo = scenario.fluxo(scenario.agente);
     let conversa = scenario.conversa(scenario.agente);
-    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(choices(&[(
         "g9_iniciar_fluxo",
         &fluxo.slug,
     )])));
     let g9 = MetricsG9::own();
-    let (engine, _provedor) = scenario.engine(
+    let (engine, _provider) = scenario.engine(
         scenario.agente,
-        Some(motor_jev(Arc::clone(&jev))),
+        Some(engine_judge(Arc::clone(&jev))),
         Some(FlowsConfig::default()),
         g9.clone(),
     );
-    let gatilho = scenario.falar(conversa, "quero marcar uma visita");
+    let gatilho = scenario.say(conversa, "quero marcar uma visita");
     let summary = scenario.turno(&engine, conversa, gatilho).await;
 
-    let registrado = summary.jev.expect("o turno devolve o Jev");
-    assert_eq!(registrado.choice(IdGate::G9), Some(fluxo.slug.as_str()));
-    let turno = scenario.ultimo_turno(conversa);
+    let registered = summary.jev.expect("o turno devolve o Jev");
+    assert_eq!(registered.choice(IdGate::G9), Some(fluxo.slug.as_str()));
+    let turno = scenario.last_turn(conversa);
     let stored: serde_json::Value = serde_json::from_str(&turno.jev_json).expect("JSON");
     assert_eq!(stored["decisoes"][0]["gate"], "g9");
     assert_eq!(stored["decisoes"][0]["escolha"], "agendar_visita");
@@ -871,52 +871,52 @@ async fn painel_por_que_mostra_a_decisao() {
 }
 
 #[tokio::test]
-async fn gate_desligado_no_agente_entrega_a_reserva_sem_perguntar() {
+async fn gate_disabled_agent_delivers_reservation_without_ask() {
     let scenario = Scenario::new("gate-off");
     let fluxo = scenario.fluxo(scenario.agente);
-    scenario.ajustar_jev_do_agente(scenario.agente, r#"{"g9": false}"#);
+    scenario.adjust_judge_agent(scenario.agente, r#"{"g9": false}"#);
     let conversa = scenario.conversa(scenario.agente);
-    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(choices(&[(
         "g9_iniciar_fluxo",
         &fluxo.slug,
     )])));
     let (engine, provedor) = scenario.engine(
         scenario.agente,
-        Some(motor_jev(Arc::clone(&jev))),
+        Some(engine_judge(Arc::clone(&jev))),
         Some(FlowsConfig::default()),
         MetricsG9::own(),
     );
-    let gatilho = scenario.falar(conversa, "quero marcar uma visita");
+    let gatilho = scenario.say(conversa, "quero marcar uma visita");
     scenario.turno(&engine, conversa, gatilho).await;
 
     assert_eq!(jev.calls(), 0, "gate desligado não é perguntado");
     assert!(scenario.active(conversa).is_none(), "e nada inicia sozinho");
-    let pedidos = provedor.received();
+    let requests = provedor.received();
     assert!(
-        request(&pedidos[0], "<fluxos_de_atendimento>"),
+        request(&requests[0], "<fluxos_de_atendimento>"),
         "a reserva entrega o catálogo ao modelo"
     );
-    let turno = scenario.ultimo_turno(conversa);
+    let turno = scenario.last_turn(conversa);
     let stored: serde_json::Value = serde_json::from_str(&turno.jev_json).expect("JSON");
     assert_eq!(stored["fluxo"]["resultado"], "reserva");
 }
 
 #[tokio::test]
-async fn estado_do_g9_leva_os_fluxos_liberados() {
+async fn state_g9_takes_flows_released() {
     let scenario = Scenario::new("estado");
     let fluxo = scenario.fluxo(scenario.agente);
     let conversa = scenario.conversa(scenario.agente);
-    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(choices(&[(
         "g9_iniciar_fluxo",
         &fluxo.slug,
     )])));
-    let (engine, _provedor) = scenario.engine(
+    let (engine, _provider) = scenario.engine(
         scenario.agente,
-        Some(motor_jev(Arc::clone(&jev))),
+        Some(engine_judge(Arc::clone(&jev))),
         Some(FlowsConfig::default()),
         MetricsG9::own(),
     );
-    let gatilho = scenario.falar(conversa, "quero marcar uma visita");
+    let gatilho = scenario.say(conversa, "quero marcar uma visita");
     scenario.turno(&engine, conversa, gatilho).await;
 
     let request = &jev.requests()[0];
@@ -931,7 +931,7 @@ async fn estado_do_g9_leva_os_fluxos_liberados() {
     assert_eq!(released[0]["exemplos"][0], "quero marcar uma visita");
 }
 
-fn escolhas(items: &[(&str, &str)]) -> std::collections::BTreeMap<String, String> {
+fn choices(items: &[(&str, &str)]) -> std::collections::BTreeMap<String, String> {
     items
         .iter()
         .map(|(id, choice)| ((*id).to_owned(), (*choice).to_owned()))

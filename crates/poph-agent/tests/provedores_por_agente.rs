@@ -1,11 +1,10 @@
 #![allow(dead_code)]
 
-mod apoio;
+mod support;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use apoio::{Scenario, SemEspera};
 use poph_agent::config_hot::{ConfigHot, HotConfigOptions};
 use poph_agent::limites::{LimitOptions, Limiter};
 use poph_agent::metrics::{MetricsMemory, MetricsTurn};
@@ -15,8 +14,9 @@ use poph_agent::turno::{TurnEngine, TurnOptions};
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
 use poph_store::{AgentChange, Page};
 use poph_types::AgentId;
+use support::{NoWait, Scenario};
 
-fn roteiro(texto: &str) -> Script {
+fn script(texto: &str) -> Script {
     Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
         LlmEvent::Usage(Usage {
@@ -27,7 +27,7 @@ fn roteiro(texto: &str) -> Script {
     ])
 }
 
-fn primeiro_agente(scenario: &Scenario) -> AgentId {
+fn first_agent(scenario: &Scenario) -> AgentId {
     scenario
         .store
         .agents()
@@ -38,8 +38,8 @@ fn primeiro_agente(scenario: &Scenario) -> AgentId {
         .id
 }
 
-fn definir_provedor_do_agente(scenario: &Scenario, provedor: &str) {
-    let id = primeiro_agente(scenario);
+fn define_provider_agent(scenario: &Scenario, provedor: &str) {
+    let id = first_agent(scenario);
     let agente = scenario
         .store
         .agents()
@@ -64,15 +64,15 @@ fn definir_provedor_do_agente(scenario: &Scenario, provedor: &str) {
 struct Palco {
     scenario: Scenario,
     default: Arc<FakeProvider>,
-    nomeado: Arc<FakeProvider>,
+    designated: Arc<FakeProvider>,
 }
 
 impl Palco {
-    fn new(label: &str, resposta_padrao: &str, resposta_nomeada: &str) -> Self {
+    fn new(label: &str, reply_default: &str, reply_named: &str) -> Self {
         let scenario = Scenario::new(label);
         Self {
-            default: Arc::new(FakeProvider::with_scripts(vec![roteiro(resposta_padrao)])),
-            nomeado: Arc::new(FakeProvider::with_scripts(vec![roteiro(resposta_nomeada)])),
+            default: Arc::new(FakeProvider::with_scripts(vec![script(reply_default)])),
+            designated: Arc::new(FakeProvider::with_scripts(vec![script(reply_named)])),
             scenario,
         }
     }
@@ -83,7 +83,7 @@ impl Palco {
             "openai-forte".to_owned(),
             ResolvedProvider::new(
                 "openai-forte",
-                Arc::clone(&self.nomeado) as Arc<dyn poph_core::llm::LlmProvider>,
+                Arc::clone(&self.designated) as Arc<dyn poph_core::llm::LlmProvider>,
                 "modelo-do-forte",
             ),
         );
@@ -107,7 +107,7 @@ impl Palco {
             TurnOptions::default(),
             MetricsTurn::own(),
         )
-        .with_pause(Arc::new(SemEspera))
+        .with_pause(Arc::new(NoWait))
         .with_summary(SummaryOptions {
             ativo: false,
             ..SummaryOptions::default()
@@ -117,17 +117,17 @@ impl Palco {
 }
 
 #[tokio::test]
-async fn agente_com_provedor_nomeado_recebe_a_resposta_dele() {
+async fn agent_with_provider_named_receives_reply_its() {
     let palco = Palco::new("nomeado", "resposta do padrão", "resposta do forte");
-    definir_provedor_do_agente(&palco.scenario, "openai-forte");
+    define_provider_agent(&palco.scenario, "openai-forte");
     let engine = palco.engine();
 
-    let gatilho = palco.scenario.falar_com_arquivos("oi", Vec::new());
+    let gatilho = palco.scenario.speak_with_files("oi", Vec::new());
     let summary = palco.scenario.turno(&engine, gatilho).await;
 
     assert_eq!(summary.modelo, "modelo-do-forte");
-    assert_eq!(palco.nomeado.received().len(), 1);
-    let request = &palco.nomeado.received()[0];
+    assert_eq!(palco.designated.received().len(), 1);
+    let request = &palco.designated.received()[0];
     assert_eq!(request.modelo.as_deref(), Some("modelo-do-forte"));
     assert!(
         palco.default.received().is_empty(),
@@ -152,28 +152,28 @@ async fn agente_com_provedor_nomeado_recebe_a_resposta_dele() {
 }
 
 #[tokio::test]
-async fn escolha_vazia_e_nome_de_protocolo_caem_no_provedor_padrao() {
+async fn choice_empty_name_protocol_fall_provider_default() {
     for choice in ["", "antigravity2api", "openai_compativel"] {
         let palco = Palco::new("padrao", "resposta do padrão", "resposta do forte");
-        definir_provedor_do_agente(&palco.scenario, choice);
+        define_provider_agent(&palco.scenario, choice);
         let engine = palco.engine();
-        let gatilho = palco.scenario.falar_com_arquivos("oi", Vec::new());
+        let gatilho = palco.scenario.speak_with_files("oi", Vec::new());
         let summary = palco.scenario.turno(&engine, gatilho).await;
         assert_eq!(summary.modelo, "modelo-do-padrao", "escolha `{choice}`");
         assert_eq!(palco.default.received().len(), 1, "escolha `{choice}`");
         assert!(
-            palco.nomeado.received().is_empty(),
+            palco.designated.received().is_empty(),
             "escolha `{choice}`: o nomeado não deveria receber pedido"
         );
     }
 }
 
 #[tokio::test]
-async fn provedor_desconhecido_falha_o_turno_sem_chamar_ninguem() {
+async fn provider_unknown_failure_turn_without_call_nobody() {
     let palco = Palco::new("desconhecido", "resposta do padrão", "resposta do forte");
-    definir_provedor_do_agente(&palco.scenario, "sumiu-do-toml");
+    define_provider_agent(&palco.scenario, "sumiu-do-toml");
     let engine = palco.engine();
-    let gatilho = palco.scenario.falar_com_arquivos("oi", Vec::new());
+    let gatilho = palco.scenario.speak_with_files("oi", Vec::new());
     let summary = palco.scenario.turno(&engine, gatilho).await;
 
     assert_eq!(summary.estado, poph_store::TurnState::Failed);
@@ -181,5 +181,5 @@ async fn provedor_desconhecido_falha_o_turno_sem_chamar_ninguem() {
     assert!(error.contains("sumiu-do-toml"), "{error}");
     assert!(error.contains("openai-forte"), "{error}");
     assert!(palco.default.received().is_empty());
-    assert!(palco.nomeado.received().is_empty());
+    assert!(palco.designated.received().is_empty());
 }

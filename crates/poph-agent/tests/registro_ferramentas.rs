@@ -16,27 +16,27 @@ use poph_store::{NewAgent, NewConversation, NewMessage, NewOrg, Page, Store, Tur
 use poph_types::{AgentId, ConversationId, OrgId, StructuredInstructions, ToolConfig};
 
 #[derive(Default, Clone)]
-struct PausaFalsa;
+struct FakePause;
 
-impl Pause for PausaFalsa {
-    fn wait(&self, _duracao: Duration) -> FuturePause {
+impl Pause for FakePause {
+    fn wait(&self, _duration: Duration) -> FuturePause {
         Box::pin(async {})
     }
 }
 
 #[derive(Clone)]
-enum Comportamento {
+enum Behavior {
     Texto(String),
-    ComAtraso(String, u64),
-    Erro(String),
+    WithDelay(String, u64),
+    Error(String),
 }
 
-struct FerramentaFalsa {
+struct FakeTool {
     nome: &'static str,
-    comportamento: Comportamento,
+    behaviour: Behavior,
 }
 
-impl InternalTool for FerramentaFalsa {
+impl InternalTool for FakeTool {
     fn nome(&self) -> &'static str {
         self.nome
     }
@@ -54,15 +54,15 @@ impl InternalTool for FerramentaFalsa {
     }
 
     fn run(&self, _context: ToolContext, _arguments: serde_json::Value) -> ToolFuture {
-        let comportamento = self.comportamento.clone();
+        let behaviour = self.behaviour.clone();
         Box::pin(async move {
-            match comportamento {
-                Comportamento::Texto(texto) => Ok(texto),
-                Comportamento::ComAtraso(texto, ms) => {
+            match behaviour {
+                Behavior::Texto(texto) => Ok(texto),
+                Behavior::WithDelay(texto, ms) => {
                     tokio::time::sleep(Duration::from_millis(ms)).await;
                     Ok(texto)
                 }
-                Comportamento::Erro(error) => Err(error),
+                Behavior::Error(error) => Err(error),
             }
         })
     }
@@ -155,10 +155,10 @@ impl Scenario {
 
     fn engine(
         &self,
-        roteiros: Vec<Script>,
+        scripts: Vec<Script>,
         registro: DefaultRegistry,
     ) -> (TurnEngine, Arc<FakeProvider>) {
-        let fake = Arc::new(FakeProvider::with_scripts(roteiros));
+        let fake = Arc::new(FakeProvider::with_scripts(scripts));
         let provedor: Arc<dyn LlmProvider> = fake.clone();
         let config = ConfigHot::new(
             Arc::clone(&self.store),
@@ -174,12 +174,12 @@ impl Scenario {
             TurnOptions::default(),
             MetricsTurn::own(),
         )
-        .with_pause(Arc::new(PausaFalsa))
+        .with_pause(Arc::new(FakePause))
         .with_tools(Arc::new(registro));
         (engine, fake)
     }
 
-    fn falar(&self, texto: &str) -> poph_types::MessageId {
+    fn say(&self, texto: &str) -> poph_types::MessageId {
         self.store
             .messages()
             .write(
@@ -201,17 +201,17 @@ impl Scenario {
     }
 
     fn turno(&self) -> Turno {
-        let turnos = self
+        let turns = self
             .store
             .turns()
             .list(self.org, self.conversa, Page::default())
             .expect("lista os turnos");
-        assert_eq!(turnos.len(), 1, "um turno por mensagem");
-        turnos.into_iter().next().expect("o turno")
+        assert_eq!(turns.len(), 1, "um turno por mensagem");
+        turns.into_iter().next().expect("o turno")
     }
 
-    async fn rodar(&self, engine: &TurnEngine, fala: &str) -> serde_json::Value {
-        let mensagem = self.falar(fala);
+    async fn execute(&self, engine: &TurnEngine, speaks: &str) -> serde_json::Value {
+        let mensagem = self.say(speaks);
         engine
             .run(
                 poph_agent::turno::TurnInput::new(self.org, self.conversa, mensagem),
@@ -248,27 +248,27 @@ fn call(nome: &str, arguments: serde_json::Value) -> Script {
     ])
 }
 
-fn registro_consultar_base(comportamento: Comportamento) -> DefaultRegistry {
-    DefaultRegistry::new().com(Arc::new(FerramentaFalsa {
+fn record_query_base(behaviour: Behavior) -> DefaultRegistry {
+    DefaultRegistry::new().com(Arc::new(FakeTool {
         nome: "consultar_base",
-        comportamento,
+        behaviour,
     }))
 }
 
-fn registro_consultar_base_e_carrinho() -> DefaultRegistry {
+fn record_query_base_cart() -> DefaultRegistry {
     DefaultRegistry::new()
-        .com(Arc::new(FerramentaFalsa {
+        .com(Arc::new(FakeTool {
             nome: "consultar_base",
-            comportamento: Comportamento::Texto("ok".to_owned()),
+            behaviour: Behavior::Texto("ok".to_owned()),
         }))
-        .com(Arc::new(FerramentaFalsa {
+        .com(Arc::new(FakeTool {
             nome: "cart_add_item",
-            comportamento: Comportamento::Texto("ok".to_owned()),
+            behaviour: Behavior::Texto("ok".to_owned()),
         }))
 }
 
 #[tokio::test]
-async fn chamada_executada_grava_argumentos_resultado_duracao_e_rodada() {
+async fn call_executed_records_arguments_result_duration_round() {
     let scenario = Scenario::new("executada", &["consultar_base"]);
     let (engine, _) = scenario.engine(
         vec![
@@ -278,13 +278,10 @@ async fn chamada_executada_grava_argumentos_resultado_duracao_e_rodada() {
             ),
             response("O prazo é de cinco dias úteis."),
         ],
-        registro_consultar_base(Comportamento::ComAtraso(
-            "Prazo de 5 dias úteis.".to_owned(),
-            20,
-        )),
+        record_query_base(Behavior::WithDelay("Prazo de 5 dias úteis.".to_owned(), 20)),
     );
 
-    let registro = scenario.rodar(&engine, "qual o prazo?").await;
+    let registro = scenario.execute(&engine, "qual o prazo?").await;
     assert_eq!(registro["nomes"], serde_json::json!(["consultar_base"]));
     let calls = registro["chamadas"].as_array().expect("lista de chamadas");
     assert_eq!(calls.len(), 1);
@@ -308,7 +305,7 @@ async fn chamada_executada_grava_argumentos_resultado_duracao_e_rodada() {
 }
 
 #[tokio::test]
-async fn ferramenta_nao_habilitada_grava_recusa_e_o_modelo_recebe_o_erro() {
+async fn tool_not_enabled_records_refusal_model_receives_error() {
     let scenario = Scenario::new("nao-habilitada", &["consultar_base"]);
     let (engine, fake) = scenario.engine(
         vec![
@@ -318,10 +315,10 @@ async fn ferramenta_nao_habilitada_grava_recusa_e_o_modelo_recebe_o_erro() {
             ),
             response("Não consigo montar o carrinho."),
         ],
-        registro_consultar_base_e_carrinho(),
+        record_query_base_cart(),
     );
 
-    let registro = scenario.rodar(&engine, "põe no carrinho").await;
+    let registro = scenario.execute(&engine, "põe no carrinho").await;
     let calls = registro["chamadas"].as_array().expect("lista de chamadas");
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0]["estado"], "recusada");
@@ -329,9 +326,9 @@ async fn ferramenta_nao_habilitada_grava_recusa_e_o_modelo_recebe_o_erro() {
     assert_eq!(calls[0]["duracao_ms"], 0);
     assert_eq!(registro["nomes"], serde_json::json!(["cart_add_item"]));
 
-    let pedidos = fake.received();
-    assert_eq!(pedidos.len(), 2);
-    let error = pedidos[1]
+    let requests = fake.received();
+    assert_eq!(requests.len(), 2);
+    let error = requests[1]
         .messages
         .iter()
         .find_map(|mensagem| match mensagem {
@@ -346,17 +343,17 @@ async fn ferramenta_nao_habilitada_grava_recusa_e_o_modelo_recebe_o_erro() {
 }
 
 #[tokio::test]
-async fn ferramenta_desconhecida_grava_recusa_com_motivo_proprio() {
+async fn tool_unknown_records_refusal_with_reason_own() {
     let scenario = Scenario::new("desconhecida", &["cart_add_item"]);
     let (engine, _) = scenario.engine(
         vec![
             call("cart_add_item", serde_json::json!({"produto_id": "x"})),
             response("Sigo sem o carrinho."),
         ],
-        registro_consultar_base(Comportamento::Texto("ok".to_owned())),
+        record_query_base(Behavior::Texto("ok".to_owned())),
     );
 
-    let registro = scenario.rodar(&engine, "põe no carrinho").await;
+    let registro = scenario.execute(&engine, "põe no carrinho").await;
     let calls = registro["chamadas"].as_array().expect("lista de chamadas");
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0]["estado"], "recusada");
@@ -364,19 +361,19 @@ async fn ferramenta_desconhecida_grava_recusa_com_motivo_proprio() {
 }
 
 #[tokio::test]
-async fn erro_de_argumento_da_ferramenta_vira_motivo_argumento_invalido() {
+async fn error_argument_tool_becomes_reason_argument_invalid() {
     let scenario = Scenario::new("argumento", &["consultar_base"]);
     let (engine, _) = scenario.engine(
         vec![
             call("consultar_base", serde_json::json!({})),
             response("Não encontrei."),
         ],
-        registro_consultar_base(Comportamento::Erro(
+        record_query_base(Behavior::Error(
             "erro: o argumento `consulta` é obrigatório".to_owned(),
         )),
     );
 
-    let registro = scenario.rodar(&engine, "consulta").await;
+    let registro = scenario.execute(&engine, "consulta").await;
     let calls = registro["chamadas"].as_array().expect("lista de chamadas");
     assert_eq!(calls[0]["estado"], "recusada");
     assert_eq!(calls[0]["motivo"], "argumento_invalido");
@@ -389,22 +386,22 @@ async fn erro_de_argumento_da_ferramenta_vira_motivo_argumento_invalido() {
 }
 
 #[tokio::test]
-async fn argumentos_e_resultado_respeitam_o_teto_de_tamanho() {
+async fn arguments_result_respect_cap_size() {
     let scenario = Scenario::new("teto", &["consultar_base"]);
-    let argumento_grande = "consulta".repeat(500);
-    let resultado_grande = "retorno".repeat(500);
+    let argument_large = "consulta".repeat(500);
+    let result_large = "retorno".repeat(500);
     let (engine, _) = scenario.engine(
         vec![
             call(
                 "consultar_base",
-                serde_json::json!({"consulta": argumento_grande}),
+                serde_json::json!({"consulta": argument_large}),
             ),
             response("Certo."),
         ],
-        registro_consultar_base(Comportamento::Texto(resultado_grande)),
+        record_query_base(Behavior::Texto(result_large)),
     );
 
-    let registro = scenario.rodar(&engine, "consulta grande").await;
+    let registro = scenario.execute(&engine, "consulta grande").await;
     let calls = registro["chamadas"].as_array().expect("lista de chamadas");
     let arguments = calls[0]["argumentos"].as_str().expect("argumentos");
     let resultado = calls[0]["resultado"].as_str().expect("resultado");
@@ -422,7 +419,7 @@ async fn argumentos_e_resultado_respeitam_o_teto_de_tamanho() {
 }
 
 #[tokio::test]
-async fn argumento_com_nome_de_segredo_nao_vai_para_o_registro() {
+async fn argument_with_name_secret_not_goes_for_record() {
     let scenario = Scenario::new("segredo", &["consultar_base"]);
     let (engine, _) = scenario.engine(
         vec![
@@ -436,10 +433,10 @@ async fn argumento_com_nome_de_segredo_nao_vai_para_o_registro() {
             ),
             response("Prazo de 5 dias."),
         ],
-        registro_consultar_base(Comportamento::Texto("ok".to_owned())),
+        record_query_base(Behavior::Texto("ok".to_owned())),
     );
 
-    let registro = scenario.rodar(&engine, "qual o prazo?").await;
+    let registro = scenario.execute(&engine, "qual o prazo?").await;
     let texto = registro.to_string();
     assert!(texto.contains("prazo"));
     assert!(texto.contains("[redigido]"));
@@ -449,14 +446,14 @@ async fn argumento_com_nome_de_segredo_nao_vai_para_o_registro() {
 }
 
 #[tokio::test]
-async fn turno_sem_ferramenta_grava_lista_de_chamadas_vazia() {
+async fn turn_without_tool_records_list_calls_empty() {
     let scenario = Scenario::new("sem-ferramenta", &["consultar_base"]);
     let (engine, _) = scenario.engine(
         vec![response("Olá! Como posso ajudar?")],
-        registro_consultar_base(Comportamento::Texto("ok".to_owned())),
+        record_query_base(Behavior::Texto("ok".to_owned())),
     );
 
-    let registro = scenario.rodar(&engine, "oi").await;
+    let registro = scenario.execute(&engine, "oi").await;
     assert_eq!(registro["nomes"], serde_json::json!([]));
     assert_eq!(registro["chamadas"], serde_json::json!([]));
 }

@@ -73,7 +73,7 @@ fn evento(peer: &str) -> InboundEvent {
 }
 
 #[test]
-fn um_contato_uma_conversa_com_cache_por_contato() {
+fn contact_conversation_with_cache_by_contact() {
     let scenario = Scenario::new("cache");
     let resolver =
         ConversationChannel::new(Arc::clone(&scenario.store), scenario.agente, "eco", None);
@@ -107,7 +107,7 @@ fn um_contato_uma_conversa_com_cache_por_contato() {
 }
 
 #[test]
-fn conversa_transferida_nao_e_servida_do_cache() {
+fn conversation_transferred_not_served_cache() {
     let scenario = Scenario::new("transferida");
     let resolver =
         ConversationChannel::new(Arc::clone(&scenario.store), scenario.agente, "eco", None);
@@ -142,8 +142,8 @@ fn conversa_transferida_nao_e_servida_do_cache() {
             },
         )
         .expect("abre a conversa nova");
-    let escolhida = resolver
+    let chosen = resolver
         .resolver(scenario.org, &evento(peer))
         .expect("resolve de novo");
-    assert_eq!(escolhida, new.id);
+    assert_eq!(chosen, new.id);
 }

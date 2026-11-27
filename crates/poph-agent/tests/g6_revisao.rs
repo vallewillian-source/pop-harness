@@ -11,16 +11,16 @@ use poph_agent::turno::{
     FuturePause, NoopObserver, Pause, TurnEngine, TurnInput, TurnOptions, TurnSummary,
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmError, LlmEvent, Script, Usage};
-use poph_jev::{BatchResponse, FakeJev, JevEngine, JevError, JevResponse as RespostaJev};
+use poph_jev::{BatchResponse, FakeJev, JevEngine, JevError, JevResponse as ReplyJudge};
 use poph_store::{
     AgentChange, Direction, NewAgent, NewConversation, NewMessage, Page, Role, Store, TurnState,
 };
 use poph_types::{ConversationId, JevGates, MessageId, OrgId, StructuredInstructions};
 
-struct SemEspera;
+struct NoWait;
 
-impl Pause for SemEspera {
-    fn wait(&self, _duracao: Duration) -> FuturePause {
+impl Pause for NoWait {
+    fn wait(&self, _duration: Duration) -> FuturePause {
         Box::pin(async {})
     }
 }
@@ -35,16 +35,16 @@ struct Scenario {
 
 impl Scenario {
     fn new(label: &str) -> Self {
-        Self::com_jev_json(label, "")
+        Self::with_judge_json(label, "")
     }
 
-    fn com_jev_json(label: &str, jev_json: &str) -> Self {
+    fn with_judge_json(label: &str, jev_json: &str) -> Self {
         let folder = std::env::temp_dir().join(format!(
             "poph-hr34-{label}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map(|tempo| tempo.as_nanos())
+                .map(|time| time.as_nanos())
                 .unwrap_or(0)
         ));
         let _ = std::fs::remove_dir_all(&folder);
@@ -123,7 +123,7 @@ impl Scenario {
         }
     }
 
-    fn falar(&self, texto: &str) -> MessageId {
+    fn say(&self, texto: &str) -> MessageId {
         self.store
             .messages()
             .write(
@@ -146,10 +146,10 @@ impl Scenario {
 
     fn engine(
         &self,
-        roteiros: Vec<Script>,
+        scripts: Vec<Script>,
         jev: Option<Arc<JevEngine>>,
     ) -> (TurnEngine, Arc<FakeProvider>) {
-        let fake = Arc::new(FakeProvider::with_scripts(roteiros));
+        let fake = Arc::new(FakeProvider::with_scripts(scripts));
         let config = ConfigHot::new(
             Arc::clone(&self.store),
             HotConfigOptions::default(),
@@ -164,7 +164,7 @@ impl Scenario {
             TurnOptions::default(),
             self.metrics.clone(),
         )
-        .with_pause(Arc::new(SemEspera))
+        .with_pause(Arc::new(NoWait))
         .with_summary(poph_agent::summary::SummaryOptions {
             ativo: false,
             ..poph_agent::summary::SummaryOptions::default()
@@ -185,7 +185,7 @@ impl Scenario {
             .expect("o turno roda")
     }
 
-    fn saidas(&self) -> Vec<String> {
+    fn outputs(&self) -> Vec<String> {
         self.store
             .messages()
             .list(self.org, self.conversa, Page::with_limit(200))
@@ -196,7 +196,7 @@ impl Scenario {
             .collect()
     }
 
-    fn fila(&self) -> Vec<String> {
+    fn queue(&self) -> Vec<String> {
         self.store
             .outbox()
             .list_pending(self.org, 50)
@@ -206,7 +206,7 @@ impl Scenario {
             .collect()
     }
 
-    fn turno_gravado(&self, turno: &TurnSummary) -> String {
+    fn turn_stored(&self, turno: &TurnSummary) -> String {
         self.store
             .turns()
             .get(self.org, turno.turno)
@@ -224,11 +224,11 @@ impl Drop for Scenario {
 fn fastrand() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|tempo| tempo.as_nanos() as u64)
+        .map(|time| time.as_nanos() as u64)
         .unwrap_or(0)
 }
 
-fn roteiro_texto(texto: &str) -> Script {
+fn script_text(texto: &str) -> Script {
     Script::Events(vec![
         LlmEvent::Texto(texto.to_owned()),
         LlmEvent::Usage(Usage {
@@ -246,43 +246,43 @@ fn so_g6() -> JevGates {
     }
 }
 
-type RespostaRoteirizada = (&'static str, f64);
+type ReplyScripted = (&'static str, f64);
 
-fn jev_por_texto(tabela: &[(&str, RespostaRoteirizada)]) -> Arc<FakeJev> {
-    let tabela: Vec<(String, String, f64)> = tabela
+fn judge_by_text(table: &[(&str, ReplyScripted)]) -> Arc<FakeJev> {
+    let table: Vec<(String, String, f64)> = table
         .iter()
         .map(|(texto, (choice, confidence))| {
             ((*texto).to_owned(), (*choice).to_owned(), *confidence)
         })
         .collect();
     Arc::new(FakeJev::new(move |request| {
-        let candidata = request.estado["resposta_candidata"]
+        let candidate = request.estado["resposta_candidata"]
             .as_str()
             .unwrap_or_default()
             .to_owned();
-        let mut respostas = BTreeMap::new();
+        let mut replies = BTreeMap::new();
         if let Some((_, choice, confidence)) =
-            tabela.iter().find(|(texto, _, _)| *texto == candidata)
+            table.iter().find(|(texto, _, _)| *texto == candidate)
         {
-            respostas.insert(
+            replies.insert(
                 "g6_revisao".to_owned(),
-                RespostaJev {
+                ReplyJudge {
                     choice: Some(choice.clone()),
                     confidence: *confidence,
-                    ..RespostaJev::default()
+                    ..ReplyJudge::default()
                 },
             );
         }
         Ok(BatchResponse {
-            answers: respostas,
+            answers: replies,
             tokens: 20,
             ..BatchResponse::default()
         })
     }))
 }
 
-fn jev_fora() -> Arc<FakeJev> {
-    Arc::new(FakeJev::new(|_pedido: &poph_jev::JevRequest| {
+fn judge_out() -> Arc<FakeJev> {
+    Arc::new(FakeJev::new(|_request: &poph_jev::JevRequest| {
         Err(JevError::Status {
             code: 503,
             motivo: "Service Unavailable".to_owned(),
@@ -290,9 +290,9 @@ fn jev_fora() -> Arc<FakeJev> {
     }))
 }
 
-fn jev_que_falha_na_segunda(first: RespostaRoteirizada) -> Arc<FakeJev> {
+fn judge_failure_second(first: ReplyScripted) -> Arc<FakeJev> {
     let calls = Arc::new(AtomicU64::new(0));
-    Arc::new(FakeJev::new(move |_pedido: &poph_jev::JevRequest| {
+    Arc::new(FakeJev::new(move |_request: &poph_jev::JevRequest| {
         let call = calls.fetch_add(1, Ordering::SeqCst);
         if call > 0 {
             return Err(JevError::Status {
@@ -300,87 +300,87 @@ fn jev_que_falha_na_segunda(first: RespostaRoteirizada) -> Arc<FakeJev> {
                 motivo: "Service Unavailable".to_owned(),
             });
         }
-        let mut respostas = BTreeMap::new();
-        respostas.insert(
+        let mut replies = BTreeMap::new();
+        replies.insert(
             "g6_revisao".to_owned(),
-            RespostaJev {
+            ReplyJudge {
                 choice: Some(first.0.to_owned()),
                 confidence: first.1,
-                ..RespostaJev::default()
+                ..ReplyJudge::default()
             },
         );
         Ok(BatchResponse {
-            answers: respostas,
+            answers: replies,
             tokens: 20,
             ..BatchResponse::default()
         })
     }))
 }
 
-fn motor_jev(jev: Arc<FakeJev>, gates: JevGates) -> Arc<JevEngine> {
+fn engine_judge(jev: Arc<FakeJev>, gates: JevGates) -> Arc<JevEngine> {
     Arc::new(JevEngine::new(jev, gates, "jev-latest"))
 }
 
-const PERGUNTA: &str = "quanto custa para dedetizar baratas no apê?";
-const RASCUNHO: &str = "Sai R$ 150,00 e amanhã mandamos o atendente aí.";
+const QUESTION: &str = "quanto custa para dedetizar baratas no apê?";
+const DRAFT: &str = "Sai R$ 150,00 e amanhã mandamos o atendente aí.";
 const REESCRITA: &str = "A dedetização de baratas custa R$ 180,00 por visita.";
-const SEGURA: &str = "Vou confirmar o valor com a equipe e já te respondo.";
+const SAFE: &str = "Vou confirmar o valor com a equipe e já te respondo.";
 
 #[tokio::test]
-async fn g6_aprovada_mantem_a_resposta_e_faz_uma_chamada_ao_modelo() {
+async fn g6_approved_keeps_reply_does_call_model() {
     let scenario = Scenario::new("aprovada");
-    let jev = jev_por_texto(&[(RASCUNHO, ("aprovada", 0.95))]);
+    let jev = judge_by_text(&[(DRAFT, ("aprovada", 0.95))]);
     let (engine, provedor) =
-        scenario.engine(vec![roteiro_texto(RASCUNHO)], Some(motor_jev(jev, so_g6())));
+        scenario.engine(vec![script_text(DRAFT)], Some(engine_judge(jev, so_g6())));
 
-    let gatilho = scenario.falar(PERGUNTA);
+    let gatilho = scenario.say(QUESTION);
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(summary.estado, TurnState::Completed);
-    assert_eq!(summary.texto, RASCUNHO);
+    assert_eq!(summary.texto, DRAFT);
     assert_eq!(provedor.received().len(), 1, "uma chamada ao modelo");
-    assert_eq!(scenario.saidas(), vec![RASCUNHO]);
-    assert_eq!(scenario.fila().len(), 1, "um item na fila de saída");
+    assert_eq!(scenario.outputs(), vec![DRAFT]);
+    assert_eq!(scenario.queue().len(), 1, "um item na fila de saída");
     assert_eq!(scenario.metrics.revisions_g6.value(), 1);
     assert_eq!(scenario.metrics.reprovadas_g6.value(), 0);
     assert_eq!(scenario.metrics.responses_safe_g6.value(), 0);
-    let registro = scenario.turno_gravado(&summary);
+    let registro = scenario.turn_stored(&summary);
     assert!(registro.contains("\"revisao\""), "{registro}");
     assert!(registro.contains("\"aprovada\""), "{registro}");
 }
 
 #[tokio::test]
-async fn g6_reprovada_regenera_uma_vez_e_envia_o_texto_novo() {
+async fn g6_rejected_regenerates_once_sends_text_new() {
     let scenario = Scenario::new("regenera");
-    let jev = jev_por_texto(&[
-        (RASCUNHO, ("revisar_preco", 0.91)),
+    let jev = judge_by_text(&[
+        (DRAFT, ("revisar_preco", 0.91)),
         (REESCRITA, ("aprovada", 0.93)),
     ]);
     let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto(RASCUNHO), roteiro_texto(REESCRITA)],
-        Some(motor_jev(jev, so_g6())),
+        vec![script_text(DRAFT), script_text(REESCRITA)],
+        Some(engine_judge(jev, so_g6())),
     );
 
-    let gatilho = scenario.falar(PERGUNTA);
+    let gatilho = scenario.say(QUESTION);
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(summary.estado, TurnState::Completed);
     assert_eq!(summary.texto, REESCRITA, "sai o texto regenerado");
-    let pedidos = provedor.received();
-    assert_eq!(pedidos.len(), 2, "exatamente uma regeneração");
-    let last = pedidos.last().expect("o pedido da regeneração");
+    let requests = provedor.received();
+    assert_eq!(requests.len(), 2, "exatamente uma regeneração");
+    let last = requests.last().expect("o pedido da regeneração");
     assert!(
         matches!(last.messages.last(), Some(poph_core::llm::Message::User(_))),
         "o pedido da regeneração termina com a orientação do usuário"
     );
     assert!(last.tools.is_empty(), "regeneração não reabre ferramenta");
-    assert_eq!(scenario.saidas(), vec![REESCRITA], "uma única saída");
-    assert_eq!(scenario.fila().len(), 1, "um único item na fila");
+    assert_eq!(scenario.outputs(), vec![REESCRITA], "uma única saída");
+    assert_eq!(scenario.queue().len(), 1, "um único item na fila");
     assert_eq!(scenario.metrics.revisions_g6.value(), 2);
     assert_eq!(scenario.metrics.reprovadas_g6.value(), 1);
     assert_eq!(scenario.metrics.responses_safe_g6.value(), 0);
     assert_eq!(summary.input_tokens, 200);
-    let registro = scenario.turno_gravado(&summary);
+    let registro = scenario.turn_stored(&summary);
     assert!(registro.contains("\"regenerou\":true"), "{registro}");
     assert!(
         registro.contains("\"segunda_escolha\":\"aprovada\""),
@@ -389,126 +389,123 @@ async fn g6_reprovada_regenera_uma_vez_e_envia_o_texto_novo() {
 }
 
 #[tokio::test]
-async fn g6_duas_reprovacoes_usam_a_resposta_segura() {
+async fn g6_two_rejections_use_reply_safe() {
     let scenario =
-        Scenario::com_jev_json("segura", &format!(r#"{{"resposta_segura": "{SEGURA}"}}"#));
-    let jev = jev_por_texto(&[
-        (RASCUNHO, ("revisar_preco", 0.91)),
+        Scenario::with_judge_json("segura", &format!(r#"{{"resposta_segura": "{SAFE}"}}"#));
+    let jev = judge_by_text(&[
+        (DRAFT, ("revisar_preco", 0.91)),
         (REESCRITA, ("revisar_transferencia", 0.88)),
     ]);
     let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto(RASCUNHO), roteiro_texto(REESCRITA)],
-        Some(motor_jev(jev, so_g6())),
+        vec![script_text(DRAFT), script_text(REESCRITA)],
+        Some(engine_judge(jev, so_g6())),
     );
 
-    let gatilho = scenario.falar(PERGUNTA);
+    let gatilho = scenario.say(QUESTION);
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(summary.estado, TurnState::Completed);
-    assert_eq!(summary.texto, SEGURA, "a resposta segura é a que sai");
+    assert_eq!(summary.texto, SAFE, "a resposta segura é a que sai");
     assert_eq!(provedor.received().len(), 2, "sem terceira tentativa");
-    assert_eq!(scenario.saidas(), vec![SEGURA]);
-    assert_eq!(scenario.fila().len(), 1);
+    assert_eq!(scenario.outputs(), vec![SAFE]);
+    assert_eq!(scenario.queue().len(), 1);
     assert_eq!(scenario.metrics.responses_safe_g6.value(), 1);
-    let registro = scenario.turno_gravado(&summary);
+    let registro = scenario.turn_stored(&summary);
     assert!(registro.contains("\"resposta_segura\":true"), "{registro}");
 }
 
 #[tokio::test]
-async fn g6_sem_resposta_segura_na_segunda_reprovacao_envia_o_texto_regenerado() {
+async fn g6_without_reply_safe_second_rejection_sends_text_regenerated() {
     let scenario = Scenario::new("sem-segura");
-    let jev = jev_por_texto(&[
-        (RASCUNHO, ("revisar_preco", 0.91)),
+    let jev = judge_by_text(&[
+        (DRAFT, ("revisar_preco", 0.91)),
         (REESCRITA, ("revisar_longa", 0.85)),
     ]);
-    let (engine, _provedor) = scenario.engine(
-        vec![roteiro_texto(RASCUNHO), roteiro_texto(REESCRITA)],
-        Some(motor_jev(jev, so_g6())),
+    let (engine, _provider) = scenario.engine(
+        vec![script_text(DRAFT), script_text(REESCRITA)],
+        Some(engine_judge(jev, so_g6())),
     );
 
-    let gatilho = scenario.falar(PERGUNTA);
+    let gatilho = scenario.say(QUESTION);
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(
         summary.texto, REESCRITA,
         "sem resposta segura, sai a regenerada"
     );
-    assert_eq!(scenario.saidas(), vec![REESCRITA]);
+    assert_eq!(scenario.outputs(), vec![REESCRITA]);
     assert_eq!(scenario.metrics.responses_safe_g6.value(), 0);
 }
 
 #[tokio::test]
-async fn g6_segunda_revisao_sem_resposta_usa_a_segura() {
-    let scenario = Scenario::com_jev_json(
+async fn g6_second_revision_without_reply_uses_safe() {
+    let scenario = Scenario::with_judge_json(
         "segunda-fora",
-        &format!(r#"{{"resposta_segura": "{SEGURA}"}}"#),
+        &format!(r#"{{"resposta_segura": "{SAFE}"}}"#),
     );
-    let jev = jev_que_falha_na_segunda(("revisar_preco", 0.92));
+    let jev = judge_failure_second(("revisar_preco", 0.92));
     let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto(RASCUNHO), roteiro_texto(REESCRITA)],
-        Some(motor_jev(jev, so_g6())),
+        vec![script_text(DRAFT), script_text(REESCRITA)],
+        Some(engine_judge(jev, so_g6())),
     );
 
-    let gatilho = scenario.falar(PERGUNTA);
+    let gatilho = scenario.say(QUESTION);
     let summary = scenario.turno(&engine, gatilho).await;
 
-    assert_eq!(summary.texto, SEGURA);
+    assert_eq!(summary.texto, SAFE);
     assert_eq!(provedor.received().len(), 2);
     assert_eq!(scenario.metrics.responses_safe_g6.value(), 1);
 }
 
 #[tokio::test]
-async fn g6_jev_fora_nao_revisa_e_mantem_a_resposta() {
+async fn g6_judge_out_not_reviews_keeps_reply() {
     let scenario = Scenario::new("fora");
     let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto(RASCUNHO)],
-        Some(motor_jev(jev_fora(), so_g6())),
+        vec![script_text(DRAFT)],
+        Some(engine_judge(judge_out(), so_g6())),
     );
 
-    let gatilho = scenario.falar(PERGUNTA);
+    let gatilho = scenario.say(QUESTION);
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(summary.estado, TurnState::Completed);
-    assert_eq!(summary.texto, RASCUNHO, "Jev fora = comportamento de hoje");
+    assert_eq!(summary.texto, DRAFT, "Jev fora = comportamento de hoje");
     assert_eq!(provedor.received().len(), 1, "sem regeneração");
     assert_eq!(scenario.metrics.reprovadas_g6.value(), 0);
 }
 
 #[tokio::test]
-async fn g6_abstencao_e_confianca_baixa_mantem_a_resposta() {
-    for (label, tabela) in [
+async fn g6_abstention_confidence_low_keeps_reply() {
+    for (label, table) in [
         ("sem-resposta", Vec::new()),
-        ("baixa-confianca", vec![(RASCUNHO, ("revisar_preco", 0.45))]),
-        (
-            "fora-do-contrato",
-            vec![(RASCUNHO, ("reescrever_tudo", 0.99))],
-        ),
+        ("baixa-confianca", vec![(DRAFT, ("revisar_preco", 0.45))]),
+        ("fora-do-contrato", vec![(DRAFT, ("reescrever_tudo", 0.99))]),
     ] {
         let scenario = Scenario::new(label);
-        let jev = jev_por_texto(&tabela);
+        let jev = judge_by_text(&table);
         let (engine, provedor) =
-            scenario.engine(vec![roteiro_texto(RASCUNHO)], Some(motor_jev(jev, so_g6())));
-        let gatilho = scenario.falar(PERGUNTA);
+            scenario.engine(vec![script_text(DRAFT)], Some(engine_judge(jev, so_g6())));
+        let gatilho = scenario.say(QUESTION);
         let summary = scenario.turno(&engine, gatilho).await;
-        assert_eq!(summary.texto, RASCUNHO, "{label}");
+        assert_eq!(summary.texto, DRAFT, "{label}");
         assert_eq!(provedor.received().len(), 1, "{label}: sem regeneração");
         assert_eq!(scenario.metrics.reprovadas_g6.value(), 0, "{label}");
     }
 }
 
 #[tokio::test]
-async fn g6_desligado_nao_pergunta_e_mantem_a_resposta() {
+async fn g6_disabled_not_question_keeps_reply() {
     let scenario = Scenario::new("desligado");
-    let jev = jev_por_texto(&[(RASCUNHO, ("revisar_preco", 0.99))]);
+    let jev = judge_by_text(&[(DRAFT, ("revisar_preco", 0.99))]);
     let (engine, provedor) = scenario.engine(
-        vec![roteiro_texto(RASCUNHO)],
-        Some(motor_jev(Arc::clone(&jev), JevGates::default_value())),
+        vec![script_text(DRAFT)],
+        Some(engine_judge(Arc::clone(&jev), JevGates::default_value())),
     );
 
-    let gatilho = scenario.falar(PERGUNTA);
+    let gatilho = scenario.say(QUESTION);
     let summary = scenario.turno(&engine, gatilho).await;
 
-    assert_eq!(summary.texto, RASCUNHO);
+    assert_eq!(summary.texto, DRAFT);
     assert_eq!(provedor.received().len(), 1);
     assert!(
         jev.requests().is_empty(),
@@ -522,109 +519,109 @@ async fn g6_desligado_nao_pergunta_e_mantem_a_resposta() {
 }
 
 #[tokio::test]
-async fn g6_falha_do_modelo_na_regeneracao_mantem_a_resposta_original() {
+async fn g6_failure_model_regeneration_keeps_reply_original() {
     let scenario = Scenario::new("falha-modelo");
-    let jev = jev_por_texto(&[(RASCUNHO, ("revisar_preco", 0.93))]);
+    let jev = judge_by_text(&[(DRAFT, ("revisar_preco", 0.93))]);
     let (engine, provedor) = scenario.engine(
         vec![
-            roteiro_texto(RASCUNHO),
+            script_text(DRAFT),
             Script::Failure(LlmError::ConnectionInterrupted("conexão caiu".to_owned())),
         ],
-        Some(motor_jev(jev, so_g6())),
+        Some(engine_judge(jev, so_g6())),
     );
 
-    let gatilho = scenario.falar(PERGUNTA);
+    let gatilho = scenario.say(QUESTION);
     let summary = scenario.turno(&engine, gatilho).await;
 
     assert_eq!(summary.estado, TurnState::Completed);
     assert_eq!(
-        summary.texto, RASCUNHO,
+        summary.texto, DRAFT,
         "a falha da reescrita não derruba o turno"
     );
     assert_eq!(provedor.received().len(), 2);
-    assert_eq!(scenario.saidas(), vec![RASCUNHO]);
+    assert_eq!(scenario.outputs(), vec![DRAFT]);
     assert_eq!(scenario.metrics.responses_safe_g6.value(), 0);
 }
 
 #[tokio::test]
 #[ignore = "medição: imprime o custo do G6 nas duas condições"]
-async fn medicao_do_g6() {
+async fn measurement_g6() {
     let aprovadas = 15usize;
-    let regeneradas = 6usize;
-    let seguras = 3usize;
-    let total = aprovadas + regeneradas + seguras;
+    let regenerated = 6usize;
+    let safe_ones = 3usize;
+    let total = aprovadas + regenerated + safe_ones;
 
     let mut messages: Vec<String> = Vec::new();
-    let mut roteiros: Vec<Script> = Vec::new();
-    let mut tabela: Vec<(String, String, f64)> = Vec::new();
+    let mut scripts: Vec<Script> = Vec::new();
+    let mut table: Vec<(String, String, f64)> = Vec::new();
     for index in 0..total {
-        let pergunta = format!("mensagem {index}: quero um orçamento de dedetização");
-        messages.push(pergunta);
-        let rascunho = format!("rascunho {index}: fica R$ 150,00 e já te passo para um atendente.");
+        let question = format!("mensagem {index}: quero um orçamento de dedetização");
+        messages.push(question);
+        let draft = format!("rascunho {index}: fica R$ 150,00 e já te passo para um atendente.");
         let reescrita =
             format!("rascunho {index}: a dedetização de baratas custa R$ 180,00 por visita.");
-        roteiros.push(roteiro_texto(&rascunho));
+        scripts.push(script_text(&draft));
         if index < aprovadas {
-            tabela.push((rascunho, "aprovada".to_owned(), 0.93));
+            table.push((draft, "aprovada".to_owned(), 0.93));
             continue;
         }
-        tabela.push((rascunho, "revisar_preco".to_owned(), 0.93));
-        roteiros.push(roteiro_texto(&reescrita));
-        if index < aprovadas + regeneradas {
-            tabela.push((reescrita, "aprovada".to_owned(), 0.91));
+        table.push((draft, "revisar_preco".to_owned(), 0.93));
+        scripts.push(script_text(&reescrita));
+        if index < aprovadas + regenerated {
+            table.push((reescrita, "aprovada".to_owned(), 0.91));
         } else {
-            tabela.push((reescrita, "revisar_transferencia".to_owned(), 0.90));
+            table.push((reescrita, "revisar_transferencia".to_owned(), 0.90));
         }
     }
 
-    let mut resultados = Vec::new();
-    for (label, ligado) in [("sem G6", false), ("com G6", true)] {
-        let scenario = if ligado {
-            Scenario::com_jev_json(
+    let mut results = Vec::new();
+    for (label, linked) in [("sem G6", false), ("com G6", true)] {
+        let scenario = if linked {
+            Scenario::with_judge_json(
                 "medicao-com",
-                &format!(r#"{{"resposta_segura": "{SEGURA}"}}"#),
+                &format!(r#"{{"resposta_segura": "{SAFE}"}}"#),
             )
         } else {
             Scenario::new("medicao-sem")
         };
-        let tabela_json: Vec<(String, String, f64)> = tabela.clone();
+        let table_json: Vec<(String, String, f64)> = table.clone();
         let jev = Arc::new(FakeJev::new(move |request| {
-            let candidata = request.estado["resposta_candidata"]
+            let candidate = request.estado["resposta_candidata"]
                 .as_str()
                 .unwrap_or_default()
                 .to_owned();
-            let mut respostas = BTreeMap::new();
+            let mut replies = BTreeMap::new();
             if let Some((_, choice, confidence)) =
-                tabela_json.iter().find(|(texto, _, _)| *texto == candidata)
+                table_json.iter().find(|(texto, _, _)| *texto == candidate)
             {
-                respostas.insert(
+                replies.insert(
                     "g6_revisao".to_owned(),
-                    RespostaJev {
+                    ReplyJudge {
                         choice: Some(choice.clone()),
                         confidence: *confidence,
-                        ..RespostaJev::default()
+                        ..ReplyJudge::default()
                     },
                 );
             }
             Ok(BatchResponse {
-                answers: respostas,
+                answers: replies,
                 tokens: 20,
                 ..BatchResponse::default()
             })
         }));
-        let gates = if ligado { so_g6() } else { JevGates::default() };
-        let motor_jev = Arc::new(JevEngine::new(
+        let gates = if linked { so_g6() } else { JevGates::default() };
+        let engine_judge = Arc::new(JevEngine::new(
             Arc::clone(&jev) as Arc<dyn poph_jev::JevTransport>,
             gates,
             "jev-latest",
         ));
-        let (engine, provedor) = scenario.engine(roteiros.clone(), Some(motor_jev));
+        let (engine, provedor) = scenario.engine(scripts.clone(), Some(engine_judge));
         for mensagem in &messages {
-            let gatilho = scenario.falar(mensagem);
+            let gatilho = scenario.say(mensagem);
             let summary = scenario.turno(&engine, gatilho).await;
             assert_eq!(summary.estado, TurnState::Completed);
         }
-        resultados.push((
+        results.push((
             label,
             provedor.received().len(),
             jev.requests().len(),
@@ -637,11 +634,11 @@ async fn medicao_do_g6() {
     println!(
         "condição | chamadas ao modelo | chamadas à revisão (Jev) | regenerações | respostas seguras"
     );
-    for (label, modelo, revision, regeneracoes, seguras) in &resultados {
-        println!("{label} | {modelo} | {revision} | {regeneracoes} | {seguras}");
+    for (label, modelo, revision, regeneracoes, safe_ones) in &results {
+        println!("{label} | {modelo} | {revision} | {regeneracoes} | {safe_ones}");
     }
-    let without = &resultados[0];
-    let com = &resultados[1];
+    let without = &results[0];
+    let com = &results[1];
     println!(
         "acréscimo com o gate ligado: {} chamadas ao modelo (+{:.0}%) · {:.2} revisões por turno",
         com.1 - without.1,

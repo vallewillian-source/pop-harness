@@ -14,25 +14,25 @@ import json
 import pathlib
 import sys
 
-RAIZ_BACKEND = pathlib.Path(__file__).resolve().parents[6] / "backend"
-sys.path.insert(0, str(RAIZ_BACKEND))
+ROOT_BACKEND = pathlib.Path(__file__).resolve().parents[6] / "backend"
+sys.path.insert(0, str(ROOT_BACKEND))
 
 from core.agent.instructions_composer import compose_instructions  # noqa: E402
 from core.agent.instructions_models import StructuredInstructions  # noqa: E402
 
-PASTA = pathlib.Path(__file__).resolve().parent
+FOLDER = pathlib.Path(__file__).resolve().parent
 
 
 def main() -> int:
-    gerados = 0
-    for entrada in sorted(PASTA.glob("*.json")):
-        dados = json.loads(entrada.read_text(encoding="utf-8"))
-        texto = compose_instructions(StructuredInstructions.model_validate(dados))
-        saida = entrada.with_name(entrada.stem + ".esperado.txt")
-        saida.write_text(texto, encoding="utf-8")
-        print(f"{entrada.name}: {len(texto)} caracteres, {len(texto.encode('utf-8'))} bytes")
-        gerados += 1
-    print(f"{gerados} referência(s) gerada(s) em {PASTA}")
+    generated = 0
+    for entry in sorted(FOLDER.glob("*.json")):
+        payload = json.loads(entry.read_text(encoding="utf-8"))
+        text = compose_instructions(StructuredInstructions.model_validate(payload))
+        output = entry.with_name(entry.stem + ".esperado.txt")
+        output.write_text(text, encoding="utf-8")
+        print(f"{entry.name}: {len(text)} caracteres, {len(text.encode('utf-8'))} bytes")
+        generated += 1
+    print(f"{generated} referência(s) gerada(s) em {FOLDER}")
     return 0
 
 
