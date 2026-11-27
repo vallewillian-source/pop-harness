@@ -55,9 +55,9 @@ M07b	321	crates/poph-matrix/tests/usuarios_synapse_falso.rs
 M07b	1	tests/matrix/registro-python-teste.yaml.template
 M08c	3	crates/poph-store/migrations/harness/0004_audit_log_matrix_user.sql
 M10a	37	crates/poph-agent/src/flows_transition.rs
-M10a	61	crates/poph-agent/src/turno/fluxo.rs
-M10a	34	crates/poph-agent/src/turno/fluxo_ferramentas.rs
-M10a	11	crates/poph-agent/src/turno/mod.rs
+M10a	61	crates/poph-agent/src/turno/flow.rs
+M10a	34	crates/poph-agent/src/turno/flow_tools.rs
+M10a	2	crates/poph-agent/src/turno/mod.rs
 M10b	43	crates/poph-agent/tests/apoio/mod.rs
 M10b	7	crates/poph-agent/tests/auditoria_ignorado.rs
 M10b	29	crates/poph-agent/tests/base_conhecimento.rs
@@ -67,7 +67,7 @@ M10b	21	crates/poph-agent/tests/compositor_paridade.rs
 M10b	208	crates/poph-agent/tests/entrada_saida.rs
 M10b	4	crates/poph-agent/tests/fila_integracao.rs
 M10b	10	crates/poph-agent/tests/fixtures/compositor/gerar_referencia.py
-M10b	108	crates/poph-agent/tests/fluxo_ferramentas.rs
+M10b	104	crates/poph-agent/tests/fluxo_ferramentas.rs
 M10b	163	crates/poph-agent/tests/fluxo_turno.rs
 M10b	264	crates/poph-agent/tests/g2_janela.rs
 M10b	269	crates/poph-agent/tests/g3_base.rs
@@ -163,7 +163,7 @@ M11d	424	crates/poph-server/tests/fichas_acoes.rs
 M11d	317	crates/poph-server/tests/fichas_leitura.rs
 M11d	364	crates/poph-server/tests/fluxos_api.rs
 M11d	260	crates/poph-server/tests/fluxos_contadores.rs
-M11d	294	crates/poph-server/tests/fluxos_e2e.rs
+M11d	292	crates/poph-server/tests/fluxos_e2e.rs
 M11d	732	crates/poph-server/tests/fluxos_efeitos.rs
 M11d	119	crates/poph-server/tests/fluxos_limites.rs
 M11d	67	crates/poph-server/tests/fluxos_metricas.rs
@@ -216,7 +216,7 @@ M12a	188	crates/poph/src/main.rs
 M12a	421	crates/poph/src/matrix.rs
 M12a	308	crates/poph/src/matrix_admin.rs
 M12a	48	crates/poph/src/modelo.rs
-M12a	219	crates/poph/src/montagem.rs
+M12a	217	crates/poph/src/montagem.rs
 M12a	214	crates/poph/src/org.rs
 M12a	315	crates/poph/src/produto.rs
 M12a	39	crates/poph/src/rag.rs
