@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{DomainError, DomainResult};
 use crate::ids::OrgId;
-use crate::instructions::REGISTER_LEAD;
+use crate::instructions::{REGISTER_LEAD, StructuredInstructions, TOOLS_V1};
 use crate::integration::PluginsConfig;
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -567,6 +567,16 @@ impl Default for JevConfig {
 }
 
 impl HarnessConfig {
+    pub fn validate_agent_instructions(
+        &self,
+        org: OrgId,
+        instructions: &StructuredInstructions,
+    ) -> DomainResult<()> {
+        let declared = self.http_tools.get(&org);
+        instructions
+            .validate_with_tools(|name| declared.is_some_and(|tools| tools.contains_key(name)))
+    }
+
     pub fn validar(&self) -> DomainResult<()> {
         validate_server(&self.server)?;
         validate_data(&self.data)?;
@@ -1012,10 +1022,23 @@ fn validate_evolution_instances(instances: &[EvolutionInstanceConfig]) -> Domain
 fn validate_http_tools(tools: &HttpToolsConfig) -> DomainResult<()> {
     for definitions in tools.values() {
         for (name, definition) in definitions {
-            if name != REGISTER_LEAD {
+            if !(3..=41).contains(&name.len())
+                || !matches!(name.as_bytes(), [b'a'..=b'z', ..])
+                || !name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+            {
                 return Err(invalid(
                     "http_tools",
-                    "ferramenta HTTP fora da lista fechada",
+                    "nome de ferramenta HTTP inválido (use ^[a-z][a-z0-9_]{2,40}$)",
+                ));
+            }
+            if name != REGISTER_LEAD
+                && (TOOLS_V1.contains(&name.as_str()) || name.replace('_', "") == "registerlead")
+            {
+                return Err(invalid(
+                    "http_tools",
+                    format!("nome de ferramenta HTTP reservado: {name}"),
                 ));
             }
             validate_url("http_tools.url", &definition.url)?;

@@ -10,6 +10,9 @@ change; it is always marked **Breaking** in the notes.
 
 ### Added
 
+- Per-organization HTTP tools declared in the server configuration and enabled in structured agent instructions.
+  Site conversations retain the existing tool allowlist.
+
 - Multi-tenant customer-service engine in Rust: orgs, agents with structured instructions, departments,
   categories, products with a quote cart, and a per-agent file library.
 - Knowledge base with hybrid search (vector and text) and local embeddings in ONNX (int8).
