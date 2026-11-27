@@ -192,16 +192,16 @@ async fn ligar_turno(
         }
         return Ok(estado);
     };
-    let metricas = montagem::Metricas::registradas(estado.metrics.clone(), &estado.registry)?;
-    let montagem = montagem::montar(
+    let metricas = montagem::Metrics::registered(estado.metrics.clone(), &estado.registry)?;
+    let montagem = montagem::assemble(
         configuracao,
         Arc::clone(store),
-        montagem::Chaves {
+        montagem::Keys {
             llm: chave,
             jev: segredos.typesafe.clone(),
         },
         metricas,
-        montagem::FluxosDoProcesso::do_servidor(&estado),
+        montagem::ProcessFlows::from_server(&estado),
         ambiente,
     )?;
 
@@ -224,7 +224,7 @@ async fn ligar_turno(
         {
             eprintln!("[aviso] não consegui sincronizar o índice da base: {erro}");
         }
-        if let Some(catalogo) = &montagem.catalogo
+        if let Some(catalogo) = &montagem.catalog
             && let Err(erro) = catalogo.synchronise_agent(canal.org, agente).await
         {
             eprintln!("[aviso] não consegui sincronizar o índice de produtos: {erro}");
@@ -234,8 +234,8 @@ async fn ligar_turno(
     let intervalo = std::time::Duration::from_millis(configuracao.turn.dispatch_interval_ms);
     // HR-22: o chat de teste do Console roda o mesmo motor do turno, com observador próprio.
     Ok(estado
-        .with_engine(Arc::clone(&montagem.motor))
-        .with_turn(montagem.fluxo, intervalo))
+        .with_engine(Arc::clone(&montagem.engine))
+        .with_turn(montagem.flow, intervalo))
 }
 
 /// Executa `poph openapi`.

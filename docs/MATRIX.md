@@ -348,3 +348,23 @@ applies to the conversation and mirrored room of the integration's organization.
 
 The tests verify that the Matrix Application Service tokens stay out of HTTP responses, logs,
 errors, files and the delivery queue. Requests to Synapse carry authorization in a header.
+
+## 10. CLI operation (`poph matrix`) (MX-22, MX-23, MX-12)
+
+`poph matrix estado`, `ligar`, `desligar` and `espaco` follow the other administrative CLI groups:
+they require `--offline` and `--org` and write straight to the database. The CLI never talks to
+the server and never uses a token. The parity with the administrative API is in the rules, not in
+the transport:
+
+- The backfill cut is written by the same `ligar` repository call; `desligar` keeps the cut.
+- The state version is `updated_at` of `matrix_orgs`, the same value the API exposes as `ETag`.
+  `ligar` and `desligar` read the version, check it before writing and, when another process wrote
+  in between, exit with code `3` (the API's `412`) without writing anything.
+- Creating or linking a department space uses the same space service the API uses (MX-12) and
+  therefore talks to the configured Synapse: it needs `POPH_MATRIX_AS_TOKEN` and
+  `POPH_MATRIX_HS_TOKEN` in the environment.
+- Unlinking a space deletes only the Harness row; nothing is removed from Element.
+- The CLI cannot tell whether Synapse is answering right now — that probe runs in the server, so
+  `estado` reports `conectado` as `null`. No token or sensitive value appears in the output.
+- Exit codes: `0` ok; `1` error (org, department, configuration, Synapse, database); `3` the version
+  changed between read and write. `--json` has a stable format with `versao_relatorio` = 1.

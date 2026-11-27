@@ -38,6 +38,8 @@ Tudo em `/admin/v1` pede `Authorization: Bearer <valor>`. São dois tipos de tok
   (`spawn_blocking`, porque o argon2 é caro de propósito).
 - Token de org **não** cria nem remove orgs e tokens (`403`), e recebe `403` ao pedir outra org.
 - Token revogado (`poph token delete`) deixa de autenticar na hora.
+- There is no token update: the secret never changes. To replace a token, create another one and revoke
+  the previous one.
 - Tokens criados antes deste formato (hash do valor inteiro, sem uuid no valor) **não autenticam**
   mais: recrie-os com `poph token create`. O registro antigo pode ser revogado normalmente.
 
@@ -119,6 +121,14 @@ O Console e os scripts casam pelo `code`, nunca pela `message`.
 | GET | `/healthz` | — | `{status, version, uptime_seconds, databases}` e, no modo cluster, `instance_id` e `cluster_map_fingerprint`; 503 se o banco não responde |
 | GET | `/metrics` | — | texto Prometheus |
 | GET | `/admin/v1/openapi.json` e `/openapi.json` | — | OpenAPI 3.1 gerado por utoipa |
+
+## Organization deletion
+
+`DELETE /admin/v1/orgs/{org_id}` deletes everything inside the organization. The API requires `force`
+when the organization has agents. The CLI (`poph org delete`) checks the content first — agents,
+categories, departments and tokens — and requires `--force` when anything is inside; with `--force`
+it deletes the organization and the products of its categories. The check runs before the repository
+call because the delete reports the agent count only after deleting.
 
 **Paginação:** `?limit=1..200` (padrão 50) e `?cursor=<next_cursor>`. A resposta é
 `{ "items": [...], "next_cursor": "<uuid>" | null }`. O cursor é o último id da página (UUID v7,

@@ -1,10 +1,3 @@
-//! `poph org`: cria, lista, mostra, altera e exclui orgs (tenants). HR-08.
-//!
-//! Excluir org apaga tudo que está dentro dela. Por isso a exclusão confere antes o conteúdo
-//! (agentes, categorias, departamentos e tokens): se houver qualquer coisa, exige `--force`.
-//! A conferência acontece antes de chamar o repositório, porque ele apaga e só depois informa
-//! quantos agentes havia.
-
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -20,131 +13,120 @@ use crate::support::{
     validate_text,
 };
 
-/// Subcomandos de `poph org`.
 #[derive(Debug, Subcommand)]
-pub enum AcaoOrg {
-    /// Cria uma org.
-    Create(CriarOrg),
-    /// Lista as orgs (primeira página, por id).
-    List(ListarOrgs),
-    /// Mostra uma org e quantos agentes ela tem.
-    Show(ReferenciaOrg),
-    /// Altera uma org com `--if-match` (a versão lida antes).
-    Update(AtualizarOrg),
-    /// Exclui a org. Se ela tiver conteúdo, exige `--force` e apaga tudo junto.
-    Delete(ExcluirOrg),
+pub enum OrgAction {
+    #[command(about = "Cria uma org")]
+    Create(CreateOrg),
+    #[command(about = "Lista as orgs (primeira página, por id)")]
+    List(ListOrgs),
+    #[command(about = "Mostra uma org e quantos agentes ela tem")]
+    Show(OrgRef),
+    #[command(about = "Altera uma org com `--if-match` (a versão lida antes)")]
+    Update(UpdateOrg),
+    #[command(about = "Exclui a org. Se ela tiver conteúdo, exige `--force` e apaga tudo junto")]
+    Delete(DeleteOrg),
 }
 
-/// `poph org create`.
 #[derive(Debug, Args)]
-pub struct CriarOrg {
-    /// Nome de exibição (até 120 caracteres).
-    #[arg(long)]
+pub struct CreateOrg {
+    #[arg(long, help = "Nome de exibição (até 120 caracteres)")]
     pub name: String,
 
-    /// Slug único (`^[a-z0-9-]{3,64}$`). Sem ele, é derivado do nome.
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Slug único (`^[a-z0-9-]{3,64}$`). Sem ele, é derivado do nome"
+    )]
     pub slug: Option<String>,
 
-    /// Saída em JSON (formato estável).
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON (formato estável)")]
     pub json: bool,
 }
 
-/// `poph org list`.
 #[derive(Debug, Args)]
-pub struct ListarOrgs {
-    /// Quantas orgs trazer (1 a 200).
-    #[arg(long, default_value_t = 50)]
+pub struct ListOrgs {
+    #[arg(long, default_value_t = 50, help = "Quantas orgs trazer (1 a 200)")]
     pub limit: u32,
 
-    /// Saída em JSON (formato estável).
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON (formato estável)")]
     pub json: bool,
 }
 
-/// Referência a uma org por id ou slug.
 #[derive(Debug, Args)]
-pub struct ReferenciaOrg {
-    /// Id (UUID v7) ou slug da org.
+pub struct OrgRef {
+    #[arg(help = "Id (UUID v7) ou slug da org")]
     pub org: String,
 
-    /// Saída em JSON (formato estável).
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON (formato estável)")]
     pub json: bool,
 }
 
-/// `poph org update`.
 #[derive(Debug, Args)]
-pub struct AtualizarOrg {
-    /// Id (UUID v7) ou slug da org.
+pub struct UpdateOrg {
+    #[arg(help = "Id (UUID v7) ou slug da org")]
     pub org: String,
 
-    /// Versão lida com `show` (`If-Match`). Obrigatória.
-    #[arg(long)]
+    #[arg(long, help = "Versão lida com `show` (`If-Match`). Obrigatória")]
     pub if_match: u64,
 
-    /// Novo nome.
-    #[arg(long)]
+    #[arg(long, help = "Novo nome")]
     pub name: Option<String>,
 
-    /// Nova situação: `active`, `inactive` ou `archived`.
-    #[arg(long)]
+    #[arg(long, help = "Nova situação: `active`, `inactive` ou `archived`")]
     pub status: Option<String>,
 
-    /// Nova configuração da org (objeto JSON: retenção, limites, padrões de modelo).
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Nova configuração da org (objeto JSON: retenção, limites, padrões de modelo)"
+    )]
     pub config_json: Option<String>,
 
-    /// Saída em JSON (formato estável).
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON (formato estável)")]
     pub json: bool,
 }
 
-/// `poph org delete`.
 #[derive(Debug, Args)]
-pub struct ExcluirOrg {
-    /// Id (UUID v7) ou slug da org.
+pub struct DeleteOrg {
+    #[arg(help = "Id (UUID v7) ou slug da org")]
     pub org: String,
 
-    /// Confirma a exclusão quando a org tem conteúdo (agentes, categorias, departamentos, tokens).
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Confirma a exclusão quando a org tem conteúdo (agentes, categorias, departamentos, tokens)"
+    )]
     pub force: bool,
 
-    /// Saída em JSON (formato estável).
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON (formato estável)")]
     pub json: bool,
 }
 
-/// Executa um subcomando de `poph org`.
-pub fn executar(
+pub fn run(
     flag: Option<PathBuf>,
-    ambiente: &config::Environment,
+    environment: &config::Environment,
     offline: bool,
-    acao: AcaoOrg,
+    action: OrgAction,
 ) -> ExitCode {
-    if let Err(erro) = require_offline(offline) {
-        return failure(erro);
+    if let Err(error) = require_offline(offline) {
+        return failure(error);
     }
-    let store = match abrir_banco(flag, ambiente) {
+    let store = match abrir_banco(flag, environment) {
         Ok(store) => store,
-        Err(erro) => return failure(erro),
+        Err(error) => return failure(error),
     };
-    match acao {
-        AcaoOrg::Create(args) => criar(&store, args),
-        AcaoOrg::List(args) => listar(&store, args),
-        AcaoOrg::Show(args) => mostrar(&store, args),
-        AcaoOrg::Update(args) => atualizar(&store, args),
-        AcaoOrg::Delete(args) => excluir(&store, args),
+    match action {
+        OrgAction::Create(args) => create(&store, args),
+        OrgAction::List(args) => list(&store, args),
+        OrgAction::Show(args) => show(&store, args),
+        OrgAction::Update(args) => update(&store, args),
+        OrgAction::Delete(args) => delete(&store, args),
     }
 }
 
-fn criar(store: &Store, args: CriarOrg) -> ExitCode {
-    let nome = match validate_text("nome", &args.name, 120) {
-        Ok(nome) => nome,
-        Err(erro) => return failure(erro),
+fn create(store: &Store, args: CreateOrg) -> ExitCode {
+    let name = match validate_text("nome", &args.name, 120) {
+        Ok(name) => name,
+        Err(error) => return failure(error),
     };
-    let slug = args.slug.clone().unwrap_or_else(|| derive_slug(&nome));
+    let slug = args.slug.clone().unwrap_or_else(|| derive_slug(&name));
     if !is_valid_slug(&slug) {
         return failure(format!(
             "slug `{slug}` inválido: use de 3 a 64 caracteres, só a-z, 0-9 e `-`"
@@ -152,33 +134,33 @@ fn criar(store: &Store, args: CriarOrg) -> ExitCode {
     }
     match store.orgs().by_slug(&slug) {
         Ok(_) => return failure(format!("já existe uma org com o slug `{slug}`")),
-        Err(erro) if erro.is_not_found() => {}
-        Err(erro) => return failure(describe(&erro)),
+        Err(error) if error.is_not_found() => {}
+        Err(error) => return failure(describe(&error)),
     }
-    let nova = NewOrg {
-        name: nome,
+    let new_org = NewOrg {
+        name,
         slug,
         config_json: String::new(),
     };
-    match store.orgs().create(nova) {
-        Ok(org) => saida(&org, args.json, "org criada", None),
-        Err(erro) => failure(describe(&erro)),
+    match store.orgs().create(new_org) {
+        Ok(org) => print_org(&org, args.json, "org criada", None),
+        Err(error) => failure(describe(&error)),
     }
 }
 
-fn listar(store: &Store, args: ListarOrgs) -> ExitCode {
-    let pagina = match validate_limit(args.limit) {
-        Ok(pagina) => pagina,
-        Err(erro) => return failure(erro),
+fn list(store: &Store, args: ListOrgs) -> ExitCode {
+    let page = match validate_limit(args.limit) {
+        Ok(page) => page,
+        Err(error) => return failure(error),
     };
-    match store.orgs().list(pagina) {
+    match store.orgs().list(page) {
         Ok(orgs) => {
             if args.json {
-                let itens: Vec<Value> = orgs.iter().map(json_org).collect();
+                let items: Vec<Value> = orgs.iter().map(json_org).collect();
                 print_json(&json!({
                     "versao_relatorio": 1,
-                    "total": itens.len(),
-                    "orgs": itens,
+                    "total": items.len(),
+                    "orgs": items,
                 }));
             } else if orgs.is_empty() {
                 println!("Nenhuma org cadastrada.");
@@ -196,43 +178,43 @@ fn listar(store: &Store, args: ListarOrgs) -> ExitCode {
             }
             ExitCode::SUCCESS
         }
-        Err(erro) => failure(describe(&erro)),
+        Err(error) => failure(describe(&error)),
     }
 }
 
-fn mostrar(store: &Store, args: ReferenciaOrg) -> ExitCode {
+fn show(store: &Store, args: OrgRef) -> ExitCode {
     let id = match resolve_org(store, &args.org) {
         Ok(id) => id,
-        Err(erro) => return failure(erro),
+        Err(error) => return failure(error),
     };
     let org = match store.orgs().get(id) {
         Ok(org) => org,
-        Err(erro) => return failure(describe(&erro)),
+        Err(error) => return failure(describe(&error)),
     };
-    let agentes = match contar_agentes(store, id) {
+    let agents = match count_agents(store, id) {
         Ok(total) => total,
-        Err(erro) => return failure(erro),
+        Err(error) => return failure(error),
     };
-    saida(&org, args.json, "", Some(agentes))
+    print_org(&org, args.json, "", Some(agents))
 }
 
-fn atualizar(store: &Store, args: AtualizarOrg) -> ExitCode {
+fn update(store: &Store, args: UpdateOrg) -> ExitCode {
     let id = match resolve_org(store, &args.org) {
         Ok(id) => id,
-        Err(erro) => return failure(erro),
+        Err(error) => return failure(error),
     };
-    let nome = match args
+    let name = match args
         .name
         .as_deref()
-        .map(|nome| validate_text("nome", nome, 120))
+        .map(|name| validate_text("nome", name, 120))
         .transpose()
     {
-        Ok(nome) => nome,
-        Err(erro) => return failure(erro),
+        Ok(name) => name,
+        Err(error) => return failure(error),
     };
     let status = match args.status.as_deref().map(parse_status).transpose() {
         Ok(status) => status,
-        Err(erro) => return failure(erro),
+        Err(error) => return failure(error),
     };
     let config_json = match args
         .config_json
@@ -241,138 +223,136 @@ fn atualizar(store: &Store, args: AtualizarOrg) -> ExitCode {
         .transpose()
     {
         Ok(config) => config,
-        Err(erro) => return failure(erro),
+        Err(error) => return failure(error),
     };
-    if nome.is_none() && status.is_none() && config_json.is_none() {
+    if name.is_none() && status.is_none() && config_json.is_none() {
         return failure("nada a alterar: informe --name, --status ou --config-json");
     }
-    let mudanca = OrgChange {
-        name: nome,
+    let change = OrgChange {
+        name,
         status,
         config_json,
     };
-    match store.orgs().update(id, args.if_match, mudanca) {
-        Ok(org) => saida(&org, args.json, "org alterada", None),
-        Err(erro) => failure(describe(&erro)),
+    match store.orgs().update(id, args.if_match, change) {
+        Ok(org) => print_org(&org, args.json, "org alterada", None),
+        Err(error) => failure(describe(&error)),
     }
 }
 
-fn excluir(store: &Store, args: ExcluirOrg) -> ExitCode {
+fn delete(store: &Store, args: DeleteOrg) -> ExitCode {
     let id = match resolve_org(store, &args.org) {
         Ok(id) => id,
-        Err(erro) => return failure(erro),
+        Err(error) => return failure(error),
     };
-    let conteudo = match conteudo_da_org(store, id) {
-        Ok(conteudo) => conteudo,
-        Err(erro) => return failure(erro),
+    let content = match org_content(store, id) {
+        Ok(content) => content,
+        Err(error) => return failure(error),
     };
-    if conteudo.total() > 0 && !args.force {
+    if content.total() > 0 && !args.force {
         return failure(format!(
             "a org tem conteúdo ({}). Excluir a org apaga tudo isso junto, e os produtos das \
              categorias. Para confirmar, repita o comando com --force",
-            conteudo.resumo()
+            content.summary()
         ));
     }
-    let resultado = if args.force {
+    let result = if args.force {
         store
             .orgs()
             .delete_forced(id)
-            .map_err(|erro| describe(&erro))
+            .map_err(|error| describe(&error))
     } else {
-        store.orgs().delete(id).map(|()| 0u64).map_err(|erro| {
+        store.orgs().delete(id).map(|()| 0u64).map_err(|error| {
             if matches!(
-                erro,
+                error,
                 poph_store::StoreError::Domain(poph_types::DomainError::Conflict { .. })
             ) {
                 "a org tem agentes: exclua os agentes antes, ou repita com --force".to_owned()
             } else {
-                describe(&erro)
+                describe(&error)
             }
         })
     };
-    match resultado {
-        Ok(agentes_removidos) => {
+    match result {
+        Ok(agents_removed) => {
             if args.json {
                 print_json(&json!({
                     "versao_relatorio": 1,
                     "removida": true,
                     "org_id": id.to_string(),
-                    "agentes_removidos": agentes_removidos,
-                    "categorias_removidas": conteudo.categorias,
-                    "departamentos_removidos": conteudo.departamentos,
-                    "tokens_removidos": conteudo.tokens,
+                    "agentes_removidos": agents_removed,
+                    "categorias_removidas": content.categories,
+                    "departamentos_removidos": content.departments,
+                    "tokens_removidos": content.tokens,
                 }));
             } else {
-                println!("org {id} excluída ({})", conteudo.resumo());
+                println!("org {id} excluída ({})", content.summary());
             }
             ExitCode::SUCCESS
         }
-        Err(erro) => failure(erro),
+        Err(error) => failure(error),
     }
 }
 
-/// O que existe dentro da org (o que a exclusão levaria junto).
-struct Conteudo {
-    agentes: usize,
-    categorias: usize,
-    departamentos: usize,
+struct Content {
+    agents: usize,
+    categories: usize,
+    departments: usize,
     tokens: usize,
 }
 
-impl Conteudo {
+impl Content {
     fn total(&self) -> usize {
-        self.agentes + self.categorias + self.departamentos + self.tokens
+        self.agents + self.categories + self.departments + self.tokens
     }
 
-    fn resumo(&self) -> String {
+    fn summary(&self) -> String {
         format!(
             "{} agente(s), {} categoria(s), {} departamento(s), {} token(s)",
-            self.agentes, self.categorias, self.departamentos, self.tokens
+            self.agents, self.categories, self.departments, self.tokens
         )
     }
 }
 
-fn conteudo_da_org(store: &Store, org: poph_types::OrgId) -> Result<Conteudo, String> {
-    Ok(Conteudo {
-        agentes: contar_agentes(store, org)?,
-        categorias: contar_todos(
-            |pagina| store.categories().list(org, pagina),
+fn org_content(store: &Store, org: poph_types::OrgId) -> Result<Content, String> {
+    Ok(Content {
+        agents: count_agents(store, org)?,
+        categories: contar_todos(
+            |page| store.categories().list(org, page),
             |item| item.id.as_uuid(),
         )?,
-        departamentos: contar_todos(
-            |pagina| store.departments().list(org, pagina),
+        departments: contar_todos(
+            |page| store.departments().list(org, page),
             |item| item.id.as_uuid(),
         )?,
         tokens: contar_todos(
-            |pagina| store.tokens().list(org, pagina),
+            |page| store.tokens().list(org, page),
             |item| item.id.as_uuid(),
         )?,
     })
 }
 
-fn contar_agentes(store: &Store, org: poph_types::OrgId) -> Result<usize, String> {
+fn count_agents(store: &Store, org: poph_types::OrgId) -> Result<usize, String> {
     contar_todos(
-        |pagina| store.agents().list(org, pagina),
+        |page| store.agents().list(org, page),
         |item| item.id.as_uuid(),
     )
 }
 
-/// Saída de uma org: JSON (com `agents_count` quando foi pedido) ou texto.
-fn saida(org: &Org, json: bool, mensagem: &str, agentes: Option<usize>) -> ExitCode {
+fn print_org(org: &Org, json: bool, message: &str, agents: Option<usize>) -> ExitCode {
     if json {
-        let mut valor = json_org(org);
-        if let (Some(total), Value::Object(mapa)) = (agentes, &mut valor) {
-            mapa.insert("agents_count".to_owned(), json!(total));
+        let mut value = json_org(org);
+        if let (Some(total), Value::Object(map)) = (agents, &mut value) {
+            map.insert("agents_count".to_owned(), json!(total));
         }
         print_json(&json!({
             "versao_relatorio": 1,
-            "org": valor,
+            "org": value,
         }));
     } else {
-        if !mensagem.is_empty() {
-            println!("{mensagem}\n");
+        if !message.is_empty() {
+            println!("{message}\n");
         }
-        print!("{}", texto_org(org, agentes));
+        print!("{}", org_text(org, agents));
     }
     ExitCode::SUCCESS
 }
@@ -390,39 +370,39 @@ fn json_org(org: &Org) -> Value {
     })
 }
 
-fn texto_org(org: &Org, agentes: Option<usize>) -> String {
-    let mut texto = format!(
+fn org_text(org: &Org, agents: Option<usize>) -> String {
+    let mut text = format!(
         "org {}\n  nome: {}\n  slug: {}\n  situação: {}\n",
         org.id,
         org.name,
         org.slug,
         status_in_portuguese(org.status)
     );
-    if let Some(total) = agentes {
-        texto.push_str(&format!("  agentes: {total}\n"));
+    if let Some(total) = agents {
+        text.push_str(&format!("  agentes: {total}\n"));
     }
-    texto.push_str(&format!("  versão: {}\n", org.version));
-    texto
+    text.push_str(&format!("  versão: {}\n", org.version));
+    text
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
 
     #[test]
-    fn conteudo_zerado_nao_pede_force() {
-        let vazio = Conteudo {
-            agentes: 0,
-            categorias: 0,
-            departamentos: 0,
+    fn empty_content_does_not_require_force() {
+        let empty = Content {
+            agents: 0,
+            categories: 0,
+            departments: 0,
             tokens: 0,
         };
-        assert_eq!(vazio.total(), 0);
-        let com_categoria = Conteudo {
-            categorias: 1,
-            ..vazio
+        assert_eq!(empty.total(), 0);
+        let with_category = Content {
+            categories: 1,
+            ..empty
         };
-        assert_eq!(com_categoria.total(), 1);
-        assert!(com_categoria.resumo().contains("1 categoria(s)"));
+        assert_eq!(with_category.total(), 1);
+        assert!(with_category.summary().contains("1 categoria(s)"));
     }
 }

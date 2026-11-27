@@ -81,22 +81,22 @@ fn rodar(
     let metricas_base =
         BaseMetrics::register(&registro).map_err(|erro| format!("métricas base: {erro}"))?;
     // Mesma montagem do `poph serve` (HR-26h); o chat mantém as métricas dele, fora do `/metrics`.
-    let montagem = montagem::montar(
+    let montagem = montagem::assemble(
         &configuracao,
         Arc::clone(&store),
-        montagem::Chaves {
+        montagem::Keys {
             llm: chave,
             jev: config::secrets(ambiente).typesafe,
         },
-        montagem::Metricas::proprias(metricas_base),
-        montagem::FluxosDoProcesso::default(),
+        montagem::Metrics::own(metricas_base),
+        montagem::ProcessFlows::default(),
         ambiente,
     )?;
-    let montagem::Montagem {
-        motor,
-        fluxo,
+    let montagem::Assembly {
+        engine: motor,
+        flow: fluxo,
         base,
-        catalogo,
+        catalog: catalogo,
         ..
     } = montagem;
 

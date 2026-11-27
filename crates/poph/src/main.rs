@@ -84,10 +84,10 @@ enum Comando {
     Instructions(agent::InstructionsAction),
     /// Gerencia as orgs (tenants): criar, listar, mostrar, alterar e excluir.
     #[command(subcommand)]
-    Org(org::AcaoOrg),
+    Org(org::OrgAction),
     /// Gerencia os tokens de administração de uma org (`--org`).
     #[command(subcommand)]
-    Token(token::AcaoToken),
+    Token(token::TokenAction),
     /// Gerencia as categorias de produto de uma org (`--org`).
     #[command(subcommand)]
     Category(categoria::AcaoCategoria),
@@ -105,7 +105,7 @@ enum Comando {
     Product(product::ProductAction),
     /// Biblioteca de arquivos do agente: enviar, listar, mostrar e excluir (HR-24).
     #[command(subcommand)]
-    File(arquivo::AcaoArquivo),
+    File(arquivo::FileAction),
     /// Conversa com um agente pelo terminal (streaming; Ctrl-C cancela o turno).
     Chat(chat::ChatArgs),
     /// Jev (decisões rápidas): `eval` mede um gate sobre um conjunto rotulado (HR-28).
@@ -125,7 +125,7 @@ enum Comando {
     Backup(backup::BackupAction),
     /// Roteamento entre instâncias: mostra e confere o `cluster.toml` (HR-50a).
     #[command(subcommand)]
-    Cluster(cluster::AcaoCluster),
+    Cluster(cluster::ClusterAction),
     /// Módulo Matrix: registro do Application Service (`registro`) e, por org (`--offline --org`),
     /// `estado`, `ligar`, `desligar` e `espaco`.
     #[command(subcommand)]
@@ -168,9 +168,9 @@ fn main() -> ExitCode {
         Comando::Instructions(acao) => {
             agent::run_instructions(cli.config, &ambiente, cli.org.as_deref(), acao)
         }
-        Comando::Org(acao) => org::executar(cli.config, &ambiente, cli.offline, acao),
+        Comando::Org(acao) => org::run(cli.config, &ambiente, cli.offline, acao),
         Comando::Token(acao) => {
-            token::executar(cli.config, &ambiente, cli.offline, cli.org.as_deref(), acao)
+            token::run(cli.config, &ambiente, cli.offline, cli.org.as_deref(), acao)
         }
         Comando::Category(acao) => {
             categoria::executar(cli.config, &ambiente, cli.offline, cli.org.as_deref(), acao)
@@ -185,7 +185,7 @@ fn main() -> ExitCode {
             retencao::executar(cli.config, &ambiente, cli.org.as_deref(), acao)
         }
         Comando::Backup(acao) => backup::run(cli.config, &ambiente, cli.offline, acao),
-        Comando::Cluster(acao) => cluster::executar(cli.config, &ambiente, acao),
+        Comando::Cluster(acao) => cluster::run(cli.config, &ambiente, acao),
         Comando::Matrix(acao) => {
             matrix::run(cli.config, &ambiente, cli.offline, cli.org.as_deref(), acao)
         }
@@ -197,7 +197,7 @@ fn main() -> ExitCode {
             product::run(cli.config, &ambiente, cli.offline, cli.org.as_deref(), acao)
         }
         Comando::File(acao) => {
-            arquivo::executar(cli.config, &ambiente, cli.offline, cli.org.as_deref(), acao)
+            arquivo::run(cli.config, &ambiente, cli.offline, cli.org.as_deref(), acao)
         }
         Comando::Chat(args) => chat::executar(cli.config, &ambiente, cli.org.as_deref(), args),
         Comando::Serve(args) => servidor::executar(cli.config, &ambiente, args),
