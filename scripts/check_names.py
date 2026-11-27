@@ -89,6 +89,7 @@ MANUAL_ENTRIES = (
     ("term", "e", "single letter, both languages"),
     ("term", "o", "single letter, both languages"),
     ("term", "ou", "word spelled the same in Portuguese and English"),
+    ("name", "ListaJson", "published OpenAPI schema prefix: the components are ListaJson_*"),
     ("path", "tests/fluxos/exemplos/agendar_visita.star", "published flow language example, frozen byte by byte"),
     ("path", "tests/fluxos/exemplos/confirmar_entrega.star", "published flow language example, frozen byte by byte"),
     ("path", "tests/fluxos/exemplos/triagem_suporte.star", "published flow language example, frozen byte by byte"),

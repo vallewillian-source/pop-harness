@@ -106,7 +106,7 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | whatsapp | whatsapp | traduz | console, poph-server | 258 |
 | configuracao | configuration | traduz | poph, console | 255 |
 | canal | channel | traduz | poph-server, poph-store | 253 |
-| em | in | traduz | poph-store, poph-server | 252 |
+| em | in | traduz | poph-store, poph-server | 251 |
 | linha | line | traduz | poph-server, poph | 247 |
 | limites | limits | traduz | poph-flows, poph-agent | 241 |
 | numero | number | traduz | console, poph-store | 232 |
@@ -131,11 +131,11 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | modo | mode | traduz | poph-server, console | 173 |
 | pedido | request | traduz | poph-server, poph | 173 |
 | vazio | empty | traduz | poph-server, poph-flows | 172 |
-| categoria | category | traduz | poph, poph-server | 160 |
+| categoria | category | traduz | poph, poph-server | 159 |
 | subir | raise | traduz | poph-server, poph | 159 |
 | para | for | traduz | poph-flows, poph-server | 153 |
-| lista | list | traduz | poph, poph-server | 150 |
-| produto | product | traduz | poph, poph-server | 150 |
+| lista | list | traduz | poph, poph-server | 149 |
+| produto | product | traduz | poph, poph-server | 149 |
 | responder | reply | traduz | poph-server, poph | 147 |
 | origem | origin | traduz | poph, console | 144 |
 | segredo | secret | traduz | poph-server, poph | 138 |
@@ -191,8 +191,8 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | outra | other | traduz | poph-server, poph | 80 |
 | recusa | refusal | traduz | poph-server, poph | 79 |
 | cabecalhos | headers | traduz | poph-server, poph | 78 |
-| pagina | page | traduz | poph, poph-server | 78 |
 | sessao | session | traduz | poph, console | 78 |
+| pagina | page | traduz | poph, poph-server | 77 |
 | segunda | second | traduz | poph-server, poph | 75 |
 | teste | test | traduz | poph, poph-server | 75 |
 | mapa | map | traduz | poph-server, poph | 73 |
@@ -246,9 +246,9 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | que | that | traduz | poph-server, poph | 48 |
 | resumo | summary | traduz | poph, poph-server | 48 |
 | chamada | call | traduz | poph-server, console | 47 |
-| consulta | query | traduz | poph-server, poph | 47 |
 | contem | contains | traduz | poph-flows, poph-files | 47 |
 | pedidos | requests | traduz | poph-server, poph | 47 |
+| consulta | query | traduz | poph-server, poph | 46 |
 | formato | format | traduz | poph-store, poph | 46 |
 | duracao | duration | traduz | poph-server, console | 45 |
 | fichas | cases | traduz | poph-store, poph-server | 45 |
@@ -615,7 +615,6 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | apertado | tight | traduz | poph-server | 8 |
 | aspas | quotes | traduz | poph | 8 |
 | contador | counter | traduz | poph-server | 8 |
-| exclusao | exclusion | traduz | poph-server, poph | 8 |
 | gerado | generated | traduz | poph, poph-server | 8 |
 | instalado | installed | traduz | poph-server, poph | 8 |
 | limitador | limiter | traduz | poph-server | 8 |
@@ -710,6 +709,7 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | duplicado | duplicate | traduz | poph, poph-server | 5 |
 | estatisticas | statistics | traduz | poph-server | 5 |
 | estavel | stable | traduz | poph | 5 |
+| exclusao | exclusion | traduz | poph-server, poph | 5 |
 | futuro | future | traduz | poph | 5 |
 | instalacao | installation | traduz | poph | 5 |
 | intervalo | interval | traduz | poph, poph-server | 5 |

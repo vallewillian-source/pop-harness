@@ -3,11 +3,6 @@
 # do not edit by hand.
 M08c	3	crates/poph-store/migrations/harness/0004_audit_log_matrix_user.sql
 M11a-c	49	crates/poph-server/build.rs
-M11a-c	1	crates/poph-server/src/api/categories.rs
-M11a-c	2	crates/poph-server/src/api/orgs.rs
-M11a-c	2	crates/poph-server/src/api/pagination.rs
-M11a-c	1	crates/poph-server/src/api/products.rs
-M11a-c	2	crates/poph-server/src/console.rs
 M11d	200	crates/poph-server/tests/agente_fluxos.rs
 M11d	1354	crates/poph-server/tests/api.rs
 M11d	501	crates/poph-server/tests/backup_http.rs
