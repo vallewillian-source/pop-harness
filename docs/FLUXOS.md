@@ -58,7 +58,7 @@ Testes: `cases_invariant.rs` (`closing_conversation_closes_case_and_records_even
 
 Se já existe execução ativa, o turno não pergunta nada ao Jev: o bloco da etapa atual entra no prompt. Testes: `poph-jev/tests/g9_fluxo.rs` (opções, cortes em 400 caracteres, limiares, fallback, flag), `poph-agent/tests/flow_turn.rs` (início antes do modelo, reserva, bloco da etapa) e `poph-agent/tests/flow_tools.rs`.
 
-**Revisão presa.** A execução guarda a revisão com que começou. Publicar a revisão 2 não muda a execução que está na 1 (`fluxos_e2e.rs`, `revisao_antiga_acao_humana_e_dois_fluxos_na_mesma_ficha`; `flows_migration.rs`, `published_revision_cannot_be_changed_nor_deleted`). `poph flow diff` mostra quantos atendimentos estão presos em cada revisão.
+**Revisão presa.** A execução guarda a revisão com que começou. Publicar a revisão 2 não muda a execução que está na 1 (`fluxos_e2e.rs`, `old_revision_human_action_and_two_flows_in_same_case`; `flows_migration.rs`, `published_revision_cannot_be_changed_nor_deleted`). `poph flow diff` mostra quantos atendimentos estão presos em cada revisão.
 
 **Etapas e ações.** Cada etapa pede campos (com tipo) e oferece ações. Quem age é sempre o ator da ação: `agente` (ferramenta do turno, sem escolha do modelo) ou `atendente` (pela API). Ação que não existe na etapa atual é recusada com a lista das válidas, e nada é gravado: o motor não executa ações intermediárias sozinho. Etapa que exige campo não avança sem ele, e a resposta diz o que falta (`engine.rs`: `action_validates_records_fields_and_advances_for_step_target`, `required_field_missing_returns_list_of_what_is_missing`).
 
@@ -94,9 +94,17 @@ Efeitos são o que sai do atendimento para fora da conversa. O motor só **produ
 
 **Falha não desfaz a transição.** A transição da etapa continua valendo. A falha vira o evento `efeito_falhou` na Ficha, e o atendimento segue (PRD L11).
 
-**Entrega "pelo menos uma vez".** Se o servidor cair depois do envio e antes de gravar `enviado`, o efeito pode sair de novo. Isso é aceito e documentado. Efeito já enviado não sai de novo quando a execução segue: a prova ponta a ponta roda um ciclo extra de efeitos e saída e confere que nada é reenviado (`fluxos_e2e.rs`, `exemplo_entrega_notificacao_unica_e_transferencia_com_ficha_aberta`).
+**Entrega "pelo menos uma vez".** Se o servidor cair depois do envio e antes de gravar `enviado`, o efeito pode sair de novo. Isso é aceito e documentado. Efeito já enviado não sai de novo quando a execução segue: a prova ponta a ponta roda um ciclo extra de efeitos e saída e confere que nada é reenviado (`fluxos_e2e.rs`, `example_single_notification_and_transfer_with_open_case`).
 
-**Testes.** Laço de entrega em `poph-server/tests/fluxos_efeitos.rs` (`mensagem_ao_cliente_chega_ao_cliente_uma_vez`, `notificar_whatsapp_vai_para_a_equipe_e_nao_para_o_cliente`, `sem_integracao_o_efeito_fica_pendente_e_nao_trava_o_laco`, `queda_entre_enfileirar_e_confirmar_reenvia_e_aceita_duplicata`, `falha_definitiva_vira_falhou_com_evento_e_metrica`); transição, efeitos na mesma escrita e falha no meio sem evento órfão em `poph-store/tests/flow_executions.rs` (`transition_writes_state_step_event_and_effect_in_one_write`, `failure_midway_leaves_no_event_without_state`); os três exemplos com efeitos em `fluxos_e2e.rs`.
+**Testes.** Laço de entrega em `poph-server/tests/fluxos_efeitos.rs` (`customer_message_reaches_customer_once`, `notify_whatsapp_goes_to_team_not_customer`, `without_integration_effect_stays_pending_and_does_not_block_loop`, `crash_between_enqueue_and_confirm_resends_and_accepts_duplicate`, `permanent_failure_becomes_failed_with_event_and_metric`); transição, efeitos na mesma escrita e falha no meio sem evento órfão em `poph-store/tests/flow_executions.rs` (`transition_writes_state_step_event_and_effect_in_one_write`, `failure_midway_leaves_no_event_without_state`); os três exemplos com efeitos em `fluxos_e2e.rs`.
+
+**Regras de entrega que os testes provam** (`fluxos_efeitos.rs`):
+
+- Texto acima de 4.000 caracteres é cortado no teto do canal e termina em `…`, para o cliente ver que houve corte.
+- O telefone do cliente e o da equipe não aparecem em log nem no motivo gravado no efeito (`ultimo_erro`).
+- Departamento inexistente: o efeito vai a `falhou` e o motivo diz qual departamento faltou. Conversa, execução e Ficha continuam abertas.
+- `mensagem_ao_cliente` com a conversa já encerrada vai a `falhou` (falha definitiva), sem reenvio.
+- Erro transitório (503) volta a `pendente` com uma tentativa contada e espera marcada. Antes da espera vencer, o laço não tenta de novo.
 
 ### Server delivery and representations
 

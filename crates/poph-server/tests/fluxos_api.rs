@@ -1,4 +1,3 @@
-
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -98,7 +97,7 @@ etapa(id = "coleta", nome = "Coletar dados", instrucao = "Pergunte o endereço e
 etapa(id = "confirmacao", nome = "Confirmar visita", instrucao = "Repita o endereço e o período combinados e peça a confirmação do cliente.", acoes = [acao("ok", "Visita combinada", vai_para = fim("concluida", resultado = "Visita agendada"))])
 "#;
 
-const SCRIPT_ENTREGA: &str = r#"fluxo(
+const DELIVERY_SCRIPT: &str = r#"fluxo(
     id = "confirmar_entrega",
     nome = "Confirmar entrega",
     descricao = "Confirma o horário da entrega com o cliente.",
@@ -120,49 +119,49 @@ etapa(
 )
 "#;
 
-const SCRIPT_COM_ERRO: &str = "fluxo(\n    id = \"quebrado\",\n    nome = ,\n)\n";
+const SCRIPT_WITH_ERROR: &str = "fluxo(\n    id = \"quebrado\",\n    nome = ,\n)\n";
 
-fn hash_argon2(valor: &str) -> String {
+fn hash_argon2(value: &str) -> String {
     let sal = SaltString::generate(&mut OsRng);
     Argon2::default()
-        .hash_password(valor.as_bytes(), &sal)
+        .hash_password(value.as_bytes(), &sal)
         .expect("hash argon2")
         .to_string()
 }
 
-struct Cenario {
+struct Scenario {
     base: String,
-    cliente: Client,
-    pasta: PathBuf,
+    customer: Client,
+    dir: PathBuf,
     store: Arc<Store>,
     desligar: Option<oneshot::Sender<()>>,
 }
 
-impl Cenario {
-    async fn novo(rotulo: &str) -> Self {
-        Self::novo_com(rotulo, |_| {}).await
+impl Scenario {
+    async fn fresh(label: &str) -> Self {
+        Self::fresh_with(label, |_| {}).await
     }
 
-    async fn novo_com(rotulo: &str, ajuste: impl FnOnce(&mut HarnessConfig)) -> Self {
-        let carimbo = SystemTime::now()
+    async fn fresh_with(label: &str, adjustment: impl FnOnce(&mut HarnessConfig)) -> Self {
+        let stamp = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
-            .map(|duracao| duracao.as_nanos())
+            .map(|duration| duration.as_nanos())
             .unwrap_or(0);
-        let pasta = std::env::temp_dir().join(format!(
-            "poph-server-{rotulo}-{}-{carimbo}",
+        let dir = std::env::temp_dir().join(format!(
+            "poph-server-{label}-{}-{stamp}",
             std::process::id()
         ));
-        let _ = fs::remove_dir_all(&pasta);
-        fs::create_dir_all(pasta.join("dados")).expect("pasta de dados");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("dados")).expect("pasta de dados");
 
         let mut config = HarnessConfig::default();
-        config.data.directory = pasta.join("dados");
+        config.data.directory = dir.join("dados");
         config.server.port = 7481;
         config.admin.tokens_globais = vec![GlobalTokenConfig {
             label: "teste".to_owned(),
             hash: hash_argon2(TOKEN_GLOBAL),
         }];
-        ajuste(&mut config);
+        adjustment(&mut config);
         config.validar().expect("configuração válida");
 
         let store = Arc::new(Store::open(&config).expect("abre o banco"));
@@ -172,42 +171,42 @@ impl Cenario {
             .await
             .expect("porta efêmera");
         let endereco = listener.local_addr().expect("endereço local");
-        let (desligar, sinal) = oneshot::channel();
+        let (desligar, signal) = oneshot::channel();
         tokio::spawn(async move {
             let _ = poph_server::serve_at(listener, estado, async {
-                let _ = sinal.await;
+                let _ = signal.await;
             })
             .await;
         });
 
-        let cenario = Self {
+        let scenario = Self {
             base: format!("http://{endereco}"),
-            cliente: Client::builder()
+            customer: Client::builder()
                 .timeout(Duration::from_secs(20))
                 .build()
                 .expect("cliente HTTP"),
-            pasta,
+            dir,
             store,
             desligar: Some(desligar),
         };
-        cenario.esperar_subir().await;
-        cenario
+        scenario.wait_for_boot().await;
+        scenario
     }
 
-    async fn esperar_subir(&self) {
-        let inicio = Instant::now();
+    async fn wait_for_boot(&self) {
+        let start = Instant::now();
         loop {
             match self
-                .cliente
+                .customer
                 .get(format!("{}/healthz", self.base))
                 .send()
                 .await
             {
-                Ok(resposta) if resposta.status().is_success() => return,
-                _ if inicio.elapsed() < Duration::from_secs(10) => {
+                Ok(reply) if reply.status().is_success() => return,
+                _ if start.elapsed() < Duration::from_secs(10) => {
                     tokio::time::sleep(Duration::from_millis(20)).await;
                 }
-                outro => panic!("servidor não subiu: {outro:?}"),
+                another => panic!("servidor não subiu: {another:?}"),
             }
         }
     }
@@ -216,27 +215,27 @@ impl Cenario {
         &self.store
     }
 
-    async fn pedir(
+    async fn ask(
         &self,
-        metodo: Method,
-        caminho: &str,
+        method: Method,
+        path: &str,
         token: &str,
-        corpo: Option<Value>,
+        body: Option<Value>,
         if_match: Option<u64>,
     ) -> (StatusCode, Value) {
-        let mut pedido = self
-            .cliente
-            .request(metodo, format!("{}{caminho}", self.base))
+        let mut request = self
+            .customer
+            .request(method, format!("{}{path}", self.base))
             .bearer_auth(token);
         if let Some(versao) = if_match {
-            pedido = pedido.header("If-Match", versao.to_string());
+            request = request.header("If-Match", versao.to_string());
         }
-        if let Some(valor) = corpo {
-            pedido = pedido.json(&valor);
+        if let Some(value) = body {
+            request = request.json(&value);
         }
-        let resposta = pedido.send().await.expect("pedido HTTP");
-        let status = resposta.status();
-        let texto = resposta.text().await.unwrap_or_default();
+        let reply = request.send().await.expect("pedido HTTP");
+        let status = reply.status();
+        let texto = reply.text().await.unwrap_or_default();
         let json = if texto.trim().is_empty() {
             Value::Null
         } else {
@@ -245,9 +244,9 @@ impl Cenario {
         (status, json)
     }
 
-    async fn criar_org(&self, nome: &str, slug: &str) -> String {
-        let (status, corpo) = self
-            .pedir(
+    async fn create_org(&self, nome: &str, slug: &str) -> String {
+        let (status, body) = self
+            .ask(
                 Method::POST,
                 "/admin/v1/orgs",
                 TOKEN_GLOBAL,
@@ -255,27 +254,27 @@ impl Cenario {
                 None,
             )
             .await;
-        assert_eq!(status, StatusCode::CREATED, "criar org: {corpo}");
-        corpo["id"].as_str().expect("id da org").to_owned()
+        assert_eq!(status, StatusCode::CREATED, "criar org: {body}");
+        body["id"].as_str().expect("id da org").to_owned()
     }
 
-    async fn criar_token(&self, org_id: &str, rotulo: &str) -> String {
-        let (status, corpo) = self
-            .pedir(
+    async fn create_token(&self, org_id: &str, label: &str) -> String {
+        let (status, body) = self
+            .ask(
                 Method::POST,
                 &format!("/admin/v1/orgs/{org_id}/tokens"),
                 TOKEN_GLOBAL,
-                Some(json!({ "label": rotulo })),
+                Some(json!({ "label": label })),
                 None,
             )
             .await;
-        assert_eq!(status, StatusCode::CREATED, "criar token: {corpo}");
-        corpo["value"].as_str().expect("valor do token").to_owned()
+        assert_eq!(status, StatusCode::CREATED, "criar token: {body}");
+        body["value"].as_str().expect("valor do token").to_owned()
     }
 
-    async fn criar_agente(&self, org_id: &str, token: &str, slug: &str) -> String {
-        let (status, corpo) = self
-            .pedir(
+    async fn create_agent(&self, org_id: &str, token: &str, slug: &str) -> String {
+        let (status, body) = self
+            .ask(
                 Method::POST,
                 &format!("/admin/v1/orgs/{org_id}/agents"),
                 token,
@@ -283,13 +282,13 @@ impl Cenario {
                 None,
             )
             .await;
-        assert_eq!(status, StatusCode::CREATED, "criar agente: {corpo}");
-        corpo["id"].as_str().expect("id do agente").to_owned()
+        assert_eq!(status, StatusCode::CREATED, "criar agente: {body}");
+        body["id"].as_str().expect("id do agente").to_owned()
     }
 
-    fn criar_ficha(&self, org_id: &str, agente_id: &str) -> RecordId {
+    fn create_case(&self, org_id: &str, agent_id: &str) -> RecordId {
         let org: OrgId = org_id.parse().expect("org válida");
-        let agente: AgentId = agente_id.parse().expect("agente válido");
+        let agente: AgentId = agent_id.parse().expect("agente válido");
         self.store()
             .cases()
             .create(
@@ -305,18 +304,18 @@ impl Cenario {
             .id
     }
 
-    fn abrir_execucao(
+    fn open_execution(
         &self,
         org_id: &str,
-        agente_id: &str,
+        agent_id: &str,
         ficha: RecordId,
         fluxo_id: &str,
         revisao_id: &str,
     ) {
         let org: OrgId = org_id.parse().expect("org válida");
-        let agente: AgentId = agente_id.parse().expect("agente válido");
+        let agente: AgentId = agent_id.parse().expect("agente válido");
         let fluxo: FlowId = fluxo_id.parse().expect("fluxo válido");
-        let revisao: RevisionId = revisao_id.parse().expect("revisão válida");
+        let revision: RevisionId = revisao_id.parse().expect("revisão válida");
         self.store()
             .flows()
             .release(org, agente, fluxo)
@@ -329,7 +328,7 @@ impl Cenario {
                     chave_idempotencia: None,
                     case: ficha,
                     flow: fluxo,
-                    revision: revisao,
+                    revision,
                     actor: EventActor::Agent,
                     ator_ref: Some("atendente-de-teste"),
                     jev_decision: None,
@@ -347,7 +346,7 @@ impl Cenario {
             .expect("abre a execução");
     }
 
-    fn criar_fluxo(&self, org_id: &str, slug: &str) -> FlowId {
+    fn create_flow(&self, org_id: &str, slug: &str) -> FlowId {
         let org: OrgId = org_id.parse().expect("org válida");
         self.store()
             .flows()
@@ -364,7 +363,7 @@ impl Cenario {
             .id
     }
 
-    fn auditoria(&self, org_id: &str) -> Vec<poph_store::AuditEntry> {
+    fn audit(&self, org_id: &str) -> Vec<poph_store::AuditEntry> {
         let org: OrgId = org_id.parse().expect("org válida");
         self.store()
             .audit()
@@ -373,33 +372,33 @@ impl Cenario {
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
         if let Some(desligar) = self.desligar.take() {
             let _ = desligar.send(());
         }
-        let _ = fs::remove_dir_all(&self.pasta);
+        let _ = fs::remove_dir_all(&self.dir);
     }
 }
 
-fn codigo(corpo: &Value) -> &str {
-    corpo["code"].as_str().unwrap_or("")
+fn code(body: &Value) -> &str {
+    body["code"].as_str().unwrap_or("")
 }
 
-fn primeiro_diagnostico(corpo: &Value) -> &Value {
-    &corpo["details"]["diagnostics"][0]
+fn first_diagnostic(body: &Value) -> &Value {
+    &body["details"]["diagnostics"][0]
 }
 
 #[tokio::test]
-async fn validar_formatar_criar_e_isolamento() {
-    let c = Cenario::novo("fluxos-fx27-validar").await;
-    let oa = c.criar_org("Org A", "fx27-org-a").await;
-    let ob = c.criar_org("Org B", "fx27-org-b").await;
-    let ta = c.criar_token(&oa, "a").await;
-    let tb = c.criar_token(&ob, "b").await;
+async fn validate_format_create_and_isolate() {
+    let c = Scenario::fresh("fluxos-fx27-validar").await;
+    let oa = c.create_org("Org A", "fx27-org-a").await;
+    let ob = c.create_org("Org B", "fx27-org-b").await;
+    let ta = c.create_token(&oa, "a").await;
+    let tb = c.create_token(&ob, "b").await;
 
     let (s, _) = c
-        .pedir(
+        .ask(
             Method::GET,
             &format!("/admin/v1/orgs/{oa}/flows"),
             "",
@@ -408,8 +407,8 @@ async fn validar_formatar_criar_e_isolamento() {
         )
         .await;
     assert_eq!(s, StatusCode::UNAUTHORIZED);
-    let (s, corpo) = c
-        .pedir(
+    let (s, body) = c
+        .ask(
             Method::GET,
             &format!("/admin/v1/orgs/{oa}/flows"),
             &tb,
@@ -417,11 +416,11 @@ async fn validar_formatar_criar_e_isolamento() {
             None,
         )
         .await;
-    assert_eq!(s, StatusCode::FORBIDDEN, "{corpo}");
-    assert_eq!(codigo(&corpo), "forbidden");
+    assert_eq!(s, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(code(&body), "forbidden");
 
-    let (s, corpo) = c
-        .pedir(
+    let (s, body) = c
+        .ask(
             Method::POST,
             &format!("/admin/v1/orgs/{oa}/flows/validate"),
             &ta,
@@ -429,36 +428,36 @@ async fn validar_formatar_criar_e_isolamento() {
             None,
         )
         .await;
-    assert_eq!(s, StatusCode::OK, "{corpo}");
-    assert_eq!(corpo["valid"], json!(true), "{corpo}");
-    assert_eq!(corpo["diagnostics"], json!([]), "{corpo}");
-    assert_eq!(corpo["ir"]["schema_versao"], json!(1));
-    assert_eq!(corpo["ir"]["fluxo"]["id"], json!("agendar_visita"));
-    assert_eq!(corpo["ir"]["inicio"], json!("coleta"));
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["valid"], json!(true), "{body}");
+    assert_eq!(body["diagnostics"], json!([]), "{body}");
+    assert_eq!(body["ir"]["schema_versao"], json!(1));
+    assert_eq!(body["ir"]["fluxo"]["id"], json!("agendar_visita"));
+    assert_eq!(body["ir"]["inicio"], json!("coleta"));
 
-    let (s, corpo) = c
-        .pedir(
+    let (s, body) = c
+        .ask(
             Method::POST,
             &format!("/admin/v1/orgs/{oa}/flows/validate"),
             &ta,
-            Some(json!({ "source": SCRIPT_COM_ERRO })),
+            Some(json!({ "source": SCRIPT_WITH_ERROR })),
             None,
         )
         .await;
-    assert_eq!(s, StatusCode::OK, "{corpo}");
-    assert_eq!(corpo["valid"], json!(false), "{corpo}");
-    assert_eq!(corpo["ir"], Value::Null);
-    let diagnostico = &corpo["diagnostics"][0];
-    assert_eq!(diagnostico["codigo"], json!("FLX01"), "{corpo}");
-    assert_eq!(diagnostico["severidade"], json!("erro"));
-    assert_eq!(diagnostico["linha"], json!(3), "{corpo}");
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["valid"], json!(false), "{body}");
+    assert_eq!(body["ir"], Value::Null);
+    let diagnostic = &body["diagnostics"][0];
+    assert_eq!(diagnostic["codigo"], json!("FLX01"), "{body}");
+    assert_eq!(diagnostic["severidade"], json!("erro"));
+    assert_eq!(diagnostic["linha"], json!(3), "{body}");
     assert!(
-        diagnostico["coluna"].as_u64().unwrap_or(0) >= 1,
-        "coluna do diagnóstico: {diagnostico}"
+        diagnostic["coluna"].as_u64().unwrap_or(0) >= 1,
+        "coluna do diagnóstico: {diagnostic}"
     );
 
-    let (s, corpo) = c
-        .pedir(
+    let (s, body) = c
+        .ask(
             Method::POST,
             &format!("/admin/v1/orgs/{oa}/flows/format"),
             &ta,
@@ -466,11 +465,11 @@ async fn validar_formatar_criar_e_isolamento() {
             None,
         )
         .await;
-    assert_eq!(s, StatusCode::OK, "{corpo}");
-    let canonico = corpo["source"].as_str().expect("texto canônico").to_owned();
-    assert!(canonico.contains("etapa("), "{canonico}");
-    let (s, corpo) = c
-        .pedir(
+    assert_eq!(s, StatusCode::OK, "{body}");
+    let canonical = body["source"].as_str().expect("texto canônico").to_owned();
+    assert!(canonical.contains("etapa("), "{canonical}");
+    let (s, body) = c
+        .ask(
             Method::POST,
             &format!("/admin/v1/orgs/{oa}/flows/format"),
             &ta,
@@ -478,58 +477,54 @@ async fn validar_formatar_criar_e_isolamento() {
             None,
         )
         .await;
-    assert_eq!(s, StatusCode::OK, "{corpo}");
-    assert_ne!(
-        corpo["source"],
-        json!(SCRIPT_TORTO),
-        "formatar não fez nada"
-    );
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_ne!(body["source"], json!(SCRIPT_TORTO), "formatar não fez nada");
     assert_eq!(
-        corpo["source"],
-        json!(canonico),
+        body["source"],
+        json!(canonical),
         "formas canônicas diferentes"
     );
-    let (s, corpo) = c
-        .pedir(
+    let (s, body) = c
+        .ask(
             Method::POST,
             &format!("/admin/v1/orgs/{oa}/flows/format"),
             &ta,
-            Some(json!({ "source": canonico })),
+            Some(json!({ "source": canonical })),
             None,
         )
         .await;
-    assert_eq!(s, StatusCode::OK, "{corpo}");
+    assert_eq!(s, StatusCode::OK, "{body}");
     assert_eq!(
-        corpo["source"],
-        json!(canonico),
+        body["source"],
+        json!(canonical),
         "formatar duas vezes difere"
     );
-    let (s, corpo) = c
-        .pedir(
+    let (s, body) = c
+        .ask(
             Method::POST,
             &format!("/admin/v1/orgs/{oa}/flows/format"),
             &ta,
-            Some(json!({ "source": SCRIPT_COM_ERRO })),
+            Some(json!({ "source": SCRIPT_WITH_ERROR })),
             None,
         )
         .await;
-    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{corpo}");
-    assert_eq!(codigo(&corpo), "fluxo_invalido");
-    assert_eq!(primeiro_diagnostico(&corpo)["linha"], json!(3));
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(code(&body), "fluxo_invalido");
+    assert_eq!(first_diagnostic(&body)["linha"], json!(3));
 
-    let (s, corpo) = c
-        .pedir(
+    let (s, body) = c
+        .ask(
             Method::POST,
             &format!("/admin/v1/orgs/{oa}/flows"),
             &ta,
-            Some(json!({ "source": SCRIPT_COM_ERRO })),
+            Some(json!({ "source": SCRIPT_WITH_ERROR })),
             None,
         )
         .await;
-    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{corpo}");
-    assert_eq!(codigo(&corpo), "fluxo_invalido");
-    let (s, corpo) = c
-        .pedir(
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(code(&body), "fluxo_invalido");
+    let (s, body) = c
+        .ask(
             Method::GET,
             &format!("/admin/v1/orgs/{oa}/flows"),
             &ta,
@@ -538,10 +533,10 @@ async fn validar_formatar_criar_e_isolamento() {
         )
         .await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(corpo["items"], json!([]), "{corpo}");
+    assert_eq!(body["items"], json!([]), "{body}");
 
-    let (s, corpo) = c
-        .pedir(
+    let (s, body) = c
+        .ask(
             Method::POST,
             &format!("/admin/v1/orgs/{oa}/flows"),
             &ta,
@@ -549,16 +544,16 @@ async fn validar_formatar_criar_e_isolamento() {
             None,
         )
         .await;
-    assert_eq!(s, StatusCode::CREATED, "{corpo}");
-    let fluxo = corpo["id"].as_str().expect("id do fluxo").to_owned();
-    assert_eq!(corpo["slug"], json!("agendar_visita"));
-    assert_eq!(corpo["name"], json!("Agendar visita"));
-    assert_eq!(corpo["current_revision"], Value::Null);
-    assert_eq!(corpo["version"], json!(1));
-    assert_eq!(corpo["draft_source"], json!(SCRIPT_V1));
+    assert_eq!(s, StatusCode::CREATED, "{body}");
+    let fluxo = body["id"].as_str().expect("id do fluxo").to_owned();
+    assert_eq!(body["slug"], json!("agendar_visita"));
+    assert_eq!(body["name"], json!("Agendar visita"));
+    assert_eq!(body["current_revision"], Value::Null);
+    assert_eq!(body["version"], json!(1));
+    assert_eq!(body["draft_source"], json!(SCRIPT_V1));
 
-    let (s, corpo) = c
-        .pedir(
+    let (s, body) = c
+        .ask(
             Method::GET,
             &format!("/admin/v1/orgs/{oa}/flows"),
             &ta,
@@ -567,10 +562,10 @@ async fn validar_formatar_criar_e_isolamento() {
         )
         .await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(corpo["items"].as_array().expect("items").len(), 1);
-    assert_eq!(corpo["items"][0]["id"], json!(fluxo));
-    let (s, corpo) = c
-        .pedir(
+    assert_eq!(body["items"].as_array().expect("items").len(), 1);
+    assert_eq!(body["items"][0]["id"], json!(fluxo));
+    let (s, body) = c
+        .ask(
             Method::GET,
             &format!("/admin/v1/orgs/{oa}/flows/{fluxo}"),
             &ta,
@@ -578,47 +573,47 @@ async fn validar_formatar_criar_e_isolamento() {
             None,
         )
         .await;
-    assert_eq!(s, StatusCode::OK, "{corpo}");
-    assert_eq!(corpo["revision"], Value::Null);
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["revision"], Value::Null);
 
-    let rota = format!("/admin/v1/orgs/{oa}/flows/{fluxo}");
-    let (s, corpo) = c
-        .pedir(
+    let route = format!("/admin/v1/orgs/{oa}/flows/{fluxo}");
+    let (s, body) = c
+        .ask(
             Method::PATCH,
-            &rota,
+            &route,
             &ta,
             Some(json!({ "name": "Outro nome" })),
             None,
         )
         .await;
-    assert_eq!(s, StatusCode::PRECONDITION_REQUIRED, "{corpo}");
-    let (s, corpo) = c
-        .pedir(
+    assert_eq!(s, StatusCode::PRECONDITION_REQUIRED, "{body}");
+    let (s, body) = c
+        .ask(
             Method::PATCH,
-            &rota,
+            &route,
             &ta,
             Some(json!({ "name": "Outro nome" })),
             Some(9),
         )
         .await;
-    assert_eq!(s, StatusCode::PRECONDITION_FAILED, "{corpo}");
-    assert_eq!(codigo(&corpo), "version_conflict");
-    let (s, corpo) = c
-        .pedir(
+    assert_eq!(s, StatusCode::PRECONDITION_FAILED, "{body}");
+    assert_eq!(code(&body), "version_conflict");
+    let (s, body) = c
+        .ask(
             Method::PATCH,
-            &rota,
+            &route,
             &ta,
             Some(json!({ "name": "Visita técnica", "source": SCRIPT_V2 })),
             Some(1),
         )
         .await;
-    assert_eq!(s, StatusCode::OK, "{corpo}");
-    assert_eq!(corpo["name"], json!("Visita técnica"));
-    assert_eq!(corpo["version"], json!(2));
-    assert_eq!(corpo["draft_source"], json!(SCRIPT_V2));
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["name"], json!("Visita técnica"));
+    assert_eq!(body["version"], json!(2));
+    assert_eq!(body["draft_source"], json!(SCRIPT_V2));
 
     let (s, _) = c
-        .pedir(
+        .ask(
             Method::GET,
             &format!("/admin/v1/orgs/{oa}/flows/{fluxo}"),
             &tb,
@@ -627,8 +622,8 @@ async fn validar_formatar_criar_e_isolamento() {
         )
         .await;
     assert_eq!(s, StatusCode::FORBIDDEN);
-    let (s, corpo) = c
-        .pedir(
+    let (s, body) = c
+        .ask(
             Method::GET,
             &format!("/admin/v1/orgs/{ob}/flows/{fluxo}"),
             &tb,
@@ -636,20 +631,20 @@ async fn validar_formatar_criar_e_isolamento() {
             None,
         )
         .await;
-    assert_eq!(s, StatusCode::NOT_FOUND, "{corpo}");
+    assert_eq!(s, StatusCode::NOT_FOUND, "{body}");
 }
 
 #[tokio::test]
-async fn publicar_recusas_revisoes_imutaveis_e_diff() {
-    let c = Cenario::novo("fluxos-fx27-publicar").await;
-    let oa = c.criar_org("Org A", "fx27-pub-a").await;
-    let ob = c.criar_org("Org B", "fx27-pub-b").await;
-    let ta = c.criar_token(&oa, "a").await;
-    let tb = c.criar_token(&ob, "b").await;
-    let agente = c.criar_agente(&oa, &ta, "atendente").await;
+async fn publish_refusals_immutable_revisions_and_diff() {
+    let c = Scenario::fresh("fluxos-fx27-publicar").await;
+    let oa = c.create_org("Org A", "fx27-pub-a").await;
+    let ob = c.create_org("Org B", "fx27-pub-b").await;
+    let ta = c.create_token(&oa, "a").await;
+    let tb = c.create_token(&ob, "b").await;
+    let agente = c.create_agent(&oa, &ta, "atendente").await;
 
-    let (s, corpo) = c
-        .pedir(
+    let (s, body) = c
+        .ask(
             Method::POST,
             &format!("/admin/v1/orgs/{oa}/flows"),
             &ta,
@@ -657,197 +652,197 @@ async fn publicar_recusas_revisoes_imutaveis_e_diff() {
             None,
         )
         .await;
-    assert_eq!(s, StatusCode::CREATED, "{corpo}");
-    let fluxo = corpo["id"].as_str().expect("id do fluxo").to_owned();
-    let rota = format!("/admin/v1/orgs/{oa}/flows/{fluxo}");
-    let revisoes = format!("{rota}/revisions");
+    assert_eq!(s, StatusCode::CREATED, "{body}");
+    let fluxo = body["id"].as_str().expect("id do fluxo").to_owned();
+    let route = format!("/admin/v1/orgs/{oa}/flows/{fluxo}");
+    let revisions = format!("{route}/revisions");
 
-    let (s, corpo) = c
-        .pedir(
+    let (s, body) = c
+        .ask(
             Method::POST,
-            &format!("{rota}/publish"),
+            &format!("{route}/publish"),
             &ta,
             Some(Value::Null),
             None,
         )
         .await;
-    assert_eq!(s, StatusCode::PRECONDITION_REQUIRED, "{corpo}");
-    assert_eq!(codigo(&corpo), "precondition_required");
-    let (s, corpo) = c
-        .pedir(
+    assert_eq!(s, StatusCode::PRECONDITION_REQUIRED, "{body}");
+    assert_eq!(code(&body), "precondition_required");
+    let (s, body) = c
+        .ask(
             Method::POST,
-            &format!("{rota}/publish"),
+            &format!("{route}/publish"),
             &ta,
             Some(Value::Null),
             Some(7),
         )
         .await;
-    assert_eq!(s, StatusCode::PRECONDITION_FAILED, "{corpo}");
-    assert_eq!(codigo(&corpo), "version_conflict");
-    let (s, corpo) = c.pedir(Method::GET, &revisoes, &ta, None, None).await;
+    assert_eq!(s, StatusCode::PRECONDITION_FAILED, "{body}");
+    assert_eq!(code(&body), "version_conflict");
+    let (s, body) = c.ask(Method::GET, &revisions, &ta, None, None).await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(corpo["items"], json!([]), "{corpo}");
+    assert_eq!(body["items"], json!([]), "{body}");
 
-    let (s, corpo) = c
-        .pedir(
+    let (s, body) = c
+        .ask(
             Method::POST,
-            &format!("{rota}/publish"),
+            &format!("{route}/publish"),
             &ta,
-            Some(json!({ "source": SCRIPT_COM_ERRO })),
+            Some(json!({ "source": SCRIPT_WITH_ERROR })),
             Some(1),
         )
         .await;
-    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{corpo}");
-    assert_eq!(codigo(&corpo), "fluxo_invalido");
-    assert_eq!(primeiro_diagnostico(&corpo)["linha"], json!(3));
-    let (s, corpo) = c.pedir(Method::GET, &revisoes, &ta, None, None).await;
+    assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(code(&body), "fluxo_invalido");
+    assert_eq!(first_diagnostic(&body)["linha"], json!(3));
+    let (s, body) = c.ask(Method::GET, &revisions, &ta, None, None).await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(corpo["items"], json!([]), "revisão órfã: {corpo}");
-    let (s, corpo) = c.pedir(Method::GET, &rota, &ta, None, None).await;
+    assert_eq!(body["items"], json!([]), "revisão órfã: {body}");
+    let (s, body) = c.ask(Method::GET, &route, &ta, None, None).await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(corpo["version"], json!(1), "{corpo}");
+    assert_eq!(body["version"], json!(1), "{body}");
 
-    let (s, corpo) = c
-        .pedir(
+    let (s, body) = c
+        .ask(
             Method::POST,
-            &format!("{rota}/publish"),
+            &format!("{route}/publish"),
             &ta,
             Some(Value::Null),
             Some(1),
         )
         .await;
-    assert_eq!(s, StatusCode::CREATED, "{corpo}");
-    assert_eq!(corpo["revision"]["number"], json!(1));
-    assert_eq!(corpo["revision"]["schema_version"], json!(1));
-    assert_eq!(corpo["version"], json!(2));
-    let revisao_um_id = corpo["revision"]["id"]
+    assert_eq!(s, StatusCode::CREATED, "{body}");
+    assert_eq!(body["revision"]["number"], json!(1));
+    assert_eq!(body["revision"]["schema_version"], json!(1));
+    assert_eq!(body["version"], json!(2));
+    let revision_one_id = body["revision"]["id"]
         .as_str()
         .expect("id da revisão")
         .to_owned();
 
-    let (s, um_antes) = c
-        .pedir(Method::GET, &format!("{revisoes}/1"), &ta, None, None)
+    let (s, one_before) = c
+        .ask(Method::GET, &format!("{revisions}/1"), &ta, None, None)
         .await;
-    assert_eq!(s, StatusCode::OK, "{um_antes}");
-    assert_eq!(um_antes["number"], json!(1));
-    assert_eq!(um_antes["source"], json!(SCRIPT_V1));
+    assert_eq!(s, StatusCode::OK, "{one_before}");
+    assert_eq!(one_before["number"], json!(1));
+    assert_eq!(one_before["source"], json!(SCRIPT_V1));
     assert_eq!(
-        um_antes["definition"]["fluxo"]["id"],
+        one_before["definition"]["fluxo"]["id"],
         json!("agendar_visita")
     );
-    assert!(um_antes["source_sha256"].as_str().unwrap_or("").len() == 64);
+    assert!(one_before["source_sha256"].as_str().unwrap_or("").len() == 64);
 
-    let (s, corpo) = c
-        .pedir(
+    let (s, body) = c
+        .ask(
             Method::POST,
-            &format!("{rota}/publish"),
+            &format!("{route}/publish"),
             &ta,
             Some(json!({ "source": SCRIPT_V2 })),
             Some(2),
         )
         .await;
-    assert_eq!(s, StatusCode::CREATED, "{corpo}");
-    assert_eq!(corpo["revision"]["number"], json!(2));
-    assert_eq!(corpo["version"], json!(3));
+    assert_eq!(s, StatusCode::CREATED, "{body}");
+    assert_eq!(body["revision"]["number"], json!(2));
+    assert_eq!(body["version"], json!(3));
 
-    let (s, um_depois) = c
-        .pedir(Method::GET, &format!("{revisoes}/1"), &ta, None, None)
+    let (s, one_after) = c
+        .ask(Method::GET, &format!("{revisions}/1"), &ta, None, None)
         .await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(um_depois, um_antes, "a revisão 1 mudou depois da 2");
-    assert_eq!(um_depois["id"], json!(revisao_um_id));
-    let (s, lista) = c.pedir(Method::GET, &revisoes, &ta, None, None).await;
+    assert_eq!(one_after, one_before, "a revisão 1 mudou depois da 2");
+    assert_eq!(one_after["id"], json!(revision_one_id));
+    let (s, list) = c.ask(Method::GET, &revisions, &ta, None, None).await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(lista["items"].as_array().expect("items").len(), 2);
-    assert_eq!(lista["items"][0]["number"], json!(1));
-    assert_eq!(lista["items"][1]["number"], json!(2));
-    assert_eq!(lista["next_cursor"], Value::Null);
+    assert_eq!(list["items"].as_array().expect("items").len(), 2);
+    assert_eq!(list["items"][0]["number"], json!(1));
+    assert_eq!(list["items"][1]["number"], json!(2));
+    assert_eq!(list["next_cursor"], Value::Null);
 
-    let (s, corpo) = c
-        .pedir(Method::GET, &format!("{revisoes}/9"), &ta, None, None)
+    let (s, body) = c
+        .ask(Method::GET, &format!("{revisions}/9"), &ta, None, None)
         .await;
-    assert_eq!(s, StatusCode::NOT_FOUND, "{corpo}");
+    assert_eq!(s, StatusCode::NOT_FOUND, "{body}");
 
-    let (s, corpo) = c
-        .pedir(
+    let (s, body) = c
+        .ask(
             Method::GET,
-            &format!("{rota}/diff?de=1&para=2"),
+            &format!("{route}/diff?de=1&para=2"),
             &ta,
             None,
             None,
         )
         .await;
-    assert_eq!(s, StatusCode::OK, "{corpo}");
-    assert_eq!(corpo["from"]["revision"], json!(1));
-    assert_eq!(corpo["to"]["revision"], json!(2));
-    assert_eq!(corpo["from"]["active_runs"], json!(0));
-    assert_eq!(corpo["to"]["active_runs"], json!(0));
-    let mudancas = corpo["changes"].as_array().expect("changes");
-    assert!(!mudancas.is_empty(), "diff vazio: {corpo}");
-    let instrucao = mudancas
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["from"]["revision"], json!(1));
+    assert_eq!(body["to"]["revision"], json!(2));
+    assert_eq!(body["from"]["active_runs"], json!(0));
+    assert_eq!(body["to"]["active_runs"], json!(0));
+    let changes = body["changes"].as_array().expect("changes");
+    assert!(!changes.is_empty(), "diff vazio: {body}");
+    let instruction = changes
         .iter()
         .find(|m| m["tipo"] == json!("instrucao_mudou"))
-        .unwrap_or_else(|| panic!("sem `instrucao_mudou` no diff: {corpo}"));
-    assert_eq!(instrucao["alvo"], json!("etapa:confirmacao"));
+        .unwrap_or_else(|| panic!("sem `instrucao_mudou` no diff: {body}"));
+    assert_eq!(instruction["alvo"], json!("etapa:confirmacao"));
     assert!(
-        instrucao["texto"]
+        instruction["texto"]
             .as_str()
             .unwrap_or("")
             .contains("confirmação"),
-        "frase do diff: {instrucao}"
+        "frase do diff: {instruction}"
     );
 
-    let (s, corpo) = c
-        .pedir(
+    let (s, body) = c
+        .ask(
             Method::GET,
-            &format!("{rota}/preview?etapa=coleta"),
+            &format!("{route}/preview?etapa=coleta"),
             &ta,
             None,
             None,
         )
         .await;
-    assert_eq!(s, StatusCode::OK, "{corpo}");
-    assert_eq!(corpo["stage"], json!("coleta"));
-    assert_eq!(corpo["revision"], json!(2));
-    let prompt = corpo["prompt"].as_str().expect("bloco do prompt");
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["stage"], json!("coleta"));
+    assert_eq!(body["revision"], json!(2));
+    let prompt = body["prompt"].as_str().expect("bloco do prompt");
     assert!(prompt.contains("Pergunte o endereço"), "{prompt}");
     assert!(prompt.contains("Coletar dados"), "{prompt}");
-    let (s, corpo) = c
-        .pedir(Method::GET, &format!("{rota}/preview"), &ta, None, None)
+    let (s, body) = c
+        .ask(Method::GET, &format!("{route}/preview"), &ta, None, None)
         .await;
-    assert_eq!(s, StatusCode::OK, "{corpo}");
-    assert_eq!(corpo["stage"], json!("coleta"));
-    let (s, corpo) = c
-        .pedir(
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["stage"], json!("coleta"));
+    let (s, body) = c
+        .ask(
             Method::GET,
-            &format!("{rota}/preview?etapa=nao_existe"),
+            &format!("{route}/preview?etapa=nao_existe"),
             &ta,
             None,
             None,
         )
         .await;
-    assert_eq!(s, StatusCode::NOT_FOUND, "{corpo}");
+    assert_eq!(s, StatusCode::NOT_FOUND, "{body}");
 
-    let ficha = c.criar_ficha(&oa, &agente);
-    let (s, detalhe) = c.pedir(Method::GET, &rota, &ta, None, None).await;
-    assert_eq!(s, StatusCode::OK, "{detalhe}");
-    assert_eq!(detalhe["revision"]["number"], json!(2));
-    c.abrir_execucao(&oa, &agente, ficha, &fluxo, &revisao_um_id);
-    let (s, corpo) = c
-        .pedir(
+    let ficha = c.create_case(&oa, &agente);
+    let (s, detail) = c.ask(Method::GET, &route, &ta, None, None).await;
+    assert_eq!(s, StatusCode::OK, "{detail}");
+    assert_eq!(detail["revision"]["number"], json!(2));
+    c.open_execution(&oa, &agente, ficha, &fluxo, &revision_one_id);
+    let (s, body) = c
+        .ask(
             Method::GET,
-            &format!("{rota}/diff?de=1&para=2"),
+            &format!("{route}/diff?de=1&para=2"),
             &ta,
             None,
             None,
         )
         .await;
-    assert_eq!(s, StatusCode::OK, "{corpo}");
-    assert_eq!(corpo["from"]["active_runs"], json!(1), "{corpo}");
-    assert_eq!(corpo["to"]["active_runs"], json!(0), "{corpo}");
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["from"]["active_runs"], json!(1), "{body}");
+    assert_eq!(body["to"]["active_runs"], json!(0), "{body}");
 
-    let (s, corpo) = c
-        .pedir(
+    let (s, body) = c
+        .ask(
             Method::GET,
             &format!("/admin/v1/orgs/{ob}/flows/{fluxo}/revisions"),
             &tb,
@@ -855,18 +850,18 @@ async fn publicar_recusas_revisoes_imutaveis_e_diff() {
             None,
         )
         .await;
-    assert!(!s.is_success(), "{corpo}");
+    assert!(!s.is_success(), "{body}");
 }
 
 #[tokio::test]
-async fn excluir_com_execucao_ativa_exige_force_e_audita() {
-    let c = Cenario::novo("fluxos-fx27-excluir").await;
-    let oa = c.criar_org("Org A", "fx27-del-a").await;
-    let ta = c.criar_token(&oa, "a").await;
-    let agente = c.criar_agente(&oa, &ta, "atendente").await;
+async fn delete_with_active_execution_requires_force_and_audits() {
+    let c = Scenario::fresh("fluxos-fx27-excluir").await;
+    let oa = c.create_org("Org A", "fx27-del-a").await;
+    let ta = c.create_token(&oa, "a").await;
+    let agente = c.create_agent(&oa, &ta, "atendente").await;
 
-    let (s, corpo) = c
-        .pedir(
+    let (s, body) = c
+        .ask(
             Method::POST,
             &format!("/admin/v1/orgs/{oa}/flows"),
             &ta,
@@ -874,89 +869,89 @@ async fn excluir_com_execucao_ativa_exige_force_e_audita() {
             None,
         )
         .await;
-    assert_eq!(s, StatusCode::CREATED, "{corpo}");
-    let fluxo = corpo["id"].as_str().expect("id do fluxo").to_owned();
-    let rota = format!("/admin/v1/orgs/{oa}/flows/{fluxo}");
+    assert_eq!(s, StatusCode::CREATED, "{body}");
+    let fluxo = body["id"].as_str().expect("id do fluxo").to_owned();
+    let route = format!("/admin/v1/orgs/{oa}/flows/{fluxo}");
 
-    let (s, corpo) = c
-        .pedir(
+    let (s, body) = c
+        .ask(
             Method::POST,
-            &format!("{rota}/publish"),
+            &format!("{route}/publish"),
             &ta,
             Some(Value::Null),
             Some(1),
         )
         .await;
-    assert_eq!(s, StatusCode::CREATED, "{corpo}");
-    let revisao = corpo["revision"]["id"]
+    assert_eq!(s, StatusCode::CREATED, "{body}");
+    let revision = body["revision"]["id"]
         .as_str()
         .expect("id da revisão")
         .to_owned();
 
-    let ficha = c.criar_ficha(&oa, &agente);
-    c.abrir_execucao(&oa, &agente, ficha, &fluxo, &revisao);
+    let ficha = c.create_case(&oa, &agente);
+    c.open_execution(&oa, &agente, ficha, &fluxo, &revision);
 
-    let (s, corpo) = c.pedir(Method::DELETE, &rota, &ta, None, None).await;
-    assert_eq!(s, StatusCode::CONFLICT, "{corpo}");
-    assert_eq!(corpo["details"]["active_runs"], json!(1), "{corpo}");
-    let (s, _) = c.pedir(Method::GET, &rota, &ta, None, None).await;
+    let (s, body) = c.ask(Method::DELETE, &route, &ta, None, None).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["details"]["active_runs"], json!(1), "{body}");
+    let (s, _) = c.ask(Method::GET, &route, &ta, None, None).await;
     assert_eq!(s, StatusCode::OK);
 
-    let (s, corpo) = c
-        .pedir(
+    let (s, body) = c
+        .ask(
             Method::DELETE,
-            &format!("{rota}?force=talvez"),
+            &format!("{route}?force=talvez"),
             &ta,
             None,
             None,
         )
         .await;
-    assert_eq!(s, StatusCode::BAD_REQUEST, "{corpo}");
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
 
-    let (s, corpo) = c
-        .pedir(
+    let (s, body) = c
+        .ask(
             Method::DELETE,
-            &format!("{rota}?force=true"),
+            &format!("{route}?force=true"),
             &ta,
             None,
             None,
         )
         .await;
-    assert_eq!(s, StatusCode::OK, "{corpo}");
-    assert_eq!(corpo["deleted"], json!(true));
-    assert_eq!(corpo["abandoned_runs"], json!(1), "{corpo}");
-    let (s, corpo) = c.pedir(Method::GET, &rota, &ta, None, None).await;
-    assert_eq!(s, StatusCode::NOT_FOUND, "{corpo}");
-    let exclusoes: Vec<_> = c
-        .auditoria(&oa)
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["deleted"], json!(true));
+    assert_eq!(body["abandoned_runs"], json!(1), "{body}");
+    let (s, body) = c.ask(Method::GET, &route, &ta, None, None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "{body}");
+    let deletions: Vec<_> = c
+        .audit(&oa)
         .into_iter()
         .filter(|registro| registro.acao == "flow_delete")
         .collect();
-    assert_eq!(exclusoes.len(), 1, "a exclusão tem de ser auditada");
-    assert_eq!(exclusoes[0].entity, "flow");
-    assert_eq!(exclusoes[0].entity_id.as_deref(), Some(fluxo.as_str()));
+    assert_eq!(deletions.len(), 1, "a exclusão tem de ser auditada");
+    assert_eq!(deletions[0].entity, "flow");
+    assert_eq!(deletions[0].entity_id.as_deref(), Some(fluxo.as_str()));
 
-    let publicacoes: Vec<_> = c
-        .auditoria(&oa)
+    let publications: Vec<_> = c
+        .audit(&oa)
         .into_iter()
         .filter(|registro| registro.acao == "flow_publish")
         .collect();
-    assert_eq!(publicacoes.len(), 1);
+    assert_eq!(publications.len(), 1);
 }
 
 #[tokio::test]
-async fn teto_de_fluxos_por_org_vale_na_criacao() {
-    let c = Cenario::novo_com("fluxos-fx27-teto", |config| {
+async fn per_org_flow_cap_applies_on_create() {
+    let c = Scenario::fresh_with("fluxos-fx27-teto", |config| {
         config.flows.max_flows_per_org = 1;
     })
     .await;
-    let oa = c.criar_org("Org A", "fx27-teto-a").await;
-    let ta = c.criar_token(&oa, "a").await;
+    let oa = c.create_org("Org A", "fx27-teto-a").await;
+    let ta = c.create_token(&oa, "a").await;
 
-    c.criar_fluxo(&oa, "fluxo_existente");
+    c.create_flow(&oa, "fluxo_existente");
 
-    let (s, corpo) = c
-        .pedir(
+    let (s, body) = c
+        .ask(
             Method::POST,
             &format!("/admin/v1/orgs/{oa}/flows"),
             &ta,
@@ -964,20 +959,20 @@ async fn teto_de_fluxos_por_org_vale_na_criacao() {
             None,
         )
         .await;
-    assert_eq!(s, StatusCode::CONFLICT, "{corpo}");
-    assert_eq!(codigo(&corpo), "teto_de_fluxos_por_org");
-    assert_eq!(corpo["details"]["flows"], json!(1));
-    assert_eq!(corpo["details"]["limit"], json!(1));
+    assert_eq!(s, StatusCode::CONFLICT, "{body}");
+    assert_eq!(code(&body), "teto_de_fluxos_por_org");
+    assert_eq!(body["details"]["flows"], json!(1));
+    assert_eq!(body["details"]["limit"], json!(1));
 }
 
 #[tokio::test]
-async fn criar_com_a_primeira_publicacao() {
-    let c = Cenario::novo("fluxos-fx27-criar-pub").await;
-    let oa = c.criar_org("Org A", "fx27-criar-a").await;
-    let ta = c.criar_token(&oa, "a").await;
+async fn create_with_first_publication() {
+    let c = Scenario::fresh("fluxos-fx27-criar-pub").await;
+    let oa = c.create_org("Org A", "fx27-criar-a").await;
+    let ta = c.create_token(&oa, "a").await;
 
-    let (s, corpo) = c
-        .pedir(
+    let (s, body) = c
+        .ask(
             Method::POST,
             &format!("/admin/v1/orgs/{oa}/fluxos"),
             &ta,
@@ -988,27 +983,27 @@ async fn criar_com_a_primeira_publicacao() {
     assert_eq!(
         s,
         StatusCode::NOT_FOUND,
-        "rota de fluxo não é a de Ficha: {corpo}"
+        "rota de fluxo não é a de Ficha: {body}"
     );
 
-    let (s, corpo) = c
-        .pedir(
+    let (s, body) = c
+        .ask(
             Method::POST,
             &format!("/admin/v1/orgs/{oa}/flows"),
             &ta,
-            Some(json!({ "source": SCRIPT_ENTREGA, "publish": true })),
+            Some(json!({ "source": DELIVERY_SCRIPT, "publish": true })),
             None,
         )
         .await;
-    assert_eq!(s, StatusCode::CREATED, "{corpo}");
-    let fluxo = corpo["id"].as_str().expect("id do fluxo").to_owned();
-    assert_eq!(corpo["slug"], json!("confirmar_entrega"));
-    assert_eq!(corpo["current_revision"], json!(1));
-    assert_eq!(corpo["version"], json!(2));
-    assert_eq!(corpo["revision"]["number"], json!(1));
+    assert_eq!(s, StatusCode::CREATED, "{body}");
+    let fluxo = body["id"].as_str().expect("id do fluxo").to_owned();
+    assert_eq!(body["slug"], json!("confirmar_entrega"));
+    assert_eq!(body["current_revision"], json!(1));
+    assert_eq!(body["version"], json!(2));
+    assert_eq!(body["revision"]["number"], json!(1));
 
-    let (s, revisao) = c
-        .pedir(
+    let (s, revision) = c
+        .ask(
             Method::GET,
             &format!("/admin/v1/orgs/{oa}/flows/{fluxo}/revisions/1"),
             &ta,
@@ -1016,11 +1011,11 @@ async fn criar_com_a_primeira_publicacao() {
             None,
         )
         .await;
-    assert_eq!(s, StatusCode::OK, "{revisao}");
-    assert_eq!(revisao["source"], json!(SCRIPT_ENTREGA));
+    assert_eq!(s, StatusCode::OK, "{revision}");
+    assert_eq!(revision["source"], json!(DELIVERY_SCRIPT));
     assert_eq!(
-        revisao["definition"]["fluxo"]["id"],
+        revision["definition"]["fluxo"]["id"],
         json!("confirmar_entrega")
     );
-    assert_eq!(revisao["published_by"], json!("admin_token"));
+    assert_eq!(revision["published_by"], json!("admin_token"));
 }

@@ -1,4 +1,3 @@
-
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
@@ -27,22 +26,21 @@ use poph_store::{
 };
 use poph_types::{
     DepartmentId, EffectState, EventActor, ExecutionStatus, FlowId, HarnessConfig, IntegrationId,
-    OrgId, RecordEventKind, RecordId, RecordStatus, Registry as RegistroDeMetricas, RevisionId,
+    OrgId, RecordEventKind, RecordId, RecordStatus, Registry as MetricsRegistry, RevisionId,
     Secret,
 };
 use serde_json::{Value, json};
 use tracing_subscriber::fmt::MakeWriter;
 
-const TELEFONE: &str = "5521999990001";
-const TELEFONE_EQUIPE: &str = "5521988880002";
+const PHONE: &str = "5521999990001";
+const TEAM_PHONE: &str = "5521988880002";
 const CHAVE: &str = "chave-evo-fx21-teste";
-const TETO: u64 = ATTACHMENT_CAP;
-
+const CAP: u64 = ATTACHMENT_CAP;
 
 #[derive(Clone)]
-struct Captura(Arc<Mutex<Vec<u8>>>);
+struct Capture(Arc<Mutex<Vec<u8>>>);
 
-impl std::io::Write for Captura {
+impl std::io::Write for Capture {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
         self.0.lock().unwrap().extend_from_slice(bytes);
         Ok(bytes.len())
@@ -52,19 +50,19 @@ impl std::io::Write for Captura {
     }
 }
 
-impl<'a> MakeWriter<'a> for Captura {
-    type Writer = Captura;
+impl<'a> MakeWriter<'a> for Capture {
+    type Writer = Capture;
     fn make_writer(&'a self) -> Self::Writer {
         self.clone()
     }
 }
 
-fn logs_capturados() -> Arc<Mutex<Vec<u8>>> {
+fn captured_logs() -> Arc<Mutex<Vec<u8>>> {
     static LOGS: OnceLock<Arc<Mutex<Vec<u8>>>> = OnceLock::new();
     LOGS.get_or_init(|| {
         let buffer = Arc::new(Mutex::new(Vec::new()));
         let _ = tracing_subscriber::fmt()
-            .with_writer(Captura(Arc::clone(&buffer)))
+            .with_writer(Capture(Arc::clone(&buffer)))
             .with_ansi(false)
             .with_max_level(tracing::Level::DEBUG)
             .try_init();
@@ -73,119 +71,115 @@ fn logs_capturados() -> Arc<Mutex<Vec<u8>>> {
     .clone()
 }
 
-
 #[derive(Clone, Debug)]
 struct Registro {
-    caminho: String,
+    path: String,
     apikey: Option<String>,
-    corpo: Value,
+    body: Value,
 }
 
 #[derive(Clone)]
-struct EvolucaoFalsa {
-    registros: Arc<Mutex<Vec<Registro>>>,
-    roteiro: Arc<Mutex<Vec<(u16, Value)>>>,
-    chamadas: Arc<AtomicUsize>,
+struct FakeEvolution {
+    records: Arc<Mutex<Vec<Registro>>>,
+    script: Arc<Mutex<Vec<(u16, Value)>>>,
+    calls: Arc<AtomicUsize>,
 }
 
-async fn enviar_falso(
-    State(evo): State<EvolucaoFalsa>,
+async fn send_fake(
+    State(evo): State<FakeEvolution>,
     Path(instancia): Path<String>,
-    cabecalhos: HeaderMap,
-    Json(corpo): Json<Value>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
-    let indice = evo.chamadas.fetch_add(1, Ordering::SeqCst);
-    let apikey = cabecalhos
+    let index = evo.calls.fetch_add(1, Ordering::SeqCst);
+    let apikey = headers
         .get("apikey")
-        .and_then(|valor| valor.to_str().ok())
+        .and_then(|value| value.to_str().ok())
         .map(str::to_owned);
-    evo.registros.lock().unwrap().push(Registro {
-        caminho: format!("instancia={instancia}"),
+    evo.records.lock().unwrap().push(Registro {
+        path: format!("instancia={instancia}"),
         apikey,
-        corpo,
+        body,
     });
-    let roteiro = evo.roteiro.lock().unwrap();
-    let (status, resposta) = roteiro
-        .get(indice)
-        .or_else(|| roteiro.last())
+    let script = evo.script.lock().unwrap();
+    let (status, reply) = script
+        .get(index)
+        .or_else(|| script.last())
         .cloned()
         .unwrap_or((200, json!({"key": {"id": "MSG-FX21"}})));
     (
         StatusCode::from_u16(status).expect("status do roteiro"),
-        Json(resposta),
+        Json(reply),
     )
 }
 
-async fn subir_evolucao_falsa(
-    roteiro: Vec<(u16, Value)>,
-) -> (String, EvolucaoFalsa, tokio::task::JoinHandle<()>) {
-    let evo = EvolucaoFalsa {
-        registros: Arc::new(Mutex::new(Vec::new())),
-        roteiro: Arc::new(Mutex::new(roteiro)),
-        chamadas: Arc::new(AtomicUsize::new(0)),
+async fn start_fake_evolution(
+    script: Vec<(u16, Value)>,
+) -> (String, FakeEvolution, tokio::task::JoinHandle<()>) {
+    let evo = FakeEvolution {
+        records: Arc::new(Mutex::new(Vec::new())),
+        script: Arc::new(Mutex::new(script)),
+        calls: Arc::new(AtomicUsize::new(0)),
     };
-    let roteador = Router::new()
-        .route("/message/sendText/{instancia}", post(enviar_falso))
-        .route("/message/sendMedia/{instancia}", post(enviar_falso))
+    let router = Router::new()
+        .route("/message/sendText/{instancia}", post(send_fake))
+        .route("/message/sendMedia/{instancia}", post(send_fake))
         .with_state(evo.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("porta efêmera da Evolution falsa");
     let endereco = listener.local_addr().expect("endereço da Evolution falsa");
-    let tarefa = tokio::spawn(async move {
-        let _ = axum::serve(listener, roteador).await;
+    let task = tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
     });
-    (format!("http://{endereco}"), evo, tarefa)
+    (format!("http://{endereco}"), evo, task)
 }
-
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Instancia {
     Normal,
-    SemChave,
-    SemCanal,
+    NoKey,
+    NoChannel,
 }
 
-struct Cenario {
+struct Scenario {
     store: Arc<Store>,
-    relogio: Arc<AtomicI64>,
+    clock: Arc<AtomicI64>,
     org: OrgId,
     agente: Agente,
     integracao: Option<IntegrationId>,
     conversa: poph_types::ConversationId,
     ficha: RecordId,
     fluxo: FlowId,
-    revisao: RevisionId,
-    evo: EvolucaoFalsa,
-    canais: Vec<EvolutionChannel>,
-    metricas: Arc<FlowMetrics>,
+    revision: RevisionId,
+    evo: FakeEvolution,
+    channels: Vec<EvolutionChannel>,
+    metrics: Arc<FlowMetrics>,
     blobs: PathBuf,
-    pasta: PathBuf,
-    tarefa_evo: tokio::task::JoinHandle<()>,
+    dir: PathBuf,
+    evo_task: tokio::task::JoinHandle<()>,
 }
 
-impl Cenario {
-    async fn novo(rotulo: &str, modo: Instancia, roteiro: Vec<(u16, Value)>) -> Self {
-        logs_capturados();
-        let carimbo = std::time::SystemTime::now()
+impl Scenario {
+    async fn fresh(label: &str, mode: Instancia, script: Vec<(u16, Value)>) -> Self {
+        captured_logs();
+        let stamp = std::time::SystemTime::now()
             .duration_since(std::time::SystemTime::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        let pasta = std::env::temp_dir().join(format!(
-            "poph-fx21-{rotulo}-{}-{carimbo}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&pasta);
-        fs::create_dir_all(pasta.join("dados")).expect("pasta de dados");
+        let dir =
+            std::env::temp_dir().join(format!("poph-fx21-{label}-{}-{stamp}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("dados")).expect("pasta de dados");
 
         let mut config = HarnessConfig::default();
-        config.data.directory = pasta.join("dados");
+        config.data.directory = dir.join("dados");
         config.server.port = 7481;
         config.validar().expect("configuração válida");
         let blobs = config.blobs();
 
-        let relogio = Arc::new(AtomicI64::new(1_700_000_000_000));
-        let ponteiro = Arc::clone(&relogio);
+        let clock = Arc::new(AtomicI64::new(1_700_000_000_000));
+        let ponteiro = Arc::clone(&clock);
         let store = Arc::new(
             Store::open(&config)
                 .expect("abre o banco")
@@ -213,7 +207,7 @@ impl Cenario {
             )
             .expect("cria o agente");
 
-        let integracao: Option<IntegrationId> = if modo == Instancia::SemCanal {
+        let integracao: Option<IntegrationId> = if mode == Instancia::NoChannel {
             None
         } else {
             Some(
@@ -234,7 +228,7 @@ impl Cenario {
                     agent_id: agente.id,
                     integration_id: integracao,
                     canal: "whatsapp".to_owned(),
-                    peer_externo: Some(TELEFONE.to_owned()),
+                    peer_externo: Some(PHONE.to_owned()),
                     target_department: None,
                 },
             )
@@ -247,10 +241,10 @@ impl Cenario {
             .expect("a conversa nasce com Ficha")
             .id;
 
-        let (fluxo, revisao) = fluxo_publicado(&store, org);
+        let (fluxo, revision) = published_flow(&store, org);
 
-        let (url, evo, tarefa_evo) = subir_evolucao_falsa(roteiro).await;
-        let cliente = if modo == Instancia::SemChave {
+        let (url, evo, evo_task) = start_fake_evolution(script).await;
+        let customer = if mode == Instancia::NoKey {
             None
         } else {
             Some(
@@ -261,47 +255,47 @@ impl Cenario {
                 .expect("cliente da Evolution falsa"),
             )
         };
-        let canais = match (modo, integracao) {
-            (Instancia::SemCanal, _) | (_, None) => Vec::new(),
+        let channels = match (mode, integracao) {
+            (Instancia::NoChannel, _) | (_, None) => Vec::new(),
             (_, Some(integracao)) => vec![EvolutionChannel {
                 org,
                 instance: "loja".to_owned(),
                 integration: integracao,
                 secret: None,
-                client: cliente,
-                attachment_limit: TETO,
+                client: customer,
+                attachment_limit: CAP,
             }],
         };
 
-        let registro = RegistroDeMetricas::new();
-        let metricas =
-            Arc::new(FlowMetrics::register(&registro).expect("registra as métricas de fluxos"));
+        let registry = MetricsRegistry::new();
+        let metrics =
+            Arc::new(FlowMetrics::register(&registry).expect("registra as métricas de fluxos"));
 
         Self {
             store,
-            relogio,
+            clock,
             org,
             agente,
             integracao,
             conversa,
             ficha,
             fluxo,
-            revisao,
+            revision,
             evo,
-            canais,
-            metricas,
+            channels,
+            metrics,
             blobs,
-            pasta,
-            tarefa_evo,
+            dir,
+            evo_task,
         }
     }
 
-    fn efeitos(&self) -> FlowEffects {
+    fn effects(&self) -> FlowEffects {
         FlowEffects::new(
             Arc::clone(&self.store),
-            &self.canais,
+            &self.channels,
             self.blobs.clone(),
-            Some(Arc::clone(&self.metricas)),
+            Some(Arc::clone(&self.metrics)),
             FlowEffectOptions {
                 backoff: Backoff {
                     base: Duration::from_millis(1),
@@ -317,7 +311,7 @@ impl Cenario {
     fn saida(&self) -> WhatsAppOutput {
         WhatsAppOutput::new(
             Arc::clone(&self.store),
-            &self.canais,
+            &self.channels,
             self.blobs.clone(),
             WhatsAppOutputOptions {
                 backoff: Backoff {
@@ -330,15 +324,15 @@ impl Cenario {
         )
     }
 
-    fn avancar(&self, ms: i64) {
-        self.relogio.fetch_add(ms, Ordering::SeqCst);
+    fn advance(&self, ms: i64) {
+        self.clock.fetch_add(ms, Ordering::SeqCst);
     }
 
-    fn abrir(&self, efeitos: Vec<TransitionEffect>) -> StoredExecution {
-        self.abrir_na_ficha(self.ficha, efeitos)
+    fn open(&self, effects: Vec<TransitionEffect>) -> StoredExecution {
+        self.open_in_case(self.ficha, effects)
     }
 
-    fn abrir_na_ficha(&self, ficha: RecordId, efeitos: Vec<TransitionEffect>) -> StoredExecution {
+    fn open_in_case(&self, ficha: RecordId, effects: Vec<TransitionEffect>) -> StoredExecution {
         self.store
             .flows()
             .release(self.org, self.agente.id, self.fluxo)
@@ -351,7 +345,7 @@ impl Cenario {
                     chave_idempotencia: None,
                     case: ficha,
                     flow: self.fluxo,
-                    revision: self.revisao,
+                    revision: self.revision,
                     actor: EventActor::Agent,
                     ator_ref: Some("agente-de-teste"),
                     jev_decision: None,
@@ -363,13 +357,13 @@ impl Cenario {
                         result: None,
                         reason: None,
                     },
-                    inbound_effects: efeitos,
+                    inbound_effects: effects,
                 },
             )
             .expect("abre a execução")
     }
 
-    fn outra_ficha(&self, integracao: Option<IntegrationId>) -> RecordId {
+    fn other_case(&self, integracao: Option<IntegrationId>) -> RecordId {
         let canal = if integracao.is_some() {
             "whatsapp"
         } else {
@@ -398,14 +392,14 @@ impl Cenario {
             .id
     }
 
-    fn efeitos_da_ficha(&self, execucao: poph_types::ExecutionId) -> Vec<FlowEffect> {
+    fn case_effects(&self, execution: poph_types::ExecutionId) -> Vec<FlowEffect> {
         self.store
             .executions()
-            .effects(self.org, execucao)
+            .effects(self.org, execution)
             .expect("lê os efeitos")
     }
 
-    fn eventos(&self, ficha: RecordId) -> Vec<poph_store::RecordEvent> {
+    fn events(&self, ficha: RecordId) -> Vec<poph_store::RecordEvent> {
         self.store
             .cases()
             .events(self.org, ficha, None, 100)
@@ -419,38 +413,38 @@ impl Cenario {
             .expect("lê a conversa")
     }
 
-    fn itens_da_saida(&self) -> Vec<poph_store::OutboxItem> {
+    fn outbox_items(&self) -> Vec<poph_store::OutboxItem> {
         self.store
             .outbox()
             .list_pending(self.org, 100)
             .expect("lê a outbox")
     }
 
-    fn total_de_itens(&self) -> i64 {
+    fn total_items(&self) -> i64 {
         let conn = rusqlite::Connection::open(self.store.harness_path()).expect("abre para contar");
         conn.query_row(
             "SELECT COUNT(*) FROM outbox WHERE org_id = ?1",
             rusqlite::params![self.org.to_string()],
-            |linha| linha.get::<_, i64>(0),
+            |line| line.get::<_, i64>(0),
         )
         .expect("conta a outbox")
     }
 
-    fn registros(&self) -> Vec<Registro> {
-        self.evo.registros.lock().unwrap().clone()
+    fn records(&self) -> Vec<Registro> {
+        self.evo.records.lock().unwrap().clone()
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
-        self.tarefa_evo.abort();
-        let _ = fs::remove_dir_all(&self.pasta);
+        self.evo_task.abort();
+        let _ = fs::remove_dir_all(&self.dir);
     }
 }
 
-fn fluxo_publicado(store: &Store, org: OrgId) -> (FlowId, RevisionId) {
+fn published_flow(store: &Store, org: OrgId) -> (FlowId, RevisionId) {
     let fluxo: FlowId = uuid::Uuid::now_v7().to_string().parse().expect("fluxo");
-    let revisao: RevisionId = uuid::Uuid::now_v7().to_string().parse().expect("revisão");
+    let revision: RevisionId = uuid::Uuid::now_v7().to_string().parse().expect("revisão");
     let conn = rusqlite::Connection::open(store.harness_path()).expect("abre para gravar");
     conn.execute(
         "INSERT INTO fluxos (id, org_id, slug, nome, descricao, status, rascunho_fonte,
@@ -464,14 +458,13 @@ fn fluxo_publicado(store: &Store, org: OrgId) -> (FlowId, RevisionId) {
                                     definicao_json, schema_versao, publicada_em, publicada_por,
                                     resolucoes_json)
          VALUES (?1, ?2, ?3, 1, 'fluxo()', 'sha', '{}', 1, 1, 'admin_token', '{}')",
-        rusqlite::params![revisao.to_string(), org.to_string(), fluxo.to_string()],
+        rusqlite::params![revision.to_string(), org.to_string(), fluxo.to_string()],
     )
     .expect("revisão");
-    (fluxo, revisao)
+    (fluxo, revision)
 }
 
-
-fn ao_cliente(texto: &str) -> TransitionEffect {
+fn to_customer(texto: &str) -> TransitionEffect {
     effect_of_transition(&ProducedEffect {
         chave: "etapa:boas_vindas/0".to_owned(),
         no: "etapa:boas_vindas".to_owned(),
@@ -482,13 +475,13 @@ fn ao_cliente(texto: &str) -> TransitionEffect {
     })
 }
 
-fn notificar(mensagem: &str) -> TransitionEffect {
+fn notify(mensagem: &str) -> TransitionEffect {
     effect_of_transition(&ProducedEffect {
         chave: "acao:boas_vindas.registrar/0".to_owned(),
         no: "acao:boas_vindas.registrar".to_owned(),
         index: 0,
         effect: Effect::NotifyWhatsApp {
-            para: TELEFONE_EQUIPE.to_owned(),
+            para: TEAM_PHONE.to_owned(),
             mensagem: mensagem.to_owned(),
         },
     })
@@ -505,12 +498,12 @@ fn encaminhar(departamento: &str) -> TransitionEffect {
     })
 }
 
-fn departamento(cenario: &Cenario, nome: &str) -> DepartmentId {
-    cenario
+fn departamento(scenario: &Scenario, nome: &str) -> DepartmentId {
+    scenario
         .store
         .departments()
         .create(
-            cenario.org,
+            scenario.org,
             NewDepartment {
                 name: nome.to_owned(),
                 description: String::new(),
@@ -520,150 +513,143 @@ fn departamento(cenario: &Cenario, nome: &str) -> DepartmentId {
         .id
 }
 
-
 #[tokio::test]
-async fn mensagem_ao_cliente_chega_ao_cliente_uma_vez() {
-    let cenario = Cenario::novo("ao-cliente", Instancia::Normal, Vec::new()).await;
-    let aberta = cenario.abrir(vec![ao_cliente("Recebemos seu pedido!")]);
-    let execucao = aberta.execution.id;
+async fn customer_message_reaches_customer_once() {
+    let scenario = Scenario::fresh("ao-cliente", Instancia::Normal, Vec::new()).await;
+    let opened = scenario.open(vec![to_customer("Recebemos seu pedido!")]);
+    let execution = opened.execution.id;
     assert_eq!(
-        aberta.effects.len(),
+        opened.effects.len(),
         1,
         "o efeito entrou na fila na abertura"
     );
 
-    let efeitos = cenario.efeitos();
-    let relato = efeitos.cycle_for_org(cenario.org).await.expect("ciclo");
-    assert_eq!(relato.sent, 1, "um efeito entregue");
+    let effects = scenario.effects();
+    let report = effects.cycle_for_org(scenario.org).await.expect("ciclo");
+    assert_eq!(report.sent, 1, "um efeito entregue");
 
-    let fila = cenario.efeitos_da_ficha(execucao);
-    assert_eq!(fila[0].state, EffectState::Sent);
-    assert!(fila[0].enviado_em.is_some(), "carimbo de entrega");
+    let queue = scenario.case_effects(execution);
+    assert_eq!(queue[0].state, EffectState::Sent);
+    assert!(queue[0].enviado_em.is_some(), "carimbo de entrega");
 
-    let itens = cenario.itens_da_saida();
-    assert_eq!(itens.len(), 1, "um item na outbox");
-    assert_eq!(itens[0].conversation_id, cenario.conversa);
+    let items = scenario.outbox_items();
+    assert_eq!(items.len(), 1, "um item na outbox");
+    assert_eq!(items[0].conversation_id, scenario.conversa);
     assert_eq!(
-        serde_json::from_str::<Value>(&itens[0].content_json).expect("payload")["texto"],
+        serde_json::from_str::<Value>(&items[0].content_json).expect("payload")["texto"],
         "Recebemos seu pedido!"
     );
 
-    let saida = cenario.saida();
-    let enviados = saida.cycle().await.expect("ciclo da saída");
-    assert_eq!(enviados.sent, 1);
-    let registros = cenario.registros();
-    assert_eq!(registros.len(), 1, "uma chamada à Evolution");
-    assert_eq!(registros[0].corpo["number"], TELEFONE);
-    assert_eq!(registros[0].corpo["text"], "Recebemos seu pedido!");
-    assert_eq!(
-        registros[0].caminho, "instancia=loja",
-        "pela instância da org"
-    );
+    let saida = scenario.saida();
+    let sent_items = saida.cycle().await.expect("ciclo da saída");
+    assert_eq!(sent_items.sent, 1);
+    let records = scenario.records();
+    assert_eq!(records.len(), 1, "uma chamada à Evolution");
+    assert_eq!(records[0].body["number"], PHONE);
+    assert_eq!(records[0].body["text"], "Recebemos seu pedido!");
+    assert_eq!(records[0].path, "instancia=loja", "pela instância da org");
 
-    let relato = efeitos
-        .cycle_for_org(cenario.org)
+    let report = effects
+        .cycle_for_org(scenario.org)
         .await
         .expect("segundo ciclo");
-    assert_eq!(relato.sent, 0, "efeito entregue não volta para a fila");
-    assert_eq!(cenario.total_de_itens(), 1, "sem segundo item na outbox");
+    assert_eq!(report.sent, 0, "efeito entregue não volta para a fila");
+    assert_eq!(scenario.total_items(), 1, "sem segundo item na outbox");
 
-    assert_eq!(cenario.metricas.pending_effects.value(), 1);
-    assert_eq!(cenario.metricas.sent_effects.value(), 1);
-    assert_eq!(cenario.metricas.failed_effects.value(), 0);
+    assert_eq!(scenario.metrics.pending_effects.value(), 1);
+    assert_eq!(scenario.metrics.sent_effects.value(), 1);
+    assert_eq!(scenario.metrics.failed_effects.value(), 0);
 
-    let enviados: Vec<_> = cenario
-        .eventos(cenario.ficha)
+    let sent_items: Vec<_> = scenario
+        .events(scenario.ficha)
         .into_iter()
         .filter(|evento| evento.tipo == RecordEventKind::EffectSent)
         .collect();
-    assert_eq!(enviados.len(), 1, "um evento `efeito_enviado`");
+    assert_eq!(sent_items.len(), 1, "um evento `efeito_enviado`");
 }
 
-
 #[tokio::test]
-async fn notificar_whatsapp_vai_para_a_equipe_e_nao_para_o_cliente() {
-    let cenario = Cenario::novo("notificar", Instancia::Normal, Vec::new()).await;
-    let aberta = cenario.abrir(vec![notificar("Visita marcada para amanhã")]);
-    let execucao = aberta.execution.id;
+async fn notify_whatsapp_goes_to_team_not_customer() {
+    let scenario = Scenario::fresh("notificar", Instancia::Normal, Vec::new()).await;
+    let opened = scenario.open(vec![notify("Visita marcada para amanhã")]);
+    let execution = opened.execution.id;
 
-    let relato = cenario
-        .efeitos()
-        .cycle_for_org(cenario.org)
+    let report = scenario
+        .effects()
+        .cycle_for_org(scenario.org)
         .await
         .expect("ciclo");
-    assert_eq!(relato.sent, 1);
+    assert_eq!(report.sent, 1);
 
-    let registros = cenario.registros();
-    assert_eq!(registros.len(), 1);
+    let records = scenario.records();
+    assert_eq!(records.len(), 1);
     assert_eq!(
-        registros[0].corpo["number"], TELEFONE_EQUIPE,
+        records[0].body["number"], TEAM_PHONE,
         "vai para o número da equipe"
     );
-    assert_ne!(
-        registros[0].corpo["number"], TELEFONE,
-        "não vai para o cliente"
-    );
-    assert_eq!(registros[0].corpo["text"], "Visita marcada para amanhã");
-    assert_eq!(registros[0].apikey.as_deref(), Some(CHAVE));
+    assert_ne!(records[0].body["number"], PHONE, "não vai para o cliente");
+    assert_eq!(records[0].body["text"], "Visita marcada para amanhã");
+    assert_eq!(records[0].apikey.as_deref(), Some(CHAVE));
 
-    let fila = cenario.efeitos_da_ficha(execucao);
-    assert_eq!(fila[0].state, EffectState::Sent);
+    let queue = scenario.case_effects(execution);
+    assert_eq!(queue[0].state, EffectState::Sent);
     assert!(
-        cenario.itens_da_saida().is_empty(),
+        scenario.outbox_items().is_empty(),
         "a notificação não usa a outbox da conversa"
     );
 }
 
-
 #[tokio::test]
-async fn sem_integracao_o_efeito_fica_pendente_e_nao_trava_o_laco() {
-    let cenario = Cenario::novo("sem-chave", Instancia::SemChave, Vec::new()).await;
-    let aberta = cenario.abrir(vec![notificar("aviso para a equipe")]);
-    let execucao = aberta.execution.id;
+async fn without_integration_effect_stays_pending_and_does_not_block_loop() {
+    let scenario = Scenario::fresh("sem-chave", Instancia::NoKey, Vec::new()).await;
+    let opened = scenario.open(vec![notify("aviso para a equipe")]);
+    let execution = opened.execution.id;
 
-    let efeitos = cenario.efeitos();
-    let relato = efeitos.cycle_for_org(cenario.org).await.expect("ciclo");
-    assert_eq!(relato.deferred, 1, "espera, não falha");
-    assert_eq!(relato.permanent_failures, 0);
+    let effects = scenario.effects();
+    let report = effects.cycle_for_org(scenario.org).await.expect("ciclo");
+    assert_eq!(report.deferred, 1, "espera, não falha");
+    assert_eq!(report.permanent_failures, 0);
 
-    let fila = cenario.efeitos_da_ficha(execucao);
-    assert_eq!(fila[0].state, EffectState::Pending, "continua na fila");
-    assert_eq!(fila[0].attempts, 0, "esperar não consome tentativa");
-    assert!(fila[0].ultimo_erro.is_none(), "esperar não é erro");
-    assert!(fila[0].proxima_tentativa.is_some(), "a espera fica marcada");
+    let queue = scenario.case_effects(execution);
+    assert_eq!(queue[0].state, EffectState::Pending, "continua na fila");
+    assert_eq!(queue[0].attempts, 0, "esperar não consome tentativa");
+    assert!(queue[0].ultimo_erro.is_none(), "esperar não é erro");
+    assert!(
+        queue[0].proxima_tentativa.is_some(),
+        "a espera fica marcada"
+    );
 
-    let relato = efeitos.cycle_for_org(cenario.org).await.expect("ciclo");
-    assert_eq!(relato.deferred, 0, "a espera segura o efeito");
-    assert_eq!(cenario.registros().len(), 0, "nenhuma chamada à Evolution");
+    let report = effects.cycle_for_org(scenario.org).await.expect("ciclo");
+    assert_eq!(report.deferred, 0, "a espera segura o efeito");
+    assert_eq!(scenario.records().len(), 0, "nenhuma chamada à Evolution");
 
-    let outra = cenario.outra_ficha(None);
-    cenario.abrir_na_ficha(outra, vec![ao_cliente("Mensagem de outra Ficha")]);
-    cenario.avancar(60);
-    let relato = efeitos.cycle_for_org(cenario.org).await.expect("ciclo");
-    assert_eq!(relato.sent, 1, "o outro efeito foi entregue");
-    assert_eq!(relato.deferred, 1, "o da equipe continua esperando");
+    let other = scenario.other_case(None);
+    scenario.open_in_case(other, vec![to_customer("Mensagem de outra Ficha")]);
+    scenario.advance(60);
+    let report = effects.cycle_for_org(scenario.org).await.expect("ciclo");
+    assert_eq!(report.sent, 1, "o outro efeito foi entregue");
+    assert_eq!(report.deferred, 1, "o da equipe continua esperando");
 }
 
-
 #[tokio::test]
-async fn queda_entre_enfileirar_e_confirmar_reenvia_e_aceita_duplicata() {
-    let cenario = Cenario::novo("queda", Instancia::Normal, Vec::new()).await;
-    let aberta = cenario.abrir(vec![ao_cliente("Bem-vindo!")]);
-    let execucao = aberta.execution.id;
-    let id = cenario.efeitos_da_ficha(execucao)[0].id;
+async fn crash_between_enqueue_and_confirm_resends_and_accepts_duplicate() {
+    let scenario = Scenario::fresh("queda", Instancia::Normal, Vec::new()).await;
+    let opened = scenario.open(vec![to_customer("Bem-vindo!")]);
+    let execution = opened.execution.id;
+    let id = scenario.case_effects(execution)[0].id;
 
-    cenario
+    scenario
         .store
         .effects()
-        .start_send(cenario.org, id)
+        .start_send(scenario.org, id)
         .expect("pega o efeito");
-    let (_, item) = cenario
+    let (_, item) = scenario
         .store
         .outbox()
         .enqueue(
-            cenario.org,
+            scenario.org,
             poph_store::NewOutboxItem {
-                conversation_id: cenario.conversa,
+                conversation_id: scenario.conversa,
                 turn_id: poph_types::TurnId::generate(),
                 seq: 0,
                 tipo: "text".to_owned(),
@@ -673,80 +659,75 @@ async fn queda_entre_enfileirar_e_confirmar_reenvia_e_aceita_duplicata() {
         .expect("enfileira a mensagem");
     assert!(!item.id.to_string().is_empty(), "o item da outbox existe");
     assert_eq!(
-        cenario.efeitos_da_ficha(execucao)[0].state,
+        scenario.case_effects(execution)[0].state,
         EffectState::Sending,
         "a marca da tentativa ficou gravada"
     );
 
-    let relato = cenario
-        .efeitos()
-        .cycle_for_org(cenario.org)
+    let report = scenario
+        .effects()
+        .cycle_for_org(scenario.org)
         .await
         .expect("ciclo");
-    assert_eq!(relato.sent, 1, "o reenvio acontece");
-    assert_eq!(
-        cenario.efeitos_da_ficha(execucao)[0].state,
-        EffectState::Sent
-    );
+    assert_eq!(report.sent, 1, "o reenvio acontece");
+    assert_eq!(scenario.case_effects(execution)[0].state, EffectState::Sent);
 
-    let itens = cenario.itens_da_saida();
-    assert_eq!(itens.len(), 2, "a duplicata rara é aceita, não escondida");
-    cenario.saida().cycle().await.expect("ciclo da saída");
-    assert_eq!(cenario.registros().len(), 2, "as duas chegam ao cliente");
+    let items = scenario.outbox_items();
+    assert_eq!(items.len(), 2, "a duplicata rara é aceita, não escondida");
+    scenario.saida().cycle().await.expect("ciclo da saída");
+    assert_eq!(scenario.records().len(), 2, "as duas chegam ao cliente");
 }
 
-
 #[tokio::test]
-async fn falha_definitiva_vira_falhou_com_evento_e_metrica() {
-    let cenario = Cenario::novo(
+async fn permanent_failure_becomes_failed_with_event_and_metric() {
+    let scenario = Scenario::fresh(
         "definitiva",
         Instancia::Normal,
         vec![(400, json!({"message": "número inválido"}))],
     )
     .await;
-    let aberta = cenario.abrir(vec![notificar("aviso")]);
-    let execucao = aberta.execution.id;
+    let opened = scenario.open(vec![notify("aviso")]);
+    let execution = opened.execution.id;
 
-    let relato = cenario
-        .efeitos()
-        .cycle_for_org(cenario.org)
+    let report = scenario
+        .effects()
+        .cycle_for_org(scenario.org)
         .await
         .expect("ciclo");
-    assert_eq!(relato.permanent_failures, 1, "4xx não repete");
+    assert_eq!(report.permanent_failures, 1, "4xx não repete");
 
-    let fila = cenario.efeitos_da_ficha(execucao);
-    assert_eq!(fila[0].state, EffectState::Failed);
-    assert!(fila[0].ultimo_erro.is_some(), "o motivo fica gravado");
-    assert_eq!(fila[0].attempts, 1);
-    assert_eq!(cenario.metricas.failed_effects.value(), 1);
+    let queue = scenario.case_effects(execution);
+    assert_eq!(queue[0].state, EffectState::Failed);
+    assert!(queue[0].ultimo_erro.is_some(), "o motivo fica gravado");
+    assert_eq!(queue[0].attempts, 1);
+    assert_eq!(scenario.metrics.failed_effects.value(), 1);
 
-    let atual = cenario
+    let current = scenario
         .store
         .executions()
-        .get(cenario.org, execucao)
+        .get(scenario.org, execution)
         .expect("lê a execução");
-    assert_eq!(atual.status, ExecutionStatus::Active);
-    assert_eq!(cenario.conversa().status, ConversationStatus::Open);
+    assert_eq!(current.status, ExecutionStatus::Active);
+    assert_eq!(scenario.conversa().status, ConversationStatus::Open);
 
-    let falhas: Vec<_> = cenario
-        .eventos(cenario.ficha)
+    let failures: Vec<_> = scenario
+        .events(scenario.ficha)
         .into_iter()
         .filter(|evento| evento.tipo == RecordEventKind::EffectFailed)
         .collect();
-    assert_eq!(falhas.len(), 1, "um evento `efeito_falhou`");
+    assert_eq!(failures.len(), 1, "um evento `efeito_falhou`");
 
-    let relato = cenario
-        .efeitos()
-        .cycle_for_org(cenario.org)
+    let report = scenario
+        .effects()
+        .cycle_for_org(scenario.org)
         .await
         .expect("ciclo");
-    assert_eq!(relato, FlowEffectReport::default(), "nada mais a fazer");
+    assert_eq!(report, FlowEffectReport::default(), "nada mais a fazer");
 }
 
-
 #[tokio::test]
-async fn falha_transitoria_tenta_de_novo_e_passa() {
-    let cenario = Cenario::novo(
+async fn transient_failure_retries_and_passes() {
+    let scenario = Scenario::fresh(
         "transitoria",
         Instancia::Normal,
         vec![
@@ -755,148 +736,141 @@ async fn falha_transitoria_tenta_de_novo_e_passa() {
         ],
     )
     .await;
-    let aberta = cenario.abrir(vec![notificar("aviso")]);
-    let execucao = aberta.execution.id;
+    let opened = scenario.open(vec![notify("aviso")]);
+    let execution = opened.execution.id;
 
-    let efeitos = cenario.efeitos();
-    let relato = efeitos.cycle_for_org(cenario.org).await.expect("ciclo");
-    assert_eq!(relato.transient_failures, 1);
-    let fila = cenario.efeitos_da_ficha(execucao);
-    assert_eq!(fila[0].state, EffectState::Pending, "volta para a fila");
-    assert_eq!(fila[0].attempts, 1);
-    assert!(fila[0].proxima_tentativa.is_some(), "espera marcada");
+    let effects = scenario.effects();
+    let report = effects.cycle_for_org(scenario.org).await.expect("ciclo");
+    assert_eq!(report.transient_failures, 1);
+    let queue = scenario.case_effects(execution);
+    assert_eq!(queue[0].state, EffectState::Pending, "volta para a fila");
+    assert_eq!(queue[0].attempts, 1);
+    assert!(queue[0].proxima_tentativa.is_some(), "espera marcada");
 
-    let relato = efeitos.cycle_for_org(cenario.org).await.expect("ciclo");
-    assert_eq!(relato, FlowEffectReport::default());
-    assert_eq!(cenario.registros().len(), 1, "uma tentativa até aqui");
+    let report = effects.cycle_for_org(scenario.org).await.expect("ciclo");
+    assert_eq!(report, FlowEffectReport::default());
+    assert_eq!(scenario.records().len(), 1, "uma tentativa até aqui");
 
-    cenario.avancar(50);
-    let relato = efeitos.cycle_for_org(cenario.org).await.expect("ciclo");
-    assert_eq!(relato.sent, 1);
-    assert_eq!(cenario.registros().len(), 2);
-    let fila = cenario.efeitos_da_ficha(execucao);
-    assert_eq!(fila[0].state, EffectState::Sent);
-    assert_eq!(fila[0].attempts, 2, "duas tentativas contadas");
+    scenario.advance(50);
+    let report = effects.cycle_for_org(scenario.org).await.expect("ciclo");
+    assert_eq!(report.sent, 1);
+    assert_eq!(scenario.records().len(), 2);
+    let queue = scenario.case_effects(execution);
+    assert_eq!(queue[0].state, EffectState::Sent);
+    assert_eq!(queue[0].attempts, 2, "duas tentativas contadas");
 }
 
-
 #[tokio::test]
-async fn encaminhar_transfere_a_conversa_e_mantem_a_ficha_aberta() {
-    let cenario = Cenario::novo("encaminhar", Instancia::Normal, Vec::new()).await;
-    let comercial = departamento(&cenario, "Comercial");
-    let aberta = cenario.abrir(vec![encaminhar("Comercial")]);
-    let execucao = aberta.execution.id;
+async fn forward_transfers_conversation_and_keeps_case_open() {
+    let scenario = Scenario::fresh("encaminhar", Instancia::Normal, Vec::new()).await;
+    let sales = departamento(&scenario, "Comercial");
+    let opened = scenario.open(vec![encaminhar("Comercial")]);
+    let execution = opened.execution.id;
 
-    let relato = cenario
-        .efeitos()
-        .cycle_for_org(cenario.org)
+    let report = scenario
+        .effects()
+        .cycle_for_org(scenario.org)
         .await
         .expect("ciclo");
-    assert_eq!(relato.sent, 1);
+    assert_eq!(report.sent, 1);
 
-    let conversa = cenario.conversa();
+    let conversa = scenario.conversa();
     assert_eq!(conversa.status, ConversationStatus::Transferred);
-    assert_eq!(conversa.target_department, Some(comercial));
+    assert_eq!(conversa.target_department, Some(sales));
 
-    let ficha = cenario
+    let ficha = scenario
         .store
         .cases()
-        .get(cenario.org, cenario.ficha)
+        .get(scenario.org, scenario.ficha)
         .expect("lê a Ficha");
     assert_eq!(ficha.status, RecordStatus::Open);
 
-    let auditoria = cenario
+    let audit = scenario
         .store
         .audit()
         .list(
-            cenario.org,
+            scenario.org,
             poph_store::Page {
                 after: None,
                 limit: 50,
             },
         )
         .expect("lê a auditoria");
-    let transferencia = auditoria
+    let transfer = audit
         .iter()
         .find(|registro| registro.acao == "transfer")
         .expect("auditoria da transferência");
-    assert_eq!(transferencia.ator_tipo, "system");
+    assert_eq!(transfer.ator_tipo, "system");
 
-    let tipos: Vec<RecordEventKind> = cenario
-        .eventos(cenario.ficha)
+    let types: Vec<RecordEventKind> = scenario
+        .events(scenario.ficha)
         .into_iter()
         .map(|evento| evento.tipo)
         .collect();
-    assert!(tipos.contains(&RecordEventKind::EffectSent));
-    assert!(tipos.contains(&RecordEventKind::ServiceTransferred));
+    assert!(types.contains(&RecordEventKind::EffectSent));
+    assert!(types.contains(&RecordEventKind::ServiceTransferred));
 
-    assert_eq!(
-        cenario.efeitos_da_ficha(execucao)[0].state,
-        EffectState::Sent
-    );
+    assert_eq!(scenario.case_effects(execution)[0].state, EffectState::Sent);
 }
 
-
 #[tokio::test]
-async fn departamento_inexistente_vira_falhou_sem_reverter_a_transicao() {
-    let cenario = Cenario::novo("sem-departamento", Instancia::Normal, Vec::new()).await;
-    departamento(&cenario, "Comercial");
-    departamento(&cenario, "Suporte");
-    let aberta = cenario.abrir(vec![encaminhar("Financeiro")]);
-    let execucao = aberta.execution.id;
+async fn missing_department_becomes_failed_without_reverting_transition() {
+    let scenario = Scenario::fresh("sem-departamento", Instancia::Normal, Vec::new()).await;
+    departamento(&scenario, "Comercial");
+    departamento(&scenario, "Suporte");
+    let opened = scenario.open(vec![encaminhar("Financeiro")]);
+    let execution = opened.execution.id;
 
-    let relato = cenario
-        .efeitos()
-        .cycle_for_org(cenario.org)
+    let report = scenario
+        .effects()
+        .cycle_for_org(scenario.org)
         .await
         .expect("ciclo");
-    assert_eq!(relato.permanent_failures, 1);
+    assert_eq!(report.permanent_failures, 1);
 
-    let fila = cenario.efeitos_da_ficha(execucao);
-    assert_eq!(fila[0].state, EffectState::Failed);
-    let motivo = fila[0].ultimo_erro.clone().unwrap_or_default();
+    let queue = scenario.case_effects(execution);
+    assert_eq!(queue[0].state, EffectState::Failed);
+    let motivo = queue[0].ultimo_erro.clone().unwrap_or_default();
     assert!(
         motivo.contains("Financeiro"),
         "o motivo diz qual departamento faltou: {motivo}"
     );
 
-    assert_eq!(cenario.conversa().status, ConversationStatus::Open);
-    let atual = cenario
+    assert_eq!(scenario.conversa().status, ConversationStatus::Open);
+    let current = scenario
         .store
         .executions()
-        .get(cenario.org, execucao)
+        .get(scenario.org, execution)
         .expect("lê a execução");
-    assert_eq!(atual.status, ExecutionStatus::Active);
+    assert_eq!(current.status, ExecutionStatus::Active);
 }
 
-
 #[tokio::test]
-async fn o_limite_de_4000_caracteres_do_whatsapp_e_respeitado() {
-    let cenario = Cenario::novo("limite", Instancia::Normal, Vec::new()).await;
-    let longo = "a".repeat(5_000);
-    cenario.abrir(vec![notificar(&longo)]);
+async fn whatsapp_4000_character_limit_is_respected() {
+    let scenario = Scenario::fresh("limite", Instancia::Normal, Vec::new()).await;
+    let long = "a".repeat(5_000);
+    scenario.open(vec![notify(&long)]);
 
-    let relato = cenario
-        .efeitos()
-        .cycle_for_org(cenario.org)
+    let report = scenario
+        .effects()
+        .cycle_for_org(scenario.org)
         .await
         .expect("ciclo");
-    assert_eq!(relato.sent, 1);
+    assert_eq!(report.sent, 1);
 
-    let registros = cenario.registros();
-    let enviado = registros[0].corpo["text"]
+    let records = scenario.records();
+    let sent = records[0].body["text"]
         .as_str()
         .expect("texto enviado")
         .to_owned();
-    assert_eq!(enviado.chars().count(), 4_000, "corta no teto do canal");
-    assert!(enviado.ends_with('…'), "e avisa que cortou: {enviado:.10}");
+    assert_eq!(sent.chars().count(), 4_000, "corta no teto do canal");
+    assert!(sent.ends_with('…'), "e avisa que cortou: {sent:.10}");
 }
 
-
 #[tokio::test]
-async fn o_telefone_nao_aparece_em_log_nem_no_motivo_gravado() {
-    let logs = logs_capturados();
-    let cenario = Cenario::novo(
+async fn phone_does_not_appear_in_log_or_stored_reason() {
+    let logs = captured_logs();
+    let scenario = Scenario::fresh(
         "telefone",
         Instancia::Normal,
         vec![
@@ -905,21 +879,21 @@ async fn o_telefone_nao_aparece_em_log_nem_no_motivo_gravado() {
         ],
     )
     .await;
-    cenario.abrir(vec![notificar("aviso 1")]);
-    let outra = cenario.outra_ficha(cenario.integracao);
-    let falha = cenario.abrir_na_ficha(outra, vec![notificar("aviso 2")]);
-    let efeitos = cenario.efeitos();
-    let relato = efeitos.cycle_for_org(cenario.org).await.expect("ciclo");
-    assert_eq!(relato.sent, 1);
-    assert_eq!(relato.permanent_failures, 1);
+    scenario.open(vec![notify("aviso 1")]);
+    let other = scenario.other_case(scenario.integracao);
+    let failure = scenario.open_in_case(other, vec![notify("aviso 2")]);
+    let effects = scenario.effects();
+    let report = effects.cycle_for_org(scenario.org).await.expect("ciclo");
+    assert_eq!(report.sent, 1);
+    assert_eq!(report.permanent_failures, 1);
 
-    let motivo = cenario.efeitos_da_ficha(falha.execution.id)[0]
+    let motivo = scenario.case_effects(failure.execution.id)[0]
         .ultimo_erro
         .clone()
         .unwrap_or_default();
     assert!(!motivo.is_empty(), "a falha tem motivo");
     assert!(
-        !motivo.contains(TELEFONE_EQUIPE),
+        !motivo.contains(TEAM_PHONE),
         "motivo sem telefone: {motivo}"
     );
     assert!(!motivo.contains(CHAVE), "motivo sem chave: {motivo}");
@@ -927,11 +901,11 @@ async fn o_telefone_nao_aparece_em_log_nem_no_motivo_gravado() {
     let texto = String::from_utf8_lossy(&logs.lock().unwrap()).to_string();
     assert!(!texto.is_empty(), "o coletor de log funcionou");
     assert!(
-        !texto.contains(TELEFONE),
+        !texto.contains(PHONE),
         "o telefone do cliente não pode aparecer no log"
     );
     assert!(
-        !texto.contains(TELEFONE_EQUIPE),
+        !texto.contains(TEAM_PHONE),
         "o telefone da equipe não pode aparecer no log"
     );
     assert!(
@@ -940,32 +914,34 @@ async fn o_telefone_nao_aparece_em_log_nem_no_motivo_gravado() {
     );
 }
 
-
 #[tokio::test]
-async fn a_mensagem_ao_cliente_espera_o_turno_da_conversa() {
-    let cenario = Cenario::novo("espera-turno", Instancia::Normal, Vec::new()).await;
-    let aberta = cenario.abrir(vec![ao_cliente("Mensagem fixa da etapa")]);
-    let execucao = aberta.execution.id;
+async fn customer_message_waits_for_conversation_turn() {
+    let scenario = Scenario::fresh("espera-turno", Instancia::Normal, Vec::new()).await;
+    let opened = scenario.open(vec![to_customer("Mensagem fixa da etapa")]);
+    let execution = opened.execution.id;
 
-    let turno = cenario
+    let turno = scenario
         .store
         .turns()
-        .start(cenario.org, cenario.conversa, Some(cenario.agente.id))
+        .start(scenario.org, scenario.conversa, Some(scenario.agente.id))
         .expect("abre o turno");
 
-    let efeitos = cenario.efeitos();
-    let relato = efeitos.cycle_for_org(cenario.org).await.expect("ciclo");
-    assert_eq!(relato.deferred, 1);
-    assert!(cenario.itens_da_saida().is_empty(), "nada na outbox ainda");
-    let fila = cenario.efeitos_da_ficha(execucao);
-    assert_eq!(fila[0].state, EffectState::Pending);
-    assert_eq!(fila[0].attempts, 0, "esperar o turno não consome tentativa");
+    let effects = scenario.effects();
+    let report = effects.cycle_for_org(scenario.org).await.expect("ciclo");
+    assert_eq!(report.deferred, 1);
+    assert!(scenario.outbox_items().is_empty(), "nada na outbox ainda");
+    let queue = scenario.case_effects(execution);
+    assert_eq!(queue[0].state, EffectState::Pending);
+    assert_eq!(
+        queue[0].attempts, 0,
+        "esperar o turno não consome tentativa"
+    );
 
-    cenario
+    scenario
         .store
         .turns()
         .finalise(
-            cenario.org,
+            scenario.org,
             turno.id,
             poph_store::TurnFinalization {
                 state: Some(poph_store::TurnState::Completed),
@@ -973,71 +949,69 @@ async fn a_mensagem_ao_cliente_espera_o_turno_da_conversa() {
             },
         )
         .expect("fecha o turno");
-    cenario.avancar(50);
-    let relato = efeitos.cycle_for_org(cenario.org).await.expect("ciclo");
-    assert_eq!(relato.sent, 1);
-    assert_eq!(cenario.itens_da_saida().len(), 1);
+    scenario.advance(50);
+    let report = effects.cycle_for_org(scenario.org).await.expect("ciclo");
+    assert_eq!(report.sent, 1);
+    assert_eq!(scenario.outbox_items().len(), 1);
 }
 
-
 #[tokio::test]
-async fn mensagem_ao_cliente_com_conversa_encerrada_vira_falhou() {
-    let cenario = Cenario::novo("encerrada", Instancia::Normal, Vec::new()).await;
-    let aberta = cenario.abrir(vec![ao_cliente("Mensagem fixa")]);
-    let execucao = aberta.execution.id;
+async fn customer_message_with_closed_conversation_becomes_failed() {
+    let scenario = Scenario::fresh("encerrada", Instancia::Normal, Vec::new()).await;
+    let opened = scenario.open(vec![to_customer("Mensagem fixa")]);
+    let execution = opened.execution.id;
 
-    cenario
+    scenario
         .store
         .conversations()
         .close_audited(
-            cenario.org,
-            cenario.conversa,
-            cenario.conversa().version,
+            scenario.org,
+            scenario.conversa,
+            scenario.conversa().version,
             "atendente-de-teste".to_owned(),
         )
         .expect("fecha a conversa");
 
-    let relato = cenario
-        .efeitos()
-        .cycle_for_org(cenario.org)
+    let report = scenario
+        .effects()
+        .cycle_for_org(scenario.org)
         .await
         .expect("ciclo");
-    assert_eq!(relato.permanent_failures, 1);
+    assert_eq!(report.permanent_failures, 1);
 
-    let fila = cenario.efeitos_da_ficha(execucao);
-    assert_eq!(fila[0].state, EffectState::Failed);
+    let queue = scenario.case_effects(execution);
+    assert_eq!(queue[0].state, EffectState::Failed);
     assert!(
-        fila[0]
+        queue[0]
             .ultimo_erro
             .as_deref()
             .unwrap_or_default()
             .contains("encerrada"),
         "o motivo diz que a conversa está encerrada: {:?}",
-        fila[0].ultimo_erro
+        queue[0].ultimo_erro
     );
     assert_eq!(
-        cenario.total_de_itens(),
+        scenario.total_items(),
         0,
         "nada entra na outbox de conversa encerrada"
     );
 }
 
-
 #[tokio::test]
-async fn tentativas_esgotadas_viram_falhou_com_o_motivo_certo() {
-    let cenario = Cenario::novo(
+async fn exhausted_attempts_become_failed_with_correct_reason() {
+    let scenario = Scenario::fresh(
         "esgotado",
         Instancia::Normal,
         vec![(503, json!({"message": "indisponível"}))],
     )
     .await;
-    let aberta = cenario.abrir(vec![notificar("aviso")]);
-    let execucao = aberta.execution.id;
-    let efeitos = FlowEffects::new(
-        Arc::clone(&cenario.store),
-        &cenario.canais,
-        cenario.blobs.clone(),
-        Some(Arc::clone(&cenario.metricas)),
+    let opened = scenario.open(vec![notify("aviso")]);
+    let execution = opened.execution.id;
+    let effects = FlowEffects::new(
+        Arc::clone(&scenario.store),
+        &scenario.channels,
+        scenario.blobs.clone(),
+        Some(Arc::clone(&scenario.metrics)),
         FlowEffectOptions {
             max_attempts: 2,
             backoff: Backoff {
@@ -1050,16 +1024,16 @@ async fn tentativas_esgotadas_viram_falhou_com_o_motivo_certo() {
         },
     );
 
-    efeitos.cycle_for_org(cenario.org).await.expect("1ª");
-    cenario.avancar(50);
-    efeitos.cycle_for_org(cenario.org).await.expect("2ª");
-    cenario.avancar(50);
-    let relato = efeitos.cycle_for_org(cenario.org).await.expect("3ª");
-    assert_eq!(relato.exhausted, 1);
+    effects.cycle_for_org(scenario.org).await.expect("1ª");
+    scenario.advance(50);
+    effects.cycle_for_org(scenario.org).await.expect("2ª");
+    scenario.advance(50);
+    let report = effects.cycle_for_org(scenario.org).await.expect("3ª");
+    assert_eq!(report.exhausted, 1);
 
-    let fila = cenario.efeitos_da_ficha(execucao);
-    assert_eq!(fila[0].state, EffectState::Failed);
-    assert_eq!(fila[0].attempts, 2, "o teto de tentativas vale");
-    assert_eq!(fila[0].ultimo_erro.as_deref(), Some(RETRY_LIMIT_REASON));
-    assert_eq!(cenario.metricas.failed_effects.value(), 1);
+    let queue = scenario.case_effects(execution);
+    assert_eq!(queue[0].state, EffectState::Failed);
+    assert_eq!(queue[0].attempts, 2, "o teto de tentativas vale");
+    assert_eq!(queue[0].ultimo_erro.as_deref(), Some(RETRY_LIMIT_REASON));
+    assert_eq!(scenario.metrics.failed_effects.value(), 1);
 }

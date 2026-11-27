@@ -1,10 +1,9 @@
-
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use poph_flows::engine::{self, Campos, Context, Estado as EstadoMotor};
+use poph_flows::engine::{self, Campos, Context, Estado as EngineState};
 use poph_flows::{Limites, RuleEvaluator, compile};
 use poph_server::ServerState;
 use poph_server::flow_transition::transition_engine;
@@ -36,7 +35,7 @@ etapa(
 )
 "#;
 
-const REGRA_QUEBRADA: &str = r#"fluxo(
+const BROKEN_RULE: &str = r#"fluxo(
     id = "quebra_de_regra",
     nome = "Quebra de regra",
     inicio = "coleta",
@@ -69,7 +68,7 @@ def quebrada(dados):
     return "sim"
 "#;
 
-const DUAS_DECISOES: &str = r#"fluxo(
+const TWO_DECISIONS: &str = r#"fluxo(
     id = "laco_de_decisoes",
     nome = "Laço de decisões",
     inicio = "coleta",
@@ -97,24 +96,24 @@ etapa(id = "etapa_a", nome = "A", acoes = [acao("ok", "Ok", ator = "agente", vai
 etapa(id = "etapa_b", nome = "B", acoes = [acao("ok", "Ok", ator = "agente", vai_para = fim("fim_b"))])
 "#;
 
-struct Cenario {
+struct Scenario {
     estado: Option<ServerState>,
     org: poph_types::OrgId,
     agente: poph_types::AgentId,
-    pasta: PathBuf,
+    dir: PathBuf,
 }
 
-impl Cenario {
-    fn novo(rotulo: &str) -> Self {
-        let pasta = std::env::temp_dir().join(format!(
-            "poph-fx40-{rotulo}-{}-{}",
+impl Scenario {
+    fn fresh(label: &str) -> Self {
+        let dir = std::env::temp_dir().join(format!(
+            "poph-fx40-{label}-{}-{}",
             std::process::id(),
             poph_types::AgentId::generate()
         ));
-        let _ = fs::remove_dir_all(&pasta);
-        fs::create_dir_all(pasta.join("dados")).expect("pasta de dados");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("dados")).expect("pasta de dados");
         let mut config = HarnessConfig::default();
-        config.data.directory = pasta.join("dados");
+        config.data.directory = dir.join("dados");
         let store = Arc::new(Store::open(&config).expect("abre o banco"));
         let estado = ServerState::new(store, config).expect("estado do servidor");
         assert!(
@@ -125,8 +124,8 @@ impl Cenario {
             .store
             .orgs()
             .create(NewOrg {
-                name: format!("Org {rotulo}"),
-                slug: format!("org-{rotulo}-{}", poph_types::AgentId::generate()),
+                name: format!("Org {label}"),
+                slug: format!("org-{label}-{}", poph_types::AgentId::generate()),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org")
@@ -137,8 +136,8 @@ impl Cenario {
             .create(
                 org,
                 NewAgent {
-                    name: format!("Bia {rotulo}"),
-                    slug: format!("bia-{rotulo}"),
+                    name: format!("Bia {label}"),
+                    slug: format!("bia-{label}"),
                     ..NewAgent::default()
                 },
             )
@@ -148,7 +147,7 @@ impl Cenario {
             estado: Some(estado),
             org,
             agente,
-            pasta,
+            dir,
         }
     }
 
@@ -156,7 +155,7 @@ impl Cenario {
         self.estado.as_ref().expect("o estado ainda está aqui")
     }
 
-    fn tirar_estado(&mut self) -> ServerState {
+    fn take_state(&mut self) -> ServerState {
         self.estado.take().expect("o estado ainda está aqui")
     }
 
@@ -178,11 +177,11 @@ impl Cenario {
                 },
             )
             .expect("cria o fluxo");
-        let compilado = compile(script, &Limites::default());
-        let ir = compilado
+        let compiled = compile(script, &Limites::default());
+        let ir = compiled
             .ir()
-            .unwrap_or_else(|diagnosticos| panic!("script do teste não compila: {diagnosticos:?}"));
-        let revisao = self
+            .unwrap_or_else(|diagnostics| panic!("script do teste não compila: {diagnostics:?}"));
+        let revision = self
             .store()
             .revisions()
             .publish_revision(
@@ -203,7 +202,7 @@ impl Cenario {
             .flows()
             .release(self.org, self.agente, fluxo.id)
             .expect("libera o fluxo");
-        (fluxo.id, revisao.id)
+        (fluxo.id, revision.id)
     }
 
     fn ficha(&self) -> (poph_types::ConversationId, poph_types::RecordId) {
@@ -233,11 +232,11 @@ impl Cenario {
         (conversa.id, ficha.id)
     }
 
-    fn abrir(
+    fn open(
         &self,
         ficha: poph_types::RecordId,
         fluxo: FlowId,
-        revisao: RevisionId,
+        revision: RevisionId,
         chave: &str,
     ) -> poph_store::Execution {
         self.store()
@@ -247,7 +246,7 @@ impl Cenario {
                 ExecutionStart {
                     case: ficha,
                     flow: fluxo,
-                    revision: revisao,
+                    revision,
                     actor: EventActor::Agent,
                     ator_ref: Some("atendente-de-teste"),
                     jev_decision: None,
@@ -267,23 +266,23 @@ impl Cenario {
             .execution
     }
 
-    fn agir(
+    fn act(
         &self,
         script: &str,
-        execucao: &poph_store::Execution,
+        execution: &poph_store::Execution,
         acao: &str,
-        saltos: Option<usize>,
+        jumps: Option<usize>,
         chave: &str,
     ) -> poph_store::StoredExecution {
-        let compilado = compile(script, &Limites::default());
-        let ir = compilado
+        let compiled = compile(script, &Limites::default());
+        let ir = compiled
             .ir()
-            .unwrap_or_else(|diagnosticos| panic!("script do teste não compila: {diagnosticos:?}"));
-        let avaliador = RuleEvaluator::new(script).expect("as regras do script carregam");
-        let estado = estado_do_banco(execucao);
-        let mut contexto = Context::new(&avaliador);
-        if let Some(saltos) = saltos {
-            contexto = contexto.with_jump_limit(saltos);
+            .unwrap_or_else(|diagnostics| panic!("script do teste não compila: {diagnostics:?}"));
+        let evaluator = RuleEvaluator::new(script).expect("as regras do script carregam");
+        let estado = db_state(execution);
+        let mut context = Context::new(&evaluator);
+        if let Some(jumps) = jumps {
+            context = context.with_jump_limit(jumps);
         }
         let resultado = engine::execute_action(
             ir,
@@ -292,15 +291,15 @@ impl Cenario {
             &Campos::new(),
             ActionActor::Agent,
             Some(chave),
-            &contexto,
+            &context,
         )
-        .unwrap_or_else(|erro| panic!("a passagem devia voltar desfecho: {erro}"));
+        .unwrap_or_else(|error| panic!("a passagem devia voltar desfecho: {error}"));
         self.store()
             .executions()
             .apply_transition(
                 self.org,
-                execucao.id,
-                execucao.version,
+                execution.id,
+                execution.version,
                 &transition_engine(&resultado),
                 chave,
                 TransitionExtras {
@@ -311,15 +310,15 @@ impl Cenario {
             .expect("grava a transição")
     }
 
-    fn contadores(&self) -> ExecutionMetrics {
+    fn counters(&self) -> ExecutionMetrics {
         self.estado()
             .flow_metrics()
             .expect("motor ligado")
             .execution_metrics()
     }
 
-    fn valores(&self) -> (u64, u64, u64, u64, u64) {
-        let c = self.contadores();
+    fn values(&self) -> (u64, u64, u64, u64, u64) {
+        let c = self.counters();
         (
             c.started.value(),
             c.completed.value(),
@@ -330,50 +329,48 @@ impl Cenario {
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.pasta);
+        let _ = fs::remove_dir_all(&self.dir);
     }
 }
 
-fn estado_do_banco(execucao: &poph_store::Execution) -> EstadoMotor {
-    let ir = {
-        &execucao.no_atual
-    };
-    EstadoMotor {
-        fluxo_id: execucao.fluxo_id.to_string(),
-        status: execucao.status,
+fn db_state(execution: &poph_store::Execution) -> EngineState {
+    let ir = { &execution.no_atual };
+    EngineState {
+        fluxo_id: execution.fluxo_id.to_string(),
+        status: execution.status,
         no_atual: poph_flows::ir::Destination::Etapa { id: ir.clone() },
         dados: poph_flows::Dados::new(),
         actors_who_acted: Vec::new(),
-        resultado: execucao.result.clone(),
-        motivo: execucao.motivo_fim.clone(),
+        resultado: execution.result.clone(),
+        motivo: execution.motivo_fim.clone(),
         keys: Default::default(),
     }
 }
 
 #[test]
-fn abertura_conta_uma_vez_e_repetir_a_chave_nao_conta_de_novo() {
-    let cenario = Cenario::novo("abertura");
-    let (fluxo, revisao) = cenario.fluxo(CONCLUSIVO, "triagem_contadores");
-    let (_, ficha) = cenario.ficha();
+fn open_counts_once_and_repeat_key_does_not_count_again() {
+    let scenario = Scenario::fresh("abertura");
+    let (fluxo, revision) = scenario.fluxo(CONCLUSIVO, "triagem_contadores");
+    let (_, ficha) = scenario.ficha();
 
-    let primeira = cenario.abrir(ficha, fluxo, revisao, "abertura-1");
+    let first = scenario.open(ficha, fluxo, revision, "abertura-1");
     assert_eq!(
-        cenario.valores().0,
+        scenario.values().0,
         1,
         "a abertura conta uma execução iniciada"
     );
 
-    let repetida = cenario
+    let repeated = scenario
         .store()
         .executions()
         .start_execution(
-            cenario.org,
+            scenario.org,
             ExecutionStart {
                 case: ficha,
                 flow: fluxo,
-                revision: revisao,
+                revision,
                 actor: EventActor::Agent,
                 ator_ref: Some("atendente-de-teste"),
                 jev_decision: None,
@@ -390,35 +387,35 @@ fn abertura_conta_uma_vez_e_repetir_a_chave_nao_conta_de_novo() {
             },
         )
         .expect("repetir a chave devolve a execução");
-    assert!(repetida.repeated, "a segunda abertura é repetição");
-    assert_eq!(repetida.execution.id, primeira.id);
-    assert_eq!(cenario.valores().0, 1, "repetir não soma outra iniciada");
+    assert!(repeated.repeated, "a segunda abertura é repetição");
+    assert_eq!(repeated.execution.id, first.id);
+    assert_eq!(scenario.values().0, 1, "repetir não soma outra iniciada");
 }
 
 #[test]
-fn conclusao_conta_concluida_e_repetir_a_chave_nao_soma() {
-    let cenario = Cenario::novo("conclusao");
-    let (fluxo, revisao) = cenario.fluxo(CONCLUSIVO, "triagem_contadores");
-    let (_, ficha) = cenario.ficha();
-    let execucao = cenario.abrir(ficha, fluxo, revisao, "conclusao-1");
+fn completion_counts_completed_and_repeat_key_does_not_add() {
+    let scenario = Scenario::fresh("conclusao");
+    let (fluxo, revision) = scenario.fluxo(CONCLUSIVO, "triagem_contadores");
+    let (_, ficha) = scenario.ficha();
+    let execution = scenario.open(ficha, fluxo, revision, "conclusao-1");
 
-    let gravada = cenario.agir(CONCLUSIVO, &execucao, "concluir", None, "acao-1");
-    assert_eq!(gravada.execution.status, ExecutionStatus::Completed);
+    let stored = scenario.act(CONCLUSIVO, &execution, "concluir", None, "acao-1");
+    assert_eq!(stored.execution.status, ExecutionStatus::Completed);
     assert_eq!(
-        cenario.valores(),
+        scenario.values(),
         (1, 1, 0, 0, 0),
         "iniciada e concluída, nada em abandono nem em falha"
     );
 
-    let de_novo = cenario
+    let again = scenario
         .store()
         .executions()
         .apply_transition(
-            cenario.org,
-            gravada.execution.id,
-            gravada.execution.version,
+            scenario.org,
+            stored.execution.id,
+            stored.execution.version,
             &transition_engine(&engine::Resultado {
-                new_state: estado_do_banco(&gravada.execution),
+                new_state: db_state(&stored.execution),
                 events: Vec::new(),
                 effects: Vec::new(),
                 waiting: Vec::new(),
@@ -430,18 +427,18 @@ fn conclusao_conta_concluida_e_repetir_a_chave_nao_soma() {
             TransitionExtras::default(),
         )
         .expect("repetir devolve o desfecho");
-    assert!(de_novo.repeated, "a repetição é marcada");
-    assert_eq!(cenario.valores(), (1, 1, 0, 0, 0), "nada somou");
+    assert!(again.repeated, "a repetição é marcada");
+    assert_eq!(scenario.values(), (1, 1, 0, 0, 0), "nada somou");
 }
 
 #[test]
-fn abandono_pelo_agente_conta_abandonada() {
-    let cenario = Cenario::novo("abandono");
-    let (fluxo, revisao) = cenario.fluxo(CONCLUSIVO, "triagem_contadores");
-    let (_, ficha) = cenario.ficha();
-    let execucao = cenario.abrir(ficha, fluxo, revisao, "abandono-1");
+fn abandon_by_agent_counts_abandoned() {
+    let scenario = Scenario::fresh("abandono");
+    let (fluxo, revision) = scenario.fluxo(CONCLUSIVO, "triagem_contadores");
+    let (_, ficha) = scenario.ficha();
+    let execution = scenario.open(ficha, fluxo, revision, "abandono-1");
 
-    let estado = estado_do_banco(&execucao);
+    let estado = db_state(&execution);
     let resultado = engine::abandon(
         &estado,
         "cliente desistiu",
@@ -449,13 +446,13 @@ fn abandono_pelo_agente_conta_abandonada() {
         Some("ab-1"),
     )
     .expect("o abandono volta com o desfecho");
-    cenario
+    scenario
         .store()
         .executions()
         .apply_transition(
-            cenario.org,
-            execucao.id,
-            execucao.version,
+            scenario.org,
+            execution.id,
+            execution.version,
             &transition_engine(&resultado),
             "ab-1",
             TransitionExtras::default(),
@@ -463,31 +460,31 @@ fn abandono_pelo_agente_conta_abandonada() {
         .expect("grava o abandono");
 
     assert_eq!(
-        cenario.valores(),
+        scenario.values(),
         (1, 0, 1, 0, 0),
         "uma iniciada, uma abandonada"
     );
 }
 
 #[test]
-fn fechar_o_atendimento_com_execucao_ativa_conta_abandono() {
-    let cenario = Cenario::novo("fechamento");
-    let (fluxo, revisao) = cenario.fluxo(CONCLUSIVO, "triagem_contadores");
-    let (conversa, ficha) = cenario.ficha();
-    cenario.abrir(ficha, fluxo, revisao, "fechamento-1");
-    assert_eq!(cenario.valores().0, 1);
+fn closing_case_with_active_execution_counts_abandon() {
+    let scenario = Scenario::fresh("fechamento");
+    let (fluxo, revision) = scenario.fluxo(CONCLUSIVO, "triagem_contadores");
+    let (conversa, ficha) = scenario.ficha();
+    scenario.open(ficha, fluxo, revision, "fechamento-1");
+    assert_eq!(scenario.values().0, 1);
 
-    let versao = cenario
+    let versao = scenario
         .store()
         .conversations()
-        .get(cenario.org, conversa)
+        .get(scenario.org, conversa)
         .expect("lê a conversa")
         .version;
-    cenario
+    scenario
         .store()
         .conversations()
         .close_audited(
-            cenario.org,
+            scenario.org,
             conversa,
             versao,
             "atendente-de-teste".to_owned(),
@@ -495,58 +492,58 @@ fn fechar_o_atendimento_com_execucao_ativa_conta_abandono() {
         .expect("fecha o atendimento");
 
     assert_eq!(
-        cenario.valores(),
+        scenario.values(),
         (1, 0, 1, 0, 0),
         "o fechamento abandonou a execução ativa"
     );
 }
 
 #[test]
-fn falha_de_regra_conta_falha_e_erro_de_regra() {
-    let cenario = Cenario::novo("regra");
-    let (fluxo, revisao) = cenario.fluxo(REGRA_QUEBRADA, "quebra_de_regra");
-    let (_, ficha) = cenario.ficha();
-    let execucao = cenario.abrir(ficha, fluxo, revisao, "regra-1");
+fn rule_failure_counts_failure_and_rule_error() {
+    let scenario = Scenario::fresh("regra");
+    let (fluxo, revision) = scenario.fluxo(BROKEN_RULE, "quebra_de_regra");
+    let (_, ficha) = scenario.ficha();
+    let execution = scenario.open(ficha, fluxo, revision, "regra-1");
 
-    let gravada = cenario.agir(REGRA_QUEBRADA, &execucao, "ir", None, "acao-regra");
-    assert_eq!(gravada.execution.status, ExecutionStatus::Failed);
+    let stored = scenario.act(BROKEN_RULE, &execution, "ir", None, "acao-regra");
+    assert_eq!(stored.execution.status, ExecutionStatus::Failed);
     assert_eq!(
-        cenario.valores(),
+        scenario.values(),
         (1, 0, 0, 1, 1),
         "a falha conta em falhas e a avaliação que não deu conta em erro de regra"
     );
 }
 
 #[test]
-fn falha_que_nao_e_de_regra_nao_conta_erro_de_regra() {
-    let cenario = Cenario::novo("saltos");
-    let (fluxo, revisao) = cenario.fluxo(DUAS_DECISOES, "laco_de_decisoes");
-    let (_, ficha) = cenario.ficha();
-    let execucao = cenario.abrir(ficha, fluxo, revisao, "saltos-1");
+fn non_rule_failure_does_not_count_rule_error() {
+    let scenario = Scenario::fresh("saltos");
+    let (fluxo, revision) = scenario.fluxo(TWO_DECISIONS, "laco_de_decisoes");
+    let (_, ficha) = scenario.ficha();
+    let execution = scenario.open(ficha, fluxo, revision, "saltos-1");
 
-    let gravada = cenario.agir(DUAS_DECISOES, &execucao, "ir", Some(1), "acao-saltos");
-    assert_eq!(gravada.execution.status, ExecutionStatus::Failed);
+    let stored = scenario.act(TWO_DECISIONS, &execution, "ir", Some(1), "acao-saltos");
+    assert_eq!(stored.execution.status, ExecutionStatus::Failed);
     assert_eq!(
-        cenario.valores(),
+        scenario.values(),
         (1, 0, 0, 1, 0),
         "falha conta em falhas; erro de regra fica zerado"
     );
 }
 
 #[tokio::test]
-async fn metrics_publica_os_contadores_das_execucoes() {
-    let mut cenario = Cenario::novo("metrics");
-    let (fluxo, revisao) = cenario.fluxo(CONCLUSIVO, "triagem_contadores");
-    let (_, ficha) = cenario.ficha();
-    let execucao = cenario.abrir(ficha, fluxo, revisao, "metrics-1");
-    cenario.agir(CONCLUSIVO, &execucao, "concluir", None, "acao-metrics");
-    let (_, outra) = cenario.ficha();
-    cenario.abrir(outra, fluxo, revisao, "metrics-2");
-    assert_eq!(cenario.valores(), (2, 1, 0, 0, 0));
+async fn metrics_publishes_execution_counters() {
+    let mut scenario = Scenario::fresh("metrics");
+    let (fluxo, revision) = scenario.fluxo(CONCLUSIVO, "triagem_contadores");
+    let (_, ficha) = scenario.ficha();
+    let execution = scenario.open(ficha, fluxo, revision, "metrics-1");
+    scenario.act(CONCLUSIVO, &execution, "concluir", None, "acao-metrics");
+    let (_, other) = scenario.ficha();
+    scenario.open(other, fluxo, revision, "metrics-2");
+    assert_eq!(scenario.values(), (2, 1, 0, 0, 0));
 
-    let estado = cenario.tirar_estado();
-    let texto = metricas_http(estado).await;
-    let _ = fs::remove_dir_all(&cenario.pasta);
+    let estado = scenario.take_state();
+    let texto = metrics_http(estado).await;
+    let _ = fs::remove_dir_all(&scenario.dir);
     assert!(
         texto.contains("poph_fluxos_execucoes_iniciadas_total 2\n"),
         "{texto}"
@@ -563,35 +560,35 @@ async fn metrics_publica_os_contadores_das_execucoes() {
     );
 }
 
-async fn metricas_http(estado: ServerState) -> String {
+async fn metrics_http(estado: ServerState) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("porta efêmera");
     let endereco = listener.local_addr().expect("endereço");
-    let (desligar, sinal) = tokio::sync::oneshot::channel::<()>();
+    let (desligar, signal) = tokio::sync::oneshot::channel::<()>();
     let servidor = tokio::spawn(async move {
         let _ = poph_server::serve_at(listener, estado, async {
-            let _ = sinal.await;
+            let _ = signal.await;
         })
         .await;
     });
-    let cliente = reqwest::Client::builder()
+    let customer = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
         .expect("cliente HTTP");
-    let mut corpo = None;
+    let mut body = None;
     for _ in 0..100 {
-        if let Ok(resposta) = cliente
+        if let Ok(reply) = customer
             .get(format!("http://{endereco}/metrics"))
             .send()
             .await
         {
-            corpo = Some(resposta.text().await.expect("corpo do /metrics"));
+            body = Some(reply.text().await.expect("corpo do /metrics"));
             break;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     let _ = desligar.send(());
     let _ = servidor.await;
-    corpo.expect("o /metrics respondeu")
+    body.expect("o /metrics respondeu")
 }

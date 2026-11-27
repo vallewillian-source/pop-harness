@@ -18,43 +18,43 @@ use poph_store::{
 use poph_types::{AgentId, ConversationId, FlowsConfig, JevGates, MessageId, OrgId, RecordStatus};
 use serde_json::{Value, json};
 
-struct SemEspera;
+struct NoWait;
 
-impl Pause for SemEspera {
-    fn wait(&self, _duracao: Duration) -> FuturePause {
+impl Pause for NoWait {
+    fn wait(&self, _duration: Duration) -> FuturePause {
         Box::pin(async {})
     }
 }
 
-const TODAS: [&str; 3] = [
+const ALL: [&str; 3] = [
     poph_agent::turno::NAME_RUN_ACTION,
     poph_agent::turno::NAME_ABANDON,
     poph_agent::turno::NAME_TOOL_START,
 ];
 
-struct Cenario {
-    pasta: PathBuf,
+struct Scenario {
+    dir: PathBuf,
     store: Arc<Store>,
     org: OrgId,
     agente: AgentId,
 }
 
-impl Cenario {
-    fn novo(rotulo: &str) -> Self {
-        let pasta = std::env::temp_dir().join(format!(
-            "poph-fx24-{rotulo}-{}-{}",
+impl Scenario {
+    fn fresh(label: &str) -> Self {
+        let dir = std::env::temp_dir().join(format!(
+            "poph-fx24-{label}-{}-{}",
             std::process::id(),
             AgentId::generate()
         ));
-        std::fs::create_dir_all(&pasta).expect("pasta do teste");
+        std::fs::create_dir_all(&dir).expect("pasta do teste");
         let store = Arc::new(
-            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
+            Store::open_at(&dir.join("harness.db"), &dir.join("rag.db")).expect("abre o banco"),
         );
         let org = store
             .orgs()
             .create(NewOrg {
-                name: format!("Org {rotulo}"),
-                slug: format!("org-{rotulo}-{}", AgentId::generate()),
+                name: format!("Org {label}"),
+                slug: format!("org-{label}-{}", AgentId::generate()),
                 config_json: "{}".to_owned(),
             })
             .expect("cria a org")
@@ -64,34 +64,34 @@ impl Cenario {
             .create(
                 org,
                 NewAgent {
-                    name: format!("Bia {rotulo}"),
-                    slug: format!("bia-{rotulo}"),
+                    name: format!("Bia {label}"),
+                    slug: format!("bia-{label}"),
                     grouping_window_ms: 0,
                     ..NewAgent::default()
                 },
             )
             .expect("cria o agente")
             .id;
-        let cenario = Self {
-            pasta,
+        let scenario = Self {
+            dir,
             store,
             org,
             agente,
         };
-        cenario.habilitar(&TODAS);
-        cenario
+        scenario.habilitar(&ALL);
+        scenario
     }
 
-    fn habilitar(&self, ferramentas: &[&str]) {
-        let estruturado = json!({
-            "tools": ferramentas
+    fn habilitar(&self, tools: &[&str]) {
+        let structured = json!({
+            "tools": tools
                 .iter()
                 .map(|nome| json!({ "name": nome, "enabled": true }))
                 .collect::<Vec<_>>()
         })
         .to_string();
-        let atual = self.store.instructions().version(self.org, self.agente);
-        let esperada = match atual {
+        let current = self.store.instructions().version(self.org, self.agente);
+        let expected_value = match current {
             Ok(Some(versao)) => versao,
             _ => 0,
         };
@@ -100,15 +100,15 @@ impl Cenario {
             .save(
                 self.org,
                 self.agente,
-                esperada,
-                &estruturado,
+                expected_value,
+                &structured,
                 "# Bia\n\nVocê é a atendente da FixProLar.",
                 true,
             )
             .expect("grava as instruções");
     }
 
-    fn criar_fluxo(
+    fn create_flow(
         &self,
         slug: &str,
         nome: &str,
@@ -128,8 +128,8 @@ impl Cenario {
                 },
             )
             .expect("cria o fluxo");
-        let compilado = compile(script, &Limites::default());
-        let ir = compilado.ir().expect("o script do teste compila");
+        let compiled = compile(script, &Limites::default());
+        let ir = compiled.ir().expect("o script do teste compila");
         self.store
             .revisions()
             .publish_revision(
@@ -172,7 +172,7 @@ impl Cenario {
             .id
     }
 
-    fn falar(&self, conversa: ConversationId, texto: &str) -> MessageId {
+    fn speak(&self, conversa: ConversationId, texto: &str) -> MessageId {
         self.store
             .messages()
             .write(
@@ -193,9 +193,9 @@ impl Cenario {
             .id
     }
 
-    fn motor(
+    fn engine(
         &self,
-        roteiros: Vec<Script>,
+        scripts: Vec<Script>,
         jev: Option<Arc<JevEngine>>,
         fluxos: Option<FlowsConfig>,
     ) -> (TurnEngine, Arc<FakeProvider>) {
@@ -204,17 +204,17 @@ impl Cenario {
             HotConfigOptions::default(),
             MetricsMemory::own(),
         );
-        let limitador = Arc::new(Limiter::new(LimitOptions::default(), MetricsMemory::own()));
-        let provedor = Arc::new(FakeProvider::with_scripts(roteiros));
-        let mut motor = TurnEngine::new(
+        let limiter = Arc::new(Limiter::new(LimitOptions::default(), MetricsMemory::own()));
+        let provedor = Arc::new(FakeProvider::with_scripts(scripts));
+        let mut engine = TurnEngine::new(
             Arc::clone(&self.store),
             config,
-            limitador,
+            limiter,
             provedor.clone(),
             TurnOptions::default(),
             MetricsTurn::own(),
         )
-        .with_pause(Arc::new(SemEspera))
+        .with_pause(Arc::new(NoWait))
         .with_summary(poph_agent::summary::SummaryOptions {
             ativo: false,
             ..poph_agent::summary::SummaryOptions::default()
@@ -226,23 +226,23 @@ impl Cenario {
             &fluxos.clone().unwrap_or_default(),
         );
         let registro = poph_agent::turno::register_closing_tool(registro, Arc::clone(&self.store));
-        motor = motor.with_tools(Arc::new(registro));
-        if let Some(ajustes) = fluxos {
-            motor = motor.with_flows(&ajustes);
+        engine = engine.with_tools(Arc::new(registro));
+        if let Some(adjustments) = fluxos {
+            engine = engine.with_flows(&adjustments);
         }
         if let Some(jev) = jev {
-            motor = motor.with_jev(jev);
+            engine = engine.with_jev(jev);
         }
-        (motor, provedor)
+        (engine, provedor)
     }
 
     async fn turno(
         &self,
-        motor: &TurnEngine,
+        engine: &TurnEngine,
         conversa: ConversationId,
         gatilho: MessageId,
     ) -> TurnSummary {
-        motor
+        engine
             .run(
                 TurnInput::new(self.org, conversa, gatilho),
                 &mut NoopObserver,
@@ -259,7 +259,7 @@ impl Cenario {
             .expect("a conversa tem Ficha")
     }
 
-    fn execucao(&self, conversa: ConversationId) -> poph_store::Execution {
+    fn execution(&self, conversa: ConversationId) -> poph_store::Execution {
         self.store
             .executions()
             .from_case(self.org, self.ficha(conversa).id, 20)
@@ -270,16 +270,15 @@ impl Cenario {
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.pasta);
+        let _ = std::fs::remove_dir_all(&self.dir);
     }
 }
 
-
-fn texto(conteudo: &str) -> Script {
+fn texto(content: &str) -> Script {
     Script::Events(vec![
-        LlmEvent::Texto(conteudo.to_owned()),
+        LlmEvent::Texto(content.to_owned()),
         LlmEvent::Usage(Usage {
             input: 10,
             saida: 5,
@@ -288,41 +287,41 @@ fn texto(conteudo: &str) -> Script {
     ])
 }
 
-fn chamada(nome: &str, argumentos: Value) -> Script {
+fn call(nome: &str, arguments: Value) -> Script {
     Script::Events(vec![
         LlmEvent::Tool(ToolCall {
             id: "chamada-1".to_owned(),
             nome: nome.to_owned(),
-            arguments: argumentos,
+            arguments,
         }),
         LlmEvent::Fim(FinishReason::Completed),
     ])
 }
 
-fn gates_com_g9() -> JevGates {
+fn gates_with_g9() -> JevGates {
     JevGates {
         g9: true,
         ..JevGates::default()
     }
 }
 
-fn motor_jev(jev: Arc<FakeJev>) -> Arc<JevEngine> {
-    Arc::new(JevEngine::new(jev, gates_com_g9(), "jev-latest"))
+fn jev_engine(jev: Arc<FakeJev>) -> Arc<JevEngine> {
+    Arc::new(JevEngine::new(jev, gates_with_g9(), "jev-latest"))
 }
 
-fn escolhas(itens: &[(&str, &str)]) -> std::collections::BTreeMap<String, String> {
-    itens
+fn choices(items: &[(&str, &str)]) -> std::collections::BTreeMap<String, String> {
+    items
         .iter()
-        .map(|(id, escolha)| ((*id).to_owned(), (*escolha).to_owned()))
+        .map(|(id, choice)| ((*id).to_owned(), (*choice).to_owned()))
         .collect()
 }
 
-const VISITA: &str = include_str!("../../../tests/fluxos/exemplos/agendar_visita.star");
+const VISIT: &str = include_str!("../../../tests/fluxos/exemplos/agendar_visita.star");
 const TRIAGEM: &str = include_str!("../../../tests/fluxos/exemplos/triagem_suporte.star");
-const ENTREGA: &str = include_str!("../../../tests/fluxos/exemplos/confirmar_entrega.star");
+const DELIVERY: &str = include_str!("../../../tests/fluxos/exemplos/confirmar_entrega.star");
 const TOKEN: &str = "pophg_fx35_ficticio";
 
-async fn api(c: &Cenario) -> String {
+async fn api(c: &Scenario) -> String {
     use argon2::password_hash::{PasswordHasher, SaltString};
     let sal = SaltString::generate(&mut rand_core::OsRng);
     let hash = argon2::Argon2::default()
@@ -343,131 +342,128 @@ async fn api(c: &Cenario) -> String {
     format!("http://{endereco}")
 }
 
-async fn get_api(base: &str, c: &Cenario, caminho: &str) -> Value {
-    let url = format!("{base}/admin/v1/orgs/{}/fichas/{}", c.org, caminho);
-    let resposta = reqwest::Client::new()
+async fn get_api(base: &str, c: &Scenario, path: &str) -> Value {
+    let url = format!("{base}/admin/v1/orgs/{}/fichas/{}", c.org, path);
+    let reply = reqwest::Client::new()
         .get(url)
         .bearer_auth(TOKEN)
         .send()
         .await
         .unwrap();
-    assert!(resposta.status().is_success(), "{}", resposta.status());
-    resposta.json().await.unwrap()
+    assert!(reply.status().is_success(), "{}", reply.status());
+    reply.json().await.unwrap()
 }
 
-async fn executar(
-    c: &Cenario,
+async fn run(
+    c: &Scenario,
     conversa: ConversationId,
     slug: &str,
-    roteiros: Vec<Script>,
+    scripts: Vec<Script>,
 ) -> Arc<FakeProvider> {
-    let jev = Arc::new(FakeJev::with_choices(escolhas(&[(
+    let jev = Arc::new(FakeJev::with_choices(choices(&[(
         "g9_iniciar_fluxo",
         slug,
     )])));
-    let (motor, provedor) = c.motor(roteiros, Some(motor_jev(jev)), Some(FlowsConfig::default()));
-    let mensagem = c.falar(conversa, "Pedido fictício para teste");
+    let (engine, provedor) = c.engine(scripts, Some(jev_engine(jev)), Some(FlowsConfig::default()));
+    let mensagem = c.speak(conversa, "Pedido fictício para teste");
     assert_eq!(
-        c.turno(&motor, conversa, mensagem).await.estado,
+        c.turno(&engine, conversa, mensagem).await.estado,
         TurnState::Completed
     );
     provedor
 }
 
 #[tokio::test]
-async fn exemplo_visita_com_jev_campos_e_historico_http() {
-    let c = Cenario::novo("fx35-visita");
-    c.criar_fluxo("agendar_visita", "Agendar visita", VISITA, true);
+async fn example_visit_with_jev_fields_and_http_history() {
+    let c = Scenario::fresh("fx35-visita");
+    c.create_flow("agendar_visita", "Agendar visita", VISIT, true);
     let conversa = c.conversa();
-    let provedor = executar(
+    let provedor = run(
         &c,
         conversa,
         "agendar_visita",
         vec![
-            chamada(
+            call(
                 "fluxo_executar_acao",
                 json!({"acao":"confirmar","campos":{"endereco":"Rua Exemplo 1","periodo":"tarde"}}),
             ),
-            chamada("fluxo_executar_acao", json!({"acao":"ok","campos":{}})),
+            call("fluxo_executar_acao", json!({"acao":"ok","campos":{}})),
             texto("Visita combinada."),
         ],
     )
     .await;
-    let pedidos = provedor.received();
-    assert!(format!("{:?}", pedidos[0].messages).contains("Coletar dados"));
+    let requests = provedor.received();
+    assert!(format!("{:?}", requests[0].messages).contains("Coletar dados"));
     let base = api(&c).await;
     let ficha = c.ficha(conversa);
-    let corpo = get_api(&base, &c, &ficha.id.to_string()).await;
-    assert_eq!(corpo["status"], "open");
-    let run = &corpo["execucoes"][0];
-    assert_eq!(run["status"], "concluida", "{corpo}");
+    let body = get_api(&base, &c, &ficha.id.to_string()).await;
+    assert_eq!(body["status"], "open");
+    let run = &body["execucoes"][0];
+    assert_eq!(run["status"], "concluida", "{body}");
     assert_eq!(run["resultado"], "Visita agendada");
     assert_eq!(run["etapas"][0]["no_id"], "coleta");
     assert_eq!(run["etapas"][0]["dados"]["endereco"], "Rua Exemplo 1");
     assert_eq!(run["etapas"][0]["dados"]["periodo"], "tarde");
     assert_eq!(run["etapas"][0]["atores_que_agiram"], json!(["agente"]));
     assert_eq!(run["etapas"][1]["no_id"], "confirmacao");
-    let eventos = get_api(&base, &c, &format!("{}/events", ficha.id)).await;
-    assert!(eventos["items"].as_array().unwrap().len() >= 3, "{eventos}");
+    let events = get_api(&base, &c, &format!("{}/events", ficha.id)).await;
+    assert!(events["items"].as_array().unwrap().len() >= 3, "{events}");
 }
 
 #[tokio::test]
-async fn exemplo_triagem_exercita_ambos_os_ramos() {
-    for (rotulo, resumo, afeta, esperado) in [
+async fn example_triage_exercises_both_branches() {
+    for (label, summary, afeta, expected) in [
         ("grave", "sistema nao abre", "sim", "urgente"),
         ("leve", "duvida simples", "sim", "normal"),
         ("sem-impacto", "sistema nao abre", "nao", "normal"),
     ] {
-        let c = Cenario::novo(rotulo);
-        c.criar_fluxo("triagem_suporte", "Triagem de suporte", TRIAGEM, true);
+        let c = Scenario::fresh(label);
+        c.create_flow("triagem_suporte", "Triagem de suporte", TRIAGEM, true);
         let conversa = c.conversa();
-        executar(
+        run(
             &c,
             conversa,
             "triagem_suporte",
             vec![
-                chamada(
+                call(
                     "fluxo_executar_acao",
-                    json!({"acao":"registrado","campos":{"resumo":resumo,"afeta_agora":afeta}}),
+                    json!({"acao":"registrado","campos":{"resumo":summary,"afeta_agora":afeta}}),
                 ),
                 texto("Entendido."),
             ],
         )
         .await;
-        assert_eq!(c.execucao(conversa).no_atual, esperado);
+        assert_eq!(c.execution(conversa).no_atual, expected);
         let base = api(&c).await;
         let ficha = c.ficha(conversa);
-        let eventos = get_api(&base, &c, &format!("{}/events", ficha.id)).await;
-        assert!(
-            eventos.to_string().contains("decisao_resolvida"),
-            "{eventos}"
-        );
+        let events = get_api(&base, &c, &format!("{}/events", ficha.id)).await;
+        assert!(events.to_string().contains("decisao_resolvida"), "{events}");
     }
 }
 
-async fn evolution_falsa() -> (String, Arc<std::sync::Mutex<Vec<Value>>>) {
+async fn fake_evolution() -> (String, Arc<std::sync::Mutex<Vec<Value>>>) {
     use axum::{Json, Router, extract::State, routing::post};
-    let envios = Arc::new(std::sync::Mutex::new(Vec::new()));
-    async fn enviar(
-        State(envios): State<Arc<std::sync::Mutex<Vec<Value>>>>,
-        Json(corpo): Json<Value>,
+    let sends = Arc::new(std::sync::Mutex::new(Vec::new()));
+    async fn send(
+        State(sends): State<Arc<std::sync::Mutex<Vec<Value>>>>,
+        Json(body): Json<Value>,
     ) -> Json<Value> {
-        envios.lock().unwrap().push(corpo);
+        sends.lock().unwrap().push(body);
         Json(json!({"key":{"id":"ficticio"}}))
     }
     let router = Router::new()
-        .route("/message/sendText/{instancia}", post(enviar))
-        .with_state(Arc::clone(&envios));
+        .route("/message/sendText/{instancia}", post(send))
+        .with_state(Arc::clone(&sends));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endereco = listener.local_addr().unwrap();
     tokio::spawn(async move {
         axum::serve(listener, router).await.unwrap();
     });
-    (format!("http://{endereco}"), envios)
+    (format!("http://{endereco}"), sends)
 }
 
 #[tokio::test]
-async fn exemplo_entrega_notificacao_unica_e_transferencia_com_ficha_aberta() {
+async fn example_single_notification_and_transfer_with_open_case() {
     use poph_evolution::{ATTACHMENT_CAP, ConfigEvolution, EvolutionClient};
     use poph_server::{
         evolution::EvolutionChannel,
@@ -475,8 +471,8 @@ async fn exemplo_entrega_notificacao_unica_e_transferencia_com_ficha_aberta() {
         whatsapp_output::{WhatsAppOutput, WhatsAppOutputOptions},
     };
     use poph_types::{IntegrationId, Secret};
-    let c = Cenario::novo("efeitos-fx35");
-    c.criar_fluxo("confirmar_entrega", "Confirmar entrega", ENTREGA, true);
+    let c = Scenario::fresh("efeitos-fx35");
+    c.create_flow("confirmar_entrega", "Confirmar entrega", DELIVERY, true);
     c.store
         .departments()
         .create(
@@ -494,7 +490,7 @@ async fn exemplo_entrega_notificacao_unica_e_transferencia_com_ficha_aberta() {
         .id
         .parse()
         .unwrap();
-    let (url, envios) = evolution_falsa().await;
+    let (url, sends) = fake_evolution().await;
     let canal = EvolutionChannel {
         org: c.org,
         instance: "teste".into(),
@@ -508,18 +504,18 @@ async fn exemplo_entrega_notificacao_unica_e_transferencia_com_ficha_aberta() {
         ),
         attachment_limit: ATTACHMENT_CAP,
     };
-    let canais = vec![canal];
-    let efeitos = FlowEffects::new(
+    let channels = vec![canal];
+    let effects = FlowEffects::new(
         Arc::clone(&c.store),
-        &canais,
-        c.pasta.join("blobs"),
+        &channels,
+        c.dir.join("blobs"),
         None,
         FlowEffectOptions::default(),
     );
     let saida = WhatsAppOutput::new(
         Arc::clone(&c.store),
-        &canais,
-        c.pasta.join("blobs"),
+        &channels,
+        c.dir.join("blobs"),
         WhatsAppOutputOptions::default(),
     );
     let conversa = |peer: &str| {
@@ -538,13 +534,13 @@ async fn exemplo_entrega_notificacao_unica_e_transferencia_com_ficha_aberta() {
             .unwrap()
             .id
     };
-    let primeira = conversa("5511999990001");
-    executar(
+    let first = conversa("5511999990001");
+    run(
         &c,
-        primeira,
+        first,
         "confirmar_entrega",
         vec![
-            chamada(
+            call(
                 "fluxo_executar_acao",
                 json!({"acao":"localizado","campos":{"pedido":"1234"}}),
             ),
@@ -552,14 +548,14 @@ async fn exemplo_entrega_notificacao_unica_e_transferencia_com_ficha_aberta() {
         ],
     )
     .await;
-    efeitos.cycle_for_org(c.org).await.unwrap();
+    effects.cycle_for_org(c.org).await.unwrap();
     saida.cycle().await.unwrap();
-    executar(
+    run(
         &c,
-        primeira,
+        first,
         "confirmar_entrega",
         vec![
-            chamada(
+            call(
                 "fluxo_executar_acao",
                 json!({"acao":"confirmada","campos":{"recebido":"sim"}}),
             ),
@@ -567,40 +563,40 @@ async fn exemplo_entrega_notificacao_unica_e_transferencia_com_ficha_aberta() {
         ],
     )
     .await;
-    efeitos.cycle_for_org(c.org).await.unwrap();
+    effects.cycle_for_org(c.org).await.unwrap();
     saida.cycle().await.unwrap();
-    efeitos.cycle_for_org(c.org).await.unwrap();
+    effects.cycle_for_org(c.org).await.unwrap();
     saida.cycle().await.unwrap();
-    let enviados = envios.lock().unwrap().clone();
+    let sent_items = sends.lock().unwrap().clone();
     assert_eq!(
-        enviados
+        sent_items
             .iter()
             .filter(|v| v["number"] == "5521999990000")
             .count(),
         1,
-        "{enviados:?}"
+        "{sent_items:?}"
     );
     assert!(
-        enviados
+        sent_items
             .iter()
             .any(|v| v["text"].as_str().unwrap_or("").contains("pedido 1234")),
-        "{enviados:?}"
+        "{sent_items:?}"
     );
-    let segunda = conversa("5511999990002");
-    executar(
+    let second = conversa("5511999990002");
+    run(
         &c,
-        segunda,
+        second,
         "confirmar_entrega",
         vec![
-            chamada(
+            call(
                 "fluxo_executar_acao",
                 json!({"acao":"localizado","campos":{"pedido":"5678"}}),
             ),
-            chamada(
+            call(
                 "fluxo_executar_acao",
                 json!({"acao":"nao_recebida","campos":{"recebido":"nao"}}),
             ),
-            chamada(
+            call(
                 "fluxo_executar_acao",
                 json!({"acao":"registrado","campos":{}}),
             ),
@@ -608,36 +604,36 @@ async fn exemplo_entrega_notificacao_unica_e_transferencia_com_ficha_aberta() {
         ],
     )
     .await;
-    efeitos.cycle_for_org(c.org).await.unwrap();
+    effects.cycle_for_org(c.org).await.unwrap();
     assert_eq!(
-        c.store.conversations().get(c.org, segunda).unwrap().status,
+        c.store.conversations().get(c.org, second).unwrap().status,
         ConversationStatus::Transferred
     );
-    assert_eq!(c.ficha(segunda).status, RecordStatus::Open);
+    assert_eq!(c.ficha(second).status, RecordStatus::Open);
     let base = api(&c).await;
-    let eventos = get_api(&base, &c, &format!("{}/events", c.ficha(segunda).id)).await;
+    let events = get_api(&base, &c, &format!("{}/events", c.ficha(second).id)).await;
     assert!(
-        eventos.to_string().contains("atendimento_transferido"),
-        "{eventos}"
+        events.to_string().contains("atendimento_transferido"),
+        "{events}"
     );
 }
 
 #[tokio::test]
-async fn revisao_antiga_acao_humana_e_dois_fluxos_na_mesma_ficha() {
-    let c = Cenario::novo("fx35-sequencia");
-    let visita_humana = VISITA.replace(
+async fn old_revision_human_action_and_two_flows_in_same_case() {
+    let c = Scenario::fresh("fx35-sequencia");
+    let human_visit = VISIT.replace(
         "nome = \"Confirmar visita\",",
         "nome = \"Confirmar visita\",\n    atores = [\"agente\", \"atendente\"],",
     );
-    let fluxo = c.criar_fluxo("agendar_visita", "Agendar visita", &visita_humana, true);
-    c.criar_fluxo("triagem_suporte", "Triagem de suporte", TRIAGEM, true);
+    let fluxo = c.create_flow("agendar_visita", "Agendar visita", &human_visit, true);
+    c.create_flow("triagem_suporte", "Triagem de suporte", TRIAGEM, true);
     let conversa = c.conversa();
-    executar(
+    run(
         &c,
         conversa,
         "agendar_visita",
         vec![
-            chamada(
+            call(
                 "fluxo_executar_acao",
                 json!({"acao":"confirmar","campos":{"endereco":"Rua Teste","periodo":"manhã"}}),
             ),
@@ -645,12 +641,12 @@ async fn revisao_antiga_acao_humana_e_dois_fluxos_na_mesma_ficha() {
         ],
     )
     .await;
-    let anterior = c.execucao(conversa);
-    let nova_fonte = visita_humana.replace("Visita agendada", "Resultado da versão nova");
-    let compilado = compile(&nova_fonte, &Limites::default());
-    let ir = compilado.ir().unwrap();
+    let previous = c.execution(conversa);
+    let fresh_source = human_visit.replace("Visita agendada", "Resultado da versão nova");
+    let compiled = compile(&fresh_source, &Limites::default());
+    let ir = compiled.ir().unwrap();
     let versao = c.store.flows().get(c.org, fluxo).unwrap().version;
-    let nova = c
+    let new_item = c
         .store
         .revisions()
         .publish_revision(
@@ -658,7 +654,7 @@ async fn revisao_antiga_acao_humana_e_dois_fluxos_na_mesma_ficha() {
             fluxo,
             RevisionPublication {
                 expected: versao,
-                fonte: nova_fonte,
+                fonte: fresh_source,
                 definicao_json: ir.to_json(),
                 schema_versao: Some(ir.schema_versao),
                 resolucoes_json: "{}".into(),
@@ -667,35 +663,35 @@ async fn revisao_antiga_acao_humana_e_dois_fluxos_na_mesma_ficha() {
             },
         )
         .unwrap();
-    assert_ne!(nova.id, anterior.revisao_id);
+    assert_ne!(new_item.id, previous.revisao_id);
     let base = api(&c).await;
     let ficha = c.ficha(conversa);
     let url = format!(
         "{base}/admin/v1/orgs/{}/fichas/{}/flow-runs/{}/actions",
-        c.org, ficha.id, anterior.id
+        c.org, ficha.id, previous.id
     );
-    let resposta = reqwest::Client::new()
+    let reply = reqwest::Client::new()
         .post(url)
         .bearer_auth(TOKEN)
-        .header("If-Match", anterior.version.to_string())
+        .header("If-Match", previous.version.to_string())
         .json(&json!({"acao":"ok", "campos":{}, "chave_idempotencia":"humano-fx35"}))
         .send()
         .await
         .unwrap();
-    let status = resposta.status();
-    let corpo: Value = resposta.json().await.unwrap();
-    assert_eq!(status, reqwest::StatusCode::OK, "{corpo}");
-    assert_eq!(corpo["resultado"], "Visita agendada");
-    executar(
+    let status = reply.status();
+    let body: Value = reply.json().await.unwrap();
+    assert_eq!(status, reqwest::StatusCode::OK, "{body}");
+    assert_eq!(body["resultado"], "Visita agendada");
+    run(
         &c,
         conversa,
         "triagem_suporte",
         vec![
-            chamada(
+            call(
                 "fluxo_executar_acao",
                 json!({"acao":"registrado","campos":{"resumo":"erro simples","afeta_agora":"nao"}}),
             ),
-            chamada(
+            call(
                 "fluxo_executar_acao",
                 json!({"acao":"encaminhado","campos":{}}),
             ),
@@ -703,61 +699,61 @@ async fn revisao_antiga_acao_humana_e_dois_fluxos_na_mesma_ficha() {
         ],
     )
     .await;
-    let historico = get_api(&base, &c, &ficha.id.to_string()).await;
-    let runs = historico["execucoes"].as_array().unwrap();
-    assert_eq!(runs.len(), 2, "{historico}");
-    let visita = runs
+    let history = get_api(&base, &c, &ficha.id.to_string()).await;
+    let runs = history["execucoes"].as_array().unwrap();
+    assert_eq!(runs.len(), 2, "{history}");
+    let visit = runs
         .iter()
-        .find(|r| r["id"] == anterior.id.to_string())
+        .find(|r| r["id"] == previous.id.to_string())
         .unwrap();
-    assert_eq!(visita["revisao_id"], anterior.revisao_id.to_string());
-    assert_eq!(visita["resultado"], "Visita agendada");
+    assert_eq!(visit["revisao_id"], previous.revisao_id.to_string());
+    assert_eq!(visit["resultado"], "Visita agendada");
     assert_eq!(
-        visita["etapas"][1]["atores_que_agiram"],
+        visit["etapas"][1]["atores_que_agiram"],
         json!(["atendente"])
     );
     assert!(runs.iter().any(|r| r["resultado"] == "Normal"));
-    let eventos = get_api(&base, &c, &format!("{}/events", ficha.id)).await;
-    assert!(eventos.to_string().contains("atendente"), "{eventos}");
+    let events = get_api(&base, &c, &format!("{}/events", ficha.id)).await;
+    assert!(events.to_string().contains("atendente"), "{events}");
 }
 
 #[tokio::test]
-async fn jev_falha_reserva_inicia_permitido_e_recusa_nao_liberado() {
-    let c = Cenario::novo("fx35-reserva");
-    let permitido = c.criar_fluxo("agendar_visita", "Agendar visita", VISITA, true);
-    c.criar_fluxo("triagem_suporte", "Triagem de suporte", TRIAGEM, false);
+async fn jev_failure_reserve_starts_allowed_and_refuses_not_released() {
+    let c = Scenario::fresh("fx35-reserva");
+    let allowed = c.create_flow("agendar_visita", "Agendar visita", VISIT, true);
+    c.create_flow("triagem_suporte", "Triagem de suporte", TRIAGEM, false);
     let conversa = c.conversa();
     let jev = Arc::new(FakeJev::failing(poph_jev::JevError::Network(
         "indisponível no teste".into(),
     )));
-    let (motor, provedor) = c.motor(
+    let (engine, provedor) = c.engine(
         vec![
-            chamada("fluxo_iniciar", json!({"fluxo_id":"triagem_suporte"})),
-            chamada("fluxo_iniciar", json!({"fluxo_id":"agendar_visita"})),
+            call("fluxo_iniciar", json!({"fluxo_id":"triagem_suporte"})),
+            call("fluxo_iniciar", json!({"fluxo_id":"agendar_visita"})),
             texto("Certo."),
         ],
-        Some(motor_jev(jev)),
+        Some(jev_engine(jev)),
         Some(FlowsConfig::default()),
     );
-    let mensagem = c.falar(conversa, "Quero agendar");
-    c.turno(&motor, conversa, mensagem).await;
-    let pedidos = provedor.received();
-    assert!(pedidos[0].tools.iter().any(|f| f.nome == "fluxo_iniciar"));
-    assert!(!format!("{:?}", pedidos[0].messages).contains("triagem_suporte"));
-    assert!(format!("{:?}", pedidos[1].messages).contains("não está entre os liberados"));
-    assert_eq!(c.execucao(conversa).no_atual, "coleta");
+    let mensagem = c.speak(conversa, "Quero agendar");
+    c.turno(&engine, conversa, mensagem).await;
+    let requests = provedor.received();
+    assert!(requests[0].tools.iter().any(|f| f.nome == "fluxo_iniciar"));
+    assert!(!format!("{:?}", requests[0].messages).contains("triagem_suporte"));
+    assert!(format!("{:?}", requests[1].messages).contains("não está entre os liberados"));
+    assert_eq!(c.execution(conversa).no_atual, "coleta");
     let runs = c
         .store
         .executions()
         .from_case(c.org, c.ficha(conversa).id, 20)
         .unwrap();
     assert_eq!(runs.len(), 1);
-    assert_eq!(runs[0].fluxo_id, permitido);
+    assert_eq!(runs[0].fluxo_id, allowed);
 }
 
 #[tokio::test]
-async fn encerramento_do_agente_e_proxima_mensagem_abrem_nova_ficha() {
-    let c = Cenario::novo("fx35-encerrar");
+async fn agent_closing_and_next_message_open_new_case() {
+    let c = Scenario::fresh("fx35-encerrar");
     c.habilitar(&["atendimento_encerrar"]);
     let integracao = c
         .store
@@ -766,7 +762,7 @@ async fn encerramento_do_agente_e_proxima_mensagem_abrem_nova_ficha() {
         .id
         .parse()
         .unwrap();
-    let entrada = |id: &str| poph_store::NewChannelInboxItem {
+    let input = |id: &str| poph_store::NewChannelInboxItem {
         integration_id: integracao,
         agent_id: c.agente,
         canal: "whatsapp".into(),
@@ -780,29 +776,29 @@ async fn encerramento_do_agente_e_proxima_mensagem_abrem_nova_ficha() {
     let mensagem = c
         .store
         .inbox()
-        .receive_from_channel(c.org, entrada("fx35-1"))
+        .receive_from_channel(c.org, input("fx35-1"))
         .unwrap()
         .mensagem;
     let conversa = mensagem.conversation_id;
     let ficha = c.ficha(conversa);
-    let (motor, _) = c.motor(
+    let (engine, _) = c.engine(
         vec![
-            chamada("atendimento_encerrar", json!({"motivo":"resolvido"})),
+            call("atendimento_encerrar", json!({"motivo":"resolvido"})),
             texto("Até logo."),
         ],
         None,
         Some(FlowsConfig::default()),
     );
-    c.turno(&motor, conversa, mensagem.id).await;
+    c.turno(&engine, conversa, mensagem.id).await;
     assert_eq!(c.ficha(conversa).status, RecordStatus::Closed);
-    let proxima = c
+    let next = c
         .store
         .inbox()
-        .receive_from_channel(c.org, entrada("fx35-2"))
+        .receive_from_channel(c.org, input("fx35-2"))
         .unwrap()
         .mensagem;
-    assert_ne!(proxima.conversation_id, conversa);
-    assert_ne!(c.ficha(proxima.conversation_id).id, ficha.id);
+    assert_ne!(next.conversation_id, conversa);
+    assert_ne!(c.ficha(next.conversation_id).id, ficha.id);
     let base = api(&c).await;
     assert_eq!(
         get_api(&base, &c, &ficha.id.to_string()).await["status"],
@@ -810,44 +806,43 @@ async fn encerramento_do_agente_e_proxima_mensagem_abrem_nova_ficha() {
     );
 }
 
-
 #[tokio::test]
-async fn contadores_do_turno_contam_uma_abertura_e_uma_conclusao() {
-    let c = Cenario::novo("fx40-turno");
+async fn turn_counters_count_one_open_and_one_completion() {
+    let c = Scenario::fresh("fx40-turno");
     let registro = poph_types::Registry::new();
-    let metricas = poph_server::flow_metrics::FlowMetrics::register(&registro)
+    let metrics = poph_server::flow_metrics::FlowMetrics::register(&registro)
         .expect("o catálogo de fluxos registra");
     c.store
-        .publish_execution_metrics(metricas.execution_metrics());
+        .publish_execution_metrics(metrics.execution_metrics());
 
-    c.criar_fluxo("agendar_visita", "Agendar visita", VISITA, true);
+    c.create_flow("agendar_visita", "Agendar visita", VISIT, true);
     let conversa = c.conversa();
-    executar(
+    run(
         &c,
         conversa,
         "agendar_visita",
         vec![
-            chamada(
+            call(
                 "fluxo_executar_acao",
                 json!({"acao":"confirmar","campos":{"endereco":"Rua Exemplo 1","periodo":"tarde"}}),
             ),
-            chamada("fluxo_executar_acao", json!({"acao":"ok","campos":{}})),
+            call("fluxo_executar_acao", json!({"acao":"ok","campos":{}})),
             texto("Visita combinada."),
         ],
     )
     .await;
 
     assert_eq!(
-        metricas.started_executions.value(),
+        metrics.started_executions.value(),
         1,
         "o turno abriu uma execução (G9 antes do modelo)"
     );
     assert_eq!(
-        metricas.completed_executions.value(),
+        metrics.completed_executions.value(),
         1,
         "as ações do agente concluíram a mesma execução"
     );
-    assert_eq!(metricas.abandoned_executions.value(), 0);
-    assert_eq!(metricas.failed_executions.value(), 0);
-    assert_eq!(metricas.rule_errors.value(), 0);
+    assert_eq!(metrics.abandoned_executions.value(), 0);
+    assert_eq!(metrics.failed_executions.value(), 0);
+    assert_eq!(metrics.rule_errors.value(), 0);
 }

@@ -1,4 +1,3 @@
-
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -36,77 +35,77 @@ const SERIES: [&str; 22] = [
     "poph_fluxos_erros_regra_total",
 ];
 
-fn estado(rotulo: &str, cfg: impl FnOnce(&mut HarnessConfig)) -> (ServerState, PathBuf) {
-    let pasta = std::env::temp_dir().join(format!(
-        "poph-fluxos-metricas-{rotulo}-{}",
+fn estado(label: &str, cfg: impl FnOnce(&mut HarnessConfig)) -> (ServerState, PathBuf) {
+    let dir = std::env::temp_dir().join(format!(
+        "poph-fluxos-metricas-{label}-{}",
         std::process::id()
     ));
-    let _ = fs::remove_dir_all(&pasta);
-    fs::create_dir_all(pasta.join("dados")).expect("pasta de dados");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("dados")).expect("pasta de dados");
     let mut config = HarnessConfig::default();
-    config.data.directory = pasta.join("dados");
+    config.data.directory = dir.join("dados");
     cfg(&mut config);
     let store = Arc::new(Store::open(&config).expect("abre o banco"));
     let estado = ServerState::new(store, config).expect("estado do servidor");
-    (estado, pasta)
+    (estado, dir)
 }
 
-async fn metricas_http(estado: ServerState) -> String {
+async fn metrics_http(estado: ServerState) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("porta efêmera");
     let endereco = listener.local_addr().expect("endereço");
-    let (desligar, sinal) = tokio::sync::oneshot::channel::<()>();
+    let (desligar, signal) = tokio::sync::oneshot::channel::<()>();
     let servidor = tokio::spawn(async move {
         let _ = poph_server::serve_at(listener, estado, async {
-            let _ = sinal.await;
+            let _ = signal.await;
         })
         .await;
     });
-    let cliente = reqwest::Client::builder()
+    let customer = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
         .expect("cliente HTTP");
-    let mut corpo = None;
+    let mut body = None;
     for _ in 0..100 {
-        if let Ok(resposta) = cliente
+        if let Ok(reply) = customer
             .get(format!("http://{endereco}/metrics"))
             .send()
             .await
         {
-            corpo = Some(resposta.text().await.expect("corpo do /metrics"));
+            body = Some(reply.text().await.expect("corpo do /metrics"));
             break;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     let _ = desligar.send(());
     let _ = servidor.await;
-    corpo.expect("o /metrics respondeu")
+    body.expect("o /metrics respondeu")
 }
 
-fn carregar(estado: &ServerState, fluxo: &str, numero: u32) {
+fn load(estado: &ServerState, fluxo: &str, numero: u32) {
     let limites = Limites::default();
-    let compilado = compile(FLUXO, &limites);
-    let ir = compilado
+    let compiled = compile(FLUXO, &limites);
+    let ir = compiled
         .ir()
-        .unwrap_or_else(|diagnosticos| panic!("exemplo não compila: {diagnosticos:?}"))
+        .unwrap_or_else(|diagnostics| panic!("exemplo não compila: {diagnostics:?}"))
         .clone();
     let chave = RevisionKey::new(fluxo, numero, FLUXO);
     estado
         .flow_cache
         .load(&chave, &ir, FLUXO, &limites)
-        .unwrap_or_else(|falha| panic!("carga falhou: {falha:?}"));
+        .unwrap_or_else(|failure| panic!("carga falhou: {failure:?}"));
 }
 
 #[tokio::test]
-async fn series_de_fluxos_aparecem_uma_vez_com_o_motor_ligado() {
-    let (estado, pasta) = estado("ligado", |_| {});
+async fn flow_series_appear_once_with_engine_on() {
+    let (estado, dir) = estado("ligado", |_| {});
     assert!(
         estado.flow_metrics().is_some(),
         "motor ligado declara as métricas"
     );
-    let texto = metricas_http(estado).await;
-    let _ = fs::remove_dir_all(&pasta);
+    let texto = metrics_http(estado).await;
+    let _ = fs::remove_dir_all(&dir);
     for nome in SERIES {
         assert_eq!(
             texto.matches(&format!("# HELP {nome} ")).count(),
@@ -114,18 +113,18 @@ async fn series_de_fluxos_aparecem_uma_vez_com_o_motor_ligado() {
             "{nome} deve aparecer exatamente uma vez no /metrics"
         );
     }
-    for linha in texto.lines().filter(|l| l.starts_with("poph_fluxos_")) {
-        assert!(!linha.contains('{'), "série com rótulo: {linha}");
+    for line in texto.lines().filter(|l| l.starts_with("poph_fluxos_")) {
+        assert!(!line.contains('{'), "série com rótulo: {line}");
     }
 }
 
 #[tokio::test]
-async fn revisao_carregada_pelo_motor_aparece_nas_series_do_cache() {
-    let (estado, pasta) = estado("cache", |_| {});
-    carregar(&estado, "agendar_visita", 1);
-    carregar(&estado, "agendar_visita", 1);
-    let texto = metricas_http(estado).await;
-    let _ = fs::remove_dir_all(&pasta);
+async fn revision_loaded_by_engine_appears_in_cache_series() {
+    let (estado, dir) = estado("cache", |_| {});
+    load(&estado, "agendar_visita", 1);
+    load(&estado, "agendar_visita", 1);
+    let texto = metrics_http(estado).await;
+    let _ = fs::remove_dir_all(&dir);
     assert!(
         texto.contains("poph_fluxos_cache_cargas_total 1\n"),
         "{texto}"
@@ -145,22 +144,22 @@ async fn revisao_carregada_pelo_motor_aparece_nas_series_do_cache() {
 }
 
 #[tokio::test]
-async fn teto_do_cache_vem_da_configuracao() {
-    let (padrao, pasta_padrao) = estado("teto-padrao", |_| {});
-    assert_eq!(padrao.flow_cache.byte_cap(), 16 * 1024 * 1024);
-    let _ = fs::remove_dir_all(&pasta_padrao);
+async fn cache_cap_comes_from_config() {
+    let (standard, dir_standard) = estado("teto-padrao", |_| {});
+    assert_eq!(standard.flow_cache.byte_cap(), 16 * 1024 * 1024);
+    let _ = fs::remove_dir_all(&dir_standard);
 
-    let (trocado, pasta_trocado) = estado("teto-3", |cfg| cfg.flows.revision_cache_mb = 3);
-    assert_eq!(trocado.flow_cache.byte_cap(), 3 * 1024 * 1024);
-    let _ = fs::remove_dir_all(&pasta_trocado);
+    let (changed, dir_changed) = estado("teto-3", |cfg| cfg.flows.revision_cache_mb = 3);
+    assert_eq!(changed.flow_cache.byte_cap(), 3 * 1024 * 1024);
+    let _ = fs::remove_dir_all(&dir_changed);
 }
 
 #[tokio::test]
-async fn cache_zero_nao_guarda_e_conta_nao_cacheada() {
-    let (estado, pasta) = estado("teto-zero", |cfg| cfg.flows.revision_cache_mb = 0);
-    carregar(&estado, "agendar_visita", 1);
-    let texto = metricas_http(estado).await;
-    let _ = fs::remove_dir_all(&pasta);
+async fn cache_zero_does_not_store_and_counts_uncached() {
+    let (estado, dir) = estado("teto-zero", |cfg| cfg.flows.revision_cache_mb = 0);
+    load(&estado, "agendar_visita", 1);
+    let texto = metrics_http(estado).await;
+    let _ = fs::remove_dir_all(&dir);
     assert!(
         texto.contains("poph_fluxos_cache_nao_cacheadas_total 1\n"),
         "{texto}"
@@ -172,14 +171,14 @@ async fn cache_zero_nao_guarda_e_conta_nao_cacheada() {
 }
 
 #[tokio::test]
-async fn motor_desligado_nao_declara_nenhuma_serie_de_fluxos() {
-    let (estado, pasta) = estado("desligado", |cfg| cfg.flows.enabled = false);
+async fn engine_off_declares_no_flow_series() {
+    let (estado, dir) = estado("desligado", |cfg| cfg.flows.enabled = false);
     assert!(
         estado.flow_metrics().is_none(),
         "motor desligado não declara as métricas"
     );
-    let texto = metricas_http(estado).await;
-    let _ = fs::remove_dir_all(&pasta);
+    let texto = metrics_http(estado).await;
+    let _ = fs::remove_dir_all(&dir);
     assert!(
         texto.contains("poph_memoria_processo_bytes"),
         "sanidade: o /metrics responde"
