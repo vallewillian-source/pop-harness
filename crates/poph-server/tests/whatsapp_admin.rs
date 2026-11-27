@@ -1,17 +1,3 @@
-//! WhatsApp administrativo (HR-44b): pareamento com QR, estado ao vivo e desconexão, de ponta a
-//! ponta.
-//!
-//! Servidor de verdade (porta efêmera) sobre banco temporário, cliente HTTP de verdade e uma
-//! Evolution falsa em `127.0.0.1` que guarda o próprio estado (instância criada, aparelho aberto).
-//! Nada de rede externa e nenhum número de WhatsApp.
-//!
-//! O que se prova: gerar QR cria a instância quando ela não existe e reaproveita quando existe;
-//! a resposta traz QR, rodada e código de pareamento, com `expira_em: null` (a Evolution não
-//! informa prazo); o estado ao vivo vira `connected`/`awaiting_scan`/`disconnected` e grava na
-//! integração sem subir a versão; desconectar chama o logout e grava `disconnected`; as duas
-//! escritas exigem `If-Match` (428 sem ele, 412 com versão velha); integração inexistente dá 404,
-//! integração que não é WhatsApp e integração sem instância declarada dão 409; a chave da Evolution
-//! e o número do cliente nunca aparecem na resposta nem no log; token de outra org dá 403.
 
 use std::fs;
 use std::path::PathBuf;
@@ -36,18 +22,12 @@ use serde_json::{Value, json};
 use tokio::sync::oneshot;
 use tracing_subscriber::fmt::MakeWriter;
 
-/// Token global dos testes (o servidor guarda só o hash).
 const TOKEN_GLOBAL: &str = "pophg_teste-global-hr44b";
-/// Chave da Evolution usada nos testes (só no servidor falso).
 const CHAVE_EVO: &str = "chave-evo-hr44b-ABC123";
-/// Segredo do webhook (o mesmo esquema da HR-26b; aqui só para resolver o canal).
 const SEGREDO_WEBHOOK: &str = "segredo-webhook-hr44b";
-/// Variável de ambiente do segredo do webhook.
 const VARIAVEL_SEGREDO: &str = "POPH_EVO_SEGREDO_HR44B";
-/// Número do cliente fictício, usado no pedido de pareamento por número.
 const TELEFONE: &str = "5511999990000";
 
-// ───────────────────────── captura de logs (para provar o que NÃO sai) ─────────────────────────
 
 #[derive(Clone)]
 struct Captura(Arc<Mutex<Vec<u8>>>);
@@ -84,9 +64,7 @@ fn logs_capturados() -> Arc<Mutex<Vec<u8>>> {
     .clone()
 }
 
-// ───────────────────────── Evolution falsa ─────────────────────────
 
-/// Estado da instância falsa, atrás de um mutex.
 #[derive(Debug, Default)]
 struct Instancia {
     existe: bool,
@@ -95,7 +73,6 @@ struct Instancia {
     pareamentos: usize,
     estados: usize,
     deslogadas: usize,
-    /// Quando `true`, criar instância responde 500 ecoando a chave e o número (prova de limpeza).
     falhar_ao_criar: bool,
 }
 
@@ -111,7 +88,6 @@ impl EvolucaoFalsa {
     }
 }
 
-/// A chave vai no cabeçalho `apikey`: sem ela certa, nada acontece (como na Evolution de verdade).
 fn autorizado(cabecalhos: &HeaderMap) -> bool {
     cabecalhos
         .get("apikey")
@@ -253,7 +229,6 @@ async fn subir_evolucao_falsa() -> (String, EvolucaoFalsa) {
     (format!("http://{endereco}"), evo)
 }
 
-// ───────────────────────── cenário ─────────────────────────
 
 struct Cenario {
     base: String,
@@ -262,11 +237,8 @@ struct Cenario {
     store: Arc<Store>,
     org: OrgId,
     agente: AgentId,
-    /// Integração WhatsApp declarada em `[evolution].instancias`.
     integracao: IntegrationId,
-    /// Integração WhatsApp que **não** foi declarada na configuração.
     integracao_solta: IntegrationId,
-    /// Integração de outro tipo (`sms`).
     integracao_sms: IntegrationId,
     evo: EvolucaoFalsa,
     logs: Arc<Mutex<Vec<u8>>>,
@@ -363,7 +335,6 @@ impl Cenario {
         });
         config.validar().expect("configuração com Evolution válida");
 
-        // O caminho de verdade da subida: configuração + `EVOLUTION_API_KEY` do ambiente.
         let canais: Vec<EvolutionChannel> = channels_from_config(
             &config,
             Some(Secret::new(CHAVE_EVO.to_owned())),
@@ -473,7 +444,6 @@ impl Cenario {
             .version
     }
 
-    /// Token de org de verdade, criado pela API (o valor só existe na resposta da criação).
     async fn token_novo(&self, org: OrgId, rotulo: &str) -> String {
         let resposta = self
             .pedir(
@@ -510,7 +480,6 @@ async fn pareamento_devolve_qr_e_grava_estado() {
     let c = Cenario::novo("pareamento").await;
     let rota = c.rota(c.integracao, "qrcode");
 
-    // Sem `If-Match` não age: é escrita na instância da Evolution.
     let sem_if_match = c.pedir(Method::POST, &rota, TOKEN_GLOBAL, None, None).await;
     assert_eq!(sem_if_match.status, StatusCode::PRECONDITION_REQUIRED);
     assert_eq!(codigo(&sem_if_match.corpo), "precondition_required");
@@ -547,7 +516,6 @@ async fn pareamento_devolve_qr_e_grava_estado() {
     assert_eq!(c.estado_gravado(c.integracao), "awaiting_scan");
     assert_eq!(c.versao(c.integracao), 1, "estado não é edição de versão");
 
-    // A geração do QR fica na auditoria, sem o conteúdo do QR.
     let registros = c
         .store
         .audit()
@@ -569,7 +537,6 @@ async fn pareamento_devolve_qr_e_grava_estado() {
     assert_eq!(c.evo.ler(|e| e.criadas), 1);
     assert_eq!(c.evo.ler(|e| e.pareamentos), 1);
 
-    // Segundo clique: a instância já existe na Evolution, e o pareamento continua.
     let denovo = c
         .pedir(Method::POST, &rota, TOKEN_GLOBAL, None, Some(1))
         .await;
@@ -577,7 +544,6 @@ async fn pareamento_devolve_qr_e_grava_estado() {
     assert_eq!(c.evo.ler(|e| e.criadas), 2, "tentou criar de novo");
     assert_eq!(c.evo.ler(|e| e.pareamentos), 2);
 
-    // Aparelho já conectado: não há QR, e o estado informado é o real.
     c.evo.com(|e| e.aberta = true);
     let conectado = c
         .pedir(Method::POST, &rota, TOKEN_GLOBAL, None, Some(1))
@@ -613,8 +579,6 @@ async fn estado_ao_vivo_reflete_na_integracao() {
     assert_eq!(c.estado_gravado(c.integracao), "connected");
     assert_eq!(c.versao(c.integracao), 1, "ler estado não muda a versão");
 
-    // Evolution fora do ar: 503 com código estável, nada gravado por engano.
-    // (instância inexistente responde 404 na Evolution, que vira 502 `evolution_recusou`.)
     c.evo.com(|e| e.existe = false);
     let sem_instancia = c.pedir(Method::GET, &rota, TOKEN_GLOBAL, None, None).await;
     assert_eq!(sem_instancia.status, StatusCode::BAD_GATEWAY);
@@ -640,7 +604,6 @@ async fn desconectar_exige_if_match_e_chama_o_logout() {
     assert_eq!(sem_if_match.status, StatusCode::PRECONDITION_REQUIRED);
     assert_eq!(c.evo.ler(|e| e.deslogadas), 0);
 
-    // Outra pessoa edita a integração: a versão sobe para 2.
     c.store
         .update_integration(
             c.org,

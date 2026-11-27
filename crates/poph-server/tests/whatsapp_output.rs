@@ -1,14 +1,3 @@
-//! Saída pelo WhatsApp (HR-26c): a `outbox` chega à Evolution, sem turno.
-//!
-//! Banco temporário, consumidor de verdade (`SaidaWhatsApp`) e uma Evolution falsa em `127.0.0.1`
-//! que registra cada requisição e responde o roteiro que o teste escreveu. Nada de rede externa e
-//! nenhum número de WhatsApp.
-//!
-//! O que se prova: texto sai uma vez, com a chave só no cabeçalho; texto acima de 4000 caracteres
-//! sai cortado em uma mensagem só; arquivo sai como mídia; arquivo acima de 16 MB não sai nem sobe,
-//! e o texto do mesmo turno segue; erro 5xx volta para a fila e só repete na tentativa seguinte;
-//! erro 4xx é definitivo e não repete; conversa de outro canal ou sem chave fica como está; rede
-//! fora do ar é transitória; nem a chave nem o telefone aparecem em erro ou log.
 
 use std::collections::VecDeque;
 use std::fs;
@@ -33,14 +22,10 @@ use poph_types::{ConversationId, HarnessConfig, IntegrationId, OrgId, Secret, Tu
 use serde_json::{Value, json};
 use tracing_subscriber::fmt::MakeWriter;
 
-/// Chave da Evolution usada nos testes (só para os cabeçalhos das requisições falsas).
 const CHAVE: &str = "chave-evo-saida-26c-teste";
-/// Número de cliente falso. Não é de ninguém.
 const TELEFONE: &str = "5511999990000";
-/// Arquivo com 16 MB: o teto do canal (um byte a mais já é recusado).
 const TETO: u64 = ATTACHMENT_CAP;
 
-// ───────────────────────── captura de logs (para provar o que NÃO sai) ─────────────────────────
 
 #[derive(Clone)]
 struct Captura(Arc<Mutex<Vec<u8>>>);
@@ -62,7 +47,6 @@ impl<'a> MakeWriter<'a> for Captura {
     }
 }
 
-/// Instala, uma vez no processo de testes, o coletor de logs. Todo teste deste arquivo usa o mesmo.
 fn logs_capturados() -> Arc<Mutex<Vec<u8>>> {
     static LOGS: OnceLock<Arc<Mutex<Vec<u8>>>> = OnceLock::new();
     LOGS.get_or_init(|| {
@@ -77,9 +61,7 @@ fn logs_capturados() -> Arc<Mutex<Vec<u8>>> {
     .clone()
 }
 
-// ───────────────────────── Evolution falsa: registra e responde o roteiro ─────────────────────────
 
-/// Uma requisição que chegou na Evolution falsa.
 #[derive(Clone, Debug)]
 struct Registro {
     caminho: String,
@@ -122,7 +104,6 @@ async fn enviar_falso(
     )
 }
 
-/// Sobe a Evolution falsa numa porta efêmera. Devolve o endereço e o que ela recebeu.
 async fn subir_evolucao_falsa(
     roteiro: Vec<(u16, Value)>,
 ) -> (String, EvolucaoFalsa, tokio::task::JoinHandle<()>) {
@@ -145,27 +126,19 @@ async fn subir_evolucao_falsa(
     (format!("http://{endereco}"), evo, tarefa)
 }
 
-// ───────────────────────── cenário: banco, org, integração e conversas ─────────────────────────
 
-/// Como a instância da Evolution aparece para o consumidor neste teste.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Instancia {
-    /// Chave presente e Evolution falsa no ar.
     Normal,
-    /// Chave ausente no ambiente: o consumidor não consegue enviar.
     SemChave,
-    /// Endereço sem nada escutando: falha de rede.
     PortaFechada,
 }
 
 struct Cenario {
     store: Arc<Store>,
     org: OrgId,
-    /// Conversa de WhatsApp da integração configurada.
     conversa_wa: ConversationId,
-    /// Conversa do console (sem integração).
     conversa_console: ConversationId,
-    /// Conversa de uma integração que existe no banco, mas não na configuração do servidor.
     conversa_nao_configurada: ConversationId,
     blobs: PathBuf,
     evo: EvolucaoFalsa,
@@ -297,7 +270,6 @@ impl Cenario {
             attachment_limit: ATTACHMENT_CAP,
         }];
         let opcoes = WhatsAppOutputOptions {
-            // Espera curta para o teste de nova tentativa não depender de relógio.
             backoff: Backoff {
                 base: Duration::from_millis(1),
                 factor: 2,
@@ -364,7 +336,6 @@ impl Cenario {
         self.evo.chamadas.load(Ordering::SeqCst)
     }
 
-    /// Grava um blob no lugar em que a biblioteca grava (`<pasta de blobs>/<org>/<sha256>`).
     fn gravar_blob(&self, sha: &str, bytes: &[u8]) -> String {
         let relativo = format!("{}/{sha}", self.org);
         let caminho = self.blobs.join(&relativo);
@@ -383,7 +354,6 @@ impl Drop for Cenario {
     }
 }
 
-// ───────────────────────── texto ─────────────────────────
 
 #[tokio::test]
 async fn texto_sai_uma_vez_no_formato_do_canal_com_a_chave_so_no_cabecalho() {
@@ -423,7 +393,6 @@ async fn texto_acima_de_4000_sai_cortado_em_uma_mensagem_so() {
     assert!(enviado.ends_with('…'), "termina em reticências");
 }
 
-// ───────────────────────── arquivo da biblioteca ─────────────────────────
 
 #[tokio::test]
 async fn arquivo_da_biblioteca_sai_como_midia_com_o_blob() {
@@ -476,7 +445,6 @@ async fn arquivo_acima_de_16_mb_nao_sai_e_o_texto_do_turno_segue() {
         1,
         "file",
         json!({
-            // Sem blob no disco de propósito: a recusa tem de vir antes de qualquer leitura.
             "blob_ref": format!("{}/{}", cenario.org, "c".repeat(64)),
             "arquivo_id": "01a1f6a5-cd9b-7000-8000-000000000001",
             "nome": "catalogo.pdf",
@@ -504,7 +472,6 @@ async fn arquivo_acima_de_16_mb_nao_sai_e_o_texto_do_turno_segue() {
     );
 }
 
-// ───────────────────────── falhas: transitória, definitiva, não repetição ─────────────────────────
 
 #[tokio::test]
 async fn erro_5xx_volta_para_a_fila_e_so_repete_na_tentativa_seguinte() {
@@ -543,7 +510,6 @@ async fn erro_5xx_volta_para_a_fila_e_so_repete_na_tentativa_seguinte() {
 
 #[tokio::test]
 async fn falha_transitoria_que_nunca_passa_esgota_as_tentativas_e_vira_failed() {
-    // Oito tentativas (o teto do motor) com 5xx; a nona não chega a ser feita.
     let roteiro = (0..8)
         .map(|_| (500, json!({"message": "indisponível"})))
         .collect();
@@ -615,7 +581,6 @@ async fn rede_fora_do_ar_e_transitoria() {
     assert_eq!(cenario.estado(&item).state, OutboxState::Sending);
 }
 
-// ───────────────────────── o que não é deste consumidor fica como está ─────────────────────────
 
 #[tokio::test]
 async fn conversa_do_console_e_de_integracao_nao_configurada_nao_sao_tocadas() {
@@ -661,7 +626,6 @@ async fn sem_chave_da_evolution_a_mensagem_fica_pendente_e_nao_falha() {
     assert_eq!(cenario.chamadas(), 0);
 }
 
-// ───────────────────────── segredo e telefone fora dos logs ─────────────────────────
 
 #[tokio::test]
 async fn chave_e_telefone_nao_aparecem_em_log() {
@@ -684,7 +648,6 @@ async fn chave_e_telefone_nao_aparecem_em_log() {
     .await;
     transitoria.texto("mensagem com falha transitória");
     transitoria.saida.cycle().await.expect("ciclo");
-    // Prova de que a captura funciona: sem isto, um coletor vazio faria o teste passar à toa.
     tracing::warn!(
         marca = "marca-de-teste-saida-26c",
         "linha de controle do teste"
@@ -700,9 +663,7 @@ async fn chave_e_telefone_nao_aparecem_em_log() {
     assert!(!logs.contains("s.whatsapp"), "o JID não aparece em log");
 }
 
-// ───────────────────────── rastro operacional: uma linha por item ─────────────────────────
 
-/// Primeira linha do log que contém `frase` e `trecho`, ou vazio.
 fn linha_com(registro: &str, frase: &str, trecho: &str) -> String {
     registro
         .lines()
@@ -732,7 +693,6 @@ async fn envio_enviado_e_adiado_deixam_uma_linha_cada_sem_dado_sensivel() {
     assert_eq!(adiado.estado(&item_adiado).state, OutboxState::Sending);
 
     let registro = String::from_utf8_lossy(&logs_capturados().lock().unwrap()).into_owned();
-    // Captura viva: as duas linhas precisam aparecer, senão a ausência de dado não prova nada.
     let linha_ok = linha_com(
         &registro,
         "item de saída do WhatsApp enviado",
@@ -770,9 +730,7 @@ async fn envio_enviado_e_adiado_deixam_uma_linha_cada_sem_dado_sensivel() {
     }
 }
 
-// ───────────────────────── id do envio (MX-40) ─────────────────────────
 
-/// Id que a Evolution falsa devolve quando o teste não escreve outro no roteiro.
 const ID_DA_EVOLUTION: &str = "MSG-SAIDA-1";
 
 #[tokio::test]
@@ -793,7 +751,6 @@ async fn texto_enviado_grava_o_id_que_a_evolution_devolveu() {
         Some(ID_DA_EVOLUTION),
         "o id da resposta do envio tem de ficar na outbox"
     );
-    // O id vem da resposta (`key.id`), não do pedido: a Evolution é quem nomeia a mensagem.
     assert_eq!(cenario.estado(&item).state, OutboxState::Sent);
 }
 
@@ -838,7 +795,6 @@ async fn arquivo_enviado_grava_o_id_que_a_evolution_devolveu() {
 
 #[tokio::test]
 async fn envio_que_falha_nao_grava_id() {
-    // Definitivo: o canal recusa o conteúdo.
     let recusado = Cenario::novo(
         "id-recusado",
         Instancia::Normal,
@@ -858,7 +814,6 @@ async fn envio_que_falha_nao_grava_id() {
         "envio recusado não pode ficar com id"
     );
 
-    // Transitório: volta para a fila sem id.
     let adiado = Cenario::novo(
         "id-adiado",
         Instancia::Normal,
@@ -881,7 +836,6 @@ async fn envio_que_falha_nao_grava_id() {
 
 #[tokio::test]
 async fn canal_sem_id_na_resposta_envia_e_fica_sem_id() {
-    // Evolution responde 200 sem id nenhum: o envio vale, e a coluna fica vazia (não é falha).
     let cenario = Cenario::novo(
         "id-ausente",
         Instancia::Normal,

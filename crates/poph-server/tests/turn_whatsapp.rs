@@ -1,19 +1,3 @@
-//! Turno no `poph serve` (HR-26h): mensagem do WhatsApp vira resposta, ponta a ponta.
-//!
-//! Cada teste sobe um servidor de verdade (porta efêmera, `servir_em`) com:
-//! - o webhook da Evolution (entrada, HR-26b);
-//! - o turno com um **provedor de LLM falso** (`ProvedorFake`), contando as chamadas;
-//! - a saída pela fila (`saida_whatsapp`) apontando para uma **Evolution falsa** em `127.0.0.1`,
-//!   que registra cada envio (com a chave do cabeçalho) e responde o roteiro do teste.
-//!
-//! Nada de rede externa, nenhum número de WhatsApp. O banco é temporário.
-//!
-//! O que se prova: mensagem entra e sai uma vez (ordem e contagem de chamadas nos dois servidores
-//! falsos); reentrega do mesmo evento não abre segundo turno; conversa transferida e integração
-//! inativa não respondem e concluem a entrada com o motivo; sem o turno ligado a mensagem fica na
-//! fila e é respondida quando o servidor sobe com ele; resposta que ficou em `sending` na queda é
-//! enviada na subida; métricas do turno aparecem no `/metrics`; logs do turno não trazem telefone,
-//! JID, chave, segredo nem texto do cliente ou da resposta.
 
 use std::collections::VecDeque;
 use std::fs;
@@ -47,19 +31,14 @@ use serde_json::{Value, json};
 use tokio::sync::oneshot;
 use tracing_subscriber::fmt::MakeWriter;
 
-/// Segredo do webhook da instância `loja` (só para o cabeçalho das entregas falsas).
 const SEGREDO: &str = "segredo-webhook-turno-26h";
-/// Chave da Evolution (só para o cabeçalho das requisições de envio).
 const CHAVE_EVO: &str = "chave-evo-turno-26h-teste";
-/// Número de cliente falso. Não é de ninguém.
 const TELEFONE: &str = "5511999990001";
 const JID: &str = "5511999990001@s.whatsapp.net";
-/// Texto do cliente e resposta do agente: não podem aparecer em log.
 const PERGUNTA: &str = "qual o prazo de entrega do pedido quatro quatro sete um";
 const RESPOSTA: &str = "o prazo é de cinco dias úteis após a confirmação";
 const INSTANCIA: &str = "loja";
 
-// ───────────────────────── captura de logs (para provar o que NÃO sai) ─────────────────────────
 
 #[derive(Clone)]
 struct Captura(Arc<Mutex<Vec<u8>>>);
@@ -84,7 +63,6 @@ impl<'a> MakeWriter<'a> for Captura {
     }
 }
 
-/// Instala, uma vez no processo de testes, o coletor de logs. Todo teste deste arquivo usa o mesmo.
 fn logs_capturados() -> Arc<Mutex<Vec<u8>>> {
     static LOGS: OnceLock<Arc<Mutex<Vec<u8>>>> = OnceLock::new();
     LOGS.get_or_init(|| {
@@ -107,7 +85,6 @@ fn logs_ate_agora() -> String {
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
-// ───────────────────────── Evolution falsa: registra cada envio ─────────────────────────
 
 #[derive(Debug, Clone)]
 struct Envio {
@@ -118,7 +95,6 @@ struct Envio {
 #[derive(Clone, Default)]
 struct EvolucaoFalsa {
     envios: Arc<Mutex<Vec<Envio>>>,
-    /// Status a devolver em cada envio, na ordem. Vazio = 200.
     roteiro: Arc<Mutex<VecDeque<u16>>>,
     contador: Arc<AtomicUsize>,
 }
@@ -174,7 +150,6 @@ async fn subir_evolucao_falsa(evo: EvolucaoFalsa) -> String {
     format!("http://{endereco}")
 }
 
-// ───────────────────────── cenário: banco, org, agente e integração ─────────────────────────
 
 struct Cenario {
     pasta: PathBuf,
@@ -219,7 +194,6 @@ impl Cenario {
                     name: "Atendente Loja".to_owned(),
                     slug: "atendente-loja".to_owned(),
                     modelo: "gemini-3.8-flash-tiered".to_owned(),
-                    // Sem janela de agrupamento: o teste não espera o cliente terminar de digitar.
                     grouping_window_ms: 0,
                     ..Default::default()
                 },
@@ -257,7 +231,6 @@ impl Cenario {
         }
     }
 
-    /// Instância `loja`, com segredo e cliente de envio apontando para a Evolution falsa.
     fn canal(&self) -> EvolutionChannel {
         let cliente = EvolutionClient::new(
             ConfigEvolution::new(
@@ -278,8 +251,6 @@ impl Cenario {
         }
     }
 
-    /// Fluxo de entrada e saída com o turno de verdade e o provedor falso. As métricas vão para o
-    /// registro do servidor, como na subida real.
     fn fluxo(
         &self,
         registro: &Registry,
@@ -318,13 +289,11 @@ impl Cenario {
         (fluxo, fake)
     }
 
-    /// Sobe o servidor. Com `ligar_turno = false`, ele recebe e grava, mas não roda turno.
     async fn subir(&self, roteiros: Vec<Script>, ligar_turno: bool) -> Servidor {
         self.subir_com(roteiros, ligar_turno, FlowOptions::default())
             .await
     }
 
-    /// Como [`Cenario::subir`], com a política do fluxo escolhida pelo teste.
     async fn subir_com(
         &self,
         roteiros: Vec<Script>,
@@ -363,7 +332,6 @@ impl Cenario {
         }
     }
 
-    /// Conversa do cliente (a primeira da org; o teste só abre uma).
     fn conversa(&self) -> Option<ConversationId> {
         self.store
             .conversations()
@@ -419,18 +387,15 @@ impl Drop for Cenario {
     }
 }
 
-/// Servidor no ar: entrega webhooks e lê as métricas. Ao cair, o servidor para.
 struct Servidor {
     base: String,
     cliente: Client,
     org: OrgId,
-    /// Provedor falso do turno (`None` quando o turno não está ligado neste servidor).
     llm: Option<Arc<FakeProvider>>,
     desligar: Option<oneshot::Sender<()>>,
 }
 
 impl Servidor {
-    /// Entrega um webhook de texto. Devolve o status e o corpo da resposta.
     async fn webhook(&self, corpo: Value) -> (StatusCode, Value) {
         let url = format!("{}/webhook/evolution/{}/{INSTANCIA}", self.base, self.org);
         let resposta = self
@@ -469,13 +434,11 @@ impl Servidor {
     }
 }
 
-/// Há uma linha de nível `INFO` com o texto dado? (O nível também é conferido.)
 fn linha_em_info(logs: &str, texto: &str) -> bool {
     logs.lines()
         .any(|linha| linha.contains(" INFO ") && linha.contains(texto))
 }
 
-/// Valor de uma métrica no texto do `/metrics` (0 quando não aparece).
 fn valor_metrica(texto: &str, nome: &str) -> f64 {
     for linha in texto.lines() {
         if linha.starts_with('#') {
@@ -491,7 +454,6 @@ fn valor_metrica(texto: &str, nome: &str) -> f64 {
     0.0
 }
 
-/// Espera uma condição (polling curto). Falha com o nome do que não aconteceu.
 async fn esperar(rotulo: &str, mut condicao: impl FnMut() -> bool) {
     for _ in 0..400 {
         if condicao() {
@@ -527,7 +489,6 @@ fn evento_texto(id: &str, texto: &str) -> Value {
     })
 }
 
-/// A mesma entrega de texto, com `fromMe = true`: o que o cliente digitou no celular (MX-41).
 fn evento_do_aparelho(id: &str, texto: &str) -> Value {
     let mut corpo = evento_texto(id, texto);
     corpo["data"]["key"]["fromMe"] = json!(true);
@@ -545,7 +506,6 @@ fn resposta(texto: &str) -> Script {
     ])
 }
 
-// ───────────────────────────────────────── testes ─────────────────────────────────────────
 
 #[tokio::test]
 async fn mensagem_do_cliente_vira_resposta_pela_evolution_uma_vez() {
@@ -562,7 +522,6 @@ async fn mensagem_do_cliente_vira_resposta_pela_evolution_uma_vez() {
     })
     .await;
 
-    // Uma chamada ao modelo, um envio, a chave só no cabeçalho.
     assert_eq!(
         servidor.llm_recebidos(),
         1,
@@ -580,14 +539,12 @@ async fn mensagem_do_cliente_vira_resposta_pela_evolution_uma_vez() {
         "a chave não vai no corpo do envio"
     );
 
-    // A entrada saiu da fila, o turno concluiu e a resposta ficou na conversa.
     assert_eq!(cenario.entradas_pendentes(), 0);
     let turnos = cenario.turnos();
     assert_eq!(turnos.len(), 1);
     assert_eq!(turnos[0].state, TurnState::Completed);
     assert_eq!(cenario.respostas_gravadas(), vec![RESPOSTA.to_owned()]);
 
-    // Logs: o turno deixou linha, e nada sensível saiu nelas.
     let logs = logs_ate_agora();
     assert!(
         linha_em_info(&logs, "turno concluído"),
@@ -614,7 +571,6 @@ async fn reentrega_do_mesmo_evento_nao_gera_segundo_turno() {
     })
     .await;
 
-    // A Evolution reentrega o mesmo evento (o id da mensagem é o mesmo).
     let (status, segunda) = servidor
         .webhook(evento_texto("MSG-REENT-1", PERGUNTA))
         .await;
@@ -651,7 +607,6 @@ async fn conversa_transferida_nao_responde_e_conclui_com_motivo() {
     })
     .await;
 
-    // Um humano assume: a conversa vai para transferida.
     let conversa = cenario.conversa().expect("a conversa existe");
     let atual = cenario
         .store
@@ -701,15 +656,11 @@ async fn conversa_transferida_nao_responde_e_conclui_com_motivo() {
             .contains("não responde"),
         "o motivo fica registrado no turno"
     );
-    // A mensagem do cliente continua gravada.
     assert_eq!(cenario.respostas_gravadas().len(), 1);
 
     servidor.desligar().await;
 }
 
-/// Aceite da MX-41: a mensagem digitada no aparelho **não** é respondida pelo agente — nem na
-/// hora (não há turno), nem depois (a conversa ficou `transferred` e a próxima mensagem do cliente
-/// também não chama o modelo).
 #[tokio::test]
 async fn mensagem_do_aparelho_nao_e_respondida_pelo_agente() {
     let cenario = Cenario::novo("aparelho").await;
@@ -747,7 +698,6 @@ async fn mensagem_do_aparelho_nao_e_respondida_pelo_agente() {
     );
     assert!(cenario.turnos().is_empty(), "nenhum turno aberto");
 
-    // A mensagem existe, é saída do dispositivo e não tem turno.
     let conversa = cenario.conversa().expect("a conversa existe no banco");
     let gravadas = cenario
         .store
@@ -759,7 +709,6 @@ async fn mensagem_do_aparelho_nao_e_respondida_pelo_agente() {
     assert_eq!(gravadas[0].origin, Origin::Device);
     assert!(gravadas[0].turn_id.is_none());
 
-    // E o cliente que escrever depois também não é respondido: quem atende é o humano no aparelho.
     servidor.webhook(evento_texto("MSG-AP-2", PERGUNTA)).await;
     esperar("a entrada ser concluída", || {
         cenario.entradas_pendentes() == 0
@@ -784,7 +733,6 @@ async fn integracao_inativa_nao_responde_e_conclui_com_motivo() {
     let cenario = Cenario::novo("inativa").await;
     let servidor = cenario.subir(vec![resposta(RESPOSTA)], true).await;
 
-    // A integração é desativada no painel: as mensagens entram, mas o agente não responde.
     let atual = cenario
         .store
         .get_integration(cenario.org, cenario.agente, cenario.integracao)
@@ -851,7 +799,6 @@ async fn integracao_inativa_nao_responde_e_conclui_com_motivo() {
 async fn sem_turno_ligado_a_mensagem_fica_na_fila_e_e_respondida_na_subida() {
     let cenario = Cenario::novo("sem-turno").await;
 
-    // Servidor sem o modelo (chave ausente): recebe e grava, não responde.
     let parado = cenario.subir(Vec::new(), false).await;
     let (status, _) = parado.webhook(evento_texto("MSG-FILA-1", PERGUNTA)).await;
     assert_eq!(status, StatusCode::OK);
@@ -868,7 +815,6 @@ async fn sem_turno_ligado_a_mensagem_fica_na_fila_e_e_respondida_na_subida() {
     assert!(cenario.evo.envios().is_empty());
     parado.desligar().await;
 
-    // O servidor sobe com o turno: a fila é lida e a mensagem é respondida.
     let servidor = cenario.subir(vec![resposta(RESPOSTA)], true).await;
     esperar("a resposta da fila sair", || {
         cenario.saidas(OutboxState::Sent) == 1
@@ -885,7 +831,6 @@ async fn sem_turno_ligado_a_mensagem_fica_na_fila_e_e_respondida_na_subida() {
 async fn resposta_que_ficou_em_envio_na_queda_sai_na_subida() {
     let cenario = Cenario::novo("queda").await;
 
-    // Simula a queda no meio do envio: a resposta já está na fila, marcada como em envio.
     let conversa = cenario
         .store
         .conversations()
@@ -927,7 +872,6 @@ async fn resposta_que_ficou_em_envio_na_queda_sai_na_subida() {
         .expect("marca como em envio");
     assert_eq!(cenario.saidas(OutboxState::Sending), 1);
 
-    // Ao subir, a saída retoma o que ficou em envio e entrega.
     let servidor = cenario.subir(Vec::new(), false).await;
     esperar("a resposta retomada sair", || {
         cenario.saidas(OutboxState::Sent) == 1
@@ -944,8 +888,6 @@ async fn resposta_que_ficou_em_envio_na_queda_sai_na_subida() {
 async fn turno_interrompido_por_queda_e_retomado_uma_vez_na_subida() {
     let cenario = Cenario::novo("queda-turno").await;
 
-    // Estado deixado pelo processo que morreu no meio do atendimento: a entrega do cliente está
-    // na fila (não concluída) e o turno ficou aberto.
     let entrega = cenario
         .store
         .inbox()
@@ -971,7 +913,6 @@ async fn turno_interrompido_por_queda_e_retomado_uma_vez_na_subida() {
         .start(cenario.org, conversa, Some(cenario.agente))
         .expect("turno do processo anterior");
 
-    // A subida: o turno interrompido fecha como falha e a entrega pendente é processada de novo.
     let servidor = cenario
         .subir(vec![resposta(RESPOSTA), resposta(RESPOSTA)], true)
         .await;
@@ -991,7 +932,6 @@ async fn turno_interrompido_por_queda_e_retomado_uma_vez_na_subida() {
         Some(poph_server::turn_input::INTERRUPTED_REASON)
     );
 
-    // Uma resposta só: uma chamada ao modelo, uma mensagem do agente e um envio ao cliente.
     assert_eq!(servidor.llm_recebidos(), 1);
     assert_eq!(cenario.respostas_gravadas(), vec![RESPOSTA.to_owned()]);
     assert_eq!(cenario.evo.envios().len(), 1, "sai uma vez, na retomada");
@@ -1002,7 +942,6 @@ async fn turno_interrompido_por_queda_e_retomado_uma_vez_na_subida() {
         "nada preso em envio"
     );
 
-    // E a conversa segue atendendo: mensagem nova responde normalmente.
     let (status, _) = servidor
         .webhook(evento_texto("MSG-QUEDA-2", PERGUNTA))
         .await;
@@ -1032,7 +971,6 @@ async fn metricas_do_turno_aparecem_no_metrics() {
     servidor.desligar().await;
 }
 
-// ───────────────────────── falha do modelo (HR-26i) ─────────────────────────
 
 fn falha_do_provedor() -> Script {
     Script::Failure(poph_core::llm::LlmError::Unavailable {
@@ -1044,7 +982,6 @@ fn falha_do_provedor() -> Script {
 #[tokio::test]
 async fn falha_do_modelo_repete_e_a_resposta_sai_uma_vez_pela_evolution() {
     let cenario = Cenario::novo("falha-repete").await;
-    // Espera curta para o teste: 50 ms antes da segunda tentativa e 200 ms antes da terceira.
     let opcoes = FlowOptions::default().with_failure_model(3, Duration::from_millis(50));
     let servidor = cenario
         .subir_com(
@@ -1064,7 +1001,6 @@ async fn falha_do_modelo_repete_e_a_resposta_sai_uma_vez_pela_evolution() {
     })
     .await;
 
-    // Três chamadas ao modelo (uma por tentativa), e um só envio pela Evolution.
     assert_eq!(servidor.llm_recebidos(), 3, "uma chamada por tentativa");
     let envios = cenario.evo.envios();
     assert_eq!(envios.len(), 1, "a resposta sai uma vez");
@@ -1080,7 +1016,6 @@ async fn falha_do_modelo_repete_e_a_resposta_sai_uma_vez_pela_evolution() {
     );
     assert_eq!(cenario.respostas_gravadas(), vec![RESPOSTA.to_owned()]);
 
-    // Métricas e log: a falha deixou rastro, sem dado sensível.
     let metricas = servidor.metricas().await;
     assert_eq!(
         valor_metrica(&metricas, "poph_turnos_falha_modelo_adiadas_total"),
@@ -1127,7 +1062,6 @@ async fn falha_do_modelo_esgotada_nao_manda_nada_e_registra_o_motivo() {
     })
     .await;
 
-    // Exatamente três chamadas, nenhum envio, e nenhuma resposta gravada.
     assert_eq!(servidor.llm_recebidos(), 3);
     assert!(cenario.evo.envios().is_empty(), "nada foi enviado");
     assert!(cenario.respostas_gravadas().is_empty());
@@ -1171,12 +1105,10 @@ async fn recusa_do_provedor_401_nao_repete_avisa_a_operacao_e_nao_manda_nada() {
     })
     .await;
 
-    // Uma só chamada ao modelo, nenhum envio e nenhuma resposta gravada.
     assert_eq!(servidor.llm_recebidos(), 1, "a recusa não é repetida");
     assert!(cenario.evo.envios().is_empty(), "nada foi enviado");
     assert!(cenario.respostas_gravadas().is_empty());
 
-    // A operação vê na hora: métrica de recusa e aviso no log, sem dado sensível.
     let metricas = servidor.metricas().await;
     assert_eq!(
         valor_metrica(&metricas, "poph_turnos_falha_modelo_recusadas_total"),
