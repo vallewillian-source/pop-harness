@@ -155,7 +155,7 @@ function serverWith(
         connected?: boolean;
     } = {},
 ) {
-    const estado = { itens: [...initial], opened: options.connected ?? false, pairings: 0 };
+    const estado = { items: [...initial], opened: options.connected ?? false, pairings: 0 };
     const pathId = (url: string) => url.split(`${LIST}/`)[1]?.split("/")[0] ?? "";
     const servidor = new FakeServer()
         .respond("GET", "/manifests/", (call) => {
@@ -170,10 +170,10 @@ function serverWith(
         .respond("POST", "/whatsapp/qrcode", (call) => {
             if (options.onQrcode) return options.onQrcode();
             const id = pathId(call.url);
-            const current = estado.itens.find((item) => item.id === id);
+            const current = estado.items.find((item) => item.id === id);
             if (!current) return apiError(404, "not_found", "integração não encontrada");
             if (estado.opened) {
-                estado.itens = estado.itens.map((item) =>
+                estado.items = estado.items.map((item) =>
                     item.id === id ? { ...item, connection_state: "connected" } : item,
                 );
                 return {
@@ -189,7 +189,7 @@ function serverWith(
                 };
             }
             estado.pairings += 1;
-            estado.itens = estado.itens.map((item) =>
+            estado.items = estado.items.map((item) =>
                 item.id === id ? { ...item, connection_state: "awaiting_scan" } : item,
             );
             return {
@@ -213,7 +213,7 @@ function serverWith(
             if (options.onState) return options.onState();
             const id = pathId(call.url);
             const connection_state = estado.opened ? "connected" : "disconnected";
-            estado.itens = estado.itens.map((item) =>
+            estado.items = estado.items.map((item) =>
                 item.id === id ? { ...item, connection_state } : item,
             );
             return {
@@ -230,7 +230,7 @@ function serverWith(
             if (options.onDisconnect) return options.onDisconnect(call);
             const id = pathId(call.url);
             estado.opened = false;
-            estado.itens = estado.itens.map((item) =>
+            estado.items = estado.items.map((item) =>
                 item.id === id ? { ...item, connection_state: "disconnected" } : item,
             );
             return {
@@ -251,7 +251,7 @@ function serverWith(
                 config_json?: Record<string, unknown>;
                 secrets?: Record<string, string>;
             };
-            const current = estado.itens.find((item) => item.id === id);
+            const current = estado.items.find((item) => item.id === id);
             if (!current) return apiError(404, "not_found", "integração não encontrada");
             const filled = body.secrets
                 ? [
@@ -269,19 +269,19 @@ function serverWith(
                 tem_segredo: filled.length > 0 || current.tem_segredo,
                 version: current.version + 1,
             };
-            estado.itens = estado.itens.map((item) => (item.id === id ? changed : item));
+            estado.items = estado.items.map((item) => (item.id === id ? changed : item));
             return { status: 200, body: changed };
         })
         .respond("GET", `${LIST}/`, (call) => {
             const id = call.url.split(`${LIST}/`)[1] ?? "";
-            const found = estado.itens.find((item) => item.id === id);
+            const found = estado.items.find((item) => item.id === id);
             return found
                 ? { status: 200, body: found }
                 : apiError(404, "not_found", "integração não encontrada");
         })
         .respond("DELETE", `${LIST}/`, (call) => {
             const id = call.url.split(`${LIST}/`)[1] ?? "";
-            estado.itens = estado.itens.filter((item) => item.id !== id);
+            estado.items = estado.items.filter((item) => item.id !== id);
             return { status: 200, body: { deleted: true } };
         })
         .respond("POST", LIST, (call) => {
@@ -301,12 +301,12 @@ function serverWith(
                 segredos_preenchidos: body.secrets ? Object.keys(body.secrets) : [],
                 tem_segredo: !!body.secrets,
             });
-            estado.itens = [...estado.itens, created];
+            estado.items = [...estado.items, created];
             return { status: 201, body: created };
         })
         .respond("GET", LIST, () => ({
             status: 200,
-            body: { items: estado.itens, next_cursor: null },
+            body: { items: estado.items, next_cursor: null },
         }))
         .respond("GET", `/agents/${AGENTE}`, { status: 200, body: AGENT_JSON })
         .respond("GET", `/admin/v1/orgs/${ORG}`, {
@@ -413,7 +413,7 @@ describe("Aba Integrações", () => {
             onChange: () => {
                 if (first) {
                     first = false;
-                    estado.itens = estado.itens.map((item) =>
+                    estado.items = estado.items.map((item) =>
                         item.id === "int_1" ? { ...item, version: 5 } : item,
                     );
                     return apiError(412, "version_conflict", "conflito de versão", {
@@ -421,9 +421,9 @@ describe("Aba Integrações", () => {
                         expected_version: 1,
                     });
                 }
-                const current = estado.itens.find((item) => item.id === "int_1")!;
+                const current = estado.items.find((item) => item.id === "int_1")!;
                 const changed = { ...current, status: "inactive", version: current.version + 1 };
-                estado.itens = estado.itens.map((item) =>
+                estado.items = estado.items.map((item) =>
                     item.id === "int_1" ? changed : item,
                 );
                 return { status: 200, body: changed };
@@ -613,7 +613,7 @@ describe("Formulário do manifesto na integração (HR-44e)", () => {
                 onChange: () => {
                     if (first) {
                         first = false;
-                        estado.itens = estado.itens.map((item) =>
+                        estado.items = estado.items.map((item) =>
                             item.id === "int_1" ? { ...item, version: 5 } : item,
                         );
                         return apiError(412, "version_conflict", "conflito de versão", {
@@ -621,9 +621,9 @@ describe("Formulário do manifesto na integração (HR-44e)", () => {
                             expected_version: 1,
                         });
                     }
-                    const current = estado.itens.find((item) => item.id === "int_1")!;
+                    const current = estado.items.find((item) => item.id === "int_1")!;
                     const changed = { ...current, version: current.version + 1 };
-                    estado.itens = estado.itens.map((item) =>
+                    estado.items = estado.items.map((item) =>
                         item.id === "int_1" ? changed : item,
                     );
                     return { status: 200, body: changed };
@@ -889,7 +889,7 @@ describe("Painel do WhatsApp (HR-44d)", () => {
             onDisconnect: () => {
                 if (first) {
                     first = false;
-                    estado.itens = estado.itens.map((item) =>
+                    estado.items = estado.items.map((item) =>
                         item.id === "int_1" ? { ...item, version: 5 } : item,
                     );
                     return {
@@ -902,7 +902,7 @@ describe("Painel do WhatsApp (HR-44d)", () => {
                     };
                 }
                 estado.opened = false;
-                estado.itens = estado.itens.map((item) =>
+                estado.items = estado.items.map((item) =>
                     item.id === "int_1"
                         ? { ...item, connection_state: "disconnected", version: 6 }
                         : item,

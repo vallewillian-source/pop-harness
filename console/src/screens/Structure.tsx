@@ -30,11 +30,11 @@ import "../styles/structure.css";
 
 type Estado = {
     loading: boolean;
-    erro: string | null;
-    itens: Registro[];
+    error: string | null;
+    items: Registro[];
 };
 
-const STATE_INITIAL: Estado = { loading: true, erro: null, itens: [] };
+const STATE_INITIAL: Estado = { loading: true, error: null, items: [] };
 
 function classStatus(situacao: string): string {
     return situacao === "active" ? "poph-status--active" : "poph-status--inactive";
@@ -90,10 +90,10 @@ function SectionStructure({ tipo, org, agentCount, onChange }: ColumnProps) {
         : translate("structure.categoriesTitle");
 
     const load = useCallback(async () => {
-        setState((current) => ({ ...current, loading: true, erro: null }));
+        setState((current) => ({ ...current, loading: true, error: null }));
         try {
             const items = await listStructure(tipo, org);
-            setState({ loading: false, erro: null, itens: items });
+            setState({ loading: false, error: null, items: items });
         } catch (failure) {
             const mensagem =
                 failure instanceof Error
@@ -101,7 +101,7 @@ function SectionStructure({ tipo, org, agentCount, onChange }: ColumnProps) {
                     : isDepartment
                       ? translate("structure.loadDepartmentsError")
                       : translate("structure.loadCategoriesError");
-            setState({ loading: false, erro: mensagem, itens: [] });
+            setState({ loading: false, error: mensagem, items: [] });
         }
     }, [tipo, org, isDepartment, translate]);
 
@@ -111,11 +111,11 @@ function SectionStructure({ tipo, org, agentCount, onChange }: ColumnProps) {
 
     function onSaveRecord(registro: Registro) {
         setState((current) => {
-            const exists = current.itens.some((item) => item.id === registro.id);
+            const exists = current.items.some((item) => item.id === registro.id);
             const items = exists
-                ? current.itens.map((item) => (item.id === registro.id ? registro : item))
-                : [...current.itens, registro];
-            return { ...current, itens: items };
+                ? current.items.map((item) => (item.id === registro.id ? registro : item))
+                : [...current.items, registro];
+            return { ...current, items: items };
         });
         onChange?.();
         void load();
@@ -134,7 +134,7 @@ function SectionStructure({ tipo, org, agentCount, onChange }: ColumnProps) {
     );
 
     let content: ReactNode;
-    if (estado.loading && estado.itens.length === 0) {
+    if (estado.loading && estado.items.length === 0) {
         content = (
             <div
                 aria-busy="true"
@@ -147,7 +147,7 @@ function SectionStructure({ tipo, org, agentCount, onChange }: ColumnProps) {
                 <SofaSkeleton lines={3} />
             </div>
         );
-    } else if (estado.erro) {
+    } else if (estado.error) {
         content = (
             <SofaErrorState
                 title={
@@ -156,11 +156,11 @@ function SectionStructure({ tipo, org, agentCount, onChange }: ColumnProps) {
                         : translate("structure.errorCategoriesTitle")
                 }
                 description={translate("structure.errorDescription")}
-                details={estado.erro}
+                details={estado.error}
                 retry={{ label: translate("structure.retry"), onClick: () => void load() }}
             />
         );
-    } else if (estado.itens.length === 0) {
+    } else if (estado.items.length === 0) {
         content = (
             <SofaEmptyState
                 icon={isDepartment ? <IconBuilding aria-hidden="true" /> : <IconGrid aria-hidden="true" />}
@@ -197,7 +197,7 @@ function SectionStructure({ tipo, org, agentCount, onChange }: ColumnProps) {
                         : translate("structure.listCategoriesAria")
                 }
             >
-                {estado.itens.map((item) => (
+                {estado.items.map((item) => (
                     <li className="poph-structure__line" key={item.id}>
                         <div className="poph-structure__text">
                             <span className="poph-structure__name">{item.name}</span>
@@ -269,7 +269,7 @@ function SectionStructure({ tipo, org, agentCount, onChange }: ColumnProps) {
                         size="sm"
                         icon={<IconRefresh aria-hidden="true" />}
                         onClick={() => void load()}
-                        loading={estado.loading && estado.itens.length > 0}
+                        loading={estado.loading && estado.items.length > 0}
                     >
                         {translate("structure.refresh")}
                     </SofaButton>

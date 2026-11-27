@@ -185,27 +185,27 @@ export function OrgPanel() {
     const shortcuts = [
         {
             chave: "estrutura",
-            titulo: t("orgs.structureShortcutTitle"),
+            title: t("orgs.structureShortcutTitle"),
             descricao: t("orgs.structureShortcutDescription"),
             note: t("orgs.structureShortcutNote"),
-            rotulo: t("orgs.structureShortcutAction"),
-            caminho: `/orgs/${org.id}/structure`,
+            label: t("orgs.structureShortcutAction"),
+            path: `/orgs/${org.id}/structure`,
         },
         {
             chave: "produtos",
-            titulo: t("orgs.productsShortcutTitle"),
+            title: t("orgs.productsShortcutTitle"),
             descricao: t("orgs.productsShortcutDescription"),
             note: t("orgs.productsShortcutNote"),
-            rotulo: t("orgs.productsShortcutAction"),
-            caminho: `/orgs/${org.id}/products`,
+            label: t("orgs.productsShortcutAction"),
+            path: `/orgs/${org.id}/products`,
         },
         {
             chave: "agentes",
-            titulo: t("orgs.agentsShortcutTitle"),
+            title: t("orgs.agentsShortcutTitle"),
             descricao: t("orgs.agentsShortcutDescription"),
             note: t("orgs.agentsShortcutNote"),
-            rotulo: t("orgs.agentsShortcutAction"),
-            caminho: `/orgs/${org.id}/agents`,
+            label: t("orgs.agentsShortcutAction"),
+            path: `/orgs/${org.id}/agents`,
         },
     ];
 
@@ -295,13 +295,13 @@ export function OrgPanel() {
                             <li key={shortcut.chave} className="poph-org-panel__shortcut">
                                 <div className="poph-org-panel__shortcut-text">
                                     <span className="poph-org-panel__shortcut-title">
-                                        {shortcut.titulo}
+                                        {shortcut.title}
                                     </span>
                                     <span className="poph-org-panel__help">{shortcut.descricao}</span>
                                     <span className="poph-org-panel__note">{shortcut.note}</span>
                                 </div>
-                                <Link to={shortcut.caminho} className="poph-org-panel__shortcut-link">
-                                    {shortcut.rotulo}
+                                <Link to={shortcut.path} className="poph-org-panel__shortcut-link">
+                                    {shortcut.label}
                                 </Link>
                             </li>
                         ))}

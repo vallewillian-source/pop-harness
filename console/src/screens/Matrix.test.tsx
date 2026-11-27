@@ -583,8 +583,8 @@ describe("Matrix em en-US", () => {
     it("textos derivados acompanham o idioma ativo", () => {
         setLocale("en-US");
         expect(statusConnection(true)).toEqual({ value: "Connected" });
-        expect(statusConnection(false).detalhe).toBe("the module retries on its own");
-        expect(statusConnection(undefined).detalhe).toBe("not configured in this instance");
+        expect(statusConnection(false).detail).toBe("the module retries on its own");
+        expect(statusConnection(undefined).detail).toBe("not configured in this instance");
         expect(valueLag(1)).toBe("1 msg behind");
         expect(valueLag(142)).toBe("142 msgs behind");
         expect(valueFailures(2)).toBe("2 pending");

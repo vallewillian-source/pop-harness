@@ -37,10 +37,10 @@ type Situacao = "todas" | ProductStatus;
 type Filters = {
     search: string;
     situacao: Situacao;
-    categoria: string;
+    category: string;
 };
 
-const INITIAL_FILTERS: Filters = { search: "", situacao: "todas", categoria: "todas" };
+const INITIAL_FILTERS: Filters = { search: "", situacao: "todas", category: "todas" };
 
 function classStatus(situacao: string): string {
     return situacao === "active" ? "poph-status--active" : "poph-status--inactive";
@@ -101,9 +101,9 @@ export function Products() {
     const [agents, setAgents] = useState<Agente[] | null>(null);
     const [filters, setFilters] = useState<Filters>(INITIAL_FILTERS);
     const [noticeIndex, setIndexNotice] = useState<string | null>(null);
-    const [edit, setEdit] = useState<{ opened: boolean; produto: Product | null }>({
+    const [edit, setEdit] = useState<{ opened: boolean; product: Product | null }>({
         opened: false,
-        produto: null,
+        product: null,
     });
     const [toDelete, setToDelete] = useState<Product | null>(null);
 
@@ -162,7 +162,7 @@ export function Products() {
                 (product) =>
                     matchesSearch(product, filters.search) &&
                     (filters.situacao === "todas" || product.status === filters.situacao) &&
-                    (filters.categoria === "todas" || product.category_id === filters.categoria),
+                    (filters.category === "todas" || product.category_id === filters.category),
             ),
         [products, filters],
     );
@@ -242,7 +242,7 @@ export function Products() {
                                 aria-label={translate("products.editProductAria", {
                                     name: product.name,
                                 })}
-                                onClick={() => setEdit({ opened: true, produto: product })}
+                                onClick={() => setEdit({ opened: true, product: product })}
                             >
                                 {translate("products.edit")}
                             </SofaButton>
@@ -321,7 +321,7 @@ export function Products() {
                         <SofaButton
                             variant="primary"
                             icon={<IconPlus aria-hidden="true" />}
-                            onClick={() => setEdit({ opened: true, produto: null })}
+                            onClick={() => setEdit({ opened: true, product: null })}
                         >
                             {translate("products.createFirstProduct")}
                         </SofaButton>
@@ -388,7 +388,7 @@ export function Products() {
                         variant="primary"
                         icon={<IconPlus aria-hidden="true" />}
                         disabled={totalCategories === 0}
-                        onClick={() => setEdit({ opened: true, produto: null })}
+                        onClick={() => setEdit({ opened: true, product: null })}
                     >
                         {translate("products.newProduct")}
                     </SofaButton>
@@ -465,11 +465,11 @@ export function Products() {
                                 {(control) => (
                                     <SofaSelect
                                         id={control.id}
-                                        value={filters.categoria}
+                                        value={filters.category}
                                         onChange={(evento) =>
                                             setFilters((current) => ({
                                                 ...current,
-                                                categoria: evento.target.value,
+                                                category: evento.target.value,
                                             }))
                                         }
                                     >
@@ -491,9 +491,9 @@ export function Products() {
             <ModalProduct
                 org={orgId}
                 opened={edit.opened}
-                product={edit.produto}
+                product={edit.product}
                 categories={categories}
-                onClose={() => setEdit({ opened: false, produto: null })}
+                onClose={() => setEdit({ opened: false, product: null })}
                 onSave={onSaveProduct}
             />
 

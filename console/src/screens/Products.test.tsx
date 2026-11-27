@@ -188,9 +188,9 @@ describe("Produtos", () => {
         expect(within(rowOf("Clareamento dental")).getByText("R$ 450,00")).toBeInTheDocument();
 
         await user.click(screen.getByRole("button", { name: "Editar produto Clareamento dental" }));
-        const preco = await screen.findByRole("textbox", { name: "Preço (R$)" });
-        await user.clear(preco);
-        await user.type(preco, "500");
+        const price = await screen.findByRole("textbox", { name: "Preço (R$)" });
+        await user.clear(price);
+        await user.type(price, "500");
         await user.click(screen.getByRole("button", { name: "Salvar alterações" }));
 
         expect(await within(rowOf("Clareamento dental")).findByText("R$ 500,00")).toBeInTheDocument();

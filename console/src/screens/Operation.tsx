@@ -87,21 +87,21 @@ export function messageFailure(error: unknown, what: string): string {
     return translate("operation.errorGeneric");
 }
 
-type FailureSection = { erro: unknown; what: TranslationKey };
+type FailureSection = { error: unknown; what: TranslationKey };
 
 function textFailure(failure: FailureSection): string {
-    return messageFailure(failure.erro, translate(failure.what));
+    return messageFailure(failure.error, translate(failure.what));
 }
 
-type Estado<T> = { loading: boolean; dados: T | null; erro: FailureSection | null };
+type Estado<T> = { loading: boolean; dados: T | null; error: FailureSection | null };
 
-const stateInitial = <T,>(): Estado<T> => ({ loading: true, dados: null, erro: null });
+const stateInitial = <T,>(): Estado<T> => ({ loading: true, dados: null, error: null });
 
 type Query = {
     loading: boolean;
     kind: string;
     manifesto: PluginManifest | null;
-    erro: unknown;
+    error: unknown;
 };
 
 function messagePlugin(error: unknown): string {
@@ -180,10 +180,10 @@ export function printScreen(snapshot: string): string {
 }
 
 export type FailureReload =
-    | { tipo: "invalido"; arquivo: string | null; problemas: string[] }
+    | { tipo: "invalido"; file: string | null; problems: string[] }
     | { tipo: "sem_permissao" }
     | { tipo: "sem_resposta" }
-    | { tipo: "outra"; erro: unknown };
+    | { tipo: "outra"; error: unknown };
 
 export function failureReload(error: unknown): FailureReload {
     if (error instanceof ApiError) {
@@ -196,14 +196,14 @@ export function failureReload(error: unknown): FailureReload {
                 : [];
             return {
                 tipo: "invalido",
-                arquivo: typeof details.arquivo === "string" ? details.arquivo : null,
-                problemas: problems.length > 0 ? problems : [error.message],
+                file: typeof details.arquivo === "string" ? details.arquivo : null,
+                problems: problems.length > 0 ? problems : [error.message],
             };
         }
         if (error.status === 403) return { tipo: "sem_permissao" };
         if (error.semServidor) return { tipo: "sem_resposta" };
     }
-    return { tipo: "outra", erro: error };
+    return { tipo: "outra", error: error };
 }
 
 function listOrNone(items: string[]): string {
@@ -223,39 +223,39 @@ function TableMap({ before, after, printBefore, printAfter }: {
     printAfter: string;
 }) {
     const { translate: t } = useI18n();
-    const rows: { rotulo: string; antes: ReactNode; depois: ReactNode }[] = [
-        { rotulo: t("operation.mapMode"), antes: modeText(before), depois: modeText(after) },
+    const rows: { label: string; before: ReactNode; after: ReactNode }[] = [
+        { label: t("operation.mapMode"), before: modeText(before), after: modeText(after) },
         {
-            rotulo: t("operation.mapThisInstance"),
-            antes: before.localInstance || t("operation.mapNotDefined"),
-            depois: after.localInstance || t("operation.mapNotDefined"),
+            label: t("operation.mapThisInstance"),
+            before: before.localInstance || t("operation.mapNotDefined"),
+            after: after.localInstance || t("operation.mapNotDefined"),
         },
         {
-            rotulo: t("operation.mapDefaultInstance"),
-            antes: before.instanceDefault ?? t("operation.mapNone"),
-            depois: after.instanceDefault ?? t("operation.mapNone"),
+            label: t("operation.mapDefaultInstance"),
+            before: before.instanceDefault ?? t("operation.mapNone"),
+            after: after.instanceDefault ?? t("operation.mapNone"),
         },
         {
-            rotulo: t("operation.mapDeclaredInstances"),
-            antes: listOrNone(before.instances.map((item) => item.id)),
-            depois: listOrNone(after.instances.map((item) => item.id)),
+            label: t("operation.mapDeclaredInstances"),
+            before: listOrNone(before.instances.map((item) => item.id)),
+            after: listOrNone(after.instances.map((item) => item.id)),
         },
         {
-            rotulo: t("operation.mapRoutedOrgs"),
-            antes: formatNumber(before.quantityOrgs),
-            depois: formatNumber(after.quantityOrgs),
+            label: t("operation.mapRoutedOrgs"),
+            before: formatNumber(before.quantityOrgs),
+            after: formatNumber(after.quantityOrgs),
         },
         {
-            rotulo: t("operation.mapSharedSecret"),
-            antes: before.secretConfigured ? t("operation.mapConfigured") : t("operation.mapNotConfigured"),
-            depois: after.secretConfigured
+            label: t("operation.mapSharedSecret"),
+            before: before.secretConfigured ? t("operation.mapConfigured") : t("operation.mapNotConfigured"),
+            after: after.secretConfigured
                 ? t("operation.mapConfigured")
                 : t("operation.mapNotConfigured"),
         },
         {
-            rotulo: t("operation.mapFingerprint"),
-            antes: <code title={printBefore}>{printScreen(printBefore)}</code>,
-            depois: <code title={printAfter}>{printScreen(printAfter)}</code>,
+            label: t("operation.mapFingerprint"),
+            before: <code title={printBefore}>{printScreen(printBefore)}</code>,
+            after: <code title={printAfter}>{printScreen(printAfter)}</code>,
         },
     ];
     return (
@@ -269,10 +269,10 @@ function TableMap({ before, after, printBefore, printAfter }: {
             </thead>
             <tbody>
                 {rows.map((row) => (
-                    <tr key={row.rotulo}>
-                        <th scope="row">{row.rotulo}</th>
-                        <td>{row.antes}</td>
-                        <td>{row.depois}</td>
+                    <tr key={row.label}>
+                        <th scope="row">{row.label}</th>
+                        <td>{row.before}</td>
+                        <td>{row.after}</td>
                     </tr>
                 ))}
             </tbody>
@@ -347,9 +347,9 @@ function NoticeReload({ failure, onTryNew }: { failure: FailureReload; onTryNew:
         return (
             <SofaBanner tone="danger" title={t("operation.clusterInvalidTitle")}>
                 <p style={{ margin: 0 }}>{t("operation.clusterInvalidText")}</p>
-                {failure.arquivo ? (
+                {failure.file ? (
                     <p className="poph-mono-muted" style={{ margin: "6px 0 0" }}>
-                        {t("operation.clusterFile", { file: failure.arquivo })}
+                        {t("operation.clusterFile", { file: failure.file })}
                     </p>
                 ) : null}
                 <p style={{ margin: "6px 0 0" }}>{t("operation.clusterProblems")}</p>
@@ -357,7 +357,7 @@ function NoticeReload({ failure, onTryNew }: { failure: FailureReload; onTryNew:
                     className="poph-operation__conflicts"
                     aria-label={t("operation.clusterProblemsLabel")}
                 >
-                    {failure.problemas.map((problem, index) => (
+                    {failure.problems.map((problem, index) => (
                         <li key={`${index}-${problem}`}>{problem}</li>
                     ))}
                 </ul>
@@ -374,7 +374,7 @@ function NoticeReload({ failure, onTryNew }: { failure: FailureReload; onTryNew:
     const message =
         failure.tipo === "sem_resposta"
             ? t("operation.clusterNetworkUnknown")
-            : messageFailure(failure.erro, t("operation.whatClusterReload"));
+            : messageFailure(failure.error, t("operation.whatClusterReload"));
     return (
         <SofaBanner tone="danger" title={t("operation.clusterFailedTitle")}>
             <p style={{ margin: 0 }}>{message}</p>
@@ -492,7 +492,7 @@ export function Operation() {
         loading: false,
         kind: "",
         manifesto: null,
-        erro: null,
+        error: null,
     });
     const inProgress = useRef(false);
     const alive = useRef(true);
@@ -522,32 +522,32 @@ export function Operation() {
         if (!alive.current) return;
 
         if (resHealth.status === "fulfilled") {
-            setHealth({ loading: false, dados: resHealth.value, erro: null });
+            setHealth({ loading: false, dados: resHealth.value, error: null });
         } else {
             setHealth((current) => ({
                 loading: false,
                 dados: current.dados,
-                erro: { erro: resHealth.reason, what: "operation.whatServerState" },
+                error: { error: resHealth.reason, what: "operation.whatServerState" },
             }));
         }
 
         if (resMetrics.status === "fulfilled") {
-            setMetrics({ loading: false, dados: resMetrics.value, erro: null });
+            setMetrics({ loading: false, dados: resMetrics.value, error: null });
         } else {
             setMetrics((current) => ({
                 loading: false,
                 dados: current.dados,
-                erro: { erro: resMetrics.reason, what: "operation.whatMetrics" },
+                error: { error: resMetrics.reason, what: "operation.whatMetrics" },
             }));
         }
 
         if (resPlugins.status === "fulfilled") {
-            setPlugins({ loading: false, dados: resPlugins.value, erro: null });
+            setPlugins({ loading: false, dados: resPlugins.value, error: null });
         } else {
             setPlugins((current) => ({
                 loading: false,
                 dados: current.dados,
-                erro: { erro: resPlugins.reason, what: "operation.whatPluginList" },
+                error: { error: resPlugins.reason, what: "operation.whatPluginList" },
             }));
         }
         setUpdatedAt(new Date());
@@ -563,14 +563,14 @@ export function Operation() {
 
     const queryType = useCallback(
         async (kind: string) => {
-            setQuery({ loading: true, kind, manifesto: null, erro: null });
+            setQuery({ loading: true, kind, manifesto: null, error: null });
             try {
                 const manifesto = await fetchPlugin(orgId, kind);
                 if (!alive.current) return;
-                setQuery({ loading: false, kind, manifesto, erro: null });
+                setQuery({ loading: false, kind, manifesto, error: null });
             } catch (error) {
                 if (!alive.current) return;
-                setQuery({ loading: false, kind, manifesto: null, erro: error });
+                setQuery({ loading: false, kind, manifesto: null, error: error });
             }
         },
         [orgId],
@@ -610,17 +610,17 @@ export function Operation() {
                 <h2 id={healthId} className="poph-section__title">{t("operation.sectionServer")}</h2>
                 {health.loading && !s ? (
                     <SofaSkeleton lines={3} />
-                ) : health.erro && !s ? (
+                ) : health.error && !s ? (
                     <SofaErrorState
                         title={t("operation.serverLoadFailed")}
-                        description={textFailure(health.erro)}
+                        description={textFailure(health.error)}
                         retry={{ label: t("operation.retry"), onClick: () => void load() }}
                     />
                 ) : s ? (
                     <>
-                        {health.erro ? (
+                        {health.error ? (
                             <p className="poph-operation__notice" role="alert">
-                                {t("operation.lastUpdateFailed", { message: textFailure(health.erro) })}
+                                {t("operation.lastUpdateFailed", { message: textFailure(health.error) })}
                             </p>
                         ) : null}
                         <dl className="poph-properties">
@@ -658,17 +658,17 @@ export function Operation() {
                 <h2 id={metricsId} className="poph-section__title">{t("operation.sectionMetrics")}</h2>
                 {metrics.loading && !m ? (
                     <SofaSkeleton lines={4} />
-                ) : metrics.erro && !m ? (
+                ) : metrics.error && !m ? (
                     <SofaErrorState
                         title={t("operation.metricsLoadFailed")}
-                        description={textFailure(metrics.erro)}
+                        description={textFailure(metrics.error)}
                         retry={{ label: t("operation.retry"), onClick: () => void load() }}
                     />
                 ) : m ? (
                     <>
-                        {metrics.erro ? (
+                        {metrics.error ? (
                             <p className="poph-operation__notice" role="alert">
-                                {t("operation.lastUpdateFailed", { message: textFailure(metrics.erro) })}
+                                {t("operation.lastUpdateFailed", { message: textFailure(metrics.error) })}
                             </p>
                         ) : null}
                         <h3 className="poph-operation__subtitle">{t("operation.subtitleNow")}</h3>
@@ -745,17 +745,17 @@ export function Operation() {
                         </p>
                         <SofaSkeleton lines={3} />
                     </>
-                ) : plugins.erro && !list ? (
+                ) : plugins.error && !list ? (
                     <SofaErrorState
                         title={t("operation.pluginsLoadFailed")}
-                        description={textFailure(plugins.erro)}
+                        description={textFailure(plugins.error)}
                         retry={{ label: t("operation.retry"), onClick: () => void load() }}
                     />
                 ) : list ? (
                     <>
-                        {plugins.erro ? (
+                        {plugins.error ? (
                             <p className="poph-operation__notice" role="alert">
-                                {t("operation.lastUpdateFailed", { message: textFailure(plugins.erro) })}
+                                {t("operation.lastUpdateFailed", { message: textFailure(plugins.error) })}
                             </p>
                         ) : null}
                         {list.length === 0 ? (
@@ -790,10 +790,10 @@ export function Operation() {
                             </p>
                             <SofaSkeleton lines={3} />
                         </>
-                    ) : query.erro ? (
+                    ) : query.error ? (
                         <SofaErrorState
                             title={t("operation.pluginConsultFailed", { kind: query.kind })}
-                            description={messagePlugin(query.erro)}
+                            description={messagePlugin(query.error)}
                             retry={{
                                 label: t("operation.retry"),
                                 onClick: () => void queryType(query.kind),

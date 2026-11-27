@@ -14,7 +14,7 @@ const BASE = `/admin/v1/orgs/${ORG}/agents/${AGENTE}/test-chat`;
 
 type Order = {
     method: string;
-    caminho: string;
+    path: string;
     headers: Headers;
     body: unknown;
     signal?: AbortSignal | null;
@@ -22,7 +22,7 @@ type Order = {
 
 type RouteEntry = {
     method: string;
-    caminho: string;
+    path: string;
     respond: (order: Order) => Response | Promise<Response>;
 };
 
@@ -118,27 +118,27 @@ function serverDefault() {
         mensagem("m2", "out", "Recebi: o prazo é de 5 dias úteis.", "conv_1"),
     ];
     routes = [
-        { method: "GET", caminho: `/admin/v1/orgs/${ORG}`, respond: () => json(200, { id: ORG, name: "Clínica Teste" }) },
-        { method: "GET", caminho: `/admin/v1/orgs/${ORG}/agents/${AGENTE}`, respond: () => json(200, AGENT_JSON) },
+        { method: "GET", path: `/admin/v1/orgs/${ORG}`, respond: () => json(200, { id: ORG, name: "Clínica Teste" }) },
+        { method: "GET", path: `/admin/v1/orgs/${ORG}/agents/${AGENTE}`, respond: () => json(200, AGENT_JSON) },
         {
             method: "GET",
-            caminho: BASE,
+            path: BASE,
             respond: () => json(200, { items: [c1, c2], next_cursor: null }),
         },
         {
             method: "GET",
-            caminho: `${BASE}/conv_1`,
+            path: `${BASE}/conv_1`,
             respond: () => json(200, transcript(c1, historyC1)),
         },
         {
             method: "GET",
-            caminho: `${BASE}/conv_2`,
+            path: `${BASE}/conv_2`,
             respond: () =>
                 json(200, transcript(c2, [mensagem("m9", "in", "quero falar com alguém", "conv_2")])),
         },
         {
             method: "POST",
-            caminho: `${BASE}/conv_1/messages`,
+            path: `${BASE}/conv_1/messages`,
             respond: () =>
                 turno([
                     frame("mensagem", { conversation_id: "conv_1", message_id: "m3", text: "", attachments: [] }),
@@ -177,13 +177,13 @@ function installServer() {
             }
             const order: Order = {
                 method,
-                caminho: path,
+                path: path,
                 headers: new Headers(init?.headers),
                 body,
                 signal: init?.signal,
             };
             orders.push(order);
-            const route = routes.find((candidate) => candidate.method === method && candidate.caminho === path);
+            const route = routes.find((candidate) => candidate.method === method && candidate.path === path);
             if (!route) throw new Error(`sem rota falsa para ${method} ${url}`);
             return route.respond(order);
         }),
@@ -191,7 +191,7 @@ function installServer() {
 }
 
 function calls(method: string, path: string): Order[] {
-    return orders.filter((order) => order.method === method && order.caminho === path);
+    return orders.filter((order) => order.method === method && order.path === path);
 }
 
 function build() {
@@ -244,12 +244,12 @@ describe("lista e conversa", () => {
 
         routes.push({
             method: "POST",
-            caminho: BASE,
+            path: BASE,
             respond: () => json(201, conversa("conv_novo")),
         });
         routes.push({
             method: "GET",
-            caminho: `${BASE}/conv_novo`,
+            path: `${BASE}/conv_novo`,
             respond: () => json(200, transcript(conversa("conv_novo"), [])),
         });
 
@@ -327,7 +327,7 @@ describe("envio e streaming", () => {
         await screen.findByText("qual o prazo?");
         routes.unshift({
             method: "POST",
-            caminho: `${BASE}/conv_1/messages`,
+            path: `${BASE}/conv_1/messages`,
             respond: () =>
                 error(409, "turno_em_andamento", "esta conversa já tem um turno em andamento"),
         });
@@ -345,7 +345,7 @@ describe("envio e streaming", () => {
         await screen.findByText("qual o prazo?");
         routes.unshift({
             method: "POST",
-            caminho: `${BASE}/conv_1/messages`,
+            path: `${BASE}/conv_1/messages`,
             respond: () => error(503, "turno_indisponivel", "o turno não está ligado neste servidor"),
         });
 
@@ -363,7 +363,7 @@ describe("envio e streaming", () => {
         await screen.findByText("qual o prazo?");
         routes.unshift({
             method: "POST",
-            caminho: `${BASE}/conv_1/messages`,
+            path: `${BASE}/conv_1/messages`,
             respond: () =>
                 error(400, "validation_error", "o arquivo não é um tipo aceito", { field: "file" }),
         });
@@ -387,7 +387,7 @@ describe("streaming, cancelamento e troca de conversa", () => {
         await screen.findByText("qual o prazo?");
         routes.unshift({
             method: "POST",
-            caminho: `${BASE}/conv_1/messages`,
+            path: `${BASE}/conv_1/messages`,
             respond: (order) =>
                 turno(
                     [
@@ -414,7 +414,7 @@ describe("streaming, cancelamento e troca de conversa", () => {
         await screen.findByText("qual o prazo?");
         routes.unshift({
             method: "POST",
-            caminho: `${BASE}/conv_1/messages`,
+            path: `${BASE}/conv_1/messages`,
             respond: (order) =>
                 turno(
                     [
@@ -449,12 +449,12 @@ describe("conversa transferida", () => {
 
         routes.unshift({
             method: "POST",
-            caminho: `${BASE}/conv_2/reopen`,
+            path: `${BASE}/conv_2/reopen`,
             respond: () => json(200, conversa("conv_2", { status: "open", version: 4 })),
         });
         routes.unshift({
             method: "GET",
-            caminho: `${BASE}/conv_2`,
+            path: `${BASE}/conv_2`,
             respond: () => json(200, transcript(conversa("conv_2", { status: "open", version: 4 }), [])),
         });
 
@@ -476,7 +476,7 @@ describe("conversa transferida", () => {
         let tentativas = 0;
         routes.unshift({
             method: "POST",
-            caminho: `${BASE}/conv_2/reopen`,
+            path: `${BASE}/conv_2/reopen`,
             respond: () => {
                 tentativas += 1;
                 if (tentativas === 1) {
@@ -490,7 +490,7 @@ describe("conversa transferida", () => {
         });
         routes.unshift({
             method: "GET",
-            caminho: `${BASE}/conv_2`,
+            path: `${BASE}/conv_2`,
             respond: () =>
                 json(200, transcript(conversa("conv_2", { status: "transferred", version: 5 }), [])),
         });
@@ -508,7 +508,7 @@ describe("conversa transferida", () => {
 describe("estados", () => {
     it("falha ao ler o agente mostra o erro com tentar de novo", async () => {
         routes = routes.map((route) =>
-            route.caminho === `/admin/v1/orgs/${ORG}/agents/${AGENTE}`
+            route.path === `/admin/v1/orgs/${ORG}/agents/${AGENTE}`
                 ? { ...route, respond: () => error(500, "internal", "o servidor não respondeu") }
                 : route,
         );
@@ -522,7 +522,7 @@ describe("estados", () => {
 const PNG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
 const PDF = new TextEncoder().encode("%PDF-1.4 teste");
 
-function conteudo(bytes: Uint8Array, mime: string, layout: string): Response {
+function content(bytes: Uint8Array, mime: string, layout: string): Response {
     return new Response(bytes.buffer as ArrayBuffer, {
         status: 200,
         headers: { "content-type": mime, "content-disposition": layout },
@@ -572,7 +572,7 @@ describe("arquivos do cliente: ver e baixar (HR-46c)", () => {
         createdUrls = [];
         releasedUrls = [];
         clicks = [];
-        reportResponse = () => conteudo(PNG, "image/png", 'inline; filename="laudo.png"');
+        reportResponse = () => content(PNG, "image/png", 'inline; filename="laudo.png"');
 
         let counter = 0;
         URL.createObjectURL = vi.fn(() => {
@@ -589,7 +589,7 @@ describe("arquivos do cliente: ver e baixar (HR-46c)", () => {
         });
 
         routes = routes.map((route) =>
-            route.method === "GET" && route.caminho === `${BASE}/conv_1`
+            route.method === "GET" && route.path === `${BASE}/conv_1`
                 ? {
                       ...route,
                       respond: () =>
@@ -612,14 +612,14 @@ describe("arquivos do cliente: ver e baixar (HR-46c)", () => {
         routes.push(
             {
                 method: "GET",
-                caminho: REPORT_PATH,
+                path: REPORT_PATH,
                 respond: () => reportResponse(),
             },
             {
                 method: "GET",
-                caminho: PDF_PATH,
+                path: PDF_PATH,
                 respond: () =>
-                    conteudo(
+                    content(
                         PDF,
                         "application/pdf",
                         "attachment; filename=\"procedimento.pdf\"; filename*=UTF-8''Procedimento%20de%20entrega%20(v2).pdf",
@@ -677,7 +677,7 @@ describe("arquivos do cliente: ver e baixar (HR-46c)", () => {
         expect(await screen.findByText("o conteúdo deste arquivo não está disponível")).toBeInTheDocument();
         expect(screen.getByText("segue o laudo e o procedimento")).toBeInTheDocument();
 
-        reportResponse = () => conteudo(PNG, "image/png", 'attachment; filename="laudo.png"');
+        reportResponse = () => content(PNG, "image/png", 'attachment; filename="laudo.png"');
         await user.click(screen.getByRole("button", { name: "Tentar de novo: baixar laudo.png" }));
         await waitFor(() => expect(clicks).toHaveLength(1));
         expect(clicks[0]!.download).toBe("laudo.png");
@@ -722,7 +722,7 @@ describe("arquivos do cliente: ver e baixar (HR-46c)", () => {
         let liberar: () => void = () => undefined;
         reportResponse = () =>
             new Promise<Response>((resolver) => {
-                liberar = () => resolver(conteudo(PNG, "image/png", 'inline; filename="laudo.png"'));
+                liberar = () => resolver(content(PNG, "image/png", 'inline; filename="laudo.png"'));
             });
         const user = userEvent.setup();
         build();
@@ -808,7 +808,7 @@ describe("arquivos que o agente enviou no turno (HR-46e)", () => {
 
     function respondHistory(turns: unknown[], messages: unknown[]) {
         routes = routes.map((route) =>
-            route.method === "GET" && route.caminho === `${BASE}/conv_1`
+            route.method === "GET" && route.path === `${BASE}/conv_1`
                 ? {
                       ...route,
                       respond: () =>
@@ -832,7 +832,7 @@ describe("arquivos que o agente enviou no turno (HR-46e)", () => {
         releasedUrls = [];
         clicks = [];
         pdfResponse = () =>
-            conteudo(
+            content(
                 PDF,
                 "application/pdf",
                 "attachment; filename=\"Catalogo.pdf\"; filename*=UTF-8''Cat%C3%A1logo%20de%20servi%C3%A7os.pdf",
@@ -857,16 +857,16 @@ describe("arquivos que o agente enviou no turno (HR-46e)", () => {
             messagesDefault(),
         );
         routes.push(
-            { method: "GET", caminho: AGENT_PDF_PATH, respond: () => pdfResponse() },
+            { method: "GET", path: AGENT_PDF_PATH, respond: () => pdfResponse() },
             {
                 method: "GET",
-                caminho: AGENT_PNG_PATH,
-                respond: () => conteudo(PNG, "image/png", 'inline; filename="tabela.png"'),
+                path: AGENT_PNG_PATH,
+                respond: () => content(PNG, "image/png", 'inline; filename="tabela.png"'),
             },
             {
                 method: "GET",
-                caminho: PATH_ONLY_AGENT,
-                respond: () => conteudo(PDF, "application/pdf", 'attachment; filename="Relatorio.pdf"'),
+                path: PATH_ONLY_AGENT,
+                respond: () => content(PDF, "application/pdf", 'attachment; filename="Relatorio.pdf"'),
             },
         );
     });
@@ -943,7 +943,7 @@ describe("arquivos que o agente enviou no turno (HR-46e)", () => {
         expect(screen.getByText("Enviei os arquivos.")).toBeInTheDocument();
 
         pdfResponse = () =>
-            conteudo(PDF, "application/pdf", 'attachment; filename="Catalogo.pdf"');
+            content(PDF, "application/pdf", 'attachment; filename="Catalogo.pdf"');
         await user.click(screen.getByRole("button", { name: "Tentar de novo: baixar Catalogo.pdf" }));
         await waitFor(() => expect(clicks).toHaveLength(1));
         expect(screen.queryByText("o conteúdo deste arquivo não está disponível")).not.toBeInTheDocument();

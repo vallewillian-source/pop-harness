@@ -98,7 +98,7 @@ function build() {
 
 type Scenario = {
     groups: Group[];
-    itens: Record<string, Item[]>;
+    items: Record<string, Item[]>;
     errorCreateGroup?: { status: number; body: unknown } | null;
 };
 
@@ -114,7 +114,7 @@ function serverWith(scenario: Scenario): FakeServer {
         const groupId = call.url.split("/knowledge/")[1]?.split("/")[0] ?? "";
         return {
             status: 200,
-            body: { items: scenario.itens[groupId] ?? [], next_cursor: null },
+            body: { items: scenario.items[groupId] ?? [], next_cursor: null },
         };
     });
     servidor.respond("POST", "/items", (call) => {
@@ -133,7 +133,7 @@ function serverWith(scenario: Scenario): FakeServer {
             tags: body.tags ?? [],
             position: body.position ?? 0,
         });
-        scenario.itens[groupId] = [...(scenario.itens[groupId] ?? []), created];
+        scenario.items[groupId] = [...(scenario.items[groupId] ?? []), created];
         return { status: 201, body: created };
     });
 
@@ -193,7 +193,7 @@ function scenarioDefault(): Scenario {
             group({ id: "grupo-1", name: "Políticas da loja", description: "Entrega e frete", agents: [AGENTE] }),
             group({ id: "grupo-2", name: "Perguntas frequentes", description: "Dúvidas gerais" }),
         ],
-        itens: {
+        items: {
             "grupo-1": [item({ id: "item-1", title: "Prazo de entrega", tags: ["entrega"] })],
             "grupo-2": [],
         },
@@ -446,8 +446,8 @@ describe("AgenteConhecimento", () => {
         const scenario = scenarioDefault();
         const servidor = serverWith(scenario);
         servidor.respond("PATCH", "/items/item-1", () => {
-            scenario.itens["grupo-1"] = [
-                { ...scenario.itens["grupo-1"]![0]!, version: 2 },
+            scenario.items["grupo-1"] = [
+                { ...scenario.items["grupo-1"]![0]!, version: 2 },
             ];
             return apiError(412, "version_conflict", "versão desatualizada", {
                 expected_version: 1,
@@ -459,9 +459,9 @@ describe("AgenteConhecimento", () => {
         await screen.findByText("Prazo de entrega");
         await chooseInMenu(user, "Ações de Prazo de entrega", "Editar");
         await waitForModalFocus();
-        const conteudo = screen.getByRole("textbox", { name: /^Conteúdo/ });
-        await user.clear(conteudo);
-        await user.type(conteudo, "O prazo mudou: 10 dias úteis.");
+        const content = screen.getByRole("textbox", { name: /^Conteúdo/ });
+        await user.clear(content);
+        await user.type(content, "O prazo mudou: 10 dias úteis.");
         await user.click(screen.getByRole("button", { name: "Salvar alterações" }));
 
         expect(
@@ -497,7 +497,7 @@ describe("AgenteConhecimento", () => {
 
     it("mostra o vazio do grupo sem trechos com o CTA de criar", async () => {
         const scenario = scenarioDefault();
-        scenario.itens["grupo-1"] = [];
+        scenario.items["grupo-1"] = [];
         serverWith(scenario);
         build();
 
@@ -508,7 +508,7 @@ describe("AgenteConhecimento", () => {
     it("mostra o vazio de organização sem grupos com o CTA de criar o primeiro", async () => {
         const scenario = scenarioDefault();
         scenario.groups = [];
-        scenario.itens = {};
+        scenario.items = {};
         serverWith(scenario);
         build();
 
@@ -532,7 +532,7 @@ describe("AgenteConhecimento", () => {
                     : {
                           status: 200,
                           body: {
-                              items: scenario.itens["grupo-1"] ?? [],
+                              items: scenario.items["grupo-1"] ?? [],
                               next_cursor: null,
                           },
                       },

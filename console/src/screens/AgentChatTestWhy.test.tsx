@@ -13,7 +13,7 @@ const BASE = `/admin/v1/orgs/${ORG}/agents/${AGENTE}/test-chat`;
 
 type RouteEntry = {
     method: string;
-    caminho: string;
+    path: string;
     respond: () => Response | Promise<Response>;
 };
 
@@ -133,10 +133,10 @@ function historyConversation1() {
 
 function servidor() {
     routes = [
-        { method: "GET", caminho: `/admin/v1/orgs/${ORG}`, respond: () => json(200, { id: ORG, name: "Clínica" }) },
+        { method: "GET", path: `/admin/v1/orgs/${ORG}`, respond: () => json(200, { id: ORG, name: "Clínica" }) },
         {
             method: "GET",
-            caminho: `/admin/v1/orgs/${ORG}/agents/${AGENTE}`,
+            path: `/admin/v1/orgs/${ORG}/agents/${AGENTE}`,
             respond: () =>
                 json(200, {
                     id: AGENTE,
@@ -155,7 +155,7 @@ function servidor() {
         },
         {
             method: "GET",
-            caminho: BASE,
+            path: BASE,
             respond: () =>
                 json(200, {
                     items: [conversa("conv_1", { message_count: 3 }), conversa("conv_2", { status: "transferred" })],
@@ -164,7 +164,7 @@ function servidor() {
         },
         {
             method: "GET",
-            caminho: `${BASE}/conv_1`,
+            path: `${BASE}/conv_1`,
             respond: () => {
                 readsConversation1 += 1;
                 return readConversation1();
@@ -172,7 +172,7 @@ function servidor() {
         },
         {
             method: "GET",
-            caminho: `${BASE}/conv_2`,
+            path: `${BASE}/conv_2`,
             respond: () => json(200, { conversation: conversa("conv_2"), messages: [], turns: [] }),
         },
     ];
@@ -185,7 +185,7 @@ function installServer() {
             const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
             const path = url.split("?")[0] ?? url;
             const method = (init?.method ?? "GET").toUpperCase();
-            const route = routes.find((candidate) => candidate.method === method && candidate.caminho === path);
+            const route = routes.find((candidate) => candidate.method === method && candidate.path === path);
             if (!route) throw new Error(`sem rota falsa para ${method} ${url}`);
             return route.respond();
         }),

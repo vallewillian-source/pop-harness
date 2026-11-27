@@ -259,7 +259,7 @@ export function AgentIntegrations() {
                         configuracao && typeof configuracao === "object"
                             ? Object.keys(configuracao).length
                             : 0;
-                    const classes = [
+                    const rowClassName = [
                         "poph-table__line",
                         integracao.status !== "active" ? "poph-table__line--dimmed" : "",
                     ]
@@ -270,7 +270,7 @@ export function AgentIntegrations() {
                         id: integracao.id,
                     });
                     return (
-                        <div key={integracao.id} role="row" className={classes}>
+                        <div key={integracao.id} role="row" className={rowClassName}>
                             <div role="cell" className="poph-integrations__identity">
                                 <span className="poph-integrations__kind">{integracao.kind}</span>
                                 <span className="poph-mono-muted">{integracao.id}</span>

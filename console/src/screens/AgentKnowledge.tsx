@@ -47,7 +47,7 @@ import "../styles/knowledge.css";
 
 type StateIndex =
     | { tipo: "nao-verificado" }
-    | { tipo: "atualizado"; origem: TranslationKey; relatorio?: IndexReport }
+    | { tipo: "atualizado"; origin: TranslationKey; report?: IndexReport }
     | { tipo: "pendente"; mensagem: string };
 
 function classStatus(situacao: string): string {
@@ -157,9 +157,9 @@ export function AgentKnowledge() {
     const [link, setLinking] = useState<string | null>(null);
     const [errorLink, setLinkError] = useState<string | null>(null);
 
-    const [groupModal, setGroupModal] = useState<{ opened: boolean; grupo: KnowledgeGroup | null }>({
+    const [groupModal, setGroupModal] = useState<{ opened: boolean; group: KnowledgeGroup | null }>({
         opened: false,
-        grupo: null,
+        group: null,
     });
     const [groupDelete, setGroupToDelete] = useState<KnowledgeGroup | null>(null);
 
@@ -268,7 +268,7 @@ export function AgentKnowledge() {
         setIndex(
             notice
                 ? { tipo: "pendente", mensagem: notice }
-                : { tipo: "atualizado", origem: source },
+                : { tipo: "atualizado", origin: source },
         );
     }
 
@@ -283,7 +283,7 @@ export function AgentKnowledge() {
                 await linkGroup(orgId, agentId, group.id);
             }
             await loadGroups();
-            setIndex({ tipo: "atualizado", origem: "knowledge.indexOriginLink" });
+            setIndex({ tipo: "atualizado", origin: "knowledge.indexOriginLink" });
         } catch (failure) {
             setLinkError(
                 failure instanceof Error ? failure.message : t("knowledge.linkFailed"),
@@ -300,8 +300,8 @@ export function AgentKnowledge() {
             const resultado = await reindexAgent(orgId, agentId);
             setIndex({
                 tipo: "atualizado",
-                origem: "knowledge.indexOriginReindexed",
-                relatorio: resultado.indexed,
+                origin: "knowledge.indexOriginReindexed",
+                report: resultado.indexed,
             });
         } catch (failure) {
             if (failure instanceof ApiError && failure.code === "embedding_unavailable") {
@@ -419,7 +419,7 @@ export function AgentKnowledge() {
                 id: "editar",
                 label: t("knowledge.edit"),
                 icon: <IconPencil size={14} aria-hidden="true" />,
-                onSelect: () => setGroupModal({ opened: true, grupo: group }),
+                onSelect: () => setGroupModal({ opened: true, group: group }),
             },
             {
                 id: "vinculo",
@@ -510,9 +510,9 @@ export function AgentKnowledge() {
 
                     {index.tipo === "atualizado" && (
                         <p className="poph-knowledge__text">
-                            {t(index.origem)}.{" "}
-                            {index.relatorio
-                                ? summaryReport(index.relatorio)
+                            {t(index.origin)}.{" "}
+                            {index.report
+                                ? summaryReport(index.report)
                                 : t("knowledge.syncNoWarning")}
                         </p>
                     )}
@@ -554,7 +554,7 @@ export function AgentKnowledge() {
                             <SofaButton
                                 variant="primary"
                                 icon={<IconPlus aria-hidden="true" />}
-                                onClick={() => setGroupModal({ opened: true, grupo: null })}
+                                onClick={() => setGroupModal({ opened: true, group: null })}
                             >
                                 {t("knowledge.newGroup")}
                             </SofaButton>
@@ -582,7 +582,7 @@ export function AgentKnowledge() {
                                 <SofaButton
                                     variant="primary"
                                     icon={<IconPlus aria-hidden="true" />}
-                                    onClick={() => setGroupModal({ opened: true, grupo: null })}
+                                    onClick={() => setGroupModal({ opened: true, group: null })}
                                 >
                                     {t("knowledge.createFirstGroup")}
                                 </SofaButton>
@@ -606,7 +606,7 @@ export function AgentKnowledge() {
                             {groups.map((group) => {
                                 const linked = linkedAgent(group);
                                 const opened = group.id === selected;
-                                const classes = [
+                                const rowClassName = [
                                     "poph-table__line",
                                     opened ? "poph-table__line--selected" : "",
                                     group.status !== "active" ? "poph-table__line--dimmed" : "",
@@ -617,8 +617,8 @@ export function AgentKnowledge() {
                                     <div
                                         key={group.id}
                                         role="row"
-                                        className={classes}
-                                        data-selecionado={opened ? "true" : undefined}
+                                        className={rowClassName}
+                                        data-selected={opened ? "true" : undefined}
                                         onClick={() => setSelected(group.id)}
                                     >
                                         <div
@@ -853,8 +853,8 @@ export function AgentKnowledge() {
             <ModalGroup
                 org={orgId}
                 opened={groupModal.opened}
-                group={groupModal.grupo}
-                onClose={() => setGroupModal({ opened: false, grupo: null })}
+                group={groupModal.group}
+                onClose={() => setGroupModal({ opened: false, group: null })}
                 onSave={onSaveGroup}
             />
 

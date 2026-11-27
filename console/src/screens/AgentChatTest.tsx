@@ -62,7 +62,7 @@ const ACCEPTED = ".jpg,.jpeg,.png,.gif,.webp,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pp
 
 type Notice = {
     tom: "info" | "warn" | "danger";
-    titulo: string;
+    title: string;
     texto: string;
 } | null;
 
@@ -70,10 +70,10 @@ type TurnInProgress = {
     textClient: string;
     attachmentsClient: string[];
     response: string;
-    ferramentas: string[];
-    fontes: number | null;
+    tools: string[];
+    sources: number | null;
     transferred: boolean;
-    erro: string | null;
+    error: string | null;
 };
 
 type Closing = {
@@ -322,7 +322,7 @@ export function AgentChatTest() {
         } catch (failure) {
             setNotice({
                 tom: "danger",
-                titulo: t("testChat.newConversationError"),
+                title: t("testChat.newConversationError"),
                 texto: message(failure),
             });
         } finally {
@@ -340,13 +340,13 @@ export function AgentChatTest() {
             }
             case "base": {
                 const sources = Array.isArray(dados.sources) ? dados.sources.length : 0;
-                setTurn((current) => (current ? { ...current, fontes: sources } : current));
+                setTurn((current) => (current ? { ...current, sources: sources } : current));
                 break;
             }
             case "ferramenta": {
                 const nome = texto(dados.name) ?? t("testChat.toolFallback");
                 setTurn((current) =>
-                    current ? { ...current, ferramentas: [...current.ferramentas, nome] } : current,
+                    current ? { ...current, tools: [...current.tools, nome] } : current,
                 );
                 break;
             }
@@ -369,13 +369,13 @@ export function AgentChatTest() {
                 if (estado === "failed") {
                     setNotice({
                         tom: "danger",
-                        titulo: t("testChat.turnFailedTitle"),
+                        title: t("testChat.turnFailedTitle"),
                         texto: texto(dados.error) ?? t("testChat.turnFailedText"),
                     });
                 } else if (estado === "skipped") {
                     setNotice({
                         tom: "info",
-                        titulo: t("testChat.skippedTitle"),
+                        title: t("testChat.skippedTitle"),
                         texto: t("testChat.skippedText"),
                     });
                 }
@@ -386,7 +386,7 @@ export function AgentChatTest() {
                     current
                         ? {
                               ...current,
-                              erro: texto(dados.message) ?? t("testChat.turnStartError"),
+                              error: texto(dados.message) ?? t("testChat.turnStartError"),
                           }
                         : current,
                 );
@@ -401,14 +401,14 @@ export function AgentChatTest() {
             if (failure.status === 409) {
                 return {
                     tom: "warn",
-                    titulo: t("testChat.busyTitle"),
+                    title: t("testChat.busyTitle"),
                     texto: t("testChat.busyText"),
                 };
             }
             if (failure.status === 503) {
                 return {
                     tom: "danger",
-                    titulo: t("testChat.noTurnTitle"),
+                    title: t("testChat.noTurnTitle"),
                     texto: t("testChat.noTurnText"),
                 };
             }
@@ -421,7 +421,7 @@ export function AgentChatTest() {
         }
         return {
             tom: "danger",
-            titulo: t("testChat.sendErrorTitle"),
+            title: t("testChat.sendErrorTitle"),
             texto: message(failure),
         };
     }
@@ -451,10 +451,10 @@ export function AgentChatTest() {
             textClient,
             attachmentsClient: sent.map((file) => file.name),
             response: "",
-            ferramentas: [],
-            fontes: null,
+            tools: [],
+            sources: null,
             transferred: false,
-            erro: null,
+            error: null,
         });
 
         let started = false;
@@ -478,7 +478,7 @@ export function AgentChatTest() {
                 if (ehAbortado(failure)) {
                     setNotice({
                         tom: "info",
-                        titulo: t("testChat.cancelTitle"),
+                        title: t("testChat.cancelTitle"),
                         texto: t("testChat.cancelText"),
                     });
                 } else {
@@ -550,7 +550,7 @@ export function AgentChatTest() {
 
     const actionsFile: ActionsFile = {
         downloading: downloadingAttachment,
-        erro: downloadError,
+        error: downloadError,
         view: (source) => void openPreview(source),
         download: (source) => void downloadFile(source),
         attachment: (messageId, attachment) =>
@@ -611,7 +611,7 @@ export function AgentChatTest() {
             if (activeRef.current === conversa) {
                 setNotice({
                     tom: "info",
-                    titulo: t("testChat.reopenedTitle"),
+                    title: t("testChat.reopenedTitle"),
                     texto: t("testChat.reopenedText"),
                 });
             }
@@ -620,13 +620,13 @@ export function AgentChatTest() {
                 if (failure instanceof ApiError && failure.status === 412) {
                     setNotice({
                         tom: "warn",
-                        titulo: t("testChat.conflictTitle"),
+                        title: t("testChat.conflictTitle"),
                         texto: t("testChat.conflictText"),
                     });
                 } else {
                     setNotice({
                         tom: "danger",
-                        titulo: t("testChat.reopenErrorTitle"),
+                        title: t("testChat.reopenErrorTitle"),
                         texto: message(failure),
                     });
                 }
@@ -905,19 +905,19 @@ export function AgentChatTest() {
                                         </div>
                                         <div
                                             className="poph-chat-test__bubble poph-chat-test__bubble--agent"
-                                            aria-busy={turno.response === "" && !turno.erro}
+                                            aria-busy={turno.response === "" && !turno.error}
                                         >
                                             <span className="poph-chat-test__author">{t("testChat.agent")}</span>
-                                            {turno.ferramentas.map((nome, index) => (
+                                            {turno.tools.map((nome, index) => (
                                                 <p key={`${nome}-${index}`} className="poph-chat-test__event">
                                                     {t("testChat.toolRunning", { name: nome })}
                                                 </p>
                                             ))}
-                                            {turno.fontes !== null && (
+                                            {turno.sources !== null && (
                                                 <p className="poph-chat-test__event">
-                                                    {turno.fontes === 1
+                                                    {turno.sources === 1
                                                         ? t("testChat.sourcesOne")
-                                                        : t("testChat.sourcesMany", { count: formatNumber(turno.fontes) })}
+                                                        : t("testChat.sourcesMany", { count: formatNumber(turno.sources) })}
                                                 </p>
                                             )}
                                             {turno.transferred && (
@@ -935,12 +935,12 @@ export function AgentChatTest() {
                                                     )}
                                                 </p>
                                             ) : (
-                                                !turno.erro && (
+                                                !turno.error && (
                                                     <p className="poph-chat-test__event">{t("testChat.thinking")}</p>
                                                 )
                                             )}
-                                            {turno.erro && (
-                                                <p className="poph-chat-test__error">{turno.erro}</p>
+                                            {turno.error && (
+                                                <p className="poph-chat-test__error">{turno.error}</p>
                                             )}
                                         </div>
                                     </>
@@ -967,7 +967,7 @@ export function AgentChatTest() {
 
                             {notice && (
                                 <div className="poph-chat-test__notice" role="status">
-                                    <SofaBanner tone={notice.tom} title={notice.titulo}>
+                                    <SofaBanner tone={notice.tom} title={notice.title}>
                                         {notice.texto}
                                     </SofaBanner>
                                 </div>
@@ -1104,7 +1104,7 @@ export function AgentChatTest() {
 
 type ActionsFile = {
     downloading: string | null;
-    erro: { chave: string; texto: string } | null;
+    error: { chave: string; texto: string } | null;
     view: (source: FileOrigin) => void;
     download: (source: FileOrigin) => void;
     attachment: (messageId: string, attachment: TestAttachment) => FileOrigin;
@@ -1171,7 +1171,7 @@ function Balao({
 function FileActions({ origin: source, actions }: { origin: FileOrigin; actions: ActionsFile }) {
     const { translate: t } = useI18n();
     const downloadingThis = actions.downloading === source.chave;
-    const failed = actions.erro?.chave === source.chave ? actions.erro.texto : null;
+    const failed = actions.error?.chave === source.chave ? actions.error.texto : null;
     return (
         <span className="poph-chat-test__attachment-actions">
             {canSeeOnScreen(source.mime) && (

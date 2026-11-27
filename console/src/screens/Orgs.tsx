@@ -44,22 +44,22 @@ import "../styles/orgs.css";
 
 const column = createColumnHelper<OrgInList>();
 
-type Tab = "todas" | "ativas" | "inativas" | "arquivadas";
+type Tab = "all" | "active" | "inactive" | "archived";
 
-const TABS: Tab[] = ["todas", "ativas", "inativas", "arquivadas"];
+const TABS: Tab[] = ["all", "active", "inactive", "archived"];
 
 const LABEL_TAB: Record<Tab, TranslationKey> = {
-    todas: "orgs.tabAll",
-    ativas: "orgs.tabActive",
-    inativas: "orgs.tabInactive",
-    arquivadas: "orgs.tabArchived",
+    all: "orgs.tabAll",
+    active: "orgs.tabActive",
+    inactive: "orgs.tabInactive",
+    archived: "orgs.tabArchived",
 };
 
 const STATUSES_TAB: Record<Tab, string[]> = {
-    todas: ["active", "inactive", "archived"],
-    ativas: ["active"],
-    inativas: ["inactive"],
-    arquivadas: ["archived"],
+    all: ["active", "inactive", "archived"],
+    active: ["active"],
+    inactive: ["inactive"],
+    archived: ["archived"],
 };
 
 function noAccent(texto: string): string {
@@ -153,7 +153,7 @@ async function readTelemetry(): Promise<Telemetry> {
     };
 }
 
-type Notice = { tom: "warn" | "danger"; titulo: string; texto: string };
+type Notice = { tom: "warn" | "danger"; title: string; texto: string };
 
 export function Orgs() {
     const { translate: t, locale } = useI18n();
@@ -165,7 +165,7 @@ export function Orgs() {
     const [telemetry, setTelemetry] = useState<Telemetry | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [tab, setTab] = useState<Tab>("todas");
+    const [tab, setTab] = useState<Tab>("all");
     const [filter, setFilter] = useState("");
     const [selected, setSelectedItem] = useState<string | null>(null);
     const [formOpened, setFormOpened] = useState(false);
@@ -173,7 +173,7 @@ export function Orgs() {
     const [toDelete, setToDelete] = useState<Org | null>(null);
     const [reativando, setReativando] = useState<string | null>(null);
     const [notice, setNotice] = useState<Notice | null>(null);
-    const lastClick = useRef<{ id: string; quando: number } | null>(null);
+    const lastClick = useRef<{ id: string; at: number } | null>(null);
     const pendingFocus = useRef<string | null>(null);
 
     const canManage = sessao?.escopo !== "org";
@@ -228,20 +228,20 @@ export function Orgs() {
     const counts = useMemo(() => {
         const byStatus = (situacao: string) => orgs.filter((org) => org.status === situacao).length;
         return {
-            todas: orgs.length,
-            ativas: byStatus("active"),
-            inativas: byStatus("inactive"),
-            arquivadas: byStatus("archived"),
+            all: orgs.length,
+            active: byStatus("active"),
+            inactive: byStatus("inactive"),
+            archived: byStatus("archived"),
         } satisfies Record<Tab, number>;
     }, [orgs]);
 
     const tabsVisible = useMemo(
-        () => TABS.filter((candidate) => candidate !== "arquivadas" || counts.arquivadas > 0),
-        [counts.arquivadas],
+        () => TABS.filter((candidate) => candidate !== "archived" || counts.archived > 0),
+        [counts.archived],
     );
 
     useEffect(() => {
-        if (!tabsVisible.includes(tab)) setTab("todas");
+        if (!tabsVisible.includes(tab)) setTab("all");
     }, [tab, tabsVisible]);
 
     const visible = useMemo(() => {
@@ -267,12 +267,12 @@ export function Orgs() {
     function selectRow(org: OrgInList) {
         const now = Date.now();
         const previous = lastClick.current;
-        lastClick.current = { id: org.id, quando: now };
+        lastClick.current = { id: org.id, at: now };
         setSelectedItem(org.id);
         if (
             previous !== null &&
             previous.id === org.id &&
-            now - previous.quando < 400 &&
+            now - previous.at < 400 &&
             !isFromOtherNode(org)
         ) {
             lastClick.current = null;
@@ -297,7 +297,7 @@ export function Orgs() {
         if (isFromOtherNode(org)) {
             setNotice({
                 tom: "warn",
-                titulo: t("orgs.noticeRemoteTitle"),
+                title: t("orgs.noticeRemoteTitle"),
                 texto: t("orgs.noticeRemoteText", {
                     name: org.name,
                     node: org.instancia ?? "",
@@ -314,7 +314,7 @@ export function Orgs() {
             downloadFile(await exportOrg(org.id, false));
         } catch (failure) {
             const detail = backupFailure(failure, "exportar");
-            setNotice({ tom: "danger", titulo: detail.title, texto: detail.texto });
+            setNotice({ tom: "danger", title: detail.title, texto: detail.texto });
         }
     }
 
@@ -329,7 +329,7 @@ export function Orgs() {
             if (disputa) {
                 setNotice({
                     tom: "warn",
-                    titulo: t("orgs.formConflictTitle"),
+                    title: t("orgs.formConflictTitle"),
                     texto:
                         typeof disputa.current === "number"
                             ? t("orgs.noticeConflictWithVersion", {
@@ -343,7 +343,7 @@ export function Orgs() {
             }
             setNotice({
                 tom: "danger",
-                titulo: t("orgs.noticeReactivateTitle"),
+                title: t("orgs.noticeReactivateTitle"),
                 texto:
                     failure instanceof Error
                         ? failure.message
@@ -585,7 +585,7 @@ export function Orgs() {
         [navigate, canManage, selected, reativando, instances, localInstance, mapInstances, isFromOtherNode, tryNavigate, locale],
     );
 
-    const filtering = tab !== "todas" || filter.trim() !== "";
+    const filtering = tab !== "all" || filter.trim() !== "";
     const orgSelected = selected === null ? null : (orgs.find((org) => org.id === selected) ?? null);
 
     const telemetryParts: string[] = [];
@@ -671,7 +671,7 @@ export function Orgs() {
                 {notice && (
                     <SofaBanner
                         tone={notice.tom}
-                        title={notice.titulo}
+                        title={notice.title}
                         dismissLabel={t("orgs.listDismissNotice")}
                         onDismiss={() => setNotice(null)}
                     >
@@ -764,7 +764,7 @@ export function Orgs() {
                                         <SofaButton
                                             variant="secondary"
                                             onClick={() => {
-                                                setTab("todas");
+                                                setTab("all");
                                                 setFilter("");
                                             }}
                                         >

@@ -38,9 +38,9 @@ export function Login() {
         setNetworkError(null);
         setSending(true);
         try {
-            const sessao = await signIn(token);
+            const session = await signIn(token);
             clearExpiryNotice();
-            navigate(resolveDefaultOrgPath(sessao.orgs), { replace: true });
+            navigate(resolveDefaultOrgPath(session.orgs), { replace: true });
         } catch (error) {
             if (error instanceof ApiError) {
                 if (error.naoAutorizado) {

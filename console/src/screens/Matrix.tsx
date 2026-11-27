@@ -37,15 +37,15 @@ export function conflictMessage(): string {
 
 type TextSource =
     | { key: TranslationKey }
-    | { erro: unknown; what: TranslationKey; espaco?: true };
+    | { error: unknown; what: TranslationKey; espaco?: true };
 
 function textNotice(fonte: TextSource): string {
     if ("key" in fonte) return translate(fonte.key);
     const what = translate(fonte.what);
-    return fonte.espaco ? messageSpace(fonte.erro, what) : messageFailure(fonte.erro, what);
+    return fonte.espaco ? messageSpace(fonte.error, what) : messageFailure(fonte.error, what);
 }
 
-type Load<T> = { loading: boolean; dados: T | null; erro: TextSource | null };
+type Load<T> = { loading: boolean; dados: T | null; error: TextSource | null };
 type Notice = { tom: "ok" | "error"; fonte: TextSource } | null;
 
 export type RowSpace = {
@@ -55,19 +55,19 @@ export type RowSpace = {
     archived: boolean;
 };
 
-const loadInitial = <T,>(): Load<T> => ({ loading: true, dados: null, erro: null });
+const loadInitial = <T,>(): Load<T> => ({ loading: true, dados: null, error: null });
 
-export function statusConnection(connected: boolean | null | undefined): { value: string; detalhe?: string } {
+export function statusConnection(connected: boolean | null | undefined): { value: string; detail?: string } {
     if (connected === true) return { value: translate("matrix.connectionConnected") };
     if (connected === false) {
         return {
             value: translate("matrix.connectionDisconnected"),
-            detalhe: translate("matrix.connectionDisconnectedDetail"),
+            detail: translate("matrix.connectionDisconnectedDetail"),
         };
     }
     return {
         value: translate("matrix.connectionUnknown"),
-        detalhe: translate("matrix.connectionUnknownDetail"),
+        detail: translate("matrix.connectionUnknownDetail"),
     };
 }
 
@@ -200,22 +200,22 @@ export function Matrix() {
         if (!alive.current) return;
 
         if (resModule.status === "fulfilled") {
-            setModule({ loading: false, dados: resModule.value, erro: null });
+            setModule({ loading: false, dados: resModule.value, error: null });
         } else {
             setModule((current) => ({
                 loading: false,
                 dados: current.dados,
-                erro: { erro: resModule.reason, what: "operation.whatMatrixModule" },
+                error: { error: resModule.reason, what: "operation.whatMatrixModule" },
             }));
         }
 
         if (resSpaces.status === "fulfilled") {
-            setSpaces({ loading: false, dados: resSpaces.value, erro: null });
+            setSpaces({ loading: false, dados: resSpaces.value, error: null });
         } else {
             setSpaces((current) => ({
                 loading: false,
                 dados: current.dados,
-                erro: { erro: resSpaces.reason, what: "operation.whatSpaces" },
+                error: { error: resSpaces.reason, what: "operation.whatSpaces" },
             }));
         }
 
@@ -223,13 +223,13 @@ export function Matrix() {
             setDepartments({
                 loading: false,
                 dados: resDepartments.value as Departamento[],
-                erro: null,
+                error: null,
             });
         } else {
             setDepartments((current) => ({
                 loading: false,
                 dados: current.dados,
-                erro: { erro: resDepartments.reason, what: "operation.whatDepartments" },
+                error: { error: resDepartments.reason, what: "operation.whatDepartments" },
             }));
         }
     }, [orgId]);
@@ -241,12 +241,12 @@ export function Matrix() {
     const reloadSpaces = useCallback(async () => {
         try {
             const list = await listMatrixSpaces(orgId);
-            if (alive.current) setSpaces({ loading: false, dados: list, erro: null });
+            if (alive.current) setSpaces({ loading: false, dados: list, error: null });
         } catch (error) {
             if (alive.current) {
                 setSpaces((current) => ({
                     ...current,
-                    erro: { erro: error, what: "operation.whatSpaces" },
+                    error: { error: error, what: "operation.whatSpaces" },
                 }));
             }
         }
@@ -260,7 +260,7 @@ export function Matrix() {
         try {
             const fresh = await updateMatrixModule(orgId, on, stateVersion(current));
             if (!alive.current) return;
-            setModule({ loading: false, dados: fresh, erro: null });
+            setModule({ loading: false, dados: fresh, error: null });
             setModuleNotice({
                 tom: "ok",
                 fonte: {
@@ -275,7 +275,7 @@ export function Matrix() {
             } else {
                 setModuleNotice({
                     tom: "error",
-                    fonte: { erro: error, what: "operation.whatMatrixModule" },
+                    fonte: { error: error, what: "operation.whatMatrixModule" },
                 });
             }
         } finally {
@@ -296,7 +296,7 @@ export function Matrix() {
             if (alive.current) {
                 setSpaceNotice({
                     tom: "error",
-                    fonte: { erro: error, what: "operation.whatDepartment", espaco: true },
+                    fonte: { error: error, what: "operation.whatDepartment", espaco: true },
                 });
             }
         } finally {
@@ -332,7 +332,7 @@ export function Matrix() {
             await reloadSpaces();
         } catch (error) {
             if (alive.current) {
-                setDialogError({ erro: error, what: "operation.whatDepartment", espaco: true });
+                setDialogError({ error: error, what: "operation.whatDepartment", espaco: true });
             }
         } finally {
             if (alive.current) setSendingCall(false);
@@ -357,7 +357,7 @@ export function Matrix() {
             setSpaceToTurnOff(null);
             setSpaceNotice({
                 tom: "error",
-                fonte: { erro: error, what: "operation.whatSpace", espaco: true },
+                fonte: { error: error, what: "operation.whatSpace", espaco: true },
             });
         } finally {
             if (alive.current) setTurningOffSpace(false);
@@ -436,17 +436,17 @@ export function Matrix() {
                             ),
                         )}
                     </dl>
-                ) : module.erro && !m ? (
+                ) : module.error && !m ? (
                     <SofaErrorState
                         title={t("matrix.moduleLoadFailed")}
-                        description={textNotice(module.erro)}
+                        description={textNotice(module.error)}
                         retry={{ label: t("operation.retry"), onClick: () => void load() }}
                     />
                 ) : m ? (
                     <>
-                        {module.erro ? (
+                        {module.error ? (
                             <p className="poph-matrix__notice" role="alert">
-                                {t("matrix.lastUpdateFailed", { message: textNotice(module.erro) })}
+                                {t("matrix.lastUpdateFailed", { message: textNotice(module.error) })}
                             </p>
                         ) : null}
 
@@ -499,7 +499,7 @@ export function Matrix() {
                                 label={t("matrix.indicatorSynapse")}
                                 value={connection.value}
                                 tom={m.connected === true ? "ok" : m.connected === false ? "error" : undefined}
-                                detail={connection.detalhe}
+                                detail={connection.detail}
                             />
                             <Indicador
                                 label={t("matrix.indicatorBacklog")}
@@ -563,24 +563,24 @@ export function Matrix() {
                             </div>
                         ))}
                     </div>
-                ) : spaces.erro && !list ? (
+                ) : spaces.error && !list ? (
                     <SofaErrorState
                         title={t("matrix.spacesLoadFailed")}
-                        description={textNotice(spaces.erro)}
+                        description={textNotice(spaces.error)}
                         retry={{ label: t("operation.retry"), onClick: () => void load() }}
                     />
                 ) : list ? (
                     <>
-                        {spaces.erro ? (
+                        {spaces.error ? (
                             <p className="poph-matrix__notice" role="alert">
-                                {t("matrix.lastUpdateFailed", { message: textNotice(spaces.erro) })}
+                                {t("matrix.lastUpdateFailed", { message: textNotice(spaces.error) })}
                             </p>
                         ) : null}
 
-                        {departments.erro && !deptos ? (
+                        {departments.error && !deptos ? (
                             <p className="poph-matrix__notice" role="alert">
                                 {t("matrix.departmentsLoadFailed", {
-                                    message: textNotice(departments.erro),
+                                    message: textNotice(departments.error),
                                 })}
                             </p>
                         ) : null}
