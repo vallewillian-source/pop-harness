@@ -4,12 +4,8 @@ M05	4	crates/poph-jev/Cargo.toml
 M06a	142	crates/poph-fluxos/src/cache.rs
 M06a	73	crates/poph-fluxos/src/compilador.rs
 M06a	79	crates/poph-fluxos/src/compilador/forma.rs
-M06a	95	crates/poph-fluxos/src/diagnostico.rs
 M06a	104	crates/poph-fluxos/src/diff.rs
 M06a	133	crates/poph-fluxos/src/formatador.rs
-M06a	125	crates/poph-fluxos/src/ir.rs
-M06a	29	crates/poph-fluxos/src/lib.rs
-M06a	54	crates/poph-fluxos/src/linguagem.rs
 M06a	320	crates/poph-fluxos/src/motor.rs
 M06a	75	crates/poph-fluxos/src/prompt.rs
 M06a	170	crates/poph-fluxos/src/regras.rs
