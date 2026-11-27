@@ -865,8 +865,8 @@ Quando a resposta do atendente não sai pelo WhatsApp de vez, o módulo escreve 
 - **Só a org com o módulo ligado.** A listagem percorre as orgs de `matrix_orgs` com `enabled = 1`. O
   repositório também confere que o item de saída é da org (`INSERT … SELECT … FROM outbox WHERE id AND org_id`):
   uma org não grava desfecho para item de outra.
-- **Motivo de falha.** A fila grava `tentativas de envio esgotadas` (constante `MOTIVO_TENTATIVAS_ESGOTADAS`,
-  em `saida_whatsapp.rs`) ou o erro definitivo do canal. O aviso traduz para um de três códigos fixos
+- **Motivo de falha.** A fila grava `tentativas de envio esgotadas` (constante `RETRY_LIMIT_REASON`,
+  em `whatsapp_output.rs`) ou o erro definitivo do canal. O aviso traduz para um de três códigos fixos
   (`tentativas_esgotadas`, `recusado_pelo_canal`, `nao_informado`); o texto do canal não entra na sala nem no
   log.
 

@@ -215,7 +215,7 @@ instead of the terminal:
 1. The Evolution webhook records the customer's message in the incoming queue (`inbox`) and in the conversation.
 2. The dispatch loop (`crates/poph-server/src/turn_input.rs`) reads the pending queue every
    `[turno] intervalo_despacho_ms` (default 1000 ms; accepts 100 to 60000). It dispatches **only the input**: it
-   sends nothing. The output is handled by the WhatsApp loop (`saida_whatsapp.rs`).
+   sends nothing. The output is handled by the WhatsApp loop (`whatsapp_output.rs`).
 3. The conversation actor runs the turn. One turn at a time per conversation is guaranteed by the actor itself.
 4. The reply goes to the conversation as `out` and to the outgoing queue; the WhatsApp loop delivers it.
 
@@ -438,7 +438,7 @@ not lost, the turn does not get stuck as "in progress", the conversation goes ba
   crash in the middle leaves the item pending and startup dispatches it again (at least once). If the reply was already saved after the
   customer's message, the turn redoes the analysis (`analisar`) and completes as `skipped` without calling the model — this is what
   prevents a duplicate reply (HR-12).
-- **An interrupted turn does not stay `running`.** At startup, `entrada_turno::recuperar_turnos_interrompidos` closes as `failed` every turn
+- **An interrupted turn does not stay `running`.** At startup, `turn_input::recover_interrupted_turns` closes as `failed` every turn
   that is still `running` and started **up to** the startup instant, with the error `interrompido: o processo caiu no meio do atendimento; a
   mensagem foi mantida` (interrupted: the process crashed in the middle of the service; the message was kept)
   (`Turnos::falhar_orfaos`, additive read/write, no migration). A turn opened in this instance after startup is never touched. The sweep runs
