@@ -13,8 +13,3 @@ M12a	14	crates/poph/src/jev.rs
 M12a	19	crates/poph/src/logs.rs
 M12a	9	crates/poph/src/modelo.rs
 M12a	21	crates/poph/src/retencao.rs
-M12b	19	crates/poph/tests/cli_retencao.rs
-M12b	35	crates/poph/tests/ferramentas_sem_base.rs
-M12b	9	crates/poph/tests/serve.rs
-M12b	18	crates/poph/tests/serve_logs.rs
-M12b	13	crates/poph/tests/token_api.rs
