@@ -1,28 +1,3 @@
-//! Testes da MX-18: a resposta do atendente no Element chega ao cliente.
-//!
-//! Tudo aqui é de ponta a ponta, com os três servidores de verdade e banco em pasta temporária:
-//!
-//! - o Harness no ar (`servir_em`), do jeito que o Synapse o vê, com as rotas do Application
-//!   Service e o consumidor da fila de saída;
-//! - um **Synapse falso** em `127.0.0.1`, que responde o perfil do atendente e anota cada evento de
-//!   mensagem escrito na sala (é por ele que se prova que o aviso saiu, e que não sai resposta
-//!   quando a conversa está encerrada);
-//! - uma **Evolution falsa** em `127.0.0.1`, que anota cada envio (é por ela que se prova que o
-//!   cliente recebeu **uma** mensagem, com o prefixo do atendente).
-//!
-//! O que se prova:
-//! - A2: uma mensagem do atendente vira um envio com `*[Nome]*:`, a conversa fica `transferred` e o
-//!   reenvio da mesma transação não envia de novo;
-//! - A3 (do PRD): o Synapse repetindo a mesma transação gera um envio só;
-//! - A9: evento de sala da org A não altera a conversa da org B (e vice-versa);
-//! - conversa encerrada → nada ao cliente e aviso na sala;
-//! - sala que nenhuma org conhece → `200`, nada gravado;
-//! - falha de banco na entrega → `503` (nunca `4xx`), e o reenvio processa;
-//! - mídia do atendente que o Synapse não entrega mais → nada ao cliente e aviso na sala
-//!   (o caminho completo do arquivo, com Evolution falsa e Synapse falso servindo o download, está
-//!   em `tests/matrix_midia_atendente.rs`);
-//! - o nome do atendente é lido uma vez e fica no cache com validade.
-
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -49,63 +24,52 @@ use reqwest::{Client, StatusCode as StatusHttp};
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
 
-// ───────────────────────────────── constantes ─────────────────────────────────
-
-const PREFIXO: &str = "ph";
+const PREFIX: &str = "ph";
 const SERVER_NAME: &str = "matrix-dev.local";
 
-/// Valor-canário do token do Synapse: não pode aparecer em resposta, log nem erro.
 const HS_TOKEN: &str = "CANARIO-HS-mx18-5f3c-TAO-SECRETO";
 
-/// Valor-canário do token com que o Harness age no Synapse.
 const AS_TOKEN: &str = "CANARIO-AS-mx18-91ab-TAO-SECRETO";
 
 const INSTANCIA: &str = "loja";
-const CHAVE_EVO: &str = "chave-evo-mx18-teste";
-const SEGREDO_WEBHOOK: &str = "segredo-webhook-mx18";
+const EVO_KEY: &str = "chave-evo-mx18-teste";
+const WEBHOOK_SECRET: &str = "segredo-webhook-mx18";
 
-/// Número do cliente. Não é de ninguém.
-const TELEFONE: &str = "5511999990000";
+const PHONE: &str = "5511999990000";
 const JID: &str = "5511999990000@s.whatsapp.net";
 
-/// Atendente humano: `localpart` que **não** pode ser confundida com fantasma.
-const ATENDENTE: &str = "@ana:matrix-dev.local";
-const NOME_ATENDENTE: &str = "Ana Atendente";
+const ATTENDANT: &str = "@ana:matrix-dev.local";
+const ATTENDANT_NAME: &str = "Ana Atendente";
 
-/// Sala da conversa da org do cenário.
-const SALA: &str = "!sala-a:matrix-dev.local";
-/// Sala da conversa da org vizinha (teste de isolamento).
-const SALA_B: &str = "!sala-b:matrix-dev.local";
+const ROOM: &str = "!sala-a:matrix-dev.local";
+const ROOM_B: &str = "!sala-b:matrix-dev.local";
 
-// ───────────────────────────────── Synapse falso ─────────────────────────────────
-
-/// Um evento de mensagem que o Harness escreveu na sala (aviso, por exemplo).
 #[derive(Clone, Debug)]
-struct Escrita {
+struct Write {
     room: String,
     tipo: String,
     txn: String,
     disfarcado: Option<String>,
-    autorizacao: Option<String>,
+    authorization: Option<String>,
     body: Value,
 }
 
 #[derive(Clone, Default)]
-struct SynapseFalso {
-    perfis: Arc<Mutex<HashMap<String, String>>>,
-    escritas: Arc<Mutex<Vec<Escrita>>>,
-    perfis_lidos: Arc<AtomicUsize>,
+struct FakeSynapse {
+    profiles: Arc<Mutex<HashMap<String, String>>>,
+    writes: Arc<Mutex<Vec<Write>>>,
+    profiles_read: Arc<AtomicUsize>,
 }
 
-async fn perfil_falso(
-    State(falso): State<SynapseFalso>,
-    Path(usuario): Path<String>,
-    cabecalhos: HeaderMap,
+async fn fake_profile(
+    State(fake): State<FakeSynapse>,
+    Path(user): Path<String>,
+    headers: HeaderMap,
 ) -> (StatusCode, Json<Value>) {
-    falso.perfis_lidos.fetch_add(1, Ordering::SeqCst);
-    let _ = cabecalhos;
-    let perfis = falso.perfis.lock().unwrap();
-    match perfis.get(&usuario) {
+    fake.profiles_read.fetch_add(1, Ordering::SeqCst);
+    let _ = headers;
+    let profiles = fake.profiles.lock().unwrap();
+    match profiles.get(&user) {
         Some(name) => (
             StatusCode::OK,
             Json(json!({ "displayname": name, "avatar_url": null })),
@@ -117,138 +81,131 @@ async fn perfil_falso(
     }
 }
 
-async fn enviar_falso(
-    State(falso): State<SynapseFalso>,
+async fn send_fake(
+    State(fake): State<FakeSynapse>,
     Path((room, tipo, txn)): Path<(String, String, String)>,
-    Query(consulta): Query<HashMap<String, String>>,
-    cabecalhos: HeaderMap,
+    Query(query): Query<HashMap<String, String>>,
+    headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
-    let autorizacao = cabecalhos
+    let authorization = headers
         .get("authorization")
-        .and_then(|valor| valor.to_str().ok())
+        .and_then(|value| value.to_str().ok())
         .map(str::to_owned);
-    let mut escritas = falso.escritas.lock().unwrap();
-    let posicao = escritas.len() + 1;
-    escritas.push(Escrita {
+    let mut writes = fake.writes.lock().unwrap();
+    let position = writes.len() + 1;
+    writes.push(Write {
         room,
         tipo,
         txn,
-        disfarcado: consulta.get("user_id").cloned(),
-        autorizacao,
+        disfarcado: query.get("user_id").cloned(),
+        authorization,
         body,
     });
     (
         StatusCode::OK,
-        Json(json!({ "event_id": format!("$escrito-{posicao}:matrix-dev.local") })),
+        Json(json!({ "event_id": format!("$escrito-{position}:matrix-dev.local") })),
     )
 }
 
-/// Sobe o Synapse falso numa porta efêmera e devolve o endereço.
-async fn subir_synapse_falso() -> (String, SynapseFalso) {
-    let falso = SynapseFalso::default();
+async fn boot_fake_synapse() -> (String, FakeSynapse) {
+    let fake = FakeSynapse::default();
     {
-        let mut perfis = falso.perfis.lock().unwrap();
-        perfis.insert(ATENDENTE.to_owned(), NOME_ATENDENTE.to_owned());
+        let mut profiles = fake.profiles.lock().unwrap();
+        profiles.insert(ATTENDANT.to_owned(), ATTENDANT_NAME.to_owned());
     }
-    let roteador = Router::new()
+    let router = Router::new()
         .route("/pronto", get(|| async { StatusCode::OK }))
-        .route("/_matrix/client/v3/profile/{user}", get(perfil_falso))
+        .route("/_matrix/client/v3/profile/{user}", get(fake_profile))
         .route(
             "/_matrix/client/v3/rooms/{room}/send/{kind}/{txn}",
-            put(enviar_falso),
+            put(send_fake),
         )
-        .with_state(falso.clone());
+        .with_state(fake.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("porta efêmera do Synapse falso");
     let endereco = listener.local_addr().expect("endereço do Synapse falso");
     tokio::spawn(async move {
-        let _ = axum::serve(listener, roteador).await;
+        let _ = axum::serve(listener, router).await;
     });
-    (format!("http://{endereco}"), falso)
+    (format!("http://{endereco}"), fake)
 }
 
-/// Espera as rotas do Synapse falso responderem (o servidor sobe na tarefa acima).
-async fn esperar_synapse(url: &str) {
+async fn wait_synapse(url: &str) {
     let client = Client::new();
-    let inicio = Instant::now();
+    let start = Instant::now();
     loop {
-        let resposta = client.get(format!("{url}/pronto")).send().await;
-        if resposta.is_ok() {
+        let reply = client.get(format!("{url}/pronto")).send().await;
+        if reply.is_ok() {
             return;
         }
         assert!(
-            inicio.elapsed() < Duration::from_secs(10),
+            start.elapsed() < Duration::from_secs(10),
             "Synapse falso não subiu"
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
 
-// ───────────────────────────────── Evolution falsa ─────────────────────────────────
-
 #[derive(Clone, Default)]
-struct EvolucaoFalsa {
-    envios: Arc<Mutex<Vec<Value>>>,
+struct FakeEvolution {
+    sends: Arc<Mutex<Vec<Value>>>,
 }
 
-async fn enviar_pelo_whatsapp(
-    State(falsa): State<EvolucaoFalsa>,
-    Path(_instancia): Path<String>,
+async fn send_via_whatsapp(
+    State(fake): State<FakeEvolution>,
+    Path(_instance): Path<String>,
     Json(body): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
-    let mut envios = falsa.envios.lock().unwrap();
-    envios.push(body);
-    let posicao = envios.len();
+    let mut sends = fake.sends.lock().unwrap();
+    sends.push(body);
+    let position = sends.len();
     (
         StatusCode::OK,
-        Json(json!({ "key": { "id": format!("MSG-EVO-{posicao}") } })),
+        Json(json!({ "key": { "id": format!("MSG-EVO-{position}") } })),
     )
 }
 
-async fn subir_evolution_falsa() -> (String, EvolucaoFalsa) {
-    let falsa = EvolucaoFalsa::default();
-    let roteador = Router::new()
-        .route("/message/sendText/{instance}", post(enviar_pelo_whatsapp))
-        .with_state(falsa.clone());
+async fn boot_fake_evolution() -> (String, FakeEvolution) {
+    let fake = FakeEvolution::default();
+    let router = Router::new()
+        .route("/message/sendText/{instance}", post(send_via_whatsapp))
+        .with_state(fake.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("porta efêmera da Evolution falsa");
     let endereco = listener.local_addr().expect("endereço da Evolution falsa");
     tokio::spawn(async move {
-        let _ = axum::serve(listener, roteador).await;
+        let _ = axum::serve(listener, router).await;
     });
-    (format!("http://{endereco}"), falsa)
+    (format!("http://{endereco}"), fake)
 }
 
-// ───────────────────────────────── porta que sabe falhar ─────────────────────────────────
-
-/// A porta de verdade, com um interruptor para fingir banco fora do ar.
-struct PortaComFalha {
+struct PortWithFailure {
     real: HarnessResponsePort,
-    falhar: AtomicBool,
+    fail: AtomicBool,
 }
 
-impl PortaComFalha {
+impl PortWithFailure {
     fn fresh(store: Arc<Store>) -> Self {
         Self {
             real: HarnessResponsePort::fresh(store),
-            falhar: AtomicBool::new(true),
+            fail: AtomicBool::new(true),
         }
     }
 
-    fn consertar(&self) {
-        self.falhar.store(false, Ordering::SeqCst);
+    fn fix(&self) {
+        self.fail.store(false, Ordering::SeqCst);
     }
 }
 
-impl ResponsePort for PortaComFalha {
+impl ResponsePort for PortWithFailure {
     fn room_conversation(
         &self,
         room: &str,
     ) -> Result<Option<poph_server::matrix_response::RoomConversation>, StoreError> {
-        if self.falhar.load(Ordering::SeqCst) {
+        if self.fail.load(Ordering::SeqCst) {
             return Err(StoreError::Internal("banco fora do ar (teste)".to_owned()));
         }
         self.real.room_conversation(room)
@@ -256,38 +213,36 @@ impl ResponsePort for PortaComFalha {
 
     fn conversation_agent(
         &self,
-        alvo: poph_server::matrix_response::RoomConversation,
+        target: poph_server::matrix_response::RoomConversation,
     ) -> Result<Option<poph_types::AgentId>, StoreError> {
-        if self.falhar.load(Ordering::SeqCst) {
+        if self.fail.load(Ordering::SeqCst) {
             return Err(StoreError::Internal("banco fora do ar (teste)".to_owned()));
         }
-        self.real.conversation_agent(alvo)
+        self.real.conversation_agent(target)
     }
 
     fn record_response(
         &self,
-        alvo: poph_server::matrix_response::RoomConversation,
+        target: poph_server::matrix_response::RoomConversation,
         fresh: NewHumanResponse<'_>,
     ) -> Result<HumanResponse, StoreError> {
-        self.real.record_response(alvo, fresh)
+        self.real.record_response(target, fresh)
     }
 
     fn record_response_with_file(
         &self,
-        alvo: poph_server::matrix_response::RoomConversation,
+        target: poph_server::matrix_response::RoomConversation,
         fresh: poph_store::HumanResponseWithFile<'_>,
     ) -> Result<HumanResponse, StoreError> {
-        self.real.record_response_with_file(alvo, fresh)
+        self.real.record_response_with_file(target, fresh)
     }
 }
 
-/// A porta de verdade, mas sem saber o agente da conversa: o caso da conversa antiga, da org
-/// migrada ou do registro que sumiu. Não há fantasma para assinar o arquivo do atendente.
-struct PortaSemAgente {
+struct PortWithoutAgent {
     real: HarnessResponsePort,
 }
 
-impl ResponsePort for PortaSemAgente {
+impl ResponsePort for PortWithoutAgent {
     fn room_conversation(
         &self,
         room: &str,
@@ -297,108 +252,100 @@ impl ResponsePort for PortaSemAgente {
 
     fn conversation_agent(
         &self,
-        _alvo: poph_server::matrix_response::RoomConversation,
+        _target: poph_server::matrix_response::RoomConversation,
     ) -> Result<Option<poph_types::AgentId>, StoreError> {
         Ok(None)
     }
 
     fn record_response(
         &self,
-        alvo: poph_server::matrix_response::RoomConversation,
+        target: poph_server::matrix_response::RoomConversation,
         fresh: NewHumanResponse<'_>,
     ) -> Result<HumanResponse, StoreError> {
-        self.real.record_response(alvo, fresh)
+        self.real.record_response(target, fresh)
     }
 
     fn record_response_with_file(
         &self,
-        alvo: poph_server::matrix_response::RoomConversation,
+        target: poph_server::matrix_response::RoomConversation,
         fresh: poph_store::HumanResponseWithFile<'_>,
     ) -> Result<HumanResponse, StoreError> {
-        self.real.record_response_with_file(alvo, fresh)
+        self.real.record_response_with_file(target, fresh)
     }
 }
 
-// ───────────────────────────────── cenário ─────────────────────────────────
-
-struct ConversaDoCenario {
+struct ScenarioConversation {
     org: OrgId,
     conversation: ConversationId,
 }
 
-struct Cenario {
-    pasta: PathBuf,
+struct Scenario {
+    dir: PathBuf,
     store: Arc<Store>,
-    /// Org do cenário (a dona da sala [`SALA`]).
     org: OrgId,
     conversation: ConversationId,
-    /// Org vizinha, com conversa própria e sem sala: o isolamento é provado contra ela.
     org_b: OrgId,
-    conversa_b: ConversationId,
-    synapse: SynapseFalso,
-    evo: EvolucaoFalsa,
-    /// Endereço do Synapse falso (o cliente do módulo aponta para ele).
+    conversation_b: ConversationId,
+    synapse: FakeSynapse,
+    evo: FakeEvolution,
     url_synapse: String,
-    /// Endereço da Evolution falsa (o canal de saída aponta para ele).
     url_evo: String,
 }
 
-impl Cenario {
-    async fn new(rotulo: &str) -> Self {
-        let carimbo = SystemTime::now()
+impl Scenario {
+    async fn new(label: &str) -> Self {
+        let stamp = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
-            .map(|duracao| duracao.as_nanos())
+            .map(|duration| duration.as_nanos())
             .unwrap_or(0);
-        let pasta = std::env::temp_dir().join(format!(
-            "poph-matrix-resposta-{rotulo}-{}-{carimbo}",
+        let dir = std::env::temp_dir().join(format!(
+            "poph-matrix-resposta-{label}-{}-{stamp}",
             std::process::id()
         ));
-        let _ = fs::remove_dir_all(&pasta);
-        fs::create_dir_all(&pasta).expect("pasta do teste");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("pasta do teste");
         let store = Arc::new(
-            Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")).expect("abre o banco"),
+            Store::open_at(&dir.join("harness.db"), &dir.join("rag.db")).expect("abre o banco"),
         );
 
-        let a = Self::org_com_conversa(&store, "loja-a", "Sala A", "bia-a");
-        let b = Self::org_com_conversa(&store, "loja-b", "Sala B", "bia-b");
+        let a = Self::org_with_conversation(&store, "loja-a", "Sala A", "bia-a");
+        let b = Self::org_with_conversation(&store, "loja-b", "Sala B", "bia-b");
 
-        // Sala da org A pronta no banco (a provisão de sala é a MX-11).
         store
             .matrix()
             .enable(a.org)
             .expect("liga o módulo na org A");
         store
             .matrix()
-            .ensure_room(a.org, a.conversation, SALA, None)
+            .ensure_room(a.org, a.conversation, ROOM, None)
             .expect("grava a sala da org A");
         store
             .matrix()
             .mark_room_ready(a.org, a.conversation)
             .expect("sala pronta");
-        // A org B também tem o módulo ligado e uma sala, para o isolamento valer nos dois sentidos.
         store
             .matrix()
             .enable(b.org)
             .expect("liga o módulo na org B");
         store
             .matrix()
-            .ensure_room(b.org, b.conversation, SALA_B, None)
+            .ensure_room(b.org, b.conversation, ROOM_B, None)
             .expect("grava a sala da org B");
         store
             .matrix()
             .mark_room_ready(b.org, b.conversation)
             .expect("sala B pronta");
 
-        let (url_synapse, synapse) = subir_synapse_falso().await;
-        esperar_synapse(&url_synapse).await;
-        let (url_evo, evo) = subir_evolution_falsa().await;
+        let (url_synapse, synapse) = boot_fake_synapse().await;
+        wait_synapse(&url_synapse).await;
+        let (url_evo, evo) = boot_fake_evolution().await;
         Self {
-            pasta,
+            dir,
             store,
             org: a.org,
             conversation: a.conversation,
             org_b: b.org,
-            conversa_b: b.conversation,
+            conversation_b: b.conversation,
             synapse,
             evo,
             url_synapse,
@@ -406,13 +353,12 @@ impl Cenario {
         }
     }
 
-    /// Cria org + agente + integração de WhatsApp + conversa, com sala em [`SALA`].
-    fn org_com_conversa(
+    fn org_with_conversation(
         store: &Store,
         slug: &str,
         agent_name: &str,
-        slug_agente: &str,
-    ) -> ConversaDoCenario {
+        agent_slug: &str,
+    ) -> ScenarioConversation {
         let org = store
             .orgs()
             .create(NewOrg {
@@ -428,7 +374,7 @@ impl Cenario {
                 org,
                 NewAgent {
                     name: agent_name.to_owned(),
-                    slug: slug_agente.to_owned(),
+                    slug: agent_slug.to_owned(),
                     ..NewAgent::default()
                 },
             )
@@ -448,22 +394,21 @@ impl Cenario {
                     agent_id: agent,
                     integration_id: Some(integracao),
                     canal: "whatsapp".to_owned(),
-                    peer_externo: Some(TELEFONE.to_owned()),
+                    peer_externo: Some(PHONE.to_owned()),
                     target_department: None,
                 },
             )
             .expect("cria a conversa")
             .id;
-        ConversaDoCenario { org, conversation }
+        ScenarioConversation { org, conversation }
     }
 
-    /// O canal da Evolution que o servidor usa para entregar a fila de saída de uma conversa.
     fn channel(&self, org: OrgId, conversation: ConversationId, url_evo: &str) -> EvolutionChannel {
         let client = EvolutionClient::new(
             ConfigEvolution::new(
                 url_evo.to_owned(),
                 INSTANCIA,
-                Secret::new(CHAVE_EVO.to_owned()),
+                Secret::new(EVO_KEY.to_owned()),
             )
             .expect("config da Evolution falsa"),
         )
@@ -479,20 +424,18 @@ impl Cenario {
             org,
             instance: INSTANCIA.to_owned(),
             integration: integracao,
-            secret: Some(Secret::new(SEGREDO_WEBHOOK.to_owned())),
+            secret: Some(Secret::new(WEBHOOK_SECRET.to_owned())),
             client: Some(client),
             attachment_limit: ATTACHMENT_CAP,
         }
     }
 
-    /// Sobe o Harness com o receptor do Application Service e o consumidor da fila de saída.
-    async fn subir(&self, porta: Arc<dyn ResponsePort>) -> Servidor {
-        // Um canal por org, como na operação: a fila de cada org sai pelo canal dela.
-        let canais = vec![
+    async fn boot(&self, porta: Arc<dyn ResponsePort>) -> Servidor {
+        let channels = vec![
             self.channel(self.org, self.conversation, &self.url_evo),
-            self.channel(self.org_b, self.conversa_b, &self.url_evo),
+            self.channel(self.org_b, self.conversation_b, &self.url_evo),
         ];
-        let cliente_matrix = MatrixClient::new(
+        let matrix_customer = MatrixClient::new(
             ClientConfig::new(
                 self.url_synapse.clone(),
                 SERVER_NAME.to_owned(),
@@ -501,31 +444,30 @@ impl Cenario {
             .expect("config do cliente do Matrix"),
         )
         .expect("cliente do Matrix");
-        let ids = GhostIds::new(PREFIXO, SERVER_NAME).expect("ids dos fantasmas");
-        // Pasta de blobs como na operação: o arquivo do atendente (MX-44) é gravado ali.
-        let entrega = Arc::new(
-            AttendantResponse::new(porta, Some(cliente_matrix), ids)
-                .with_blob_folder(self.pasta.join("blobs")),
+        let ids = GhostIds::new(PREFIX, SERVER_NAME).expect("ids dos fantasmas");
+        let delivery = Arc::new(
+            AttendantResponse::new(porta, Some(matrix_customer), ids)
+                .with_blob_folder(self.dir.join("blobs")),
         );
 
         let state = ServerState::new(Arc::clone(&self.store), HarnessConfig::default())
             .expect("estado do servidor")
-            .with_evolution_channels(canais)
+            .with_evolution_channels(channels)
             .with_matrix_as(Arc::new(AsReceiver::new(
-                PREFIXO,
+                PREFIX,
                 SERVER_NAME,
                 Secret::new(HS_TOKEN.to_owned()),
-                entrega.clone(),
+                delivery.clone(),
             )));
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("porta efêmera");
         let endereco = listener.local_addr().expect("endereço local");
-        let (desligar, sinal) = oneshot::channel::<()>();
+        let (desligar, signal) = oneshot::channel::<()>();
         tokio::spawn(async move {
             let _ = poph_server::serve_at(listener, state, async {
-                let _ = sinal.await;
+                let _ = signal.await;
             })
             .await;
         });
@@ -535,25 +477,25 @@ impl Cenario {
                 .timeout(Duration::from_secs(20))
                 .build()
                 .expect("cliente HTTP"),
-            entrega,
+            delivery,
             desligar: Some(desligar),
         };
-        servidor.esperar_subir().await;
+        servidor.wait_boot().await;
         servidor
     }
 
-    fn conversa_da_org(&self, org: OrgId) -> ConversationId {
+    fn org_conversation(&self, org: OrgId) -> ConversationId {
         if org == self.org {
             self.conversation
         } else {
-            self.conversa_b
+            self.conversation_b
         }
     }
 
     fn status(&self, org: OrgId) -> poph_store::ConversationStatus {
         self.store
             .conversations()
-            .get(org, self.conversa_da_org(org))
+            .get(org, self.org_conversation(org))
             .expect("lê a conversa")
             .status
     }
@@ -561,35 +503,32 @@ impl Cenario {
     fn messages(&self, org: OrgId) -> Vec<poph_store::Mensagem> {
         self.store
             .messages()
-            .list(org, self.conversa_da_org(org), Page::with_limit(50))
+            .list(org, self.org_conversation(org), Page::with_limit(50))
             .expect("lista as mensagens")
     }
 
-    fn enviados(&self, org: OrgId) -> u64 {
+    fn sent(&self, org: OrgId) -> u64 {
         self.store
             .outbox()
             .count_by_state(org, OutboxState::Sent)
             .expect("conta a fila de saída")
     }
 
-    fn pendentes(&self, org: OrgId) -> u64 {
+    fn pending(&self, org: OrgId) -> u64 {
         self.store
             .outbox()
             .count_by_state(org, OutboxState::Pending)
             .expect("conta a fila de saída")
     }
 
-    fn envios_no_whatsapp(&self) -> Vec<Value> {
-        self.evo.envios.lock().unwrap().clone()
+    fn whatsapp_sends(&self) -> Vec<Value> {
+        self.evo.sends.lock().unwrap().clone()
     }
 
-    fn escritas_no_synapse(&self) -> Vec<Escrita> {
-        self.synapse.escritas.lock().unwrap().clone()
+    fn synapse_writes(&self) -> Vec<Write> {
+        self.synapse.writes.lock().unwrap().clone()
     }
 
-    /// O fantasma do agente dono da conversa: quem o Synapse deixa personificar (namespace do
-    /// Application Service) e quem está na sala. É ele que baixa o arquivo do atendente e assina os
-    /// avisos.
     fn agent_ghost(&self) -> String {
         let agent = self
             .store
@@ -597,7 +536,7 @@ impl Cenario {
             .get(self.org, self.conversation)
             .expect("lê a conversa")
             .agent_id;
-        GhostIds::new(PREFIXO, SERVER_NAME)
+        GhostIds::new(PREFIX, SERVER_NAME)
             .expect("ids dos fantasmas")
             .agent(&agent.to_string())
             .expect("fantasma do agente")
@@ -606,23 +545,22 @@ impl Cenario {
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.pasta);
+        let _ = fs::remove_dir_all(&self.dir);
     }
 }
 
-/// O Harness no ar: entrega transações como o Synapse entregaria.
 struct Servidor {
     base: String,
     client: Client,
-    entrega: Arc<AttendantResponse>,
+    delivery: Arc<AttendantResponse>,
     desligar: Option<oneshot::Sender<()>>,
 }
 
 impl Servidor {
-    async fn esperar_subir(&self) {
-        let inicio = Instant::now();
+    async fn wait_boot(&self) {
+        let start = Instant::now();
         loop {
             match self
                 .client
@@ -630,18 +568,17 @@ impl Servidor {
                 .send()
                 .await
             {
-                Ok(resposta) if resposta.status().is_success() => return,
-                _ if inicio.elapsed() < Duration::from_secs(10) => {
+                Ok(reply) if reply.status().is_success() => return,
+                _ if start.elapsed() < Duration::from_secs(10) => {
                     tokio::time::sleep(Duration::from_millis(20)).await;
                 }
-                outro => panic!("servidor não subiu: {outro:?}"),
+                other => panic!("servidor não subiu: {other:?}"),
             }
         }
     }
 
-    /// `PUT /_matrix/app/v1/transactions/{txnId}` com o `hs_token`, como o Synapse faz.
-    async fn transacao(&self, txn: &str, body: &Value) -> (StatusHttp, Value) {
-        let resposta = self
+    async fn transaction(&self, txn: &str, body: &Value) -> (StatusHttp, Value) {
+        let reply = self
             .client
             .put(format!("{}/_matrix/app/v1/transactions/{txn}", self.base))
             .header("authorization", format!("Bearer {HS_TOKEN}"))
@@ -649,26 +586,25 @@ impl Servidor {
             .send()
             .await
             .expect("entrega a transação");
-        let status = resposta.status();
-        let valor = resposta.json::<Value>().await.unwrap_or(Value::Null);
-        (status, valor)
+        let status = reply.status();
+        let value = reply.json::<Value>().await.unwrap_or(Value::Null);
+        (status, value)
     }
 
-    /// Entrega uma mensagem de texto do atendente numa transação própria.
-    async fn texto_do_atendente(
+    async fn attendant_text(
         &self,
         txn: &str,
         room: &str,
         event: &str,
         text: &str,
     ) -> (StatusHttp, Value) {
-        self.transacao(
+        self.transaction(
             txn,
             &json!({
                 "events": [{
                     "type": "m.room.message",
                     "room_id": room,
-                    "sender": ATENDENTE,
+                    "sender": ATTENDANT,
                     "event_id": event,
                     "origin_server_ts": 1_795_300_000_000i64,
                     "content": { "msgtype": "m.text", "body": text }
@@ -678,23 +614,22 @@ impl Servidor {
         .await
     }
 
-    /// Entrega um webhook da Evolution como o cliente faria (mensagem recebida).
     async fn webhook(&self, org: OrgId, body: &Value) -> (StatusHttp, Value) {
-        let resposta = self
+        let reply = self
             .client
             .post(format!("{}/webhook/evolution/{org}/{INSTANCIA}", self.base))
-            .header(SECRET_HEADER, SEGREDO_WEBHOOK)
+            .header(SECRET_HEADER, WEBHOOK_SECRET)
             .json(body)
             .send()
             .await
             .expect("entrega o webhook");
-        let status = resposta.status();
-        let valor = resposta.json::<Value>().await.unwrap_or(Value::Null);
-        (status, valor)
+        let status = reply.status();
+        let value = reply.json::<Value>().await.unwrap_or(Value::Null);
+        (status, value)
     }
 
-    fn contadores(&self) -> &poph_server::matrix_response::ResponseCounters {
-        self.entrega.counters()
+    fn counters(&self) -> &poph_server::matrix_response::ResponseCounters {
+        self.delivery.counters()
     }
 }
 
@@ -706,26 +641,22 @@ impl Drop for Servidor {
     }
 }
 
-// ───────────────────────────────── utilidades ─────────────────────────────────
-
-/// Espera uma condição virar verdadeira (até 15 s), com a última checagem no erro.
-async fn esperar(rotulo: &str, mut condicao: impl FnMut() -> bool) {
-    let inicio = Instant::now();
+async fn wait(label: &str, mut condition: impl FnMut() -> bool) {
+    let start = Instant::now();
     loop {
-        if condicao() {
+        if condition() {
             return;
         }
         assert!(
-            inicio.elapsed() < Duration::from_secs(15),
-            "não aconteceu a tempo: {rotulo}"
+            start.elapsed() < Duration::from_secs(15),
+            "não aconteceu a tempo: {label}"
         );
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
 }
 
-/// Texto que o cliente recebeu pela Evolution falsa (o corpo de `text` de cada envio).
-fn textos_enviados(envios: &[Value]) -> Vec<String> {
-    envios
+fn texts_sent(sends: &[Value]) -> Vec<String> {
+    sends
         .iter()
         .map(|send| {
             send.get("text")
@@ -736,21 +667,19 @@ fn textos_enviados(envios: &[Value]) -> Vec<String> {
         .collect()
 }
 
-// ───────────────────────────────── testes ─────────────────────────────────
-
 #[tokio::test]
-async fn resposta_do_atendente_vira_um_envio_com_prefixo_e_transfere_a_conversa() {
-    let cenario = Cenario::new("a2").await;
-    let servidor = cenario
-        .subir(Arc::new(HarnessResponsePort::fresh(Arc::clone(
-            &cenario.store,
+async fn attendant_reply_becomes_prefixed_send_and_transfers() {
+    let scenario = Scenario::new("a2").await;
+    let servidor = scenario
+        .boot(Arc::new(HarnessResponsePort::fresh(Arc::clone(
+            &scenario.store,
         ))))
         .await;
 
     let (status, body) = servidor
-        .texto_do_atendente(
+        .attendant_text(
             "txn-1",
-            SALA,
+            ROOM,
             "$evento-1:matrix-dev.local",
             "olá, tudo bem?",
         )
@@ -758,28 +687,25 @@ async fn resposta_do_atendente_vira_um_envio_com_prefixo_e_transfere_a_conversa(
     assert_eq!(status, StatusHttp::OK);
     assert_eq!(body, json!({}));
 
-    // O cliente recebe **uma** mensagem, com o nome do atendente no prefixo.
-    esperar("o envio sair pela Evolution", || {
-        !cenario.envios_no_whatsapp().is_empty()
+    wait("o envio sair pela Evolution", || {
+        !scenario.whatsapp_sends().is_empty()
     })
     .await;
-    let envios = cenario.envios_no_whatsapp();
-    assert_eq!(envios.len(), 1, "uma mensagem do atendente = um envio");
+    let sends = scenario.whatsapp_sends();
+    assert_eq!(sends.len(), 1, "uma mensagem do atendente = um envio");
     assert_eq!(
-        textos_enviados(&envios),
+        texts_sent(&sends),
         vec!["*[Ana Atendente]*:\nolá, tudo bem?".to_owned()]
     );
 
-    // A conversa fica transferida: o agente não responde mais.
     assert_eq!(
-        cenario.status(cenario.org),
+        scenario.status(scenario.org),
         poph_store::ConversationStatus::Transferred
     );
 
-    // A mensagem fica no histórico como humana, com o id do evento e o nome do autor.
-    let mensagens = cenario.messages(cenario.org);
-    assert_eq!(mensagens.len(), 1);
-    let message = &mensagens[0];
+    let messages = scenario.messages(scenario.org);
+    assert_eq!(messages.len(), 1);
+    let message = &messages[0];
     assert_eq!(message.origin, Origin::Human);
     assert_eq!(message.texto, "olá, tudo bem?");
     assert_eq!(
@@ -788,18 +714,16 @@ async fn resposta_do_atendente_vira_um_envio_com_prefixo_e_transfere_a_conversa(
     );
     assert_eq!(message.author_name.as_deref(), Some("Ana Atendente"));
 
-    // Nada sobrou na fila: o único item foi entregue.
-    assert_eq!(cenario.enviados(cenario.org), 1);
-    assert_eq!(cenario.pendentes(cenario.org), 0);
+    assert_eq!(scenario.sent(scenario.org), 1);
+    assert_eq!(scenario.pending(scenario.org), 0);
 
-    // A mensagem seguinte do cliente é gravada e não reabre a conversa: o agente segue pausado.
     let (status, _) = servidor
         .webhook(
-            cenario.org,
+            scenario.org,
             &json!({
                 "event": "messages.upsert",
                 "instance": INSTANCIA,
-                "apikey": CHAVE_EVO,
+                "apikey": EVO_KEY,
                 "destination": "http://harness.teste/webhook/evolution/x/loja",
                 "data": {
                     "key": { "id": "MSG-CLIENTE-1", "remoteJid": JID, "fromMe": false },
@@ -812,173 +736,154 @@ async fn resposta_do_atendente_vira_um_envio_com_prefixo_e_transfere_a_conversa(
         )
         .await;
     assert_eq!(status, StatusHttp::OK);
-    esperar("a mensagem do cliente ser gravada", || {
-        cenario.messages(cenario.org).len() == 2
+    wait("a mensagem do cliente ser gravada", || {
+        scenario.messages(scenario.org).len() == 2
     })
     .await;
-    // Nada novo vai ao cliente e a conversa continua transferida (o agente não responde).
     tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(scenario.whatsapp_sends().len(), 1, "o agente não respondeu");
     assert_eq!(
-        cenario.envios_no_whatsapp().len(),
-        1,
-        "o agente não respondeu"
-    );
-    assert_eq!(
-        cenario.status(cenario.org),
+        scenario.status(scenario.org),
         poph_store::ConversationStatus::Transferred
     );
 
-    // A org vizinha não foi tocada (A9, conferido também no teste próprio).
     assert_eq!(
-        cenario.status(cenario.org_b),
+        scenario.status(scenario.org_b),
         poph_store::ConversationStatus::Open
     );
-    assert_eq!(cenario.enviados(cenario.org_b), 0);
+    assert_eq!(scenario.sent(scenario.org_b), 0);
 }
 
 #[tokio::test]
-async fn reenvio_da_mesma_transacao_e_do_mesmo_evento_nao_gera_segundo_envio() {
-    let cenario = Cenario::new("a3").await;
-    let porta = Arc::new(HarnessResponsePort::fresh(Arc::clone(&cenario.store)));
-    let servidor = cenario.subir(porta).await;
+async fn resend_of_same_transaction_or_event_makes_no_second_send() {
+    let scenario = Scenario::new("a3").await;
+    let porta = Arc::new(HarnessResponsePort::fresh(Arc::clone(&scenario.store)));
+    let servidor = scenario.boot(porta).await;
 
-    let (primeiro, _) = servidor
-        .texto_do_atendente(
+    let (first, _) = servidor
+        .attendant_text(
             "txn-repetida",
-            SALA,
+            ROOM,
             "$evento-repetido:matrix-dev.local",
             "oi",
         )
         .await;
-    // Mesma transação outra vez: a MX-16 lembra o `txnId` e nem chama a entrega.
-    let (segundo, _) = servidor
-        .texto_do_atendente(
+    let (second, _) = servidor
+        .attendant_text(
             "txn-repetida",
-            SALA,
+            ROOM,
             "$evento-repetido:matrix-dev.local",
             "oi",
         )
         .await;
-    // Transação nova com o mesmo evento (o Synapse pode remontar o lote): a idempotência é do
-    // `event_id`, na operação atômica da MX-04.
-    let (terceiro, _) = servidor
-        .texto_do_atendente("txn-outra", SALA, "$evento-repetido:matrix-dev.local", "oi")
+    let (third, _) = servidor
+        .attendant_text("txn-outra", ROOM, "$evento-repetido:matrix-dev.local", "oi")
         .await;
 
-    assert_eq!(primeiro, StatusHttp::OK);
-    assert_eq!(segundo, StatusHttp::OK);
-    assert_eq!(terceiro, StatusHttp::OK);
+    assert_eq!(first, StatusHttp::OK);
+    assert_eq!(second, StatusHttp::OK);
+    assert_eq!(third, StatusHttp::OK);
 
-    esperar("o envio sair pela Evolution", || {
-        cenario.enviados(cenario.org) == 1
+    wait("o envio sair pela Evolution", || {
+        scenario.sent(scenario.org) == 1
     })
     .await;
-    // Tempo para um segundo envio aparecer, se ele existisse.
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(
-        cenario.envios_no_whatsapp().len(),
+        scenario.whatsapp_sends().len(),
         1,
         "reenvio não duplica o envio"
     );
     assert_eq!(
-        cenario.messages(cenario.org).len(),
+        scenario.messages(scenario.org).len(),
         1,
         "uma mensagem no histórico"
     );
     assert_eq!(
-        servidor.contadores().duplicates.load(Ordering::SeqCst),
+        servidor.counters().duplicates.load(Ordering::SeqCst),
         1,
         "o reenvio com transação nova foi reconhecido como duplicado"
     );
 }
 
 #[tokio::test]
-async fn evento_de_uma_org_nao_toca_a_conversa_da_outra() {
-    let cenario = Cenario::new("a9").await;
-    let porta = Arc::new(HarnessResponsePort::fresh(Arc::clone(&cenario.store)));
-    let servidor = cenario.subir(porta).await;
+async fn event_from_one_org_does_not_touch_other_org_conversation() {
+    let scenario = Scenario::new("a9").await;
+    let porta = Arc::new(HarnessResponsePort::fresh(Arc::clone(&scenario.store)));
+    let servidor = scenario.boot(porta).await;
 
-    // Atendente responde na sala da org A.
     let (status, _) = servidor
-        .texto_do_atendente(
+        .attendant_text(
             "txn-a",
-            SALA,
+            ROOM,
             "$evento-a:matrix-dev.local",
             "resposta da org A",
         )
         .await;
     assert_eq!(status, StatusHttp::OK);
-    esperar("o envio da org A sair", || {
-        cenario.enviados(cenario.org) == 1
-    })
-    .await;
+    wait("o envio da org A sair", || scenario.sent(scenario.org) == 1).await;
 
     assert_eq!(
-        cenario.status(cenario.org),
+        scenario.status(scenario.org),
         poph_store::ConversationStatus::Transferred
     );
     assert_eq!(
-        cenario.status(cenario.org_b),
+        scenario.status(scenario.org_b),
         poph_store::ConversationStatus::Open,
         "a conversa da org B continua aberta"
     );
     assert!(
-        cenario.messages(cenario.org_b).is_empty(),
+        scenario.messages(scenario.org_b).is_empty(),
         "nada gravado na org B"
     );
-    assert_eq!(
-        cenario.enviados(cenario.org_b),
-        0,
-        "nada enviado pela org B"
-    );
+    assert_eq!(scenario.sent(scenario.org_b), 0, "nada enviado pela org B");
 
-    // E o contrário: resposta na sala da org B não mexe na org A.
     let (status, _) = servidor
-        .texto_do_atendente(
+        .attendant_text(
             "txn-b",
-            SALA_B,
+            ROOM_B,
             "$evento-b:matrix-dev.local",
             "resposta da org B",
         )
         .await;
     assert_eq!(status, StatusHttp::OK);
-    esperar("o envio da org B sair", || {
-        cenario.enviados(cenario.org_b) == 1
+    wait("o envio da org B sair", || {
+        scenario.sent(scenario.org_b) == 1
     })
     .await;
     assert_eq!(
-        cenario.messages(cenario.org).len(),
+        scenario.messages(scenario.org).len(),
         1,
         "a org A ficou como estava"
     );
-    assert_eq!(cenario.enviados(cenario.org), 1);
+    assert_eq!(scenario.sent(scenario.org), 1);
 }
 
 #[tokio::test]
-async fn conversa_encerrada_nao_envia_e_avisa_na_sala() {
-    let cenario = Cenario::new("encerrada").await;
-    let conversation = cenario
+async fn closed_conversation_does_not_send_and_notifies_room() {
+    let scenario = Scenario::new("encerrada").await;
+    let conversation = scenario
         .store
         .conversations()
-        .get(cenario.org, cenario.conversation)
+        .get(scenario.org, scenario.conversation)
         .expect("lê a conversa");
-    cenario
+    scenario
         .store
         .conversations()
         .close_audited(
-            cenario.org,
-            cenario.conversation,
+            scenario.org,
+            scenario.conversation,
             conversation.version,
             "teste".to_owned(),
         )
         .expect("encerra a conversa");
-    let porta = Arc::new(HarnessResponsePort::fresh(Arc::clone(&cenario.store)));
-    let servidor = cenario.subir(porta).await;
+    let porta = Arc::new(HarnessResponsePort::fresh(Arc::clone(&scenario.store)));
+    let servidor = scenario.boot(porta).await;
 
     let (status, _) = servidor
-        .texto_do_atendente(
+        .attendant_text(
             "txn-fechada",
-            SALA,
+            ROOM,
             "$evento-fechado:matrix-dev.local",
             "oi",
         )
@@ -989,39 +894,39 @@ async fn conversa_encerrada_nao_envia_e_avisa_na_sala() {
         "conversa encerrada não é erro de transporte"
     );
 
-    esperar("o aviso aparecer na sala", || {
-        !cenario.escritas_no_synapse().is_empty()
+    wait("o aviso aparecer na sala", || {
+        !scenario.synapse_writes().is_empty()
     })
     .await;
-    let escritas = cenario.escritas_no_synapse();
-    assert_eq!(escritas.len(), 1);
+    let writes = scenario.synapse_writes();
+    assert_eq!(writes.len(), 1);
     assert_eq!(
-        escritas[0].body.get("body").and_then(Value::as_str),
+        writes[0].body.get("body").and_then(Value::as_str),
         Some(poph_server::matrix_response::CLOSED_CONVERSATION_NOTICE)
     );
     assert_eq!(
-        escritas[0].body.get("msgtype").and_then(Value::as_str),
+        writes[0].body.get("msgtype").and_then(Value::as_str),
         Some("m.notice")
     );
-    assert_eq!(cenario.envios_no_whatsapp().len(), 0, "nada vai ao cliente");
+    assert_eq!(scenario.whatsapp_sends().len(), 0, "nada vai ao cliente");
     assert!(
-        cenario.messages(cenario.org).is_empty(),
+        scenario.messages(scenario.org).is_empty(),
         "nada gravado no histórico"
     );
     assert_eq!(
-        cenario.status(cenario.org),
+        scenario.status(scenario.org),
         poph_store::ConversationStatus::Closed
     );
 }
 
 #[tokio::test]
-async fn sala_que_ninguem_conhece_e_ignorada_com_200() {
-    let cenario = Cenario::new("desconhecida").await;
-    let porta = Arc::new(HarnessResponsePort::fresh(Arc::clone(&cenario.store)));
-    let servidor = cenario.subir(porta).await;
+async fn unknown_room_is_ignored_with_200() {
+    let scenario = Scenario::new("desconhecida").await;
+    let porta = Arc::new(HarnessResponsePort::fresh(Arc::clone(&scenario.store)));
+    let servidor = scenario.boot(porta).await;
 
     let (status, body) = servidor
-        .texto_do_atendente(
+        .attendant_text(
             "txn-estranha",
             "!sala-que-nao-existe:matrix-dev.local",
             "$evento-x:matrix-dev.local",
@@ -1030,25 +935,22 @@ async fn sala_que_ninguem_conhece_e_ignorada_com_200() {
         .await;
     assert_eq!(status, StatusHttp::OK);
     assert_eq!(body, json!({}));
-    assert_eq!(
-        servidor.contadores().unknown_rooms.load(Ordering::SeqCst),
-        1
-    );
-    assert!(cenario.messages(cenario.org).is_empty());
-    assert!(cenario.messages(cenario.org_b).is_empty());
-    assert_eq!(cenario.enviados(cenario.org), 0);
+    assert_eq!(servidor.counters().unknown_rooms.load(Ordering::SeqCst), 1);
+    assert!(scenario.messages(scenario.org).is_empty());
+    assert!(scenario.messages(scenario.org_b).is_empty());
+    assert_eq!(scenario.sent(scenario.org), 0);
 }
 
 #[tokio::test]
-async fn falha_de_banco_da_503_e_o_reenvio_processa() {
-    let cenario = Cenario::new("falha").await;
-    let porta = Arc::new(PortaComFalha::fresh(Arc::clone(&cenario.store)));
-    let servidor = cenario.subir(porta.clone()).await;
+async fn db_failure_gives_503_and_resend_processes() {
+    let scenario = Scenario::new("falha").await;
+    let porta = Arc::new(PortWithFailure::fresh(Arc::clone(&scenario.store)));
+    let servidor = scenario.boot(porta.clone()).await;
 
     let (status, _) = servidor
-        .texto_do_atendente(
+        .attendant_text(
             "txn-instavel",
-            SALA,
+            ROOM,
             "$evento-instavel:matrix-dev.local",
             "oi",
         )
@@ -1059,40 +961,38 @@ async fn falha_de_banco_da_503_e_o_reenvio_processa() {
         "erro transitório nosso é 5xx (o Synapse reenvia), nunca 4xx"
     );
 
-    porta.consertar();
+    porta.fix();
     let (status, _) = servidor
-        .texto_do_atendente(
+        .attendant_text(
             "txn-instavel",
-            SALA,
+            ROOM,
             "$evento-instavel:matrix-dev.local",
             "oi",
         )
         .await;
     assert_eq!(status, StatusHttp::OK, "a mesma transação é reprocessada");
 
-    esperar("o envio sair depois do reenvio", || {
-        cenario.enviados(cenario.org) == 1
+    wait("o envio sair depois do reenvio", || {
+        scenario.sent(scenario.org) == 1
     })
     .await;
-    assert_eq!(cenario.envios_no_whatsapp().len(), 1);
+    assert_eq!(scenario.whatsapp_sends().len(), 1);
 }
 
 #[tokio::test]
-async fn arquivo_que_o_synapse_nao_entrega_mais_vira_aviso_e_nao_vai_ao_cliente() {
-    // MX-44: o arquivo do atendente agora é baixado da sala. Quando o Synapse não o entrega (aqui,
-    // porque o `mxc://` não existe), o cliente **não** recebe nada e o atendente é avisado na sala.
-    let cenario = Cenario::new("midia").await;
-    let porta = Arc::new(HarnessResponsePort::fresh(Arc::clone(&cenario.store)));
-    let servidor = cenario.subir(porta).await;
+async fn file_synapse_no_longer_delivers_becomes_notice_not_sent_to_customer() {
+    let scenario = Scenario::new("midia").await;
+    let porta = Arc::new(HarnessResponsePort::fresh(Arc::clone(&scenario.store)));
+    let servidor = scenario.boot(porta).await;
 
     let (status, _) = servidor
-        .transacao(
+        .transaction(
             "txn-midia",
             &json!({
                 "events": [{
                     "type": "m.room.message",
-                    "room_id": SALA,
-                    "sender": ATENDENTE,
+                    "room_id": ROOM,
+                    "sender": ATTENDANT,
                     "event_id": "$evento-midia:matrix-dev.local",
                     "content": {
                         "msgtype": "m.image",
@@ -1105,85 +1005,82 @@ async fn arquivo_que_o_synapse_nao_entrega_mais_vira_aviso_e_nao_vai_ao_cliente(
         .await;
     assert_eq!(status, StatusHttp::OK);
 
-    esperar("o aviso de mídia aparecer na sala", || {
-        !cenario.escritas_no_synapse().is_empty()
+    wait("o aviso de mídia aparecer na sala", || {
+        !scenario.synapse_writes().is_empty()
     })
     .await;
-    let escritas = cenario.escritas_no_synapse();
-    assert_eq!(escritas.len(), 1);
+    let writes = scenario.synapse_writes();
+    assert_eq!(writes.len(), 1);
     assert_eq!(
-        escritas[0].body.get("body").and_then(Value::as_str),
+        writes[0].body.get("body").and_then(Value::as_str),
         Some("Não consegui enviar o arquivo ao cliente: não consegui baixar o arquivo da sala")
     );
     assert_eq!(
-        escritas[0].body.get("msgtype").and_then(Value::as_str),
+        writes[0].body.get("msgtype").and_then(Value::as_str),
         Some("m.notice")
     );
     assert_eq!(
-        cenario.envios_no_whatsapp().len(),
+        scenario.whatsapp_sends().len(),
         0,
         "sem o arquivo, nada sai para o cliente"
     );
-    assert!(cenario.messages(cenario.org).is_empty());
+    assert!(scenario.messages(scenario.org).is_empty());
     assert_eq!(
-        cenario.status(cenario.org),
+        scenario.status(scenario.org),
         poph_store::ConversationStatus::Open,
         "sem arquivo, a conversa não é transferida"
     );
 }
 
 #[tokio::test]
-async fn o_nome_do_atendente_e_lido_uma_vez_e_fica_no_cache() {
-    let cenario = Cenario::new("cache-nome").await;
-    let porta = Arc::new(HarnessResponsePort::fresh(Arc::clone(&cenario.store)));
-    let servidor = cenario.subir(porta).await;
+async fn attendant_name_is_read_once_and_cached() {
+    let scenario = Scenario::new("cache-nome").await;
+    let porta = Arc::new(HarnessResponsePort::fresh(Arc::clone(&scenario.store)));
+    let servidor = scenario.boot(porta).await;
 
     let (status, _) = servidor
-        .texto_do_atendente("txn-n1", SALA, "$evento-n1:matrix-dev.local", "primeira")
+        .attendant_text("txn-n1", ROOM, "$evento-n1:matrix-dev.local", "primeira")
         .await;
     assert_eq!(status, StatusHttp::OK);
     let (status, _) = servidor
-        .texto_do_atendente("txn-n2", SALA, "$evento-n2:matrix-dev.local", "segunda")
+        .attendant_text("txn-n2", ROOM, "$evento-n2:matrix-dev.local", "segunda")
         .await;
     assert_eq!(status, StatusHttp::OK);
 
-    esperar("os dois envios saírem", || {
-        cenario.envios_no_whatsapp().len() == 2
+    wait("os dois envios saírem", || {
+        scenario.whatsapp_sends().len() == 2
     })
     .await;
     assert_eq!(
-        cenario.synapse.perfis_lidos.load(Ordering::SeqCst),
+        scenario.synapse.profiles_read.load(Ordering::SeqCst),
         1,
         "o perfil do mesmo atendente é lido uma vez só dentro da validade"
     );
-    let envios = cenario.envios_no_whatsapp();
+    let sends = scenario.whatsapp_sends();
     assert!(
-        textos_enviados(&envios)
+        texts_sent(&sends)
             .iter()
             .all(|text| text.starts_with("*[Ana Atendente]*:\n"))
     );
-    assert!(servidor.entrega.name_ttl() > Duration::ZERO);
+    assert!(servidor.delivery.name_ttl() > Duration::ZERO);
 }
 
 #[tokio::test]
-async fn conversa_sem_agente_nao_baixa_a_midia_nem_inventa_assinatura() {
-    // Sem o agente da conversa não existe fantasma do Application Service para baixar o arquivo nem
-    // para avisar na sala. O caso é relatado (`error` + contador) e a mensagem não volta para a fila
-    // do Synapse: reenviar não traria o agente de volta.
-    let cenario = Cenario::new("sem-agente").await;
-    let porta = Arc::new(PortaSemAgente {
-        real: HarnessResponsePort::fresh(Arc::clone(&cenario.store)),
+async fn conversation_without_agent_does_not_fetch_media_or_invent_signature() {
+    let scenario = Scenario::new("sem-agente").await;
+    let porta = Arc::new(PortWithoutAgent {
+        real: HarnessResponsePort::fresh(Arc::clone(&scenario.store)),
     });
-    let servidor = cenario.subir(porta).await;
+    let servidor = scenario.boot(porta).await;
 
     let (status, _) = servidor
-        .transacao(
+        .transaction(
             "txn-sem-agente",
             &json!({
                 "events": [{
                     "type": "m.room.message",
-                    "room_id": SALA,
-                    "sender": ATENDENTE,
+                    "room_id": ROOM,
+                    "sender": ATTENDANT,
                     "event_id": "$sem-agente:matrix-dev.local",
                     "content": {
                         "msgtype": "m.image",
@@ -1200,20 +1097,19 @@ async fn conversa_sem_agente_nao_baixa_a_midia_nem_inventa_assinatura() {
         "sem assinatura é falha relatada, não erro de transporte"
     );
 
-    // Nada foi escrito na sala e nada foi ao cliente.
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert!(
-        cenario.escritas_no_synapse().is_empty(),
+        scenario.synapse_writes().is_empty(),
         "sem fantasma do agente não há aviso na sala: {:?}",
-        cenario.escritas_no_synapse()
+        scenario.synapse_writes()
     );
     assert!(
-        cenario.envios_no_whatsapp().is_empty(),
+        scenario.whatsapp_sends().is_empty(),
         "o arquivo não vai ao cliente"
     );
     assert_eq!(
         servidor
-            .entrega
+            .delivery
             .counters()
             .unsigned_assets
             .load(Ordering::SeqCst),
@@ -1223,34 +1119,32 @@ async fn conversa_sem_agente_nao_baixa_a_midia_nem_inventa_assinatura() {
 }
 
 #[tokio::test]
-async fn token_do_synapse_e_do_harness_nao_vazam_para_o_cliente_nem_para_a_sala() {
-    let cenario = Cenario::new("canario").await;
-    let porta = Arc::new(HarnessResponsePort::fresh(Arc::clone(&cenario.store)));
-    let servidor = cenario.subir(porta).await;
+async fn synapse_and_harness_tokens_do_not_leak_to_customer_or_room() {
+    let scenario = Scenario::new("canario").await;
+    let porta = Arc::new(HarnessResponsePort::fresh(Arc::clone(&scenario.store)));
+    let servidor = scenario.boot(porta).await;
 
-    // Uma resposta do atendente (vai ao cliente) e uma mídia (vira aviso na sala): os dois
-    // caminhos que escrevem fora do Harness.
     let (status, body) = servidor
-        .texto_do_atendente(
+        .attendant_text(
             "txn-canario",
-            SALA,
+            ROOM,
             "$evento-canario:matrix-dev.local",
             "oi",
         )
         .await;
     assert_eq!(status, StatusHttp::OK);
-    let texto_da_resposta = body.to_string();
-    assert!(!texto_da_resposta.contains(HS_TOKEN));
-    assert!(!texto_da_resposta.contains(AS_TOKEN));
+    let reply_text = body.to_string();
+    assert!(!reply_text.contains(HS_TOKEN));
+    assert!(!reply_text.contains(AS_TOKEN));
 
     let (status, _) = servidor
-        .transacao(
+        .transaction(
             "txn-canario-midia",
             &json!({
                 "events": [{
                     "type": "m.room.message",
-                    "room_id": SALA,
-                    "sender": ATENDENTE,
+                    "room_id": ROOM,
+                    "sender": ATTENDANT,
                     "event_id": "$evento-canario-midia:matrix-dev.local",
                     "content": { "msgtype": "m.file", "body": "contrato.pdf", "url": "mxc://x/y" }
                 }]
@@ -1259,53 +1153,51 @@ async fn token_do_synapse_e_do_harness_nao_vazam_para_o_cliente_nem_para_a_sala(
         .await;
     assert_eq!(status, StatusHttp::OK);
 
-    esperar("os envios saírem", || {
-        cenario.envios_no_whatsapp().len() == 1 && !cenario.escritas_no_synapse().is_empty()
+    wait("os envios saírem", || {
+        scenario.whatsapp_sends().len() == 1 && !scenario.synapse_writes().is_empty()
     })
     .await;
 
-    let para_o_cliente =
-        serde_json::to_string(&cenario.envios_no_whatsapp()).expect("serializa o envio");
-    assert!(!para_o_cliente.contains(HS_TOKEN));
-    assert!(!para_o_cliente.contains(AS_TOKEN));
+    let for_customer =
+        serde_json::to_string(&scenario.whatsapp_sends()).expect("serializa o envio");
+    assert!(!for_customer.contains(HS_TOKEN));
+    assert!(!for_customer.contains(AS_TOKEN));
 
-    let escritas = cenario.escritas_no_synapse();
-    let para_o_synapse = escritas
+    let writes = scenario.synapse_writes();
+    let for_synapse = writes
         .iter()
-        .map(|escrita| {
+        .map(|write| {
             format!(
                 "{} {} {} {} {}",
-                escrita.room,
-                escrita.tipo,
-                escrita.txn,
-                escrita.disfarcado.clone().unwrap_or_default(),
-                serde_json::to_string(&escrita.body).unwrap_or_default()
+                write.room,
+                write.tipo,
+                write.txn,
+                write.disfarcado.clone().unwrap_or_default(),
+                serde_json::to_string(&write.body).unwrap_or_default()
             )
         })
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(!para_o_synapse.contains(HS_TOKEN));
+    assert!(!for_synapse.contains(HS_TOKEN));
     assert!(
-        !para_o_synapse.contains(AS_TOKEN),
+        !for_synapse.contains(AS_TOKEN),
         "o token vai só no cabeçalho"
     );
     assert!(
-        escritas[0]
-            .autorizacao
+        writes[0]
+            .authorization
             .as_deref()
-            .is_some_and(|valor| valor == format!("Bearer {AS_TOKEN}")),
+            .is_some_and(|value| value == format!("Bearer {AS_TOKEN}")),
         "o token do Harness viaja no cabeçalho Authorization"
     );
-    // O aviso sai em nome do **fantasma do agente**: o atendente humano está fora do namespace do
-    // Application Service e o Synapse de verdade recusaria o disfarce com `403 M_FORBIDDEN`.
-    let fantasma = cenario.agent_ghost();
+    let ghost = scenario.agent_ghost();
     assert_eq!(
-        escritas[0].disfarcado.as_deref(),
-        Some(fantasma.as_str()),
+        writes[0].disfarcado.as_deref(),
+        Some(ghost.as_str()),
         "o aviso é escrito em nome do fantasma do agente, nunca do atendente humano"
     );
     assert!(
-        !fantasma.starts_with(ATENDENTE),
+        !ghost.starts_with(ATTENDANT),
         "sanidade: o fantasma do agente é do namespace do AS, e o atendente não"
     );
 }

@@ -1,16 +1,3 @@
-//! Testes da ligação do módulo Matrix no servidor (MX-20).
-//!
-//! O que se prova aqui, com o banco de verdade e um Synapse **falso** que responde como o Synapse:
-//! - módulo desligado → nenhuma tarefa do módulo e as rotas do Application Service em `404` (A8);
-//! - Synapse fora na subida → o servidor sobe, atende e o módulo fica degradado (sem derrubar
-//!   nada), e a sonda marca "conectado" quando ele responde;
-//! - desligar uma org em `matrix_orgs` para o espelho dela até o ciclo seguinte, sem reiniciar;
-//! - término ordenado: o que estava pendente não se perde e sai na subida seguinte;
-//! - a sala criada pelo módulo usa o nome do cliente (`conversations.client_name`, MX-32).
-//!
-//! O Synapse falso é o mesmo tipo usado nos testes da MX-11: guarda usuários, salas, aliases,
-//! membros, eventos de estado e mensagens, e deduplica envio por `txnId` como o Synapse faz.
-
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
@@ -36,42 +23,33 @@ use poph_types::{
 };
 use serde_json::{Value, json};
 
-/// Token que o Harness apresenta ao Synapse.
 const AS_TOKEN: &str = "CANARIO-AS-mx20-nao-pode-vazar";
-/// Token que o Synapse apresenta ao Harness.
 const HS_TOKEN: &str = "CANARIO-HS-mx20-nao-pode-vazar";
-/// Domínio dos ids no teste.
 const SERVIDOR: &str = "matrix-dev.local";
-/// Prefixo dos usuários virtuais.
-const PREFIXO: &str = "ph";
-
-// ───────────────────────────── Synapse falso ─────────────────────────────
+const PREFIX: &str = "ph";
 
 #[derive(Default, Clone)]
-struct SalaFalsa {
+struct FakeRoom {
     name: Option<String>,
     tipo: Option<String>,
     members: Vec<String>,
     guests: Vec<String>,
     state: BTreeMap<(String, String), Value>,
-    /// `(txnId, tipo, corpo)` enviados por `send`.
-    mensagens: Vec<(String, String, Value)>,
+    messages: Vec<(String, String, Value)>,
 }
 
 #[derive(Default)]
-struct EstadoFalso {
+struct FakeState {
     users: BTreeMap<String, Option<String>>,
-    /// Escritas de `m.space.child` com conteúdo (o vínculo da sala com o espaço).
-    filhos_escritos: u32,
-    rooms: BTreeMap<String, SalaFalsa>,
+    children_written: u32,
+    rooms: BTreeMap<String, FakeRoom>,
     aliases: BTreeMap<String, String>,
-    proxima_sala: u32,
-    /// Recusa todo envio com 503 (Synapse "fora" para o envio, mas respondendo à sonda).
-    falhar_envio: bool,
-    versoes: u32,
+    next_room: u32,
+    fail_send: bool,
+    versions: u32,
 }
 
-fn responder(status: u16, body: Value) -> Response {
+fn respond(status: u16, body: Value) -> Response {
     (
         StatusCode::from_u16(status).expect("status válido"),
         [("content-type", "application/json")],
@@ -80,9 +58,8 @@ fn responder(status: u16, body: Value) -> Response {
         .into_response()
 }
 
-/// Percent-decoding de um segmento de caminho (o alias chega com `%23` no lugar do `#`).
-fn decodificar(segmento: &str) -> String {
-    let bytes = segmento.as_bytes();
+fn decode(segment: &str) -> String {
+    let bytes = segment.as_bytes();
     let mut saida = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
@@ -100,169 +77,167 @@ fn decodificar(segmento: &str) -> String {
     String::from_utf8_lossy(&saida).into_owned()
 }
 
-/// Valor de um parâmetro da consulta (`?user_id=@…`).
-fn consulta(bruta: &str, name: &str) -> Option<String> {
-    bruta.split('&').find_map(|par| {
-        let (chave, valor) = par.split_once('=')?;
-        (chave == name).then(|| decodificar(valor))
+fn query(raw: &str, name: &str) -> Option<String> {
+    raw.split('&').find_map(|pair| {
+        let (chave, value) = pair.split_once('=')?;
+        (chave == name).then(|| decode(value))
     })
 }
 
-async fn atender(
-    State(state): State<Arc<Mutex<EstadoFalso>>>,
-    metodo: Method,
+async fn attend(
+    State(state): State<Arc<Mutex<FakeState>>>,
+    method: Method,
     uri: Uri,
-    cabecalhos: HeaderMap,
+    headers: HeaderMap,
     body: String,
 ) -> Response {
     let body: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
-    let mut guarda = state.lock().expect("trava do Synapse falso");
+    let mut guard = state.lock().expect("trava do Synapse falso");
 
-    let autorizacao = cabecalhos
+    let authorization = headers
         .get(AUTHORIZATION)
-        .and_then(|valor| valor.to_str().ok())
+        .and_then(|value| value.to_str().ok())
         .unwrap_or_default()
         .to_owned();
-    if autorizacao != format!("Bearer {AS_TOKEN}") {
-        return responder(
+    if authorization != format!("Bearer {AS_TOKEN}") {
+        return respond(
             401,
             json!({ "errcode": "M_UNKNOWN_TOKEN", "error": "Token inválido" }),
         );
     }
 
-    // A sonda de conexão do módulo fala com `/_matrix/client/versions` (sem `/v3`).
     if uri.path() == "/_matrix/client/versions" {
-        guarda.versoes += 1;
-        return responder(200, json!({ "versions": ["v1.11"] }));
+        guard.versions += 1;
+        return respond(200, json!({ "versions": ["v1.11"] }));
     }
 
-    let caminho = uri.path().trim_start_matches("/_matrix/client/v3");
-    let partes: Vec<String> = caminho
+    let path = uri.path().trim_start_matches("/_matrix/client/v3");
+    let parts: Vec<String> = path
         .split('/')
-        .filter(|pedaco| !pedaco.is_empty())
-        .map(decodificar)
+        .filter(|piece| !piece.is_empty())
+        .map(decode)
         .collect();
-    let consulta_bruta = uri.query().unwrap_or_default().to_owned();
-    let quem = consulta(&consulta_bruta, "user_id").unwrap_or_default();
+    let raw_query = uri.query().unwrap_or_default().to_owned();
+    let who = query(&raw_query, "user_id").unwrap_or_default();
 
-    match (metodo.as_str(), partes.as_slice()) {
+    match (method.as_str(), parts.as_slice()) {
         ("POST", [registro]) if registro == "register" => {
             let localpart = body["username"].as_str().unwrap_or_default();
             let id = format!("@{localpart}:{SERVIDOR}");
-            if guarda.users.contains_key(&id) {
-                return responder(
+            if guard.users.contains_key(&id) {
+                return respond(
                     400,
                     json!({ "errcode": "M_USER_IN_USE", "error": "User ID already taken." }),
                 );
             }
-            guarda.users.insert(id.clone(), None);
-            responder(200, json!({ "user_id": id }))
+            guard.users.insert(id.clone(), None);
+            respond(200, json!({ "user_id": id }))
         }
-        ("GET", [profile, id]) if profile == "profile" => match guarda.users.get(id) {
+        ("GET", [profile, id]) if profile == "profile" => match guard.users.get(id) {
             Some(name) => {
-                let mut resposta = json!({});
+                let mut reply = json!({});
                 if let Some(name) = name {
-                    resposta["displayname"] = Value::String(name.clone());
+                    reply["displayname"] = Value::String(name.clone());
                 }
-                responder(200, resposta)
+                respond(200, reply)
             }
-            None => responder(
+            None => respond(
                 404,
                 json!({ "errcode": "M_NOT_FOUND", "error": "Usuário não existe" }),
             ),
         },
         ("PUT", [profile, id, campo]) if profile == "profile" && campo == "displayname" => {
-            guarda
+            guard
                 .users
                 .insert(id.clone(), body["displayname"].as_str().map(str::to_owned));
-            responder(200, json!({}))
+            respond(200, json!({}))
         }
-        ("POST", [criacao]) if criacao == "createRoom" => {
+        ("POST", [creation]) if creation == "createRoom" => {
             let alias = body["room_alias_name"]
                 .as_str()
                 .map(|localpart| format!("#{localpart}:{SERVIDOR}"));
             if let Some(alias) = &alias
-                && guarda.aliases.contains_key(alias)
+                && guard.aliases.contains_key(alias)
             {
-                return responder(
+                return respond(
                     400,
                     json!({ "errcode": "M_ROOM_IN_USE", "error": "Room alias already taken." }),
                 );
             }
-            guarda.proxima_sala += 1;
-            let room = format!("!{}:{SERVIDOR}", guarda.proxima_sala);
+            guard.next_room += 1;
+            let room = format!("!{}:{SERVIDOR}", guard.next_room);
             let mut members = Vec::new();
-            if !quem.is_empty() {
-                members.push(quem.clone());
+            if !who.is_empty() {
+                members.push(who.clone());
             }
-            guarda.rooms.insert(
+            guard.rooms.insert(
                 room.clone(),
-                SalaFalsa {
+                FakeRoom {
                     name: body["name"].as_str().map(str::to_owned),
                     tipo: body["creation_content"]["type"].as_str().map(str::to_owned),
                     members,
-                    ..SalaFalsa::default()
+                    ..FakeRoom::default()
                 },
             );
             if let Some(alias) = alias {
-                guarda.aliases.insert(alias, room.clone());
+                guard.aliases.insert(alias, room.clone());
             }
-            responder(200, json!({ "room_id": room }))
+            respond(200, json!({ "room_id": room }))
         }
         ("GET", [diretorio, room, alias]) if diretorio == "directory" && room == "room" => {
-            match guarda.aliases.get(alias) {
-                Some(room) => responder(200, json!({ "room_id": room })),
-                None => responder(
+            match guard.aliases.get(alias) {
+                Some(room) => respond(200, json!({ "room_id": room })),
+                None => respond(
                     404,
                     json!({ "errcode": "M_NOT_FOUND", "error": "Alias não encontrado" }),
                 ),
             }
         }
-        ("POST", [rooms, room, convite]) if rooms == "rooms" && convite == "invite" => {
-            match guarda.rooms.get_mut(room) {
-                Some(alvo) => {
-                    let convidado = body["user_id"].as_str().unwrap_or_default().to_owned();
-                    if !alvo.guests.contains(&convidado) {
-                        alvo.guests.push(convidado);
+        ("POST", [rooms, room, invite]) if rooms == "rooms" && invite == "invite" => {
+            match guard.rooms.get_mut(room) {
+                Some(target) => {
+                    let invited = body["user_id"].as_str().unwrap_or_default().to_owned();
+                    if !target.guests.contains(&invited) {
+                        target.guests.push(invited);
                     }
-                    responder(200, json!({}))
+                    respond(200, json!({}))
                 }
-                None => responder(
+                None => respond(
                     404,
                     json!({ "errcode": "M_NOT_FOUND", "error": "Sala não existe" }),
                 ),
             }
         }
-        ("POST", [enter, alvo]) if enter == "join" => {
-            let room = if alvo.starts_with('#') {
-                guarda.aliases.get(alvo).cloned()
+        ("POST", [enter, target]) if enter == "join" => {
+            let room = if target.starts_with('#') {
+                guard.aliases.get(target).cloned()
             } else {
-                Some(alvo.clone())
+                Some(target.clone())
             };
-            match room.and_then(|room| guarda.rooms.get_mut(&room).map(|alvo| (room, alvo))) {
-                Some((room, alvo)) => {
-                    if !alvo.members.contains(&quem) {
-                        alvo.members.push(quem.clone());
+            match room.and_then(|room| guard.rooms.get_mut(&room).map(|target| (room, target))) {
+                Some((room, target)) => {
+                    if !target.members.contains(&who) {
+                        target.members.push(who.clone());
                     }
-                    responder(200, json!({ "room_id": room }))
+                    respond(200, json!({ "room_id": room }))
                 }
-                None => responder(
+                None => respond(
                     404,
                     json!({ "errcode": "M_NOT_FOUND", "error": "Sala não existe" }),
                 ),
             }
         }
         ("GET", [rooms, room, members]) if rooms == "rooms" && members == "joined_members" => {
-            match guarda.rooms.get(room) {
-                Some(alvo) => {
-                    let juntos: BTreeMap<String, Value> = alvo
+            match guard.rooms.get(room) {
+                Some(target) => {
+                    let together: BTreeMap<String, Value> = target
                         .members
                         .iter()
                         .map(|id| (id.clone(), json!({})))
                         .collect();
-                    responder(200, json!({ "joined": juntos }))
+                    respond(200, json!({ "joined": together }))
                 }
-                None => responder(
+                None => respond(
                     404,
                     json!({ "errcode": "M_NOT_FOUND", "error": "Sala não existe" }),
                 ),
@@ -271,32 +246,30 @@ async fn atender(
         ("PUT", [rooms, room, state, tipo, chave @ ..]) if rooms == "rooms" && state == "state" => {
             let chave = chave.join("/");
             if tipo == "m.space.child" && !body.as_object().is_none_or(|body| body.is_empty()) {
-                guarda.filhos_escritos += 1;
+                guard.children_written += 1;
             }
-            match guarda.rooms.get_mut(room) {
-                Some(alvo) => {
-                    alvo.state.insert((tipo.clone(), chave), body);
-                    responder(200, json!({ "event_id": "$estado" }))
+            match guard.rooms.get_mut(room) {
+                Some(target) => {
+                    target.state.insert((tipo.clone(), chave), body);
+                    respond(200, json!({ "event_id": "$estado" }))
                 }
-                None => responder(
+                None => respond(
                     404,
                     json!({ "errcode": "M_NOT_FOUND", "error": "Sala não existe" }),
                 ),
             }
         }
-        // Estado inteiro da sala (`GET /rooms/{id}/state`): a leitura que acha os espaços de onde a
-        // sala é filha quando o registro da conversa está vazio (MX-51).
         ("GET", [rooms, room, state]) if rooms == "rooms" && state == "state" => {
-            match guarda.rooms.get(room) {
-                Some(alvo) => {
-                    let events: Vec<Value> = alvo
+            match guard.rooms.get(room) {
+                Some(target) => {
+                    let events: Vec<Value> = target
                     .state
                     .iter()
                     .map(|((tipo, chave), body)| json!({ "type": tipo, "state_key": chave, "content": body }))
                     .collect();
-                    responder(200, Value::Array(events))
+                    respond(200, Value::Array(events))
                 }
-                None => responder(
+                None => respond(
                     404,
                     json!({ "errcode": "M_NOT_FOUND", "error": "Sala não existe" }),
                 ),
@@ -304,69 +277,68 @@ async fn atender(
         }
         ("GET", [rooms, room, state, tipo, chave @ ..]) if rooms == "rooms" && state == "state" => {
             let chave = chave.join("/");
-            match guarda.rooms.get(room) {
-                Some(alvo) => match alvo.state.get(&(tipo.clone(), chave)) {
-                    Some(body) => responder(200, body.clone()),
-                    None => responder(
+            match guard.rooms.get(room) {
+                Some(target) => match target.state.get(&(tipo.clone(), chave)) {
+                    Some(body) => respond(200, body.clone()),
+                    None => respond(
                         404,
                         json!({ "errcode": "M_NOT_FOUND", "error": "Evento não existe" }),
                     ),
                 },
-                None => responder(
+                None => respond(
                     404,
                     json!({ "errcode": "M_NOT_FOUND", "error": "Sala não existe" }),
                 ),
             }
         }
         ("PUT", [rooms, room, send, tipo, txn]) if rooms == "rooms" && send == "send" => {
-            if guarda.falhar_envio {
-                return responder(
+            if guard.fail_send {
+                return respond(
                     503,
                     json!({ "errcode": "M_UNKNOWN", "error": "indisponível" }),
                 );
             }
-            match guarda.rooms.get_mut(room) {
-                Some(alvo) => {
-                    if !alvo.mensagens.iter().any(|(ja, _, _)| ja == txn) {
-                        alvo.mensagens.push((txn.clone(), tipo.clone(), body));
+            match guard.rooms.get_mut(room) {
+                Some(target) => {
+                    if !target.messages.iter().any(|(ja, _, _)| ja == txn) {
+                        target.messages.push((txn.clone(), tipo.clone(), body));
                     }
-                    responder(200, json!({ "event_id": format!("$msg_{txn}") }))
+                    respond(200, json!({ "event_id": format!("$msg_{txn}") }))
                 }
-                None => responder(
+                None => respond(
                     404,
                     json!({ "errcode": "M_NOT_FOUND", "error": "Sala não existe" }),
                 ),
             }
         }
-        _ => responder(
+        _ => respond(
             404,
             json!({ "errcode": "M_UNRECOGNIZED", "error": "Rota não existe no Synapse falso" }),
         ),
     }
 }
 
-/// Synapse falso no ar, numa porta efêmera. O `Drop` desliga.
 struct Synapse {
     endereco: String,
-    state: Arc<Mutex<EstadoFalso>>,
+    state: Arc<Mutex<FakeState>>,
     desligar: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
 impl Synapse {
-    async fn subir() -> Self {
-        let state = Arc::new(Mutex::new(EstadoFalso::default()));
+    async fn boot() -> Self {
+        let state = Arc::new(Mutex::new(FakeState::default()));
         let app = Router::new()
-            .fallback(atender)
+            .fallback(attend)
             .with_state(Arc::clone(&state));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("porta efêmera");
         let endereco = format!("http://{}", listener.local_addr().expect("endereço"));
-        let (desligar, sinal) = tokio::sync::oneshot::channel();
+        let (desligar, signal) = tokio::sync::oneshot::channel();
         tokio::spawn(async move {
             let _ = axum::serve(listener, app)
                 .with_graceful_shutdown(async {
-                    let _ = sinal.await;
+                    let _ = signal.await;
                 })
                 .await;
         });
@@ -377,7 +349,7 @@ impl Synapse {
         }
     }
 
-    fn rooms(&self) -> Vec<(String, SalaFalsa)> {
+    fn rooms(&self) -> Vec<(String, FakeRoom)> {
         self.state
             .lock()
             .expect("trava")
@@ -400,14 +372,14 @@ impl Synapse {
             })
     }
 
-    fn mensagens(&self, room: &str) -> Vec<String> {
+    fn messages(&self, room: &str) -> Vec<String> {
         self.state
             .lock()
             .expect("trava")
             .rooms
             .get(room)
             .map(|room| {
-                room.mensagens
+                room.messages
                     .iter()
                     .map(|(txn, _, _)| txn.clone())
                     .collect()
@@ -415,37 +387,36 @@ impl Synapse {
             .unwrap_or_default()
     }
 
-    /// Corpo de cada mensagem escrita nas salas, para conferir o que o Harness publicou.
-    fn corpos_das_mensagens(&self) -> Vec<Value> {
+    fn message_bodies(&self) -> Vec<Value> {
         self.state
             .lock()
             .expect("trava")
             .rooms
             .values()
-            .flat_map(|room| room.mensagens.iter().map(|(_, _, body)| body.clone()))
+            .flat_map(|room| room.messages.iter().map(|(_, _, body)| body.clone()))
             .collect()
     }
 
-    fn total_de_mensagens(&self) -> usize {
+    fn total_messages(&self) -> usize {
         self.state
             .lock()
             .expect("trava")
             .rooms
             .values()
-            .map(|room| room.mensagens.len())
+            .map(|room| room.messages.len())
             .sum()
     }
 
-    fn versoes(&self) -> u32 {
-        self.state.lock().expect("trava").versoes
+    fn versions(&self) -> u32 {
+        self.state.lock().expect("trava").versions
     }
 
-    fn filhos_escritos(&self) -> u32 {
-        self.state.lock().expect("trava").filhos_escritos
+    fn children_written(&self) -> u32 {
+        self.state.lock().expect("trava").children_written
     }
 
-    fn falhar_envio(&self, falhar: bool) {
-        self.state.lock().expect("trava").falhar_envio = falhar;
+    fn fail_send(&self, fail: bool) {
+        self.state.lock().expect("trava").fail_send = fail;
     }
 }
 
@@ -457,54 +428,51 @@ impl Drop for Synapse {
     }
 }
 
-// ───────────────────────────── cenário de banco ─────────────────────────────
-
-/// Banco de verdade numa pasta temporária, com a configuração do servidor pronta.
-struct Cenario {
-    pasta: PathBuf,
+struct Scenario {
+    dir: PathBuf,
     store: Arc<Store>,
     config: HarnessConfig,
-    relogio: Arc<AtomicI64>,
+    clock: Arc<AtomicI64>,
 }
 
-impl Cenario {
-    fn new(rotulo: &str, homeserver_url: String) -> Self {
-        let carimbo = std::time::SystemTime::now()
+impl Scenario {
+    fn new(label: &str, homeserver_url: String) -> Self {
+        let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|duracao| duracao.as_nanos())
+            .map(|duration| duration.as_nanos())
             .unwrap_or(0);
-        let pasta = std::env::temp_dir().join(format!(
-            "poph-matrix-inicio-{rotulo}-{}-{carimbo}",
+        let dir = std::env::temp_dir().join(format!(
+            "poph-matrix-inicio-{label}-{}-{stamp}",
             std::process::id()
         ));
-        let _ = fs::remove_dir_all(&pasta);
-        fs::create_dir_all(pasta.join("dados")).expect("pasta de dados");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("dados")).expect("pasta de dados");
 
         let mut config = HarnessConfig::default();
-        config.data.directory = pasta.join("dados");
+        config.data.directory = dir.join("dados");
         config.matrix = Some(MatrixConfig {
             enabled: true,
             homeserver_url,
             server_name: SERVIDOR.to_owned(),
-            prefix: PREFIXO.to_owned(),
+            prefix: PREFIX.to_owned(),
             concurrency: 4,
             interval_ms: 50,
             ..MatrixConfig::default()
         });
         config.validar().expect("configuração válida");
 
-        let relogio = Arc::new(AtomicI64::new(1_000_000));
-        let proprio = Arc::clone(&relogio);
+        let clock = Arc::new(AtomicI64::new(1_000_000));
+        let own = Arc::clone(&clock);
         let store = Arc::new(
             Store::open(&config)
                 .expect("abre o banco")
-                .with_clock(Arc::new(move || proprio.fetch_add(10, Ordering::SeqCst))),
+                .with_clock(Arc::new(move || own.fetch_add(10, Ordering::SeqCst))),
         );
         Self {
-            pasta,
+            dir,
             store,
             config,
-            relogio,
+            clock,
         }
     }
 
@@ -512,8 +480,7 @@ impl Cenario {
         ServerState::new(Arc::clone(&self.store), self.config.clone()).expect("estado do servidor")
     }
 
-    /// O módulo já preparado, com os tokens de teste (sem tocar no ambiente do processo).
-    fn modulo(&self) -> MatrixModule {
+    fn module(&self) -> MatrixModule {
         MatrixModule {
             config: self.config.matrix.clone().expect("seção [matrix]"),
             secrets: MatrixSecrets {
@@ -564,8 +531,7 @@ impl Cenario {
             .id
     }
 
-    /// Agente já com departamento padrão (é ele que manda a sala para o espaço).
-    fn agente_com_departamento(&self, org: OrgId, department: DepartmentId) -> AgentId {
+    fn agent_with_department(&self, org: OrgId, department: DepartmentId) -> AgentId {
         self.store
             .agents()
             .create(
@@ -599,7 +565,7 @@ impl Cenario {
     }
 
     fn message(&self, org: OrgId, conversation: ConversationId, text: &str) -> String {
-        self.relogio.fetch_add(10, Ordering::SeqCst);
+        self.clock.fetch_add(10, Ordering::SeqCst);
         self.store
             .messages()
             .write(
@@ -622,17 +588,16 @@ impl Cenario {
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.pasta);
+        let _ = fs::remove_dir_all(&self.dir);
     }
 }
 
-/// Espera até a condição valer. Falha o teste (com o motivo) quando o prazo acaba.
-async fn esperar_ate(descricao: &str, mut condicao: impl FnMut() -> bool) {
-    let inicio = Instant::now();
-    while inicio.elapsed() < Duration::from_secs(20) {
-        if condicao() {
+async fn wait_until(descricao: &str, mut condition: impl FnMut() -> bool) {
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(20) {
+        if condition() {
             return;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -640,26 +605,23 @@ async fn esperar_ate(descricao: &str, mut condicao: impl FnMut() -> bool) {
     panic!("tempo esgotado esperando: {descricao}");
 }
 
-/// Sobe o router do servidor numa porta efêmera (sem a raiz de composição, para o teste controlar
-/// quando o módulo é ligado).
-async fn servir(state: ServerState) -> (String, tokio::sync::oneshot::Sender<()>) {
+async fn serve(state: ServerState) -> (String, tokio::sync::oneshot::Sender<()>) {
     let app = poph_server::router(state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("porta efêmera");
     let endereco = format!("http://{}", listener.local_addr().expect("endereço"));
-    let (desligar, sinal) = tokio::sync::oneshot::channel();
+    let (desligar, signal) = tokio::sync::oneshot::channel();
     tokio::spawn(async move {
         let _ = axum::serve(listener, app)
             .with_graceful_shutdown(async {
-                let _ = sinal.await;
+                let _ = signal.await;
             })
             .await;
     });
     (endereco, desligar)
 }
 
-/// Cliente HTTP dos testes.
 fn client() -> reqwest::Client {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(20))
@@ -667,30 +629,27 @@ fn client() -> reqwest::Client {
         .expect("cliente HTTP")
 }
 
-/// `GET` simples, devolvendo `(status, corpo)`.
-async fn buscar(url: &str, token: Option<&str>) -> (StatusCode, String) {
-    let mut pedido = client().get(url);
+async fn search(url: &str, token: Option<&str>) -> (StatusCode, String) {
+    let mut request = client().get(url);
     if let Some(token) = token {
-        pedido = pedido.bearer_auth(token);
+        request = request.bearer_auth(token);
     }
-    let resposta = pedido.send().await.expect("pedido HTTP");
-    let status = resposta.status();
-    (status, resposta.text().await.unwrap_or_default())
+    let reply = request.send().await.expect("pedido HTTP");
+    let status = reply.status();
+    (status, reply.text().await.unwrap_or_default())
 }
 
-// ───────────────────────────── módulo desligado (A8) ─────────────────────────────
-
 #[tokio::test]
-async fn modulo_desligado_nao_sobe_tarefas_nem_publica_metricas() {
-    let cenario = Cenario::new("desligado", "http://127.0.0.1:9".to_owned());
-    for secao in [None, Some(MatrixConfig::default())] {
-        let mut config = cenario.config.clone();
-        config.matrix = secao;
-        let mut state = ServerState::new(Arc::clone(&cenario.store), config).expect("estado");
+async fn module_off_starts_no_tasks_nor_metrics() {
+    let scenario = Scenario::new("desligado", "http://127.0.0.1:9".to_owned());
+    for section in [None, Some(MatrixConfig::default())] {
+        let mut config = scenario.config.clone();
+        config.matrix = section;
+        let mut state = ServerState::new(Arc::clone(&scenario.store), config).expect("estado");
 
-        let rodando = matrix_beginning::start(&mut state);
+        let running = matrix_beginning::start(&mut state);
         assert!(
-            rodando.is_none(),
+            running.is_none(),
             "módulo desligado não pode render tarefa do módulo"
         );
         assert!(
@@ -705,23 +664,22 @@ async fn modulo_desligado_nao_sobe_tarefas_nem_publica_metricas() {
 }
 
 #[tokio::test]
-async fn modulo_desligado_responde_404_no_application_service() {
-    let cenario = Cenario::new("desligado-http", "http://127.0.0.1:9".to_owned());
-    let mut config = cenario.config.clone();
+async fn module_off_answers_404_on_application_service() {
+    let scenario = Scenario::new("desligado-http", "http://127.0.0.1:9".to_owned());
+    let mut config = scenario.config.clone();
     config.matrix = None;
-    let state = ServerState::new(Arc::clone(&cenario.store), config).expect("estado");
-    let (base, desligar) = servir(state).await;
+    let state = ServerState::new(Arc::clone(&scenario.store), config).expect("estado");
+    let (base, desligar) = serve(state).await;
 
-    let alvo = format!("{base}/_matrix/app/v1/users/@ph_wa_5511999999999:{SERVIDOR}");
-    let (status, _) = buscar(&alvo, Some(HS_TOKEN)).await;
+    let target = format!("{base}/_matrix/app/v1/users/@ph_wa_5511999999999:{SERVIDOR}");
+    let (status, _) = search(&target, Some(HS_TOKEN)).await;
     assert_eq!(
         status,
         StatusCode::NOT_FOUND,
         "módulo desligado: nenhuma rota do Application Service"
     );
 
-    // E nenhuma métrica do módulo no `/metrics`.
-    let (status, body) = buscar(&format!("{base}/metrics"), None).await;
+    let (status, body) = search(&format!("{base}/metrics"), None).await;
     assert_eq!(status, StatusCode::OK);
     assert!(
         !body.contains("poph_matrix_"),
@@ -730,32 +688,28 @@ async fn modulo_desligado_responde_404_no_application_service() {
     let _ = desligar.send(());
 }
 
-// ───────────────────────────── Synapse fora ─────────────────────────────
-
 #[tokio::test]
-async fn synapse_fora_na_subida_nao_impede_o_serve() {
-    // Porta fechada: qualquer chamada falha na conexão.
-    let cenario = Cenario::new("fora", "http://127.0.0.1:9".to_owned());
-    let mut state = cenario.state();
-    let rodando = matrix_beginning::start_with(&mut state, cenario.modulo())
+async fn synapse_down_at_boot_does_not_block_serve() {
+    let scenario = Scenario::new("fora", "http://127.0.0.1:9".to_owned());
+    let mut state = scenario.state();
+    let running = matrix_beginning::start_with(&mut state, scenario.module())
         .expect("módulo ligado sobe mesmo com o Synapse fora");
     assert!(state.matrix_as.is_some(), "receptor injetado");
 
-    let (base, desligar) = servir(state.clone()).await;
-    let (status, _) = buscar(&format!("{base}/healthz"), None).await;
+    let (base, desligar) = serve(state.clone()).await;
+    let (status, _) = search(&format!("{base}/healthz"), None).await;
     assert_eq!(
         status,
         StatusCode::OK,
         "o servidor atende com o Synapse fora"
     );
 
-    // As rotas do Synapse também respondem: elas não dependem da conexão com o Synapse.
-    let alvo = format!("{base}/_matrix/app/v1/users/@ph_wa_5511999999999:{SERVIDOR}");
-    let (status, _) = buscar(&alvo, Some(HS_TOKEN)).await;
+    let target = format!("{base}/_matrix/app/v1/users/@ph_wa_5511999999999:{SERVIDOR}");
+    let (status, _) = search(&target, Some(HS_TOKEN)).await;
     assert_eq!(status, StatusCode::OK);
 
     assert!(
-        !rodando.connected(),
+        !running.connected(),
         "sem Synapse do outro lado, o módulo está degradado"
     );
     assert_eq!(
@@ -763,7 +717,7 @@ async fn synapse_fora_na_subida_nao_impede_o_serve() {
         Some(false),
         "o estado do módulo diz 'degradado' para a API administrativa"
     );
-    rodando
+    running
         .with_shutdown_timeout(Duration::from_secs(2))
         .stop()
         .await;
@@ -771,93 +725,89 @@ async fn synapse_fora_na_subida_nao_impede_o_serve() {
 }
 
 #[tokio::test]
-async fn sonda_marca_conectado_e_volta_a_degradar() {
-    let synapse = Synapse::subir().await;
-    let cenario = Cenario::new("sonda", synapse.endereco.clone());
-    let mut state = cenario.state();
-    // Sonda rápida: em produção ela é de 30 s, aqui de 50 ms.
-    let ajustes = StartupSettings {
+async fn probe_marks_connected_and_back_to_degraded() {
+    let synapse = Synapse::boot().await;
+    let scenario = Scenario::new("sonda", synapse.endereco.clone());
+    let mut state = scenario.state();
+    let settings = StartupSettings {
         probe_period: Duration::from_millis(50),
         probe_delay_cap: Duration::from_millis(200),
         shutdown_timeout: Duration::from_secs(2),
     };
-    let rodando = matrix_beginning::start_with_settings(&mut state, cenario.modulo(), ajustes)
+    let running = matrix_beginning::start_with_settings(&mut state, scenario.module(), settings)
         .expect("módulo ligado");
 
-    esperar_ate("a sonda marcar conectado", || rodando.connected()).await;
-    assert!(synapse.versoes() >= 1, "a sonda fala com o Synapse");
+    wait_until("a sonda marcar conectado", || running.connected()).await;
+    assert!(synapse.versions() >= 1, "a sonda fala com o Synapse");
     assert_eq!(state.matrix_connected(), Some(true));
 
     drop(synapse);
-    esperar_ate("a sonda marcar degradado depois da queda", || {
-        !rodando.connected()
+    wait_until("a sonda marcar degradado depois da queda", || {
+        !running.connected()
     })
     .await;
 
-    rodando
+    running
         .with_shutdown_timeout(Duration::from_secs(2))
         .stop()
         .await;
 }
 
-// ───────────────────────────── espelho: sala, nome e org ─────────────────────────────
-
-/// Cena comum: org ligada, agente, conversa com nome de cliente conhecido e uma mensagem.
-struct Cena {
-    cenario: Cenario,
+struct Scene {
+    scenario: Scenario,
     org: OrgId,
     conversation: ConversationId,
-    primeiro: String,
+    first: String,
 }
 
-fn cena(rotulo: &str, endereco: String) -> Cena {
-    let cenario = Cenario::new(rotulo, endereco);
-    let org = cenario.org("a");
-    let agent = cenario.agent(org);
-    let conversation = cenario.conversation(org, agent, "5511999999999");
-    cenario
+fn scene(label: &str, endereco: String) -> Scene {
+    let scenario = Scenario::new(label, endereco);
+    let org = scenario.org("a");
+    let agent = scenario.agent(org);
+    let conversation = scenario.conversation(org, agent, "5511999999999");
+    scenario
         .store
         .conversations()
         .set_customer_name(org, conversation, "Ana Souza")
         .expect("grava o nome do cliente");
-    cenario.store.matrix().enable(org).expect("liga a org");
-    let primeiro = cenario.message(org, conversation, "primeira resposta do agente");
-    Cena {
-        cenario,
+    scenario.store.matrix().enable(org).expect("liga a org");
+    let first = scenario.message(org, conversation, "primeira resposta do agente");
+    Scene {
+        scenario,
         org,
         conversation,
-        primeiro,
+        first,
     }
 }
 
 #[tokio::test]
-async fn sala_criada_usa_o_nome_do_cliente_e_espelha_a_mensagem() {
-    let synapse = Synapse::subir().await;
-    let cena = cena("nome", synapse.endereco.clone());
-    let mut state = cena.cenario.state();
-    let rodando =
-        matrix_beginning::start_with(&mut state, cena.cenario.modulo()).expect("módulo ligado");
+async fn room_created_uses_customer_name_and_mirrors_message() {
+    let synapse = Synapse::boot().await;
+    let scene = scene("nome", synapse.endereco.clone());
+    let mut state = scene.scenario.state();
+    let running =
+        matrix_beginning::start_with(&mut state, scene.scenario.module()).expect("módulo ligado");
 
-    esperar_ate("o Synapse receber a mensagem", || {
-        synapse.total_de_mensagens() >= 1
+    wait_until("o Synapse receber a mensagem", || {
+        synapse.total_messages() >= 1
     })
     .await;
 
-    let (room, falsa) = synapse.rooms().pop().expect("a sala foi criada");
+    let (room, fake) = synapse.rooms().pop().expect("a sala foi criada");
     assert_eq!(
-        falsa.name.as_deref(),
+        fake.name.as_deref(),
         Some("Ana Souza"),
         "a sala nasce com o nome do cliente, não com o telefone"
     );
     assert_eq!(
-        falsa.tipo.as_deref(),
+        fake.tipo.as_deref(),
         Some(poph_matrix::rooms::ROOM_KIND),
         "a sala nasce com o tipo de atendimento que o Element reconhece"
     );
     assert!(
         synapse
-            .mensagens(&room)
-            .contains(&format!("poph-msg-{}", cena.primeiro)),
+            .messages(&room)
+            .contains(&format!("poph-msg-{}", scene.first)),
         "a mensagem do Harness chegou à sala"
     );
     let metadata = synapse
@@ -866,52 +816,50 @@ async fn sala_criada_usa_o_nome_do_cliente_e_espelha_a_mensagem() {
     assert_eq!(metadata["client_name"], json!("Ana Souza"));
     assert_eq!(
         metadata["conversation_id"],
-        json!(cena.conversation.to_string())
+        json!(scene.conversation.to_string())
     );
 
-    let gravada = cena
-        .cenario
+    let recorded = scene
+        .scenario
         .store
         .matrix()
-        .room(cena.org, cena.conversation)
+        .room(scene.org, scene.conversation)
         .expect("lê a sala")
         .expect("linha da sala");
     assert_eq!(
-        gravada.state,
+        recorded.state,
         poph_store::StateRoom::Ready,
         "a linha fica pronta depois da criação"
     );
-    assert_eq!(gravada.room_id, room);
+    assert_eq!(recorded.room_id, room);
 
-    rodando
+    running
         .with_shutdown_timeout(Duration::from_secs(2))
         .stop()
         .await;
 }
 
 #[tokio::test]
-async fn sala_criada_depois_da_passagem_do_estado_ja_entra_no_espaco_do_departamento() {
-    let synapse = Synapse::subir().await;
-    let cenario = Cenario::new("espaco", synapse.endereco.clone());
-    let org = cenario.org("a");
-    let department = cenario.department(org, "Comercial");
-    let agent = cenario.agente_com_departamento(org, department);
-    let conversation = cenario.conversation(org, agent, "5511988887777");
-    cenario.store.matrix().enable(org).expect("liga a org");
+async fn room_created_after_state_pass_joins_department_space() {
+    let synapse = Synapse::boot().await;
+    let scenario = Scenario::new("espaco", synapse.endereco.clone());
+    let org = scenario.org("a");
+    let department = scenario.department(org, "Comercial");
+    let agent = scenario.agent_with_department(org, department);
+    let conversation = scenario.conversation(org, agent, "5511988887777");
+    scenario.store.matrix().enable(org).expect("liga a org");
 
-    let mut state = cenario.state();
-    let rodando =
-        matrix_beginning::start_with(&mut state, cenario.modulo()).expect("módulo ligado");
+    let mut state = scenario.state();
+    let running =
+        matrix_beginning::start_with(&mut state, scenario.module()).expect("módulo ligado");
 
-    // O laço de estado vê a conversa **antes** de a sala existir (não há mensagem ainda): é o caso
-    // em que antes a sala nascia fora do espaço e só entrava na próxima alteração da conversa.
-    esperar_ate("o laço de estado passar pela conversa sem sala", || {
-        let cursores = cenario.store.matrix().read_cursors(org).expect("cursores");
-        cursores.conversations.id == conversation.to_string()
+    wait_until("o laço de estado passar pela conversa sem sala", || {
+        let cursors = scenario.store.matrix().read_cursors(org).expect("cursores");
+        cursors.conversations.id == conversation.to_string()
     })
     .await;
     assert_eq!(
-        cenario
+        scenario
             .store
             .matrix()
             .room(org, conversation)
@@ -920,192 +868,177 @@ async fn sala_criada_depois_da_passagem_do_estado_ja_entra_no_espaco_do_departam
         "o laço de estado não cria sala: quem cria é o espelho"
     );
 
-    // A mensagem chega depois: o espelho cria a sala e ela já entra no espaço, sem que a conversa
-    // mude de novo.
-    let primeira = cenario.message(org, conversation, "primeira resposta do agente");
-    esperar_ate("o Synapse receber a mensagem", || {
-        synapse.total_de_mensagens() >= 1
+    let first = scenario.message(org, conversation, "primeira resposta do agente");
+    wait_until("o Synapse receber a mensagem", || {
+        synapse.total_messages() >= 1
     })
     .await;
 
-    // Duas salas no Synapse: o espaço do departamento e a sala da conversa. A da conversa é a que
-    // recebeu a mensagem espelhada.
     let (room, _) = synapse
         .rooms()
         .into_iter()
-        .find(|(id, _)| !synapse.mensagens(id).is_empty())
+        .find(|(id, _)| !synapse.messages(id).is_empty())
         .expect("a sala da conversa foi criada");
     assert!(
         synapse
-            .mensagens(&room)
-            .contains(&format!("poph-msg-{primeira}"))
+            .messages(&room)
+            .contains(&format!("poph-msg-{first}"))
     );
 
-    // O espaço do departamento existe, tem a sala como filha e o vínculo está gravado no banco.
-    let space = cenario
+    let space = scenario
         .store
         .matrix()
         .space(org, department)
         .expect("lê o espaço")
         .expect("o espaço do departamento foi criado");
-    let filho = synapse
+    let child = synapse
         .room_state(&space.room_id, "m.space.child", &room)
         .expect("m.space.child no espaço do departamento");
     assert!(
-        filho["via"].is_array(),
-        "o filho leva `via`, que é o que o Element usa para desenhar a sala sob o espaço: {filho}"
+        child["via"].is_array(),
+        "o filho leva `via`, que é o que o Element usa para desenhar a sala sob o espaço: {child}"
     );
-    let gravada = cenario
+    let recorded = scenario
         .store
         .matrix()
         .room(org, conversation)
         .expect("lê a sala")
         .expect("linha da sala");
     assert_eq!(
-        gravada.space.as_deref(),
+        recorded.space.as_deref(),
         Some(space.room_id.as_str()),
         "o vínculo da sala com o espaço fica gravado"
     );
-    let escritas = synapse.filhos_escritos();
-    assert_eq!(escritas, 1, "o `m.space.child` foi escrito uma vez");
+    let writes = synapse.children_written();
+    assert_eq!(writes, 1, "o `m.space.child` foi escrito uma vez");
 
-    // Repetir não escreve de novo: nova mensagem na mesma conversa não reescreve o `m.space.child`.
-    let segunda = cenario.message(org, conversation, "segunda resposta do agente");
-    esperar_ate("a segunda mensagem ser espelhada", || {
+    let second = scenario.message(org, conversation, "segunda resposta do agente");
+    wait_until("a segunda mensagem ser espelhada", || {
         synapse
-            .mensagens(&room)
-            .contains(&format!("poph-msg-{segunda}"))
+            .messages(&room)
+            .contains(&format!("poph-msg-{second}"))
     })
     .await;
     assert_eq!(
-        synapse.filhos_escritos(),
-        escritas,
+        synapse.children_written(),
+        writes,
         "sala já posicionada não escreve `m.space.child` de novo"
     );
 
-    rodando
+    running
         .with_shutdown_timeout(Duration::from_secs(2))
         .stop()
         .await;
 }
 
 #[tokio::test]
-async fn desligar_org_para_o_espelho_dela_sem_reiniciar() {
-    let synapse = Synapse::subir().await;
-    let cena = cena("org", synapse.endereco.clone());
-    let mut state = cena.cenario.state();
-    let rodando =
-        matrix_beginning::start_with(&mut state, cena.cenario.modulo()).expect("módulo ligado");
+async fn turning_org_off_stops_its_mirror_without_restart() {
+    let synapse = Synapse::boot().await;
+    let scene = scene("org", synapse.endereco.clone());
+    let mut state = scene.scenario.state();
+    let running =
+        matrix_beginning::start_with(&mut state, scene.scenario.module()).expect("módulo ligado");
 
-    esperar_ate("a primeira mensagem ser espelhada", || {
-        synapse.total_de_mensagens() >= 1
+    wait_until("a primeira mensagem ser espelhada", || {
+        synapse.total_messages() >= 1
     })
     .await;
-    let antes = synapse.total_de_mensagens();
+    let before = synapse.total_messages();
 
-    // Desligar a org: o laço relê `matrix_orgs` a cada ciclo, sem reiniciar o servidor.
-    cena.cenario
+    scene
+        .scenario
         .store
         .matrix()
-        .disable(cena.org)
+        .disable(scene.org)
         .expect("desliga");
-    cena.cenario
-        .message(cena.org, cena.conversation, "mensagem com a org desligada");
+    scene.scenario.message(
+        scene.org,
+        scene.conversation,
+        "mensagem com a org desligada",
+    );
     tokio::time::sleep(Duration::from_millis(400)).await;
     assert_eq!(
-        synapse.total_de_mensagens(),
-        antes,
+        synapse.total_messages(),
+        before,
         "org desligada não espelha mais nada"
     );
 
-    // Religar volta a espelhar: a org reaparece para o laço sem reiniciar o servidor. O que foi
-    // escrito **enquanto** ela estava desligada fica de fora de propósito — religar move o corte do
-    // backfill (P8), e só o que vem depois entra. Por isso a mensagem que prova a volta é nova.
-    cena.cenario
+    scene
+        .scenario
         .store
         .matrix()
-        .enable(cena.org)
+        .enable(scene.org)
         .expect("religa");
-    cena.cenario
-        .message(cena.org, cena.conversation, "mensagem depois de religar");
-    esperar_ate("a mensagem nova sair depois de religar", || {
-        synapse.total_de_mensagens() > antes
+    scene
+        .scenario
+        .message(scene.org, scene.conversation, "mensagem depois de religar");
+    wait_until("a mensagem nova sair depois de religar", || {
+        synapse.total_messages() > before
     })
     .await;
 
-    rodando
+    running
         .with_shutdown_timeout(Duration::from_secs(2))
         .stop()
         .await;
 }
 
-// ───────────────────────────── término ordenado ─────────────────────────────
-
 #[tokio::test]
-async fn termino_ordenado_nao_perde_mensagem_pendente() {
-    let synapse = Synapse::subir().await;
-    let cena = cena("parada", synapse.endereco.clone());
-    // O Synapse aceita tudo, menos o envio: a mensagem fica pendente.
-    synapse.falhar_envio(true);
+async fn ordered_shutdown_keeps_pending_message() {
+    let synapse = Synapse::boot().await;
+    let scene = scene("parada", synapse.endereco.clone());
+    synapse.fail_send(true);
 
-    let mut state = cena.cenario.state();
-    let rodando =
-        matrix_beginning::start_with(&mut state, cena.cenario.modulo()).expect("módulo ligado");
+    let mut state = scene.scenario.state();
+    let running =
+        matrix_beginning::start_with(&mut state, scene.scenario.module()).expect("módulo ligado");
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(
-        synapse.total_de_mensagens(),
+        synapse.total_messages(),
         0,
         "nada entregue enquanto o envio falha"
     );
-    let cursor = cena
-        .cenario
+    let cursor = scene
+        .scenario
         .store
         .matrix()
-        .read_cursors(cena.org)
+        .read_cursors(scene.org)
         .expect("cursor")
         .messages;
     assert_eq!(cursor, 0, "o cursor não anda sem sucesso");
 
-    rodando
+    running
         .with_shutdown_timeout(Duration::from_secs(5))
         .stop()
         .await;
 
-    // Subida seguinte, com o Synapse de volta: a mensagem pendente sai, uma vez só.
-    synapse.falhar_envio(false);
-    let mut state = cena.cenario.state();
-    let rodando =
-        matrix_beginning::start_with(&mut state, cena.cenario.modulo()).expect("módulo ligado");
-    esperar_ate("a mensagem pendente sair na subida seguinte", || {
-        synapse.total_de_mensagens() >= 1
+    synapse.fail_send(false);
+    let mut state = scene.scenario.state();
+    let running =
+        matrix_beginning::start_with(&mut state, scene.scenario.module()).expect("módulo ligado");
+    wait_until("a mensagem pendente sair na subida seguinte", || {
+        synapse.total_messages() >= 1
     })
     .await;
     tokio::time::sleep(Duration::from_millis(200)).await;
-    assert_eq!(
-        synapse.total_de_mensagens(),
-        1,
-        "uma entrega só, sem duplicar"
-    );
-    rodando
+    assert_eq!(synapse.total_messages(), 1, "uma entrega só, sem duplicar");
+    running
         .with_shutdown_timeout(Duration::from_secs(2))
         .stop()
         .await;
 }
 
-// ───────────────────────────── o caminho do atendente está ligado ─────────────────────────────
-
 #[tokio::test]
-async fn resposta_do_atendente_esta_ligada_no_servidor() {
-    let synapse = Synapse::subir().await;
-    let cena = cena("resposta", synapse.endereco.clone());
-    let mut state = cena.cenario.state();
-    let rodando =
-        matrix_beginning::start_with(&mut state, cena.cenario.modulo()).expect("módulo ligado");
-    esperar_ate("a sala da conversa existir", || !synapse.rooms().is_empty()).await;
+async fn attendant_reply_is_wired_in_server() {
+    let synapse = Synapse::boot().await;
+    let scene = scene("resposta", synapse.endereco.clone());
+    let mut state = scene.scenario.state();
+    let running =
+        matrix_beginning::start_with(&mut state, scene.scenario.module()).expect("módulo ligado");
+    wait_until("a sala da conversa existir", || !synapse.rooms().is_empty()).await;
     let (room, _) = synapse.rooms().pop().expect("sala criada");
 
-    // O Synapse entrega a mensagem que o atendente escreveu no Element.
-    let (base, desligar) = servir(state).await;
+    let (base, desligar) = serve(state).await;
     let body = json!({
         "events": [{
             "type": "m.room.message",
@@ -1116,7 +1049,7 @@ async fn resposta_do_atendente_esta_ligada_no_servidor() {
         }]
     })
     .to_string();
-    let resposta = client()
+    let reply = client()
         .put(format!("{base}/_matrix/app/v1/transactions/9"))
         .bearer_auth(HS_TOKEN)
         .header("content-type", "application/json")
@@ -1124,23 +1057,23 @@ async fn resposta_do_atendente_esta_ligada_no_servidor() {
         .send()
         .await
         .expect("pedido HTTP");
-    assert_eq!(resposta.status(), StatusCode::OK);
+    assert_eq!(reply.status(), StatusCode::OK);
 
-    // A entrega é a de verdade (MX-18): a resposta entrou na fila e a conversa foi pausada.
-    esperar_ate("a resposta entrar na fila de saída", || {
-        cena.cenario
+    wait_until("a resposta entrar na fila de saída", || {
+        scene
+            .scenario
             .store
             .outbox()
-            .count_by_state(cena.org, OutboxState::Pending)
+            .count_by_state(scene.org, OutboxState::Pending)
             .map(|total| total >= 1)
             .unwrap_or(false)
     })
     .await;
-    let conversation = cena
-        .cenario
+    let conversation = scene
+        .scenario
         .store
         .conversations()
-        .get(cena.org, cena.conversation)
+        .get(scene.org, scene.conversation)
         .expect("lê a conversa");
     assert_eq!(
         conversation.status,
@@ -1149,26 +1082,23 @@ async fn resposta_do_atendente_esta_ligada_no_servidor() {
     );
 
     let _ = desligar.send(());
-    rodando
+    running
         .with_shutdown_timeout(Duration::from_secs(2))
         .stop()
         .await;
 }
 
 #[tokio::test]
-async fn arquivo_do_atendente_esta_ligado_no_servidor() {
-    // MX-44: o receptor montado pelo `iniciar_com` conhece a pasta de blobs do servidor. Sem essa
-    // ligação, todo arquivo do atendente cairia no aviso "não consegui guardar o arquivo" — aqui a
-    // mesma entrega responde o motivo certo para o evento que não trouxe `url`.
-    let synapse = Synapse::subir().await;
-    let cena = cena("arquivo", synapse.endereco.clone());
-    let mut state = cena.cenario.state();
-    let rodando =
-        matrix_beginning::start_with(&mut state, cena.cenario.modulo()).expect("módulo ligado");
-    esperar_ate("a sala da conversa existir", || !synapse.rooms().is_empty()).await;
+async fn attendant_file_is_wired_in_server() {
+    let synapse = Synapse::boot().await;
+    let scene = scene("arquivo", synapse.endereco.clone());
+    let mut state = scene.scenario.state();
+    let running =
+        matrix_beginning::start_with(&mut state, scene.scenario.module()).expect("módulo ligado");
+    wait_until("a sala da conversa existir", || !synapse.rooms().is_empty()).await;
     let (room, _) = synapse.rooms().pop().expect("sala criada");
 
-    let (base, desligar) = servir(state).await;
+    let (base, desligar) = serve(state).await;
     let body = json!({
         "events": [{
             "type": "m.room.message",
@@ -1179,7 +1109,7 @@ async fn arquivo_do_atendente_esta_ligado_no_servidor() {
         }]
     })
     .to_string();
-    let resposta = client()
+    let reply = client()
         .put(format!("{base}/_matrix/app/v1/transactions/10"))
         .bearer_auth(HS_TOKEN)
         .header("content-type", "application/json")
@@ -1187,107 +1117,102 @@ async fn arquivo_do_atendente_esta_ligado_no_servidor() {
         .send()
         .await
         .expect("pedido HTTP");
-    assert_eq!(resposta.status(), StatusCode::OK);
+    assert_eq!(reply.status(), StatusCode::OK);
 
-    esperar_ate("o aviso da mídia aparecer na sala", || {
+    wait_until("o aviso da mídia aparecer na sala", || {
         synapse
-            .corpos_das_mensagens()
+            .message_bodies()
             .iter()
             .any(|body| body["msgtype"] == json!("m.notice"))
     })
     .await;
-    let aviso = synapse
-        .corpos_das_mensagens()
+    let notice = synapse
+        .message_bodies()
         .into_iter()
         .find(|body| body["msgtype"] == json!("m.notice"))
         .expect("o aviso está na sala");
     assert_eq!(
-        aviso["body"],
+        notice["body"],
         json!("Não consegui enviar o arquivo ao cliente: o evento não trouxe o arquivo"),
         "a pasta de blobs do servidor está ligada no receptor"
     );
 
     let _ = desligar.send(());
-    rodando
+    running
         .with_shutdown_timeout(Duration::from_secs(2))
         .stop()
         .await;
 }
 
-// ───────────── Identificador do cliente: metadata e listagem usam a mesma regra (RP-02) ─────────────
-
-/// A sala criada pelo espelho e o metadata dela, quando já estão no Synapse falso.
-fn metadata_da_sala_criada(synapse: &Synapse) -> Option<(String, Value)> {
+fn created_room_metadata(synapse: &Synapse) -> Option<(String, Value)> {
     let (room, _) = synapse.rooms().into_iter().next()?;
     let metadata = synapse.room_state(&room, METADATA_KIND, "")?;
     Some((room, metadata))
 }
 
 #[tokio::test]
-async fn metadata_leva_o_external_peer_sem_espacos_na_criacao_e_no_fechamento() {
-    let synapse = Synapse::subir().await;
-    let cenario = Cenario::new("peer-espacos", synapse.endereco.clone());
-    let org = cenario.org("a");
-    let agent = cenario.agent(org);
-    // O espaço nas pontas fica gravado no banco de propósito: o identificador tem de sair sem ele.
-    let conversation = cenario.conversation(org, agent, "  5511999999999 ");
-    cenario.store.matrix().enable(org).expect("liga a org");
-    cenario.message(org, conversation, "primeira resposta do agente");
+async fn metadata_carries_external_peer_without_spaces_on_create_and_close() {
+    let synapse = Synapse::boot().await;
+    let scenario = Scenario::new("peer-espacos", synapse.endereco.clone());
+    let org = scenario.org("a");
+    let agent = scenario.agent(org);
+    let conversation = scenario.conversation(org, agent, "  5511999999999 ");
+    scenario.store.matrix().enable(org).expect("liga a org");
+    scenario.message(org, conversation, "primeira resposta do agente");
 
-    let mut state = cenario.state();
-    let rodando =
-        matrix_beginning::start_with(&mut state, cenario.modulo()).expect("módulo ligado");
+    let mut state = scenario.state();
+    let running =
+        matrix_beginning::start_with(&mut state, scenario.module()).expect("módulo ligado");
 
-    esperar_ate("a sala criada com metadata", || {
-        metadata_da_sala_criada(&synapse).is_some()
+    wait_until("a sala criada com metadata", || {
+        created_room_metadata(&synapse).is_some()
     })
     .await;
-    let (room, criado) = metadata_da_sala_criada(&synapse).expect("sala e metadata");
+    let (room, created) = created_room_metadata(&synapse).expect("sala e metadata");
     assert_eq!(
-        criado["client_identifier"],
+        created["client_identifier"],
         json!("5511999999999"),
         "na criação, o identificador sai sem espaços nas pontas"
     );
 
-    // Fechar a conversa faz o laço de estado reescrever o metadata: a regra tem de ser a mesma.
-    let atual = cenario
+    let current = scenario
         .store
         .conversations()
         .get(org, conversation)
         .expect("conversa");
-    cenario
+    scenario
         .store
         .conversations()
-        .close_audited(org, conversation, atual.version, "teste".to_owned())
+        .close_audited(org, conversation, current.version, "teste".to_owned())
         .expect("fecha a conversa");
-    esperar_ate("o metadata reescrito no fechamento", || {
+    wait_until("o metadata reescrito no fechamento", || {
         synapse
             .room_state(&room, METADATA_KIND, "")
             .is_some_and(|metadata| metadata["status"] == json!("closed"))
     })
     .await;
-    let fechado = synapse
+    let closed = synapse
         .room_state(&room, METADATA_KIND, "")
         .expect("metadata do fechamento");
     assert_eq!(
-        fechado["client_identifier"],
+        closed["client_identifier"],
         json!("5511999999999"),
         "no fechamento, o identificador continua o mesmo"
     );
 
-    rodando
+    running
         .with_shutdown_timeout(Duration::from_secs(2))
         .stop()
         .await;
 }
 
 #[tokio::test]
-async fn conversa_sem_peer_usa_o_id_da_conversa_no_metadata() {
-    let synapse = Synapse::subir().await;
-    let cenario = Cenario::new("sem-peer", synapse.endereco.clone());
-    let org = cenario.org("a");
-    let agent = cenario.agent(org);
-    let conversation = cenario
+async fn conversation_without_peer_uses_conversation_id_in_metadata() {
+    let synapse = Synapse::boot().await;
+    let scenario = Scenario::new("sem-peer", synapse.endereco.clone());
+    let org = scenario.org("a");
+    let agent = scenario.agent(org);
+    let conversation = scenario
         .store
         .conversations()
         .create(
@@ -1302,93 +1227,91 @@ async fn conversa_sem_peer_usa_o_id_da_conversa_no_metadata() {
         )
         .expect("cria a conversa sem cliente")
         .id;
-    cenario.store.matrix().enable(org).expect("liga a org");
-    cenario.message(org, conversation, "primeira resposta do agente");
+    scenario.store.matrix().enable(org).expect("liga a org");
+    scenario.message(org, conversation, "primeira resposta do agente");
 
-    let mut state = cenario.state();
-    let rodando =
-        matrix_beginning::start_with(&mut state, cenario.modulo()).expect("módulo ligado");
+    let mut state = scenario.state();
+    let running =
+        matrix_beginning::start_with(&mut state, scenario.module()).expect("módulo ligado");
 
-    esperar_ate("a sala criada com metadata", || {
-        metadata_da_sala_criada(&synapse).is_some()
+    wait_until("a sala criada com metadata", || {
+        created_room_metadata(&synapse).is_some()
     })
     .await;
-    let (_, criado) = metadata_da_sala_criada(&synapse).expect("sala e metadata");
+    let (_, created) = created_room_metadata(&synapse).expect("sala e metadata");
     assert_eq!(
-        criado["client_identifier"],
+        created["client_identifier"],
         json!(conversation.to_string()),
         "sem external_peer, o identificador é o id da conversa (a listagem usa o mesmo valor)"
     );
 
-    rodando
+    running
         .with_shutdown_timeout(Duration::from_secs(2))
         .stop()
         .await;
 }
 
 #[tokio::test]
-async fn listagem_por_cliente_acha_so_a_conversa_do_identificador_do_metadata() {
-    let synapse = Synapse::subir().await;
-    let cenario = Cenario::new("listagem", synapse.endereco.clone());
-    let org_a = cenario.org("a");
-    let agente_a = cenario.agent(org_a);
-    let conversa_a = cenario.conversation(org_a, agente_a, "5511888888888");
-    // Outra org com o mesmo telefone: a listagem não pode trazê-la.
-    let org_b = cenario.org("b");
-    let agente_b = cenario.agent(org_b);
-    let conversa_b = cenario.conversation(org_b, agente_b, "5511888888888");
-    cenario.store.matrix().enable(org_a).expect("liga a org");
-    cenario.message(org_a, conversa_a, "primeira resposta do agente");
+async fn listing_by_customer_finds_only_metadata_identifier_conversation() {
+    let synapse = Synapse::boot().await;
+    let scenario = Scenario::new("listagem", synapse.endereco.clone());
+    let org_a = scenario.org("a");
+    let agent_a = scenario.agent(org_a);
+    let conversation_a = scenario.conversation(org_a, agent_a, "5511888888888");
+    let org_b = scenario.org("b");
+    let agent_b = scenario.agent(org_b);
+    let conversation_b = scenario.conversation(org_b, agent_b, "5511888888888");
+    scenario.store.matrix().enable(org_a).expect("liga a org");
+    scenario.message(org_a, conversation_a, "primeira resposta do agente");
 
-    let mut state = cenario.state();
-    let rodando =
-        matrix_beginning::start_with(&mut state, cenario.modulo()).expect("módulo ligado");
+    let mut state = scenario.state();
+    let running =
+        matrix_beginning::start_with(&mut state, scenario.module()).expect("módulo ligado");
 
-    esperar_ate("a sala criada com metadata", || {
-        metadata_da_sala_criada(&synapse).is_some()
+    wait_until("a sala criada com metadata", || {
+        created_room_metadata(&synapse).is_some()
     })
     .await;
-    let (_, criado) = metadata_da_sala_criada(&synapse).expect("sala e metadata");
-    let identificador = criado["client_identifier"]
+    let (_, created) = created_room_metadata(&synapse).expect("sala e metadata");
+    let identifier = created["client_identifier"]
         .as_str()
         .expect("identificador em texto")
         .to_owned();
-    assert_eq!(identificador, "5511888888888");
+    assert_eq!(identifier, "5511888888888");
 
-    // O que o Element pede ao Harness para achar o histórico: a lista filtrada pelo mesmo valor.
-    let filtro = FilterConversations {
+    let filter = FilterConversations {
         status: None,
-        external_peer: Some(identificador),
+        external_peer: Some(identifier),
         ..Default::default()
     };
-    let da_a: Vec<String> = cenario
+    let of_a: Vec<String> = scenario
         .store
         .conversations()
-        .list_filter(org_a, &filtro, Page::default())
+        .list_filter(org_a, &filter, Page::default())
         .expect("lista a org A")
         .iter()
         .map(|conversation| conversation.id.to_string())
         .collect();
     assert_eq!(
-        da_a,
-        vec![conversa_a.to_string()],
+        of_a,
+        vec![conversation_a.to_string()],
         "a listagem da org A acha exatamente a conversa da sala"
     );
-    let da_b: Vec<String> = cenario
+    let of_b: Vec<String> = scenario
         .store
         .conversations()
-        .list_filter(org_b, &filtro, Page::default())
+        .list_filter(org_b, &filter, Page::default())
         .expect("lista a org B")
         .iter()
         .map(|conversation| conversation.id.to_string())
         .collect();
     assert_eq!(
-        da_b,
-        vec![conversa_b.to_string()],
+        of_b,
+        vec![conversation_b.to_string()],
         "a listagem da org B acha só a conversa dela, com o mesmo telefone"
     );
 
-    rodando
+    running
         .with_shutdown_timeout(Duration::from_secs(2))
         .stop()
         .await;

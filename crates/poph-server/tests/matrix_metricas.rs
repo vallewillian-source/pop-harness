@@ -1,9 +1,3 @@
-//! Métricas e logs do módulo Matrix (MX-26).
-//!
-//! Banco de verdade (`Store` numa pasta temporária, relógio controlado), Synapse **falso** em
-//! memória (o mesmo duplo de `matrix_espelho.rs`, só com o que estes testes pedem), e, para o
-//! `/metrics`, o servidor HTTP de verdade.
-
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
@@ -24,28 +18,25 @@ use serde_json::{Value, json};
 
 const SERVIDOR: &str = "matrix-dev.local";
 
-// ───────────────────────────── cenário ─────────────────────────────
-
-struct Cenario {
-    pasta: PathBuf,
+struct Scenario {
+    dir: PathBuf,
     store: Option<Arc<Store>>,
 }
 
-impl Cenario {
-    fn new(rotulo: &str) -> Self {
-        static CONTADOR: AtomicUsize = AtomicUsize::new(0);
-        let n = CONTADOR.fetch_add(1, Ordering::Relaxed);
-        let pasta =
-            std::env::temp_dir().join(format!("poph-metricas-{rotulo}-{}-{n}", std::process::id()));
-        let _ = fs::remove_dir_all(&pasta);
-        fs::create_dir_all(&pasta).expect("cria a pasta do teste");
-        // Relógio do banco: anda 1 ms a cada gravação, então a ordem de criação é estrita.
-        let relogio = Arc::new(AtomicI64::new(1_000));
-        let store = Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db"))
+impl Scenario {
+    fn new(label: &str) -> Self {
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir =
+            std::env::temp_dir().join(format!("poph-metricas-{label}-{}-{n}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("cria a pasta do teste");
+        let clock = Arc::new(AtomicI64::new(1_000));
+        let store = Store::open_at(&dir.join("harness.db"), &dir.join("rag.db"))
             .expect("abre o banco")
-            .with_clock(Arc::new(move || relogio.fetch_add(1, Ordering::SeqCst)));
+            .with_clock(Arc::new(move || clock.fetch_add(1, Ordering::SeqCst)));
         Self {
-            pasta,
+            dir,
             store: Some(Arc::new(store)),
         }
     }
@@ -55,10 +46,10 @@ impl Cenario {
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
         let _ = self.store.take();
-        let _ = fs::remove_dir_all(&self.pasta);
+        let _ = fs::remove_dir_all(&self.dir);
     }
 }
 
@@ -74,7 +65,7 @@ fn config() -> MatrixConfig {
     }
 }
 
-fn criar_org(store: &Store, slug: &str) -> OrgId {
+fn create_org(store: &Store, slug: &str) -> OrgId {
     store
         .orgs()
         .create(NewOrg {
@@ -86,7 +77,7 @@ fn criar_org(store: &Store, slug: &str) -> OrgId {
         .id
 }
 
-fn criar_agente(store: &Store, org: OrgId) -> AgentId {
+fn create_agent(store: &Store, org: OrgId) -> AgentId {
     store
         .agents()
         .create(
@@ -101,7 +92,7 @@ fn criar_agente(store: &Store, org: OrgId) -> AgentId {
         .id
 }
 
-fn criar_conversa(store: &Store, org: OrgId, agent: AgentId, peer: &str) -> ConversationId {
+fn create_conversation(store: &Store, org: OrgId, agent: AgentId, peer: &str) -> ConversationId {
     store
         .conversations()
         .create(
@@ -118,7 +109,7 @@ fn criar_conversa(store: &Store, org: OrgId, agent: AgentId, peer: &str) -> Conv
         .id
 }
 
-fn msg_cliente(store: &Store, org: OrgId, conversation: ConversationId, text: &str) -> String {
+fn customer_msg(store: &Store, org: OrgId, conversation: ConversationId, text: &str) -> String {
     store
         .messages()
         .write(
@@ -140,43 +131,35 @@ fn msg_cliente(store: &Store, org: OrgId, conversation: ConversationId, text: &s
         .to_string()
 }
 
-fn metricas_novas() -> Arc<MetricsMatrix> {
+fn new_metrics() -> Arc<MetricsMatrix> {
     Arc::new(MetricsMatrix::register(&Registry::new()).expect("registra as métricas"))
 }
 
-// ───────────────────────────── Synapse falso ─────────────────────────────
-
 #[derive(Clone, Copy)]
-enum Modo {
-    /// Aceita tudo.
+enum Mode {
     Normal,
-    /// Toda chamada falha de forma transitória (Synapse fora do ar).
-    Fora,
-    /// Toda chamada responde `429` (limite de taxa).
-    Limite,
-    /// Corpo com o texto é recusado com `403` (definitivo); o resto é aceito.
+    Outside,
+    Limit,
     Venenoso(&'static str),
 }
 
-struct Falso {
-    modo: Mutex<Modo>,
-    /// Texto que o Synapse devolve dentro do erro. Usado pelo teste do valor-canário.
-    mensagem_de_erro: String,
-    /// Chamadas de envio feitas (inclusive as recusadas).
-    envios: AtomicUsize,
+struct Fake {
+    mode: Mutex<Mode>,
+    error_message: String,
+    sends: AtomicUsize,
 }
 
-impl Falso {
-    fn new(modo: Modo, mensagem_de_erro: &str) -> Arc<Self> {
+impl Fake {
+    fn new(mode: Mode, error_message: &str) -> Arc<Self> {
         Arc::new(Self {
-            modo: Mutex::new(modo),
-            mensagem_de_erro: mensagem_de_erro.to_owned(),
-            envios: AtomicUsize::new(0),
+            mode: Mutex::new(mode),
+            error_message: error_message.to_owned(),
+            sends: AtomicUsize::new(0),
         })
     }
 
-    fn definir_modo(&self, modo: Modo) {
-        *self.modo.lock().unwrap() = modo;
+    fn set_mode(&self, mode: Mode) {
+        *self.mode.lock().unwrap() = mode;
     }
 
     fn error(&self, status: u16, errcode: &str) -> CallError {
@@ -184,16 +167,15 @@ impl Falso {
             operation: "send",
             status,
             errcode: Some(errcode.to_owned()),
-            message: self.mensagem_de_erro.clone(),
+            message: self.error_message.clone(),
             retry_after_ms: None,
         }
     }
 }
 
-/// O duplo que o espelho recebe: o espelho fica com uma cópia do `Arc`, o teste com outra.
-struct Sinal(Arc<Falso>);
+struct Signal(Arc<Fake>);
 
-impl MatrixTarget for Sinal {
+impl MatrixTarget for Signal {
     fn ensure_room(
         &self,
         dados: &ConversationToRoom,
@@ -204,39 +186,36 @@ impl MatrixTarget for Sinal {
 
     async fn ensure_device(
         &self,
-        _dados: &ConversationToRoom,
-        _sala: &str,
-        _aparelho: &poph_matrix::users::Ghost,
+        _data: &ConversationToRoom,
+        _room: &str,
+        _device: &poph_matrix::users::Ghost,
     ) -> Result<(), RoomError> {
         Ok(())
     }
 
     fn send(
         &self,
-        _sala: &str,
+        _room: &str,
         send: &Outbound,
     ) -> impl std::future::Future<Output = Result<(), CallError>> + Send {
-        let falso = &self.0;
-        falso.envios.fetch_add(1, Ordering::SeqCst);
-        let modo = *falso.modo.lock().unwrap();
-        let resultado = match modo {
-            Modo::Normal => Ok(()),
-            Modo::Fora => Err(falso.error(503, "M_UNKNOWN")),
-            Modo::Limite => Err(falso.error(429, "M_LIMIT_EXCEEDED")),
-            Modo::Venenoso(text) if send.body.contains(text) => {
-                Err(falso.error(403, "M_FORBIDDEN"))
-            }
-            Modo::Venenoso(_) => Ok(()),
+        let fake = &self.0;
+        fake.sends.fetch_add(1, Ordering::SeqCst);
+        let mode = *fake.mode.lock().unwrap();
+        let resultado = match mode {
+            Mode::Normal => Ok(()),
+            Mode::Outside => Err(fake.error(503, "M_UNKNOWN")),
+            Mode::Limit => Err(fake.error(429, "M_LIMIT_EXCEEDED")),
+            Mode::Venenoso(text) if send.body.contains(text) => Err(fake.error(403, "M_FORBIDDEN")),
+            Mode::Venenoso(_) => Ok(()),
         };
         async move { resultado }
     }
 
     async fn send_asset(
         &self,
-        _sala: &str,
-        _envio: &poph_server::matrix_mirror::AssetSend,
+        _room: &str,
+        _send: &poph_server::matrix_mirror::AssetSend,
     ) -> Result<PublishedAsset, CallError> {
-        // Este destino não publica mídia: nenhuma mensagem do teste tem anexo.
         Err(CallError::Configuration(
             "sem mídia neste destino".to_owned(),
         ))
@@ -244,26 +223,23 @@ impl MatrixTarget for Sinal {
 
     async fn send_notice(
         &self,
-        _sala: &str,
-        _aviso: &poph_server::matrix_mirror::RoomNotice,
+        _room: &str,
+        _notice: &poph_server::matrix_mirror::RoomNotice,
     ) -> Result<(), CallError> {
         Ok(())
     }
 }
 
-// ───────────────────────────── captura de log ─────────────────────────────
-
-/// Escritor que guarda tudo o que o `tracing` imprime, para o teste conferir o texto.
 #[derive(Clone, Default)]
-struct Captura(Arc<Mutex<Vec<u8>>>);
+struct Capture(Arc<Mutex<Vec<u8>>>);
 
-impl Captura {
+impl Capture {
     fn text(&self) -> String {
         String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
     }
 }
 
-impl Write for Captura {
+impl Write for Capture {
     fn write(&mut self, dados: &[u8]) -> std::io::Result<usize> {
         self.0.lock().unwrap().extend_from_slice(dados);
         Ok(dados.len())
@@ -274,186 +250,172 @@ impl Write for Captura {
     }
 }
 
-/// Liga a captura só nesta thread (os testes são de `current_thread`) até o guarda cair.
-fn capturar_logs() -> (Captura, tracing::subscriber::DefaultGuard) {
-    let captura = Captura::default();
-    let destino = captura.clone();
+fn capture_logs() -> (Capture, tracing::subscriber::DefaultGuard) {
+    let capture = Capture::default();
+    let destination = capture.clone();
     let assinante = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::TRACE)
         .with_ansi(false)
         .without_time()
-        .with_writer(move || destino.clone())
+        .with_writer(move || destination.clone())
         .finish();
-    let guarda = tracing::subscriber::set_default(assinante);
-    (captura, guarda)
+    let guard = tracing::subscriber::set_default(assinante);
+    (capture, guard)
 }
 
-// ───────────────────────────── testes do espelho ─────────────────────────────
-
 #[tokio::test]
-async fn atraso_do_cursor_sobe_com_synapse_fora_e_volta_a_zero() {
-    let cenario = Cenario::new("atraso");
-    let store = cenario.store();
-    let org = criar_org(&store, "atraso");
-    let agent = criar_agente(&store, org);
-    let conversation = criar_conversa(&store, org, agent, "5521977770001");
+async fn cursor_lag_rises_with_synapse_down_and_returns_to_zero() {
+    let scenario = Scenario::new("atraso");
+    let store = scenario.store();
+    let org = create_org(&store, "atraso");
+    let agent = create_agent(&store, org);
+    let conversation = create_conversation(&store, org, agent, "5521977770001");
     store.matrix().enable(org).expect("liga o módulo");
-    msg_cliente(&store, org, conversation, "primeira");
-    msg_cliente(&store, org, conversation, "segunda");
+    customer_msg(&store, org, conversation, "primeira");
+    customer_msg(&store, org, conversation, "segunda");
 
-    let falso = Falso::new(Modo::Fora, "indisponível");
-    let metricas = metricas_novas();
-    // Relógio do laço: 31 s depois da primeira mensagem, depois 91 s.
-    let agora = Arc::new(AtomicI64::new(31_000));
-    let relogio = Arc::clone(&agora);
-    let espelho = MatrixMirror::new(Arc::clone(&store), Sinal(Arc::clone(&falso)), &config())
+    let fake = Fake::new(Mode::Outside, "indisponível");
+    let metrics = new_metrics();
+    let now = Arc::new(AtomicI64::new(31_000));
+    let clock = Arc::clone(&now);
+    let mirror = MatrixMirror::new(Arc::clone(&store), Signal(Arc::clone(&fake)), &config())
         .expect("monta o espelho")
-        .with_metrics(Arc::clone(&metricas))
-        .with_clock(Arc::new(move || relogio.load(Ordering::SeqCst)));
+        .with_metrics(Arc::clone(&metrics))
+        .with_clock(Arc::new(move || clock.load(Ordering::SeqCst)));
 
-    espelho.cycle().await.expect("ciclo com o Synapse fora");
-    let inicial = metricas.cursor_age_seconds.value();
+    mirror.cycle().await.expect("ciclo com o Synapse fora");
+    let initial = metrics.cursor_age_seconds.value();
     assert!(
-        (29..=31).contains(&inicial),
-        "com o Synapse fora, a primeira mensagem tem ~30 s de atraso; veio {inicial}"
+        (29..=31).contains(&initial),
+        "com o Synapse fora, a primeira mensagem tem ~30 s de atraso; veio {initial}"
     );
 
-    agora.store(91_000, Ordering::SeqCst);
-    espelho
+    now.store(91_000, Ordering::SeqCst);
+    mirror
         .cycle()
         .await
         .expect("ciclo com o Synapse ainda fora");
-    let depois = metricas.cursor_age_seconds.value();
+    let after = metrics.cursor_age_seconds.value();
     assert!(
-        depois > inicial && (89..=91).contains(&depois),
-        "o atraso tem de subir enquanto o Synapse está fora; veio {depois} (antes {inicial})"
+        after > initial && (89..=91).contains(&after),
+        "o atraso tem de subir enquanto o Synapse está fora; veio {after} (antes {initial})"
     );
 
-    falso.definir_modo(Modo::Normal);
-    espelho.cycle().await.expect("ciclo com o Synapse de volta");
+    fake.set_mode(Mode::Normal);
+    mirror.cycle().await.expect("ciclo com o Synapse de volta");
     assert_eq!(
-        metricas.cursor_age_seconds.value(),
+        metrics.cursor_age_seconds.value(),
         0,
         "com o Synapse de volta e tudo espelhado, o atraso volta a zero"
     );
-    assert_eq!(metricas.mirrored_messages.value(), 2);
+    assert_eq!(metrics.mirrored_messages.value(), 2);
 }
 
 #[tokio::test]
-async fn contadores_do_espelho_contam_tentativas_erros_e_429() {
-    let cenario = Cenario::new("contadores");
-    let store = cenario.store();
-    let org = criar_org(&store, "contadores");
-    let agent = criar_agente(&store, org);
-    let conversation = criar_conversa(&store, org, agent, "5521977770002");
+async fn mirror_counters_count_attempts_errors_and_429() {
+    let scenario = Scenario::new("contadores");
+    let store = scenario.store();
+    let org = create_org(&store, "contadores");
+    let agent = create_agent(&store, org);
+    let conversation = create_conversation(&store, org, agent, "5521977770002");
     store.matrix().enable(org).expect("liga o módulo");
-    msg_cliente(&store, org, conversation, "um");
-    msg_cliente(&store, org, conversation, "dois");
+    customer_msg(&store, org, conversation, "um");
+    customer_msg(&store, org, conversation, "dois");
 
-    let falso = Falso::new(Modo::Limite, "limite");
-    let metricas = metricas_novas();
-    let espelho = MatrixMirror::new(Arc::clone(&store), Sinal(Arc::clone(&falso)), &config())
+    let fake = Fake::new(Mode::Limit, "limite");
+    let metrics = new_metrics();
+    let mirror = MatrixMirror::new(Arc::clone(&store), Signal(Arc::clone(&fake)), &config())
         .expect("monta o espelho")
-        .with_metrics(Arc::clone(&metricas));
+        .with_metrics(Arc::clone(&metrics));
 
-    // Primeiro ciclo: a sala é garantida (1 tentativa) e o primeiro envio leva 429 (1 tentativa).
-    espelho.cycle().await.expect("ciclo com limite de taxa");
-    assert_eq!(metricas.attempts.value(), 2);
-    assert_eq!(metricas.responses_429.value(), 1, "o 429 conta uma vez");
+    mirror.cycle().await.expect("ciclo com limite de taxa");
+    assert_eq!(metrics.attempts.value(), 2);
+    assert_eq!(metrics.responses_429.value(), 1, "o 429 conta uma vez");
     assert_eq!(
-        metricas.transient_errors.value(),
+        metrics.transient_errors.value(),
         1,
         "o 429 é transitório: conta como erro transitório"
     );
-    assert_eq!(metricas.definitive_errors.value(), 0);
-    assert_eq!(metricas.mirrored_messages.value(), 0);
+    assert_eq!(metrics.definitive_errors.value(), 0);
+    assert_eq!(metrics.mirrored_messages.value(), 0);
 
-    // Segundo ciclo, sem limite: sala (1) + duas mensagens (2) = 3 tentativas a mais.
-    falso.definir_modo(Modo::Normal);
-    espelho.cycle().await.expect("ciclo sem limite");
-    assert_eq!(metricas.attempts.value(), 5);
-    assert_eq!(metricas.mirrored_messages.value(), 2);
+    fake.set_mode(Mode::Normal);
+    mirror.cycle().await.expect("ciclo sem limite");
+    assert_eq!(metrics.attempts.value(), 5);
+    assert_eq!(metrics.mirrored_messages.value(), 2);
     assert_eq!(
-        metricas.responses_429.value(),
+        metrics.responses_429.value(),
         1,
         "sem novo 429, o contador fica"
     );
 }
 
 #[tokio::test]
-async fn mensagem_venenosa_isolada_conta_e_loga_org_e_conversa() {
-    let cenario = Cenario::new("isolada");
-    let store = cenario.store();
-    let org = criar_org(&store, "isolada");
-    let agent = criar_agente(&store, org);
-    let conversation = criar_conversa(&store, org, agent, "5521977770003");
+async fn poison_message_isolated_counts_and_logs_org_and_conversation() {
+    let scenario = Scenario::new("isolada");
+    let store = scenario.store();
+    let org = create_org(&store, "isolada");
+    let agent = create_agent(&store, org);
+    let conversation = create_conversation(&store, org, agent, "5521977770003");
     store.matrix().enable(org).expect("liga o módulo");
-    msg_cliente(&store, org, conversation, "VENENO aqui");
-    msg_cliente(&store, org, conversation, "depois");
+    customer_msg(&store, org, conversation, "VENENO aqui");
+    customer_msg(&store, org, conversation, "depois");
 
-    let falso = Falso::new(Modo::Venenoso("VENENO"), "recusado");
-    let metricas = metricas_novas();
-    let espelho = MatrixMirror::new(Arc::clone(&store), Sinal(Arc::clone(&falso)), &config())
+    let fake = Fake::new(Mode::Venenoso("VENENO"), "recusado");
+    let metrics = new_metrics();
+    let mirror = MatrixMirror::new(Arc::clone(&store), Signal(Arc::clone(&fake)), &config())
         .expect("monta o espelho")
-        .with_metrics(Arc::clone(&metricas));
-    let (captura, _guarda) = capturar_logs();
+        .with_metrics(Arc::clone(&metrics));
+    let (capture, _guard) = capture_logs();
 
-    // Três falhas definitivas seguidas isolam a mensagem venenosa; a seguinte sai no ciclo depois.
     for _ in 0..4 {
-        espelho.cycle().await.expect("ciclo");
+        mirror.cycle().await.expect("ciclo");
     }
 
-    assert_eq!(metricas.definitive_errors.value(), 3);
-    assert_eq!(metricas.isolated_messages.value(), 1);
+    assert_eq!(metrics.definitive_errors.value(), 3);
+    assert_eq!(metrics.isolated_messages.value(), 1);
     assert_eq!(
-        metricas.mirrored_messages.value(),
+        metrics.mirrored_messages.value(),
         1,
         "a mensagem seguinte sai"
     );
-    let log = captura.text();
-    // A linha do aviso de isolamento (não a de nova tentativa) é que leva org e conversa.
-    let linha = log
+    let log = capture.text();
+    let line = log
         .lines()
-        .find(|linha| linha.contains("mensagem isolada"))
+        .find(|line| line.contains("mensagem isolada"))
         .unwrap_or_else(|| panic!("falta o aviso de isolamento no log:\n{log}"));
     assert!(
-        linha.contains(&conversation.to_string()) && linha.contains(&org.to_string()),
-        "o aviso de isolamento leva org e conversa; linha: {linha}"
+        line.contains(&conversation.to_string()) && line.contains(&org.to_string()),
+        "o aviso de isolamento leva org e conversa; linha: {line}"
     );
 }
 
-// ───────────────────────────── valor-canário ─────────────────────────────
-
-/// Valores que não podem aparecer em log: telefone, texto de mensagem e token.
-const CANARIO_TELEFONE: &str = "5521900418273";
-const CANARIO_TEXTO: &str = "CANARIO-TEXTO-7a3f9";
+const CANARY_PHONE: &str = "5521900418273";
+const CANARY_TEXT: &str = "CANARIO-TEXTO-7a3f9";
 const CANARIO_TOKEN: &str = "CANARIO-TOKEN-x81kq";
 
 #[tokio::test]
-async fn valor_canario_nunca_aparece_no_log_do_modulo() {
-    let cenario = Cenario::new("canario");
-    let store = cenario.store();
-    let org = criar_org(&store, "canario");
-    let agent = criar_agente(&store, org);
-    let conversation = criar_conversa(&store, org, agent, CANARIO_TELEFONE);
+async fn canary_value_never_appears_in_module_log() {
+    let scenario = Scenario::new("canario");
+    let store = scenario.store();
+    let org = create_org(&store, "canario");
+    let agent = create_agent(&store, org);
+    let conversation = create_conversation(&store, org, agent, CANARY_PHONE);
     store.matrix().enable(org).expect("liga o módulo");
-    msg_cliente(&store, org, conversation, CANARIO_TEXTO);
-    // O Synapse devolve o token-canário dentro da mensagem de erro (não pode ir para o log).
-    let falso = Falso::new(Modo::Venenoso(CANARIO_TEXTO), CANARIO_TOKEN);
-    let espelho = MatrixMirror::new(Arc::clone(&store), Sinal(Arc::clone(&falso)), &config())
+    customer_msg(&store, org, conversation, CANARY_TEXT);
+    let fake = Fake::new(Mode::Venenoso(CANARY_TEXT), CANARIO_TOKEN);
+    let mirror = MatrixMirror::new(Arc::clone(&store), Signal(Arc::clone(&fake)), &config())
         .expect("monta o espelho")
-        .with_metrics(metricas_novas());
+        .with_metrics(new_metrics());
 
-    // Caminho do espelho: falhas definitivas até isolar, e uma transitória antes.
-    let (captura, guarda) = capturar_logs();
-    falso.definir_modo(Modo::Fora);
-    espelho.cycle().await.expect("ciclo transitório");
-    falso.definir_modo(Modo::Venenoso(CANARIO_TEXTO));
+    let (capture, guard) = capture_logs();
+    fake.set_mode(Mode::Outside);
+    mirror.cycle().await.expect("ciclo transitório");
+    fake.set_mode(Mode::Venenoso(CANARY_TEXT));
     for _ in 0..3 {
-        espelho.cycle().await.expect("ciclo definitivo");
+        mirror.cycle().await.expect("ciclo definitivo");
     }
 
-    // Caminho da resposta do atendente: uma resposta humana numa sala conhecida.
     let room = "!canario-sala:matrix-dev.local";
     store
         .matrix()
@@ -464,7 +426,7 @@ async fn valor_canario_nunca_aparece_no_log_do_modulo() {
         .mark_room_ready(org, conversation)
         .expect("sala pronta");
     let ids = GhostIds::of_config(&config()).expect("ids");
-    let entrega = AttendantResponse::with_caps(
+    let delivery = AttendantResponse::with_caps(
         Arc::new(HarnessResponsePort::fresh(Arc::clone(&store))),
         None,
         ids,
@@ -472,26 +434,26 @@ async fn valor_canario_nunca_aparece_no_log_do_modulo() {
         16,
         Duration::from_secs(300),
     )
-    .with_metrics(metricas_novas());
+    .with_metrics(new_metrics());
     let event: Value = json!({
         "type": "m.room.message",
         "room_id": room,
         "event_id": "$canario-1:matrix-dev.local",
         "sender": "@willian:matrix-dev.local",
-        "content": { "msgtype": "m.text", "body": CANARIO_TEXTO },
+        "content": { "msgtype": "m.text", "body": CANARY_TEXT },
     });
-    entrega
+    delivery
         .deliver("txn-canario", vec![event])
         .await
         .expect("entrega aceita a resposta");
-    drop(guarda);
+    drop(guard);
 
-    let log = captura.text();
+    let log = capture.text();
     assert!(
         log.contains("isolada") || log.contains("resposta do atendente enfileirada"),
         "o teste precisa ter logs de verdade para valer; log:\n{log}"
     );
-    for canario in [CANARIO_TELEFONE, CANARIO_TEXTO, CANARIO_TOKEN] {
+    for canario in [CANARY_PHONE, CANARY_TEXT, CANARIO_TOKEN] {
         assert!(
             !log.contains(canario),
             "o valor-canário `{canario}` vazou para o log:\n{log}"
@@ -499,17 +461,13 @@ async fn valor_canario_nunca_aparece_no_log_do_modulo() {
     }
 }
 
-// ───────────────────── contadores da resposta do atendente ─────────────────────
-
-/// Os contadores que a MX-18 já mantinha em memória viram métrica: enfileiradas, duplicadas, sala
-/// desconhecida, conversa encerrada e aviso de mídia.
 #[tokio::test]
-async fn contadores_da_resposta_do_atendente_viram_metrica() {
-    let cenario = Cenario::new("contadores-resposta");
-    let store = cenario.store();
-    let org = criar_org(&store, "contadores-resposta");
-    let agent = criar_agente(&store, org);
-    let conversation = criar_conversa(&store, org, agent, "5521977770004");
+async fn attendant_reply_counters_become_metrics() {
+    let scenario = Scenario::new("contadores-resposta");
+    let store = scenario.store();
+    let org = create_org(&store, "contadores-resposta");
+    let agent = create_agent(&store, org);
+    let conversation = create_conversation(&store, org, agent, "5521977770004");
     store.matrix().enable(org).expect("liga o módulo");
     let room = "!contadores-sala:matrix-dev.local";
     store
@@ -521,9 +479,9 @@ async fn contadores_da_resposta_do_atendente_viram_metrica() {
         .mark_room_ready(org, conversation)
         .expect("sala pronta");
 
-    let metricas = metricas_novas();
+    let metrics = new_metrics();
     let ids = GhostIds::of_config(&config()).expect("ids");
-    let entrega = AttendantResponse::with_caps(
+    let delivery = AttendantResponse::with_caps(
         Arc::new(HarnessResponsePort::fresh(Arc::clone(&store))),
         None,
         ids,
@@ -531,7 +489,7 @@ async fn contadores_da_resposta_do_atendente_viram_metrica() {
         16,
         Duration::from_secs(300),
     )
-    .with_metrics(Arc::clone(&metricas));
+    .with_metrics(Arc::clone(&metrics));
 
     let text = |event: &str, room: &str, body: Value| {
         json!({
@@ -542,39 +500,35 @@ async fn contadores_da_resposta_do_atendente_viram_metrica() {
             "content": body,
         })
     };
-    let humano = || json!({ "msgtype": "m.text", "body": "olá" });
+    let human = || json!({ "msgtype": "m.text", "body": "olá" });
 
-    // 1) Resposta nova: enfileirada uma vez.
-    entrega
-        .deliver("txn-1", vec![text("$c-1:matrix-dev.local", room, humano())])
+    delivery
+        .deliver("txn-1", vec![text("$c-1:matrix-dev.local", room, human())])
         .await
         .expect("entrega");
-    assert_eq!(metricas.responses_queued.value(), 1);
+    assert_eq!(metrics.responses_queued.value(), 1);
 
-    // 2) Mesmo evento de novo (reenvio do Synapse): duplicada, nada novo enfileirado.
-    entrega
-        .deliver("txn-2", vec![text("$c-1:matrix-dev.local", room, humano())])
+    delivery
+        .deliver("txn-2", vec![text("$c-1:matrix-dev.local", room, human())])
         .await
         .expect("entrega");
-    assert_eq!(metricas.responses_queued.value(), 1);
-    assert_eq!(metricas.responses_duplicated.value(), 1);
+    assert_eq!(metrics.responses_queued.value(), 1);
+    assert_eq!(metrics.responses_duplicated.value(), 1);
 
-    // 3) Sala que ninguém conhece.
-    entrega
+    delivery
         .deliver(
             "txn-3",
             vec![text(
                 "$c-2:matrix-dev.local",
                 "!desconhecida:matrix-dev.local",
-                humano(),
+                human(),
             )],
         )
         .await
         .expect("entrega");
-    assert_eq!(metricas.rooms_unknown.value(), 1);
+    assert_eq!(metrics.rooms_unknown.value(), 1);
 
-    // 4) Mídia do atendente: só o aviso na sala.
-    entrega
+    delivery
         .deliver(
             "txn-4",
             vec![text(
@@ -585,14 +539,13 @@ async fn contadores_da_resposta_do_atendente_viram_metrica() {
         )
         .await
         .expect("entrega");
-    assert_eq!(metricas.asset_notices.value(), 1);
+    assert_eq!(metrics.asset_notices.value(), 1);
     assert_eq!(
-        metricas.responses_queued.value(),
+        metrics.responses_queued.value(),
         1,
         "mídia não vira resposta ao cliente"
     );
 
-    // 5) Conversa encerrada: nada enviado, aviso na sala.
     let versao = store
         .conversations()
         .get(org, conversation)
@@ -602,30 +555,27 @@ async fn contadores_da_resposta_do_atendente_viram_metrica() {
         .conversations()
         .close_audited(org, conversation, versao, "teste".to_owned())
         .expect("encerra a conversa");
-    entrega
-        .deliver("txn-5", vec![text("$c-4:matrix-dev.local", room, humano())])
+    delivery
+        .deliver("txn-5", vec![text("$c-4:matrix-dev.local", room, human())])
         .await
         .expect("entrega");
-    assert_eq!(metricas.responses_conversation_closed.value(), 1);
+    assert_eq!(metrics.responses_conversation_closed.value(), 1);
     assert_eq!(
-        metricas.responses_queued.value(),
+        metrics.responses_queued.value(),
         1,
         "conversa encerrada não enfileira para o cliente"
     );
 }
 
-// ───────────────────────────── /metrics ─────────────────────────────
-
-/// Sobe o servidor com o estado dado e devolve o texto de `/metrics`.
-async fn metricas_http(state: ServerState) -> String {
+async fn http_metrics(state: ServerState) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("porta efêmera");
     let endereco = listener.local_addr().expect("endereço");
-    let (desligar, sinal) = tokio::sync::oneshot::channel::<()>();
+    let (desligar, signal) = tokio::sync::oneshot::channel::<()>();
     let servidor = tokio::spawn(async move {
         let _ = poph_server::serve_at(listener, state, async {
-            let _ = sinal.await;
+            let _ = signal.await;
         })
         .await;
     });
@@ -635,12 +585,12 @@ async fn metricas_http(state: ServerState) -> String {
         .expect("cliente HTTP");
     let mut body = None;
     for _ in 0..100 {
-        if let Ok(resposta) = client
+        if let Ok(reply) = client
             .get(format!("http://{endereco}/metrics"))
             .send()
             .await
         {
-            body = Some(resposta.text().await.expect("corpo do /metrics"));
+            body = Some(reply.text().await.expect("corpo do /metrics"));
             break;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -650,25 +600,23 @@ async fn metricas_http(state: ServerState) -> String {
     body.expect("o /metrics respondeu")
 }
 
-fn estado_com_modulo(rotulo: &str, ligado: bool) -> (ServerState, PathBuf) {
-    let pasta = std::env::temp_dir().join(format!(
-        "poph-metricas-http-{rotulo}-{}",
-        std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&pasta);
-    fs::create_dir_all(pasta.join("dados")).expect("pasta de dados");
+fn state_with_module(label: &str, enabled: bool) -> (ServerState, PathBuf) {
+    let dir =
+        std::env::temp_dir().join(format!("poph-metricas-http-{label}-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("dados")).expect("pasta de dados");
     let mut cfg = HarnessConfig::default();
-    cfg.data.directory = pasta.join("dados");
+    cfg.data.directory = dir.join("dados");
     cfg.matrix = Some(MatrixConfig {
-        enabled: ligado,
+        enabled,
         ..config()
     });
     let store = Arc::new(Store::open(&cfg).expect("abre o banco"));
     let state = ServerState::new(store, cfg).expect("estado do servidor");
-    (state, pasta)
+    (state, dir)
 }
 
-const NOMES_MATRIX: [&str; 15] = [
+const MATRIX_NAMES: [&str; 15] = [
     "poph_matrix_atraso_cursor_segundos",
     "poph_matrix_salas_prontas_total",
     "poph_matrix_mensagens_espelhadas_total",
@@ -687,15 +635,14 @@ const NOMES_MATRIX: [&str; 15] = [
 ];
 
 #[tokio::test]
-async fn metricas_do_modulo_nao_aparecem_com_o_modulo_desligado() {
-    let (state, pasta) = estado_com_modulo("desligado", false);
-    // Módulo desligado: nem quem prepara o módulo consegue declarar as métricas.
+async fn module_metrics_absent_when_module_off() {
+    let (state, dir) = state_with_module("desligado", false);
     assert!(
         state.matrix_metrics().expect("sem erro").is_none(),
         "com [matrix] desligado, as métricas do módulo não são declaradas"
     );
-    let text = metricas_http(state).await;
-    let _ = fs::remove_dir_all(&pasta);
+    let text = http_metrics(state).await;
+    let _ = fs::remove_dir_all(&dir);
     assert!(
         text.contains("poph_memoria_processo_bytes"),
         "sanidade: o /metrics responde"
@@ -707,25 +654,24 @@ async fn metricas_do_modulo_nao_aparecem_com_o_modulo_desligado() {
 }
 
 #[tokio::test]
-async fn metricas_do_modulo_aparecem_uma_vez_quando_preparado() {
-    let (state, pasta) = estado_com_modulo("ligado", true);
-    // Preparar duas vezes (como a raiz faria em reinícios internos) não duplica nada na saída.
-    let primeira = state
+async fn module_metrics_appear_once_when_prepared() {
+    let (state, dir) = state_with_module("ligado", true);
+    let first = state
         .matrix_metrics()
         .expect("prepara as métricas")
         .expect("módulo ligado");
-    let segunda = state
+    let second = state
         .matrix_metrics()
         .expect("segunda chamada")
         .expect("módulo ligado");
     assert!(
-        Arc::ptr_eq(&primeira, &segunda),
+        Arc::ptr_eq(&first, &second),
         "mesmo handle nas duas chamadas"
     );
-    primeira.mirrored_messages.increment(3);
-    let text = metricas_http(state).await;
-    let _ = fs::remove_dir_all(&pasta);
-    for name in NOMES_MATRIX {
+    first.mirrored_messages.increment(3);
+    let text = http_metrics(state).await;
+    let _ = fs::remove_dir_all(&dir);
+    for name in MATRIX_NAMES {
         assert_eq!(
             text.matches(&format!("# HELP {name} ")).count(),
             1,
@@ -738,18 +684,14 @@ async fn metricas_do_modulo_aparecem_uma_vez_quando_preparado() {
     );
 }
 
-// ───────────────────────────── registro do processo ─────────────────────────────
-
 #[test]
-fn metricas_descartaveis_nao_aparecem_no_registro_do_processo() {
-    // Handles descartáveis (usados quando ninguém injeta os números do processo) ficam fora do
-    // `/metrics` do processo.
-    let processo = Registry::new();
-    let _ = MetricsMatrix::register(&processo).expect("registra no processo");
+fn throwaway_metrics_absent_from_process_registry() {
+    let process = Registry::new();
+    let _ = MetricsMatrix::register(&process).expect("registra no processo");
     let descartavel = MetricsMatrix::unregistered();
     descartavel.definitive_errors.increment(1);
     assert!(
-        !processo
+        !process
             .render()
             .contains("poph_matrix_erros_definitivos_total 1")
     );

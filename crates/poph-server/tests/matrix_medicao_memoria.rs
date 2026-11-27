@@ -1,40 +1,26 @@
-//! Semeadura da medição de RAM e vazão do módulo Matrix (MX-30).
-//!
-//! Não é teste de comportamento: é `#[ignore]` e só roda por `scripts/measure-memory.sh`, que
-//! chama este arquivo com as variáveis abaixo e depois sobe o `poph serve` de verdade sobre o
-//! banco que ele gravou. A semeadura usa a API do `poph-store` (o mesmo caminho dos testes do
-//! módulo), para não depender de SQL escrito à mão.
-//!
-//! Variáveis (obrigatórias, exceto onde indicado):
-//! - `MX30_PASTA`: pasta que recebe `dados/harness.db`; deve existir e ficar vazia;
-//! - `MX30_SALAS`: quantas conversas (cada uma vira uma sala do Element quando o módulo está ligado);
-//! - `MX30_MENSAGENS_POR_SALA`: mensagens do cliente por conversa (padrão 1);
-//! - `MX30_LIGADO`: `1` liga a org no módulo antes das mensagens (o espelho pega tudo que vier
-//!   depois do corte); `0` deixa a org desligada, como o cenário "módulo desligado".
-
 use std::fs;
 use std::path::PathBuf;
 
 use poph_store::{Direction, NewAgent, NewConversation, NewMessage, NewOrg, Origin, Role, Store};
 use poph_types::{HarnessConfig, OrgId};
 
-fn variavel(name: &str) -> Option<String> {
+fn variable(name: &str) -> Option<String> {
     std::env::var(name)
         .ok()
-        .filter(|valor| !valor.trim().is_empty())
+        .filter(|value| !value.trim().is_empty())
 }
 
-fn numero(name: &str, padrao: u64) -> u64 {
-    match variavel(name) {
-        Some(valor) => valor
+fn numero(name: &str, default: u64) -> u64 {
+    match variable(name) {
+        Some(value) => value
             .trim()
             .parse()
             .unwrap_or_else(|_| panic!("{name} precisa ser um número inteiro")),
-        None => padrao,
+        None => default,
     }
 }
 
-fn criar_org(store: &Store) -> OrgId {
+fn create_org(store: &Store) -> OrgId {
     store
         .orgs()
         .create(NewOrg {
@@ -48,23 +34,21 @@ fn criar_org(store: &Store) -> OrgId {
 
 #[test]
 #[ignore = "semeadura da medição MX-30; roda por scripts/measure-memory.sh"]
-fn semeia_conversas_para_a_medicao_de_memoria() {
-    let pasta = PathBuf::from(variavel("MX30_PASTA").expect("MX30_PASTA é obrigatória"));
+fn seeds_conversations_for_memory_measurement() {
+    let dir = PathBuf::from(variable("MX30_PASTA").expect("MX30_PASTA é obrigatória"));
     let rooms = numero("MX30_SALAS", 100);
-    let mensagens_por_sala = numero("MX30_MENSAGENS_POR_SALA", 1);
-    let ligado = numero("MX30_LIGADO", 1) == 1;
+    let messages_per_room = numero("MX30_MENSAGENS_POR_SALA", 1);
+    let enabled = numero("MX30_LIGADO", 1) == 1;
 
-    let dados = pasta.join("dados");
+    let dados = dir.join("dados");
     fs::create_dir_all(&dados).expect("pasta de dados");
 
     let mut config = HarnessConfig::default();
     config.data.directory = dados;
     let store = Store::open(&config).expect("abre o banco da medição");
 
-    let org = criar_org(&store);
-    if ligado {
-        // Antes de qualquer mensagem: o corte do backfill fica para trás e tudo que vier depois é
-        // espelhado pelo laço do módulo quando o `poph serve` subir.
+    let org = create_org(&store);
+    if enabled {
         store.matrix().enable(org).expect("liga a org no módulo");
     }
     let agent = store
@@ -80,7 +64,7 @@ fn semeia_conversas_para_a_medicao_de_memoria() {
         .expect("cria o agente")
         .id;
 
-    for indice in 0..rooms {
+    for index in 0..rooms {
         let conversation = store
             .conversations()
             .create(
@@ -89,13 +73,13 @@ fn semeia_conversas_para_a_medicao_de_memoria() {
                     agent_id: agent,
                     integration_id: None,
                     canal: "whatsapp".to_owned(),
-                    peer_externo: Some(format!("5511{:09}", indice)),
+                    peer_externo: Some(format!("5511{:09}", index)),
                     target_department: None,
                 },
             )
             .expect("cria a conversa")
             .id;
-        for n in 0..mensagens_por_sala {
+        for n in 0..messages_per_room {
             store
                 .messages()
                 .write(
@@ -106,7 +90,7 @@ fn semeia_conversas_para_a_medicao_de_memoria() {
                         role: Role::User,
                         origin: Origin::Agente,
                         author_name: None,
-                        texto: format!("mensagem {n} do cliente {indice}"),
+                        texto: format!("mensagem {n} do cliente {index}"),
                         attachments_json: "[]".to_owned(),
                         external_id: None,
                         turn_id: None,
@@ -116,6 +100,6 @@ fn semeia_conversas_para_a_medicao_de_memoria() {
         }
     }
     eprintln!(
-        "semeadas {rooms} conversas com {mensagens_por_sala} mensagem(ns) cada (ligado={ligado})"
+        "semeadas {rooms} conversas com {messages_per_room} mensagem(ns) cada (ligado={enabled})"
     );
 }
