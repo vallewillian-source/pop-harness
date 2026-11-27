@@ -316,7 +316,7 @@ marks the dependency as used, because the Rust `unused_dependencies` lint breaks
 
 ### 8.4 Script compilation (`compilador/forma`)
 
-- The script is read as a syntax tree and is never executed: there is no interpreter call and no allocation guided by script data. The only Starlark evaluation is loading the module (`language::load_module`), which runs after the shape is valid and the limits are set. A single huge string in the script is refused as a shape error, not as a memory spike.
+- The script is read as a syntax tree and is never executed: there is no interpreter call and no allocation guided by script data. The only Starlark evaluation is loading the module (`language::load_module`), which runs after the shape is valid and the limits are set.
 - Two passes, on purpose. **Collection** turns each declaration into a raw structure that keeps the position of each piece, and checks the local shape (unknown argument, wrong type, invalid id, combinator arity). **Closure** runs with every declaration known: it resolves destinations (`inicio`, `vai_para`, `entao`, `senao`), checks each rule against its step and field, detects decision cycles and emits the reach and use warnings. A decision may point to a step declared later, and a `def` may be used before it is defined; only the closure pass can know that.
 - The IR is produced only when there is no error. Warnings do not block it.
 - `FLX62` (step with an actor and no action for that actor) is reported only when every action in the step is restricted to an actor. An action without `ator` is run by any actor, so the warning would be false.
