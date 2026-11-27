@@ -279,6 +279,7 @@ accepts writes, or can be created); `harness.db` and `rag.db` (SQLite format and
 
 - It writes only a test file in the data folder and deletes it right after.
 - A missing database is a **warning** (create it with `poph migrate`). A database that exists but is not SQLite is an **error**.
+- With the flow engine off, the report shows a **warning**, not an error: cases keep being created, only the engine stays stopped. The caps always appear, because they apply even with the engine off (validation runs first).
 - Exit code: `0` no error (warnings do not count); `1` with an error; `2` when it runs without a command.
 
 ## `poph migrate` (HR-07)

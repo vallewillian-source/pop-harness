@@ -5,7 +5,7 @@
 //! `retention`, `backup`, `jev`, `serve` e `openapi`. Saída: 0 quando está tudo certo; 1 quando há erro a
 //! corrigir; 2 sem comando.
 
-mod agente;
+mod agent;
 mod arquivo;
 mod backup;
 mod categoria;
@@ -24,7 +24,7 @@ mod matrix_admin;
 mod modelo;
 mod montagem;
 mod org;
-mod produto;
+mod product;
 mod rag;
 mod retencao;
 mod servidor;
@@ -78,10 +78,10 @@ enum Comando {
     Model(modelo::AcaoModelo),
     /// Gerencia agentes: identidade, modelo, parâmetros, handoff e categorias.
     #[command(subcommand)]
-    Agent(agente::AcaoAgente),
+    Agent(agent::AgentAction),
     /// Gerencia as instruções estruturadas e o texto composto do agente.
     #[command(subcommand)]
-    Instructions(agente::AcaoInstrucoes),
+    Instructions(agent::InstructionsAction),
     /// Gerencia as orgs (tenants): criar, listar, mostrar, alterar e excluir.
     #[command(subcommand)]
     Org(org::AcaoOrg),
@@ -96,13 +96,13 @@ enum Comando {
     Department(departamento::AcaoDepartamento),
     /// Base de conhecimento: grupos, itens, vínculo com agentes e índice (HR-17).
     #[command(subcommand)]
-    Kb(kb::AcaoKb),
+    Kb(kb::KbAction),
     /// Índice da busca semântica: `poph rag reindex` (mesmo comando do `poph kb reindex`).
     #[command(subcommand)]
     Rag(rag::AcaoRag),
     /// Produtos do catálogo: criar, listar, alterar, excluir e reindexar (HR-18).
     #[command(subcommand)]
-    Product(produto::AcaoProduto),
+    Product(product::ProductAction),
     /// Biblioteca de arquivos do agente: enviar, listar, mostrar e excluir (HR-24).
     #[command(subcommand)]
     File(arquivo::AcaoArquivo),
@@ -113,7 +113,7 @@ enum Comando {
     Jev(jev::AcaoJev),
     /// Fluxos da org: validar, publicar, listar, mostrar, comparar, formatar e liberar a agentes.
     #[command(subcommand)]
-    Flow(flow::AcaoFluxo),
+    Flow(flow::FlowAction),
     /// Fichas da org (um atendimento por Ficha): listar e mostrar, com as execuções de fluxo.
     #[command(subcommand)]
     Ficha(ficha::AcaoFicha),
@@ -164,11 +164,9 @@ fn main() -> ExitCode {
         Comando::Doctor(args) => executar_doctor(cli.config, &ambiente, args),
         Comando::Migrate(args) => executar_migrate(cli.config, &ambiente, args),
         Comando::Model(acao) => modelo::executar(cli.config, &ambiente, acao),
-        Comando::Agent(acao) => {
-            agente::executar_agente(cli.config, &ambiente, cli.org.as_deref(), acao)
-        }
+        Comando::Agent(acao) => agent::run_agent(cli.config, &ambiente, cli.org.as_deref(), acao),
         Comando::Instructions(acao) => {
-            agente::executar_instrucoes(cli.config, &ambiente, cli.org.as_deref(), acao)
+            agent::run_instructions(cli.config, &ambiente, cli.org.as_deref(), acao)
         }
         Comando::Org(acao) => org::executar(cli.config, &ambiente, cli.offline, acao),
         Comando::Token(acao) => {
@@ -181,7 +179,7 @@ fn main() -> ExitCode {
             departamento::executar(cli.config, &ambiente, cli.offline, cli.org.as_deref(), acao)
         }
         Comando::Jev(acao) => jev::executar(cli.config, &ambiente, acao),
-        Comando::Flow(acao) => flow::executar(cli.config, &ambiente, cli.org.as_deref(), acao),
+        Comando::Flow(acao) => flow::run(cli.config, &ambiente, cli.org.as_deref(), acao),
         Comando::Ficha(acao) => ficha::executar(cli.config, &ambiente, cli.org.as_deref(), acao),
         Comando::Retention(acao) => {
             retencao::executar(cli.config, &ambiente, cli.org.as_deref(), acao)
@@ -191,14 +189,12 @@ fn main() -> ExitCode {
         Comando::Matrix(acao) => {
             matrix::run(cli.config, &ambiente, cli.offline, cli.org.as_deref(), acao)
         }
-        Comando::Kb(acao) => {
-            kb::executar(cli.config, &ambiente, cli.offline, cli.org.as_deref(), acao)
-        }
+        Comando::Kb(acao) => kb::run(cli.config, &ambiente, cli.offline, cli.org.as_deref(), acao),
         Comando::Rag(acao) => {
             rag::executar(cli.config, &ambiente, cli.offline, cli.org.as_deref(), acao)
         }
         Comando::Product(acao) => {
-            produto::executar(cli.config, &ambiente, cli.offline, cli.org.as_deref(), acao)
+            product::run(cli.config, &ambiente, cli.offline, cli.org.as_deref(), acao)
         }
         Comando::File(acao) => {
             arquivo::executar(cli.config, &ambiente, cli.offline, cli.org.as_deref(), acao)
@@ -312,13 +308,13 @@ fn executar_doctor(
         .as_ref()
         .ok()
         .and_then(|config| poph_store::agents_by_provider_at(&config.harness_db()).ok());
-    let relatorio = doctor::gerar(doctor::Entrada {
+    let relatorio = doctor::generate(doctor::Input {
         config: carregada.as_ref(),
-        arquivo: arquivo.as_deref(),
+        file: arquivo.as_deref(),
         segredos: &segredos,
-        chave_llm: chave_llm.as_ref(),
-        ambiente: Some(ambiente),
-        agentes_por_provedor: agentes_por_provedor.as_deref(),
+        llm_key: chave_llm.as_ref(),
+        environment: Some(ambiente),
+        agents_by_provider: agentes_por_provedor.as_deref(),
     });
 
     if args.json {
@@ -327,7 +323,7 @@ fn executar_doctor(
         print!("{}", relatorio.texto());
     }
 
-    if relatorio.tem_erro() {
+    if relatorio.has_error() {
         ExitCode::from(1)
     } else {
         ExitCode::SUCCESS

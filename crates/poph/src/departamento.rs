@@ -13,8 +13,8 @@ use serde_json::{Value, json};
 
 use crate::config;
 use crate::support::{
-    abrir_com_org, describe, failure, parse_id, print_json, status_de_texto, status_em_portugues,
-    validar_limite, validar_texto,
+    abrir_com_org, describe, failure, parse_id, parse_status, print_json, status_in_portuguese,
+    validate_limit, validate_text,
 };
 
 /// Subcomandos de `poph department` (todos exigem `--org`).
@@ -120,7 +120,7 @@ pub fn executar(
 }
 
 fn criar(store: &Store, org: OrgId, args: CriarDepartamento) -> ExitCode {
-    let nome = match validar_texto("nome", &args.name, 120) {
+    let nome = match validate_text("nome", &args.name, 120) {
         Ok(nome) => nome,
         Err(erro) => return failure(erro),
     };
@@ -135,7 +135,7 @@ fn criar(store: &Store, org: OrgId, args: CriarDepartamento) -> ExitCode {
 }
 
 fn listar(store: &Store, org: OrgId, args: ListarDepartamentos) -> ExitCode {
-    let pagina = match validar_limite(args.limit) {
+    let pagina = match validate_limit(args.limit) {
         Ok(pagina) => pagina,
         Err(erro) => return failure(erro),
     };
@@ -156,7 +156,7 @@ fn listar(store: &Store, org: OrgId, args: ListarDepartamentos) -> ExitCode {
                     println!(
                         "{}  {:<9} {}",
                         departamento.id,
-                        status_em_portugues(departamento.status),
+                        status_in_portuguese(departamento.status),
                         departamento.name
                     );
                 }
@@ -189,13 +189,13 @@ fn atualizar(store: &Store, org: OrgId, args: AtualizarDepartamento) -> ExitCode
     let nome = match args
         .name
         .as_deref()
-        .map(|nome| validar_texto("nome", nome, 120))
+        .map(|nome| validate_text("nome", nome, 120))
         .transpose()
     {
         Ok(nome) => nome,
         Err(erro) => return failure(erro),
     };
-    let status = match args.status.as_deref().map(status_de_texto).transpose() {
+    let status = match args.status.as_deref().map(parse_status).transpose() {
         Ok(status) => status,
         Err(erro) => return failure(erro),
     };
@@ -291,7 +291,7 @@ fn texto_departamento(departamento: &Departamento) -> String {
         } else {
             &departamento.description
         },
-        status_em_portugues(departamento.status),
+        status_in_portuguese(departamento.status),
         departamento.version
     )
 }

@@ -135,12 +135,22 @@ or per-case labels.
 
 Valor fora da faixa é recusado com o nome da chave. O gate G9 vem ligado no padrão de instalação (`[jev].gates.g9`), e cada agente pode desligá-lo no `jev_json`. Ver [CONFIGURACAO.md](CONFIGURACAO.md).
 
-### 5.2 Comandos
+### 5.2 Commands
 
-- `poph flow validar|publicar|listar|mostrar|diff|formatar|liberar|retirar`. Depois da primeira publicação, `publicar` exige `--if-match`; `liberar` e `retirar` mudam a permissão do agente. Passo a passo em [RUNBOOKS.md](RUNBOOKS.md) (seção 7).
-- `poph ficha listar|mostrar`, com filtros `--status`, `--agente`, `--canal` e `--desde`.
-- `poph doctor`: mostra se o motor roda e os tetos em uso.
-- `poph --offline backup export|import`: o backup leva fluxos, revisões e permissões; com `--com-conversas`, leva também as Fichas e o histórico. Importar recusa sobrescrever por padrão ([BACKUP.md](BACKUP.md)).
+- `poph flow validar|publicar|listar|mostrar|diff|formatar|liberar|retirar`. After the first publication, `publicar` requires `--if-match`. Use `liberar` and `retirar` to change an agent's access to a flow. See [RUNBOOKS.md](RUNBOOKS.md) (section 7).
+- `poph ficha listar|mostrar`, with filters `--status`, `--agente`, `--canal` and `--desde`.
+- `poph doctor` reports whether the engine is running and shows the active limits.
+- `poph --offline backup export|import`: backups include flows, revisions and permissions. With `--com-conversas`, they also include Cases and their history. Imports refuse to overwrite by default ([BACKUP.md](BACKUP.md)).
+
+The flow CLI opens the database directly and shares compilation, validation, publishing, comparison and
+formatting with the API. Commands that read or write org data require `--org`. Validation can run
+without an org when no department resolution is needed. Formatting needs no org and writes the script
+only with `--escrever`.
+
+Publishing compiles the script first to get the slug from its `id`. An invalid script causes no flow
+write. The publication operation records the draft, revision and publication audit together, once.
+The CLI exits with `0` on success, `1` on command failure, and `2` on incorrect usage. JSON output
+uses the API representations and includes `versao_relatorio: 1`.
 
 ### 5.3 API
 

@@ -18,8 +18,8 @@ use serde_json::{Value, json};
 
 use crate::config;
 use crate::support::{
-    abrir_com_configuracao, describe, failure, pagina_de, parse_id, print_json, resolve_org,
-    resolver_agente,
+    describe, failure, open_with_configuration, parse_id, parse_page, print_json, resolve_agent,
+    resolve_org,
 };
 
 /// Versão do formato JSON desta saída (muda só se a forma mudar).
@@ -84,7 +84,7 @@ pub fn executar(
     org: Option<&str>,
     acao: AcaoFicha,
 ) -> ExitCode {
-    let resultado = abrir_com_configuracao(flag, ambiente).and_then(|(store, _configuracao)| {
+    let resultado = open_with_configuration(flag, ambiente).and_then(|(store, _configuracao)| {
         let org = org
             .ok_or_else(|| "informe --org com o id (UUID v7) ou o slug da org".to_owned())
             .and_then(|texto| resolve_org(&store, texto))?;
@@ -100,7 +100,7 @@ pub fn executar(
 }
 
 fn listar(store: &Store, org: OrgId, args: ListarArgs) -> Result<ExitCode, String> {
-    let pagina = pagina_de(args.limit, args.cursor.as_deref())?;
+    let pagina = parse_page(args.limit, args.cursor.as_deref())?;
     let filtro = RecordFilter {
         status: args
             .status
@@ -109,7 +109,7 @@ fn listar(store: &Store, org: OrgId, args: ListarArgs) -> Result<ExitCode, Strin
             .transpose()
             .map_err(|erro| erro.to_string())?,
         agent: match args.agente.as_deref() {
-            Some(texto) => Some(resolver_agente(store, org, texto)?.id),
+            Some(texto) => Some(resolve_agent(store, org, texto)?.id),
             None => None,
         },
         canal: match args.canal.as_deref() {

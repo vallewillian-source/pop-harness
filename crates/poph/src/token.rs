@@ -21,7 +21,7 @@ use serde_json::{Value, json};
 
 use crate::config;
 use crate::support::{
-    abrir_com_org, describe, failure, parse_id, print_json, validar_limite, validar_texto,
+    abrir_com_org, describe, failure, parse_id, print_json, validate_limit, validate_text,
 };
 
 /// Prefixo do valor gerado (ajuda a reconhecer o segredo em logs e em varreduras).
@@ -122,7 +122,7 @@ pub fn executar(
 }
 
 fn criar(store: &Store, org: OrgId, args: CriarToken) -> ExitCode {
-    let rotulo = match validar_texto("rótulo", &args.label, 80) {
+    let rotulo = match validate_text("rótulo", &args.label, 80) {
         Ok(rotulo) => rotulo,
         Err(erro) => return failure(erro),
     };
@@ -160,7 +160,7 @@ fn criar(store: &Store, org: OrgId, args: CriarToken) -> ExitCode {
 
 /// `poph token global`: gera o valor e o bloco de configuração, sem gravar em lugar nenhum.
 fn gerar_global(args: GerarGlobal) -> ExitCode {
-    let rotulo = match validar_texto("rótulo", &args.label, 80) {
+    let rotulo = match validate_text("rótulo", &args.label, 80) {
         Ok(rotulo) => rotulo,
         Err(erro) => return failure(erro),
     };
@@ -195,7 +195,7 @@ fn gerar_global(args: GerarGlobal) -> ExitCode {
 }
 
 fn listar(store: &Store, org: OrgId, args: ListarTokens) -> ExitCode {
-    let pagina: Page = match validar_limite(args.limit) {
+    let pagina: Page = match validate_limit(args.limit) {
         Ok(pagina) => pagina,
         Err(erro) => return failure(erro),
     };

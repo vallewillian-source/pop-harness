@@ -3,7 +3,7 @@
 > How the agent stops answering prices "from memory": the catalog is indexed in `rag.db` (text only), the
 > price comes from the record at the moment of the reply, and the model only receives a value through the tool.
 > Code: `crates/poph-store/src/repos/produtos.rs` (record), `crates/poph-rag/src/index.rs` (product index),
-> `crates/poph-agent/src/produtos.rs` (service and tool), `crates/poph/src/produto.rs` (CLI) and
+> `crates/poph-agent/src/produtos.rs` (service and tool), `crates/poph/src/product.rs` (CLI) and
 > `crates/poph-agent/src/turno/` (link with the turn).
 
 ## 1. Design
@@ -138,10 +138,14 @@ poph --offline --org <org> product reindex [--agent <id|slug>]
   is formatted from the cents (`25050` → "R$ 250,50").
 - `--category` accepts an id (UUID v7) or an exact name, case-insensitive.
 - `--if-match` is required for changes; an outdated `If-Match` returns a version conflict.
-- Every write reindexes the org's agents right away (hash comparison: only what changed is re-embedded). Without the
-  model installed, the write still takes effect and the command warns you: run `poph product reindex` afterwards.
-- `delete` requires `--force` (deletion removes the product from the catalog; cart items keep `product_id` null, by
-  the schema's decision).
+
+The product write commands attempt to reindex the org's agents immediately. The index compares hashes
+and embeds only changed content. Price is read from the product record and stays outside the index.
+If indexing is unavailable, the write still takes effect and the CLI prints a warning with the
+`poph product reindex` recovery command.
+
+Deletion requires `--force`. The CLI counts references before deleting so it can report how many cart
+items and carts are affected. Those items retain their stored price, and their `product_id` becomes null.
 
 ## 7. What HR-19 (cart) and HR-42 (Console) consume
 

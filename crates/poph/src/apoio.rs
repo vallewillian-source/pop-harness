@@ -42,7 +42,7 @@ pub fn abrir_banco(flag: Option<PathBuf>, ambiente: &config::Environment) -> Res
 
 /// Abre a configuração e o banco e devolve as duas coisas. Os comandos de fluxo precisam da
 /// configuração `[fluxos]` (tetos e tamanho do cache) além do banco.
-pub fn abrir_com_configuracao(
+pub fn open_with_configuration(
     flag: Option<PathBuf>,
     ambiente: &config::Environment,
 ) -> Result<(Store, HarnessConfig), String> {
@@ -56,11 +56,7 @@ pub fn abrir_com_configuracao(
 }
 
 /// Acha o agente pelo id (UUID v7) ou pelo slug, dentro da org.
-pub fn resolver_agente(
-    store: &Store,
-    org: OrgId,
-    texto: &str,
-) -> Result<poph_store::Agente, String> {
+pub fn resolve_agent(store: &Store, org: OrgId, texto: &str) -> Result<poph_store::Agente, String> {
     let encontrado = if uuid::Uuid::parse_str(texto).is_ok() {
         let id: AgentId = parse_id(texto)?;
         store.agents().get(org, id)
@@ -77,7 +73,7 @@ pub fn resolver_agente(
 }
 
 /// Acha o fluxo pelo id (UUID v7) ou pelo slug, dentro da org.
-pub fn resolver_fluxo(store: &Store, org: OrgId, texto: &str) -> Result<Fluxo, String> {
+pub fn resolve_flow(store: &Store, org: OrgId, texto: &str) -> Result<Fluxo, String> {
     let achado = if uuid::Uuid::parse_str(texto).is_ok() {
         let id: FlowId = parse_id(texto)?;
         store.flows().get(org, id).map(Some)
@@ -93,8 +89,8 @@ pub fn resolver_fluxo(store: &Store, org: OrgId, texto: &str) -> Result<Fluxo, S
 }
 
 /// Página pedida na linha de comando: `--limit` de 1 a 200 e o cursor (id da página anterior).
-pub fn pagina_de(limite: u32, cursor: Option<&str>) -> Result<Page, String> {
-    let mut pagina = validar_limite(limite)?;
+pub fn parse_page(limite: u32, cursor: Option<&str>) -> Result<Page, String> {
+    let mut pagina = validate_limit(limite)?;
     pagina.after =
         match cursor {
             None | Some("") => None,
@@ -173,7 +169,7 @@ pub fn describe(erro: &StoreError) -> String {
 }
 
 /// Lê a situação digitada (`active`, `inactive` ou `archived`, como no banco).
-pub fn status_de_texto(texto: &str) -> Result<Status, String> {
+pub fn parse_status(texto: &str) -> Result<Status, String> {
     match texto {
         "active" => Ok(Status::Active),
         "inactive" => Ok(Status::Inactive),
@@ -185,7 +181,7 @@ pub fn status_de_texto(texto: &str) -> Result<Status, String> {
 }
 
 /// Situação em português para a saída de texto.
-pub fn status_em_portugues(status: Status) -> &'static str {
+pub fn status_in_portuguese(status: Status) -> &'static str {
     match status {
         Status::Active => "ativo",
         Status::Inactive => "inativo",
@@ -194,7 +190,7 @@ pub fn status_em_portugues(status: Status) -> &'static str {
 }
 
 /// Valida um texto obrigatório: sem espaços nas pontas, não vazio, até `maximo` caracteres.
-pub fn validar_texto(campo: &str, valor: &str, maximo: usize) -> Result<String, String> {
+pub fn validate_text(campo: &str, valor: &str, maximo: usize) -> Result<String, String> {
     let limpo = valor.trim();
     if limpo.is_empty() {
         return Err(format!("{campo} não pode ficar vazio"));
@@ -206,7 +202,7 @@ pub fn validar_texto(campo: &str, valor: &str, maximo: usize) -> Result<String, 
 }
 
 /// `--limit` de listagem: 1 a 200.
-pub fn validar_limite(limite: u32) -> Result<Page, String> {
+pub fn validate_limit(limite: u32) -> Result<Page, String> {
     if (1..=200).contains(&limite) {
         Ok(Page::with_limit(limite))
     } else {
@@ -268,24 +264,24 @@ mod testes {
 
     #[test]
     fn status_aceita_so_os_textos_do_banco() {
-        assert_eq!(status_de_texto("active").unwrap(), Status::Active);
-        assert_eq!(status_de_texto("inactive").unwrap(), Status::Inactive);
-        assert_eq!(status_de_texto("archived").unwrap(), Status::Archived);
-        let erro = status_de_texto("ativo").unwrap_err();
+        assert_eq!(parse_status("active").unwrap(), Status::Active);
+        assert_eq!(parse_status("inactive").unwrap(), Status::Inactive);
+        assert_eq!(parse_status("archived").unwrap(), Status::Archived);
+        let erro = parse_status("ativo").unwrap_err();
         assert!(erro.contains("active, inactive ou archived"), "{erro}");
     }
 
     #[test]
     fn texto_obrigatorio_recusa_vazio_e_longo() {
-        assert_eq!(validar_texto("nome", "  Vendas  ", 10).unwrap(), "Vendas");
+        assert_eq!(validate_text("nome", "  Vendas  ", 10).unwrap(), "Vendas");
         assert!(
-            validar_texto("nome", "   ", 10)
+            validate_text("nome", "   ", 10)
                 .unwrap_err()
                 .contains("não pode ficar vazio")
         );
         let longo = "x".repeat(11);
         assert!(
-            validar_texto("nome", &longo, 10)
+            validate_text("nome", &longo, 10)
                 .unwrap_err()
                 .contains("passa de 10")
         );
@@ -293,9 +289,9 @@ mod testes {
 
     #[test]
     fn limite_fica_entre_1_e_200() {
-        assert!(validar_limite(0).is_err());
-        assert!(validar_limite(201).is_err());
-        assert_eq!(validar_limite(200).unwrap().limit, 200);
+        assert!(validate_limit(0).is_err());
+        assert!(validate_limit(201).is_err());
+        assert_eq!(validate_limit(200).unwrap().limit, 200);
     }
 
     #[test]

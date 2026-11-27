@@ -1,11 +1,3 @@
-//! `poph kb`: base de conhecimento do agente (HR-17).
-//!
-//! Grupos, itens (até 1000 caracteres), vínculo grupo↔agente e o estado do índice. Toda escrita que
-//! muda o que o agente deve saber reindexa os agentes ligados na hora — se o modelo de embedding
-//! estiver instalado. Sem o modelo, a escrita vale e o comando avisa que o índice ficou pendente.
-//!
-//! `poph kb reindex` reconstrói o índice de um agente (ou de todos os agentes da org).
-
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -22,285 +14,233 @@ use serde_json::{Value, json};
 
 use crate::config;
 use crate::support::{
-    describe, failure, parse_id, status_de_texto, status_em_portugues, validar_texto,
+    describe, failure, parse_id, parse_status, status_in_portuguese, validate_text,
 };
 
-/// Limite do conteúdo de um item, em caracteres (PARIDADE_AGENTE.md §3).
-const LIMITE_CONTEUDO: usize = 1000;
+const CONTENT_LIMIT: usize = 1000;
 
-/// Subcomandos de `poph kb`.
 #[derive(Debug, Subcommand)]
-pub enum AcaoKb {
-    /// Grupos de conhecimento: criar, listar, mostrar, alterar e excluir.
+pub enum KbAction {
+    #[command(about = "Grupos de conhecimento: criar, listar, mostrar, alterar e excluir")]
     #[command(subcommand)]
-    Group(AcaoGrupo),
-    /// Itens da base: criar, listar, mostrar, alterar e excluir.
+    Group(GroupAction),
+    #[command(about = "Itens da base: criar, listar, mostrar, alterar e excluir")]
     #[command(subcommand)]
-    Item(AcaoItem),
-    /// Liga um grupo a um agente (o agente passa a consultar os itens dele).
+    Item(ItemAction),
+    #[command(about = "Liga um grupo a um agente (o agente passa a consultar os itens dele)")]
     Link(LinkArgs),
-    /// Desliga um grupo de um agente.
+    #[command(about = "Desliga um grupo de um agente")]
     Unlink(LinkArgs),
-    /// Reconstrói o índice de um agente (ou de todos os agentes da org).
+    #[command(about = "Reconstrói o índice de um agente (ou de todos os agentes da org)")]
     Reindex(ReindexArgs),
-    /// Consulta a base como o agente faria (busca híbrida).
+    #[command(about = "Consulta a base como o agente faria (busca híbrida)")]
     Search(SearchArgs),
-    /// Mostra o estado do índice dos itens (geral ou de um grupo).
+    #[command(about = "Mostra o estado do índice dos itens (geral ou de um grupo)")]
     Status(StatusArgs),
 }
 
-/// Subcomandos de `poph kb group`.
 #[derive(Debug, Subcommand)]
-pub enum AcaoGrupo {
-    /// Cria um grupo.
-    Create(CriarGrupo),
-    /// Lista os grupos da org.
-    List(ListarGrupos),
-    /// Mostra um grupo e os agentes que o usam.
-    Show(RefGrupo),
-    /// Altera um grupo com `--if-match`.
-    Update(AtualizarGrupo),
-    /// Exclui o grupo e os itens dele. Exige `--force`.
-    Delete(ExcluirGrupo),
+pub enum GroupAction {
+    #[command(about = "Cria um grupo")]
+    Create(CreateGroupArgs),
+    #[command(about = "Lista os grupos da org")]
+    List(ListGroupsArgs),
+    #[command(about = "Mostra um grupo e os agentes que o usam")]
+    Show(GroupRef),
+    #[command(about = "Altera um grupo com `--if-match`")]
+    Update(UpdateGroupArgs),
+    #[command(about = "Exclui o grupo e os itens dele. Exige `--force`")]
+    Delete(DeleteGroupArgs),
 }
 
-/// Subcomandos de `poph kb item`.
 #[derive(Debug, Subcommand)]
-pub enum AcaoItem {
-    /// Cria um item (conteúdo até 1000 caracteres).
-    Create(CriarItem),
-    /// Lista os itens de um grupo, com o estado no índice.
-    List(ListarItens),
-    /// Mostra um item, com a fonte e o estado no índice.
+pub enum ItemAction {
+    #[command(about = "Cria um item (conteúdo até 1000 caracteres)")]
+    Create(CreateItemArgs),
+    #[command(about = "Lista os itens de um grupo, com o estado no índice")]
+    List(ListItemsArgs),
+    #[command(about = "Mostra um item, com a fonte e o estado no índice")]
     Show(RefItem),
-    /// Altera um item com `--if-match`.
-    Update(AtualizarItem),
-    /// Exclui o item.
-    Delete(ExcluirItem),
+    #[command(about = "Altera um item com `--if-match`")]
+    Update(UpdateItemArgs),
+    #[command(about = "Exclui o item")]
+    Delete(DeleteItemArgs),
 }
 
-/// `poph kb group create`.
 #[derive(Debug, Args)]
-pub struct CriarGrupo {
-    /// Nome (até 120 caracteres; não repete na org).
-    #[arg(long)]
+pub struct CreateGroupArgs {
+    #[arg(long, help = "Nome (até 120 caracteres; não repete na org)")]
     pub name: String,
-    /// Descrição curta.
-    #[arg(long, default_value = "")]
+    #[arg(long, default_value = "", help = "Descrição curta")]
     pub description: String,
-    /// Saída em JSON.
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON")]
     pub json: bool,
 }
 
-/// `poph kb group list`.
 #[derive(Debug, Args)]
-pub struct ListarGrupos {
-    /// Quantos grupos trazer (1 a 200).
-    #[arg(long, default_value_t = 50)]
+pub struct ListGroupsArgs {
+    #[arg(long, default_value_t = 50, help = "Quantos grupos trazer (1 a 200)")]
     pub limit: u32,
-    /// Saída em JSON.
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON")]
     pub json: bool,
 }
 
-/// Referência a um grupo.
 #[derive(Debug, Args)]
-pub struct RefGrupo {
-    /// Id (UUID v7) do grupo.
-    pub grupo: String,
-    /// Saída em JSON.
-    #[arg(long)]
+pub struct GroupRef {
+    #[arg(value_name = "GRUPO", help = "Id (UUID v7) do grupo")]
+    pub group: String,
+    #[arg(long, help = "Saída em JSON")]
     pub json: bool,
 }
 
-/// `poph kb group update`.
 #[derive(Debug, Args)]
-pub struct AtualizarGrupo {
-    /// Id (UUID v7) do grupo.
-    pub grupo: String,
-    /// Versão lida com `show` (`If-Match`). Obrigatória.
-    #[arg(long)]
+pub struct UpdateGroupArgs {
+    #[arg(value_name = "GRUPO", help = "Id (UUID v7) do grupo")]
+    pub group: String,
+    #[arg(long, help = "Versão lida com `show` (`If-Match`). Obrigatória")]
     pub if_match: u64,
-    /// Novo nome.
-    #[arg(long)]
+    #[arg(long, help = "Novo nome")]
     pub name: Option<String>,
-    /// Nova descrição.
-    #[arg(long)]
+    #[arg(long, help = "Nova descrição")]
     pub description: Option<String>,
-    /// Nova situação: `active`, `inactive` ou `archived` (inativo sai do índice, D-05).
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Nova situação: `active`, `inactive` ou `archived` (inativo sai do índice, D-05)"
+    )]
     pub status: Option<String>,
-    /// Saída em JSON.
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON")]
     pub json: bool,
 }
 
-/// `poph kb group delete`.
 #[derive(Debug, Args)]
-pub struct ExcluirGrupo {
-    /// Id (UUID v7) do grupo.
-    pub grupo: String,
-    /// Confirma: os itens do grupo saem junto.
-    #[arg(long)]
+pub struct DeleteGroupArgs {
+    #[arg(value_name = "GRUPO", help = "Id (UUID v7) do grupo")]
+    pub group: String,
+    #[arg(long, help = "Confirma: os itens do grupo saem junto")]
     pub force: bool,
-    /// Saída em JSON.
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON")]
     pub json: bool,
 }
 
-/// `poph kb item create`.
 #[derive(Debug, Args)]
-pub struct CriarItem {
-    /// Grupo dono (id UUID v7).
-    #[arg(long)]
+pub struct CreateItemArgs {
+    #[arg(long, help = "Grupo dono (id UUID v7)")]
     pub group: String,
-    /// Título (vira a fonte mostrada ao modelo).
-    #[arg(long)]
+    #[arg(long, help = "Título (vira a fonte mostrada ao modelo)")]
     pub title: String,
-    /// Conteúdo do item.
-    #[arg(long, conflicts_with = "content_file")]
+    #[arg(long, conflicts_with = "content_file", help = "Conteúdo do item")]
     pub content: Option<String>,
-    /// Arquivo com o conteúdo do item.
-    #[arg(long, value_name = "ARQUIVO")]
+    #[arg(long, value_name = "ARQUIVO", help = "Arquivo com o conteúdo do item")]
     pub content_file: Option<PathBuf>,
-    /// Etiquetas separadas por vírgula.
-    #[arg(long, value_delimiter = ',')]
+    #[arg(long, value_delimiter = ',', help = "Etiquetas separadas por vírgula")]
     pub tag: Vec<String>,
-    /// Posição dentro do grupo.
-    #[arg(long, default_value_t = 0)]
+    #[arg(long, default_value_t = 0, help = "Posição dentro do grupo")]
     pub position: i64,
-    /// Saída em JSON.
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON")]
     pub json: bool,
 }
 
-/// `poph kb item list`.
 #[derive(Debug, Args)]
-pub struct ListarItens {
-    /// Grupo dono (id UUID v7).
-    #[arg(long)]
+pub struct ListItemsArgs {
+    #[arg(long, help = "Grupo dono (id UUID v7)")]
     pub group: String,
-    /// Quantos itens trazer (1 a 200).
-    #[arg(long, default_value_t = 50)]
+    #[arg(long, default_value_t = 50, help = "Quantos itens trazer (1 a 200)")]
     pub limit: u32,
-    /// Saída em JSON.
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON")]
     pub json: bool,
 }
 
-/// Referência a um item.
 #[derive(Debug, Args)]
 pub struct RefItem {
-    /// Id (UUID v7) do item.
+    #[arg(value_name = "ITEM", help = "Id (UUID v7) do item")]
     pub item: String,
-    /// Saída em JSON.
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON")]
     pub json: bool,
 }
 
-/// `poph kb item update`.
 #[derive(Debug, Args)]
-pub struct AtualizarItem {
-    /// Id (UUID v7) do item.
+pub struct UpdateItemArgs {
+    #[arg(value_name = "ITEM", help = "Id (UUID v7) do item")]
     pub item: String,
-    /// Versão lida com `show` (`If-Match`). Obrigatória.
-    #[arg(long)]
+    #[arg(long, help = "Versão lida com `show` (`If-Match`). Obrigatória")]
     pub if_match: u64,
-    /// Move para outro grupo.
-    #[arg(long)]
+    #[arg(long, help = "Move para outro grupo")]
     pub group: Option<String>,
-    /// Novo título.
-    #[arg(long)]
+    #[arg(long, help = "Novo título")]
     pub title: Option<String>,
-    /// Novo conteúdo.
-    #[arg(long, conflicts_with = "content_file")]
+    #[arg(long, conflicts_with = "content_file", help = "Novo conteúdo")]
     pub content: Option<String>,
-    /// Arquivo com o novo conteúdo.
-    #[arg(long, value_name = "ARQUIVO")]
+    #[arg(long, value_name = "ARQUIVO", help = "Arquivo com o novo conteúdo")]
     pub content_file: Option<PathBuf>,
-    /// Novas etiquetas separadas por vírgula (substitui as anteriores).
-    #[arg(long, value_delimiter = ',')]
+    #[arg(
+        long,
+        value_delimiter = ',',
+        help = "Novas etiquetas separadas por vírgula (substitui as anteriores)"
+    )]
     pub tag: Vec<String>,
-    /// Nova posição.
-    #[arg(long)]
+    #[arg(long, help = "Nova posição")]
     pub position: Option<i64>,
-    /// Nova situação: `active`, `inactive` ou `archived`.
-    #[arg(long)]
+    #[arg(long, help = "Nova situação: `active`, `inactive` ou `archived`")]
     pub status: Option<String>,
-    /// Saída em JSON.
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON")]
     pub json: bool,
 }
 
-/// `poph kb item delete`.
 #[derive(Debug, Args)]
-pub struct ExcluirItem {
-    /// Id (UUID v7) do item.
+pub struct DeleteItemArgs {
+    #[arg(value_name = "ITEM", help = "Id (UUID v7) do item")]
     pub item: String,
-    /// Saída em JSON.
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON")]
     pub json: bool,
 }
 
-/// `poph kb link` e `poph kb unlink`.
 #[derive(Debug, Args)]
 pub struct LinkArgs {
-    /// Grupo (id UUID v7).
-    pub grupo: String,
-    /// Agente (id UUID v7 ou slug).
-    #[arg(long)]
+    #[arg(value_name = "GRUPO", help = "Grupo (id UUID v7)")]
+    pub group: String,
+    #[arg(long, help = "Agente (id UUID v7 ou slug)")]
     pub agent: String,
-    /// Saída em JSON.
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON")]
     pub json: bool,
 }
 
-/// `poph kb reindex`.
 #[derive(Debug, Args)]
 pub struct ReindexArgs {
-    /// Agente (id UUID v7 ou slug). Sem ele, reindexa todos os agentes da org.
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Agente (id UUID v7 ou slug). Sem ele, reindexa todos os agentes da org"
+    )]
     pub agent: Option<String>,
-    /// Saída em JSON.
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON")]
     pub json: bool,
 }
 
-/// `poph kb search`.
 #[derive(Debug, Args)]
 pub struct SearchArgs {
-    /// Texto da consulta.
-    pub consulta: String,
-    /// Agente cuja base será consultada (id UUID v7 ou slug).
-    #[arg(long)]
+    #[arg(value_name = "CONSULTA", help = "Texto da consulta")]
+    pub query: String,
+    #[arg(long, help = "Agente cuja base será consultada (id UUID v7 ou slug)")]
     pub agent: String,
-    /// Quantos trechos trazer (padrão: o top-k do agente).
-    #[arg(long)]
+    #[arg(long, help = "Quantos trechos trazer (padrão: o top-k do agente)")]
     pub top_k: Option<usize>,
-    /// Saída em JSON.
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON")]
     pub json: bool,
 }
 
-/// `poph kb status`.
 #[derive(Debug, Args)]
 pub struct StatusArgs {
-    /// Limita a um grupo (id UUID v7).
-    #[arg(long)]
+    #[arg(long, help = "Limita a um grupo (id UUID v7)")]
     pub group: Option<String>,
-    /// Saída em JSON.
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON")]
     pub json: bool,
 }
 
-/// Executa um subcomando de `poph kb`.
-pub fn executar(
+pub fn run(
     flag: Option<PathBuf>,
-    ambiente: &config::Environment,
+    environment: &config::Environment,
     offline: bool,
     org: Option<&str>,
-    acao: AcaoKb,
+    acao: KbAction,
 ) -> ExitCode {
     if !offline {
         return failure(
@@ -308,93 +248,85 @@ pub fn executar(
              com servidor não existe",
         );
     }
-    let (store, org, configuracao) = match abrir(flag, ambiente, org) {
+    let (store, org, configuracao) = match open_base(flag, environment, org) {
         Ok(trio) => trio,
-        Err(erro) => return failure(erro),
+        Err(error) => return failure(error),
     };
-    let contexto = Contexto {
+    let context = Context {
         store,
         org,
         configuracao,
     };
     match acao {
-        AcaoKb::Group(AcaoGrupo::Create(args)) => contexto.criar_grupo(args),
-        AcaoKb::Group(AcaoGrupo::List(args)) => contexto.listar_grupos(args),
-        AcaoKb::Group(AcaoGrupo::Show(args)) => contexto.mostrar_grupo(args),
-        AcaoKb::Group(AcaoGrupo::Update(args)) => contexto.atualizar_grupo(args),
-        AcaoKb::Group(AcaoGrupo::Delete(args)) => contexto.excluir_grupo(args),
-        AcaoKb::Item(AcaoItem::Create(args)) => contexto.criar_item(args),
-        AcaoKb::Item(AcaoItem::List(args)) => contexto.listar_itens(args),
-        AcaoKb::Item(AcaoItem::Show(args)) => contexto.mostrar_item(args),
-        AcaoKb::Item(AcaoItem::Update(args)) => contexto.atualizar_item(args),
-        AcaoKb::Item(AcaoItem::Delete(args)) => contexto.excluir_item(args),
-        AcaoKb::Link(args) => contexto.vincular(args, true),
-        AcaoKb::Unlink(args) => contexto.vincular(args, false),
-        AcaoKb::Reindex(args) => contexto.reindexar(args),
-        AcaoKb::Search(args) => contexto.buscar(args),
-        AcaoKb::Status(args) => contexto.status(args),
+        KbAction::Group(GroupAction::Create(args)) => context.create_group(args),
+        KbAction::Group(GroupAction::List(args)) => context.list_groups(args),
+        KbAction::Group(GroupAction::Show(args)) => context.show_group(args),
+        KbAction::Group(GroupAction::Update(args)) => context.update_group(args),
+        KbAction::Group(GroupAction::Delete(args)) => context.delete_group(args),
+        KbAction::Item(ItemAction::Create(args)) => context.criar_item(args),
+        KbAction::Item(ItemAction::List(args)) => context.listar_itens(args),
+        KbAction::Item(ItemAction::Show(args)) => context.mostrar_item(args),
+        KbAction::Item(ItemAction::Update(args)) => context.atualizar_item(args),
+        KbAction::Item(ItemAction::Delete(args)) => context.excluir_item(args),
+        KbAction::Link(args) => context.vincular(args, true),
+        KbAction::Unlink(args) => context.vincular(args, false),
+        KbAction::Reindex(args) => context.reindexar(args),
+        KbAction::Search(args) => context.search(args),
+        KbAction::Status(args) => context.status(args),
     }
 }
 
-fn abrir(
+fn open_base(
     flag: Option<PathBuf>,
-    ambiente: &config::Environment,
+    environment: &config::Environment,
     org: Option<&str>,
 ) -> Result<(Arc<Store>, OrgId, HarnessConfig), String> {
     let texto =
         org.ok_or_else(|| "informe --org com o id (UUID v7) ou o slug da org".to_owned())?;
-    let pasta = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let arquivo = config::resolve_file(flag.as_deref(), ambiente, &pasta);
+    let dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let file = config::resolve_file(flag.as_deref(), environment, &dir);
     let configuracao =
-        config::load(arquivo.as_deref(), ambiente).map_err(|erro| format!("{erro}"))?;
+        config::load(file.as_deref(), environment).map_err(|error| format!("{error}"))?;
     let store = Arc::new(
-        Store::open(&configuracao).map_err(|erro| format!("não consegui abrir o banco: {erro}"))?,
+        Store::open(&configuracao)
+            .map_err(|error| format!("não consegui abrir o banco: {error}"))?,
     );
     let org = crate::support::resolve_org(&store, texto)?;
     Ok((store, org, configuracao))
 }
 
-/// Estado do índice de um item.
-///
-/// - `indexado`: o hash do conteúdo atual está gravado no `rag.db` para todos os agentes ligados;
-/// - `pendente`: o conteúdo mudou (ou nunca foi indexado) e falta sincronizar;
-/// - `inativo`: item ou grupo inativo — fora do índice de propósito (D-05);
-/// - `nao_vinculado`: nenhum agente usa o grupo;
-/// - `erro`: não deu para conferir (modelo de embedding indisponível, índice ilegível).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EstadoIndice {
-    Indexado,
-    Pendente,
-    Inativo,
-    NaoVinculado,
-    Erro,
+enum IndexState {
+    Indexed,
+    Pending,
+    Inactive,
+    NotLinked,
+    Error,
 }
 
-impl EstadoIndice {
-    fn como_texto(self) -> &'static str {
+impl IndexState {
+    fn as_text(self) -> &'static str {
         match self {
-            EstadoIndice::Indexado => "indexado",
-            EstadoIndice::Pendente => "pendente",
-            EstadoIndice::Inativo => "inativo",
-            EstadoIndice::NaoVinculado => "nao_vinculado",
-            EstadoIndice::Erro => "erro",
+            IndexState::Indexed => "indexado",
+            IndexState::Pending => "pendente",
+            IndexState::Inactive => "inativo",
+            IndexState::NotLinked => "nao_vinculado",
+            IndexState::Error => "erro",
         }
     }
 }
 
-struct Contexto {
+struct Context {
     store: Arc<Store>,
     org: OrgId,
     configuracao: HarnessConfig,
 }
 
-impl Contexto {
-    // ───────────────────────────── Grupos ─────────────────────────────
-
-    fn criar_grupo(&self, args: CriarGrupo) -> ExitCode {
-        let nome = match validar_texto("nome do grupo", &args.name, 120) {
+impl Context {
+    fn create_group(&self, args: CreateGroupArgs) -> ExitCode {
+        let nome = match validate_text("nome do grupo", &args.name, 120) {
             Ok(nome) => nome,
-            Err(erro) => return failure(erro),
+            Err(error) => return failure(error),
         };
         match self.store.knowledge().create_group(
             self.org,
@@ -403,87 +335,87 @@ impl Contexto {
                 description: args.description.trim().to_owned(),
             },
         ) {
-            Ok(grupo) => {
+            Ok(group) => {
                 if args.json {
-                    imprimir(&json!({
+                    print_json(&json!({
                         "versao_relatorio": 1,
-                        "group": json_grupo(&grupo),
+                        "group": group_json(&group),
                     }));
                 } else {
                     println!(
                         "grupo criado: {}  {}  (versão {})\nuse `poph kb item create --group {}` \
                          para adicionar itens",
-                        grupo.id, grupo.name, grupo.version, grupo.id
+                        group.id, group.name, group.version, group.id
                     );
                 }
                 ExitCode::SUCCESS
             }
-            Err(erro) => failure(describe(&erro)),
+            Err(error) => failure(describe(&error)),
         }
     }
 
-    fn listar_grupos(&self, args: ListarGrupos) -> ExitCode {
-        let pagina = Page::with_limit(args.limit);
-        match self.store.knowledge().list_groups(self.org, pagina) {
-            Ok(grupos) => {
+    fn list_groups(&self, args: ListGroupsArgs) -> ExitCode {
+        let page = Page::with_limit(args.limit);
+        match self.store.knowledge().list_groups(self.org, page) {
+            Ok(groups) => {
                 if args.json {
-                    let itens: Vec<Value> = grupos.iter().map(json_grupo).collect();
-                    imprimir(&json!({
+                    let items: Vec<Value> = groups.iter().map(group_json).collect();
+                    print_json(&json!({
                         "versao_relatorio": 1,
                         "org_id": self.org.to_string(),
-                        "total": itens.len(),
-                        "groups": itens,
+                        "total": items.len(),
+                        "groups": items,
                     }));
-                } else if grupos.is_empty() {
+                } else if groups.is_empty() {
                     println!("Nenhum grupo de conhecimento na org.");
                 } else {
-                    for grupo in &grupos {
+                    for group in &groups {
                         println!(
                             "{}  {:<9} {}",
-                            grupo.id,
-                            status_em_portugues(grupo.status),
-                            grupo.name
+                            group.id,
+                            status_in_portuguese(group.status),
+                            group.name
                         );
                     }
-                    println!("\n{} grupo(s).", grupos.len());
+                    println!("\n{} grupo(s).", groups.len());
                 }
                 ExitCode::SUCCESS
             }
-            Err(erro) => failure(describe(&erro)),
+            Err(error) => failure(describe(&error)),
         }
     }
 
-    fn mostrar_grupo(&self, args: RefGrupo) -> ExitCode {
-        let id: KnowledgeGroupId = match parse_id(&args.grupo) {
+    fn show_group(&self, args: GroupRef) -> ExitCode {
+        let id: KnowledgeGroupId = match parse_id(&args.group) {
             Ok(id) => id,
-            Err(erro) => return failure(erro),
+            Err(error) => return failure(error),
         };
         match self.store.knowledge().get_group(self.org, id) {
-            Ok(grupo) => {
-                let agentes = self
+            Ok(group) => {
+                let agents = self
                     .store
                     .knowledge()
                     .agents_from_group(self.org, id)
                     .unwrap_or_default();
                 if args.json {
-                    imprimir(&json!({
+                    print_json(&json!({
                         "versao_relatorio": 1,
-                        "group": json_grupo(&grupo),
-                        "agents": agentes.iter().map(AgentId::to_string).collect::<Vec<_>>(),
+                        "group": group_json(&group),
+                        "agents": agents.iter().map(AgentId::to_string).collect::<Vec<_>>(),
                     }));
                 } else {
-                    println!("id:          {}", grupo.id);
-                    println!("nome:        {}", grupo.name);
-                    println!("descrição:   {}", grupo.description);
-                    println!("situação:    {}", status_em_portugues(grupo.status));
-                    println!("versão:      {}", grupo.version);
-                    println!("itens:       {}", self.total_itens(id));
+                    println!("id:          {}", group.id);
+                    println!("nome:        {}", group.name);
+                    println!("descrição:   {}", group.description);
+                    println!("situação:    {}", status_in_portuguese(group.status));
+                    println!("versão:      {}", group.version);
+                    println!("itens:       {}", self.total_items(id));
                     println!(
                         "agentes:     {}",
-                        if agentes.is_empty() {
+                        if agents.is_empty() {
                             "nenhum (use `poph kb link`)".to_owned()
                         } else {
-                            agentes
+                            agents
                                 .iter()
                                 .map(AgentId::to_string)
                                 .collect::<Vec<_>>()
@@ -493,20 +425,20 @@ impl Contexto {
                 }
                 ExitCode::SUCCESS
             }
-            Err(erro) => failure(describe(&erro)),
+            Err(error) => failure(describe(&error)),
         }
     }
 
-    fn atualizar_grupo(&self, args: AtualizarGrupo) -> ExitCode {
-        let id: KnowledgeGroupId = match parse_id(&args.grupo) {
+    fn update_group(&self, args: UpdateGroupArgs) -> ExitCode {
+        let id: KnowledgeGroupId = match parse_id(&args.group) {
             Ok(id) => id,
-            Err(erro) => return failure(erro),
+            Err(error) => return failure(error),
         };
-        let status = match args.status.as_deref().map(status_de_texto).transpose() {
+        let status = match args.status.as_deref().map(parse_status).transpose() {
             Ok(status) => status,
-            Err(erro) => return failure(erro),
+            Err(error) => return failure(error),
         };
-        let mudanca = KnowledgeGroupChange {
+        let change = KnowledgeGroupChange {
             name: args.name,
             description: args.description,
             status,
@@ -514,164 +446,161 @@ impl Contexto {
         match self
             .store
             .knowledge()
-            .update_group(self.org, id, args.if_match, mudanca)
+            .update_group(self.org, id, args.if_match, change)
         {
-            Ok(grupo) => {
-                let aviso = self.sincronizar_grupo(id);
+            Ok(group) => {
+                let notice = self.sync_group(id);
                 if args.json {
-                    imprimir(&json!({
+                    print_json(&json!({
                         "versao_relatorio": 1,
-                        "group": json_grupo(&grupo),
-                        "index": aviso,
+                        "group": group_json(&group),
+                        "index": notice,
                     }));
                 } else {
                     println!(
                         "grupo atualizado: {}  {}  (versão {})",
-                        grupo.id, grupo.name, grupo.version
+                        group.id, group.name, group.version
                     );
-                    if let Some(aviso) = aviso {
-                        println!("[aviso] índice não atualizado: {aviso}");
+                    if let Some(notice) = notice {
+                        println!("[aviso] índice não atualizado: {notice}");
                     }
                 }
                 ExitCode::SUCCESS
             }
-            Err(erro) => failure(describe(&erro)),
+            Err(error) => failure(describe(&error)),
         }
     }
 
-    fn excluir_grupo(&self, args: ExcluirGrupo) -> ExitCode {
-        let id: KnowledgeGroupId = match parse_id(&args.grupo) {
+    fn delete_group(&self, args: DeleteGroupArgs) -> ExitCode {
+        let id: KnowledgeGroupId = match parse_id(&args.group) {
             Ok(id) => id,
-            Err(erro) => return failure(erro),
+            Err(error) => return failure(error),
         };
         if !args.force {
             return failure(format!(
                 "o grupo {id} pode ter itens e agentes ligados; confirme com --force"
             ));
         }
-        let agentes = self
+        let agents = self
             .store
             .knowledge()
             .agents_from_group(self.org, id)
             .unwrap_or_default();
         match self.store.knowledge().delete_group(self.org, id) {
             Ok(()) => {
-                // O grupo saiu; os agentes que o usavam precisam perder os trechos do índice.
-                let aviso = self.reindexar_agentes(&agentes);
+                let notice = self.reindex_agents(&agents);
                 if args.json {
-                    imprimir(&json!({
+                    print_json(&json!({
                         "versao_relatorio": 1,
                         "deleted": id.to_string(),
-                        "index": aviso,
+                        "index": notice,
                     }));
                 } else {
                     println!("grupo {id} excluído (itens e vínculos saíram junto)");
-                    if let Some(aviso) = aviso {
-                        println!("[aviso] índice não atualizado: {aviso}");
+                    if let Some(notice) = notice {
+                        println!("[aviso] índice não atualizado: {notice}");
                     }
                 }
                 ExitCode::SUCCESS
             }
-            Err(erro) => failure(describe(&erro)),
+            Err(error) => failure(describe(&error)),
         }
     }
 
-    // ───────────────────────────── Itens ─────────────────────────────
-
-    fn criar_item(&self, args: CriarItem) -> ExitCode {
-        let grupo: KnowledgeGroupId = match parse_id(&args.group) {
+    fn criar_item(&self, args: CreateItemArgs) -> ExitCode {
+        let group: KnowledgeGroupId = match parse_id(&args.group) {
             Ok(id) => id,
-            Err(erro) => return failure(erro),
+            Err(error) => return failure(error),
         };
-        let conteudo = match ler_conteudo(args.content.as_deref(), args.content_file.as_deref()) {
-            Ok(conteudo) => conteudo,
-            Err(erro) => return failure(erro),
+        let content = match read_content(args.content.as_deref(), args.content_file.as_deref()) {
+            Ok(content) => content,
+            Err(error) => return failure(error),
         };
-        let titulo = match validar_texto("título do item", &args.title, 200) {
-            Ok(titulo) => titulo,
-            Err(erro) => return failure(erro),
+        let title = match validate_text("título do item", &args.title, 200) {
+            Ok(title) => title,
+            Err(error) => return failure(error),
         };
-        let novo = NewKnowledgeItem {
-            group_id: grupo,
-            title: titulo,
-            content: conteudo,
+        let new_item = NewKnowledgeItem {
+            group_id: group,
+            title,
+            content,
             tags: args.tag,
             position: args.position,
         };
-        match self.store.knowledge().create_item(self.org, novo) {
+        match self.store.knowledge().create_item(self.org, new_item) {
             Ok(item) => {
-                let estado = self.sincronizar_grupo(grupo);
-                self.saida_item(&item, args.json, "item criado", estado)
+                let estado = self.sync_group(group);
+                self.output_item(&item, args.json, "item criado", estado)
             }
-            Err(erro) => failure(describe(&erro)),
+            Err(error) => failure(describe(&error)),
         }
     }
 
-    fn listar_itens(&self, args: ListarItens) -> ExitCode {
-        let grupo: KnowledgeGroupId = match parse_id(&args.group) {
+    fn listar_itens(&self, args: ListItemsArgs) -> ExitCode {
+        let group: KnowledgeGroupId = match parse_id(&args.group) {
             Ok(id) => id,
-            Err(erro) => return failure(erro),
+            Err(error) => return failure(error),
         };
-        let pagina = Page::with_limit(args.limit);
-        match self.store.knowledge().list_items(self.org, grupo, pagina) {
-            Ok(itens) => {
+        let page = Page::with_limit(args.limit);
+        match self.store.knowledge().list_items(self.org, group, page) {
+            Ok(items) => {
                 if args.json {
                     let base = self.base().ok();
-                    let lista: Vec<Value> = itens
+                    let list: Vec<Value> = items
                         .iter()
                         .map(|item| {
                             let estado = base
                                 .as_ref()
-                                .map(|base| self.estado_do_item(base, item))
-                                .unwrap_or(EstadoIndice::Erro);
+                                .map(|base| self.item_state(base, item))
+                                .unwrap_or(IndexState::Error);
                             json_item(item, estado)
                         })
                         .collect();
-                    imprimir(&json!({
+                    print_json(&json!({
                         "versao_relatorio": 1,
-                        "group_id": grupo.to_string(),
-                        "total": lista.len(),
-                        "items": lista,
+                        "group_id": group.to_string(),
+                        "total": list.len(),
+                        "items": list,
                     }));
-                } else if itens.is_empty() {
+                } else if items.is_empty() {
                     println!("Nenhum item neste grupo.");
                 } else {
                     let base = self.base().ok();
-                    for item in &itens {
+                    for item in &items {
                         let estado = base
                             .as_ref()
-                            .map(|base| self.estado_do_item(base, item))
-                            .unwrap_or(EstadoIndice::Erro);
+                            .map(|base| self.item_state(base, item))
+                            .unwrap_or(IndexState::Error);
                         println!(
                             "{}  {:<9} {:<14} {}",
                             item.id,
-                            status_em_portugues(item.status),
-                            estado.como_texto(),
+                            status_in_portuguese(item.status),
+                            estado.as_text(),
                             item.title
                         );
                     }
-                    println!("\n{} item(s).", itens.len());
+                    println!("\n{} item(s).", items.len());
                 }
                 ExitCode::SUCCESS
             }
-            Err(erro) => failure(describe(&erro)),
+            Err(error) => failure(describe(&error)),
         }
     }
 
     fn mostrar_item(&self, args: RefItem) -> ExitCode {
         let id: KnowledgeItemId = match parse_id(&args.item) {
             Ok(id) => id,
-            Err(erro) => return failure(erro),
+            Err(error) => return failure(error),
         };
         match self.store.knowledge().get_item(self.org, id) {
             Ok(item) => {
                 let base = self.base().ok();
                 let estado = base
                     .as_ref()
-                    .map(|base| self.estado_do_item(base, &item))
-                    .unwrap_or(EstadoIndice::Erro);
+                    .map(|base| self.item_state(base, &item))
+                    .unwrap_or(IndexState::Error);
                 if args.json {
-                    imprimir(&json!({
+                    print_json(&json!({
                         "versao_relatorio": 1,
                         "item": json_item(&item, estado),
                     }));
@@ -679,48 +608,48 @@ impl Contexto {
                     println!("id:        {}", item.id);
                     println!("grupo:     {}", item.group_id);
                     println!("título:    {}", item.title);
-                    println!("situação:  {}", status_em_portugues(item.status));
-                    println!("índice:    {}", estado.como_texto());
+                    println!("situação:  {}", status_in_portuguese(item.status));
+                    println!("índice:    {}", estado.as_text());
                     println!("versão:    {}", item.version);
                     println!("tags:      {}", item.tags.join(", "));
                     println!("\n{}\n", item.content);
                 }
                 ExitCode::SUCCESS
             }
-            Err(erro) => failure(describe(&erro)),
+            Err(error) => failure(describe(&error)),
         }
     }
 
-    fn atualizar_item(&self, args: AtualizarItem) -> ExitCode {
+    fn atualizar_item(&self, args: UpdateItemArgs) -> ExitCode {
         let id: KnowledgeItemId = match parse_id(&args.item) {
             Ok(id) => id,
-            Err(erro) => return failure(erro),
+            Err(error) => return failure(error),
         };
-        let grupo = match args
+        let group = match args
             .group
             .as_deref()
             .map(parse_id::<KnowledgeGroupId>)
             .transpose()
         {
-            Ok(grupo) => grupo,
-            Err(erro) => return failure(erro),
+            Ok(group) => group,
+            Err(error) => return failure(error),
         };
-        let conteudo = match (args.content.as_deref(), args.content_file.as_deref()) {
+        let content = match (args.content.as_deref(), args.content_file.as_deref()) {
             (None, None) => None,
-            (inline, arquivo) => match ler_conteudo(inline, arquivo) {
-                Ok(conteudo) => Some(conteudo),
-                Err(erro) => return failure(erro),
+            (inline, file) => match read_content(inline, file) {
+                Ok(content) => Some(content),
+                Err(error) => return failure(error),
             },
         };
-        let status = match args.status.as_deref().map(status_de_texto).transpose() {
+        let status = match args.status.as_deref().map(parse_status).transpose() {
             Ok(status) => status,
-            Err(erro) => return failure(erro),
+            Err(error) => return failure(error),
         };
         let tags = (!args.tag.is_empty()).then_some(args.tag);
-        let mudanca = KnowledgeItemChange {
-            group_id: grupo,
+        let change = KnowledgeItemChange {
+            group_id: group,
             title: args.title,
-            content: conteudo,
+            content,
             tags,
             position: args.position,
             status,
@@ -728,22 +657,22 @@ impl Contexto {
         match self
             .store
             .knowledge()
-            .update_item(self.org, id, args.if_match, mudanca)
+            .update_item(self.org, id, args.if_match, change)
         {
             Ok(item) => {
-                let estado = self.sincronizar_grupo(item.group_id);
-                self.saida_item(&item, args.json, "item atualizado", estado)
+                let estado = self.sync_group(item.group_id);
+                self.output_item(&item, args.json, "item atualizado", estado)
             }
-            Err(erro) => failure(describe(&erro)),
+            Err(error) => failure(describe(&error)),
         }
     }
 
-    fn excluir_item(&self, args: ExcluirItem) -> ExitCode {
+    fn excluir_item(&self, args: DeleteItemArgs) -> ExitCode {
         let id: KnowledgeItemId = match parse_id(&args.item) {
             Ok(id) => id,
-            Err(erro) => return failure(erro),
+            Err(error) => return failure(error),
         };
-        let grupo = self
+        let group = self
             .store
             .knowledge()
             .get_item(self.org, id)
@@ -751,256 +680,248 @@ impl Contexto {
             .ok();
         match self.store.knowledge().delete_item(self.org, id) {
             Ok(()) => {
-                let aviso = grupo.and_then(|grupo| self.sincronizar_grupo(grupo));
+                let notice = group.and_then(|group| self.sync_group(group));
                 if args.json {
-                    imprimir(&json!({
+                    print_json(&json!({
                         "versao_relatorio": 1,
                         "deleted": id.to_string(),
-                        "index": aviso,
+                        "index": notice,
                     }));
                 } else {
                     println!("item {id} excluído");
-                    if let Some(aviso) = aviso {
-                        println!("[aviso] índice não atualizado: {aviso}");
+                    if let Some(notice) = notice {
+                        println!("[aviso] índice não atualizado: {notice}");
                     }
                 }
                 ExitCode::SUCCESS
             }
-            Err(erro) => failure(describe(&erro)),
+            Err(error) => failure(describe(&error)),
         }
     }
 
-    // ───────────────────────────── Vínculo, busca, índice ─────────────────────────────
-
     fn vincular(&self, args: LinkArgs, ligar: bool) -> ExitCode {
-        let grupo: KnowledgeGroupId = match parse_id(&args.grupo) {
+        let group: KnowledgeGroupId = match parse_id(&args.group) {
             Ok(id) => id,
-            Err(erro) => return failure(erro),
+            Err(error) => return failure(error),
         };
-        let agente = match self.resolver_agente(&args.agent) {
+        let agente = match self.resolve_agent(&args.agent) {
             Ok(agente) => agente,
-            Err(erro) => return failure(erro),
+            Err(error) => return failure(error),
         };
         let resultado = if ligar {
             self.store
                 .knowledge()
-                .link_agent(self.org, agente, grupo)
+                .link_agent(self.org, agente, group)
                 .map(|()| true)
         } else {
-            self.store.knowledge().unlink_agent(self.org, agente, grupo)
+            self.store.knowledge().unlink_agent(self.org, agente, group)
         };
         match resultado {
-            Ok(mudou) => {
-                let aviso = self.reindexar_agentes(&[agente]);
+            Ok(changed) => {
+                let notice = self.reindex_agents(&[agente]);
                 if args.json {
-                    imprimir(&json!({
+                    print_json(&json!({
                         "versao_relatorio": 1,
                         "agent": agente.to_string(),
-                        "group": grupo.to_string(),
+                        "group": group.to_string(),
                         "linked": ligar,
-                        "changed": mudou,
-                        "index": aviso,
+                        "changed": changed,
+                        "index": notice,
                     }));
                 } else {
                     println!(
                         "{}: grupo {} {} agente {}",
                         if ligar { "vínculo" } else { "desvínculo" },
-                        grupo,
+                        group,
                         if ligar { "ligado ao" } else { "desligado do" },
                         agente
                     );
-                    if let Some(aviso) = aviso {
-                        println!("[aviso] índice não atualizado: {aviso}");
+                    if let Some(notice) = notice {
+                        println!("[aviso] índice não atualizado: {notice}");
                     }
                 }
                 ExitCode::SUCCESS
             }
-            Err(erro) => failure(describe(&erro)),
+            Err(error) => failure(describe(&error)),
         }
     }
 
     fn reindexar(&self, args: ReindexArgs) -> ExitCode {
         let base = match self.base() {
             Ok(base) => base,
-            Err(erro) => return failure(erro),
+            Err(error) => return failure(error),
         };
-        let agentes = match &args.agent {
-            Some(referencia) => match self.resolver_agente(referencia) {
+        let agents = match &args.agent {
+            Some(reference) => match self.resolve_agent(reference) {
                 Ok(agente) => vec![agente],
-                Err(erro) => return failure(erro),
+                Err(error) => return failure(error),
             },
-            None => match self.todos_os_agentes() {
-                Ok(agentes) => agentes,
-                Err(erro) => return failure(erro),
+            None => match self.all_agents() {
+                Ok(agents) => agents,
+                Err(error) => return failure(error),
             },
         };
-        let mut relatorios = Vec::new();
-        for agente in agentes {
-            match self.sincronizar(&base, agente) {
-                Ok(relatorio) => relatorios.push(json!({
+        let mut reports = Vec::new();
+        for agente in agents {
+            match self.sync(&base, agente) {
+                Ok(report) => reports.push(json!({
                     "agent": agente.to_string(),
-                    "indexed": json_indexacao(&relatorio),
+                    "indexed": index_json(&report),
                 })),
-                Err(erro) => return failure(erro),
+                Err(error) => return failure(error),
             }
         }
         if args.json {
-            imprimir(&json!({
+            print_json(&json!({
                 "versao_relatorio": 1,
-                "agents": relatorios,
+                "agents": reports,
             }));
-        } else if relatorios.is_empty() {
+        } else if reports.is_empty() {
             println!("Nenhum agente na org para reindexar.");
         } else {
-            for relatorio in &relatorios {
+            for report in &reports {
                 println!(
                     "agente {}: novos {}, alterados {}, removidos {}, trechos {}",
-                    relatorio["agent"].as_str().unwrap_or("?"),
-                    relatorio["indexed"]["itens_novos"],
-                    relatorio["indexed"]["itens_alterados"],
-                    relatorio["indexed"]["itens_removidos"],
-                    relatorio["indexed"]["trechos_gravados"],
+                    report["agent"].as_str().unwrap_or("?"),
+                    report["indexed"]["itens_novos"],
+                    report["indexed"]["itens_alterados"],
+                    report["indexed"]["itens_removidos"],
+                    report["indexed"]["trechos_gravados"],
                 );
             }
         }
         ExitCode::SUCCESS
     }
 
-    fn buscar(&self, args: SearchArgs) -> ExitCode {
+    fn search(&self, args: SearchArgs) -> ExitCode {
         let base = match self.base() {
             Ok(base) => base,
-            Err(erro) => return failure(erro),
+            Err(error) => return failure(error),
         };
-        let agente = match self.resolver_agente(&args.agent) {
+        let agente = match self.resolve_agent(&args.agent) {
             Ok(agente) => agente,
-            Err(erro) => return failure(erro),
+            Err(error) => return failure(error),
         };
-        let agente_registro = match self.store.agents().get(self.org, agente) {
+        let agent_record = match self.store.agents().get(self.org, agente) {
             Ok(agente) => agente,
-            Err(erro) => return failure(describe(&erro)),
+            Err(error) => return failure(describe(&error)),
         };
-        let top_k = args.top_k.unwrap_or_else(|| {
-            usize::try_from(agente_registro.rag_top_k)
-                .unwrap_or(3)
-                .max(1)
-        });
+        let top_k = args
+            .top_k
+            .unwrap_or_else(|| usize::try_from(agent_record.rag_top_k).unwrap_or(3).max(1));
         let runtime = match runtime() {
             Ok(runtime) => runtime,
-            Err(erro) => return failure(erro),
+            Err(error) => return failure(error),
         };
-        let trechos = runtime.block_on(async {
+        let chunks = runtime.block_on(async {
             use poph_agent::{KnowledgeSearcher, SearchParameters};
-            let busca: &dyn KnowledgeSearcher = base.as_ref();
-            busca
+            let searcher: &dyn KnowledgeSearcher = base.as_ref();
+            searcher
                 .search(
                     self.org,
                     agente,
-                    args.consulta.clone(),
+                    args.query.clone(),
                     SearchParameters {
                         top_k,
-                        cutoff: agente_registro.rag_cutoff as f32,
+                        cutoff: agent_record.rag_cutoff as f32,
                     },
                 )
                 .await
         });
-        match trechos {
-            Ok(trechos) => {
+        match chunks {
+            Ok(chunks) => {
                 if args.json {
-                    imprimir(&json!({
+                    print_json(&json!({
                         "versao_relatorio": 1,
                         "agent": agente.to_string(),
-                        "query": args.consulta,
-                        "total": trechos.len(),
-                        "chunks": trechos,
+                        "query": args.query,
+                        "total": chunks.len(),
+                        "chunks": chunks,
                     }));
-                } else if trechos.is_empty() {
+                } else if chunks.is_empty() {
                     println!("Nenhum trecho acima do corte de relevância.");
                 } else {
-                    for (indice, trecho) in trechos.iter().enumerate() {
+                    for (index, chunk) in chunks.iter().enumerate() {
                         println!(
                             "[{}] {:.3}  fonte: {} ({})",
-                            indice + 1,
-                            trecho.similarity,
-                            trecho.title,
-                            trecho.group
+                            index + 1,
+                            chunk.similarity,
+                            chunk.title,
+                            chunk.group
                         );
-                        println!("    {}\n", trecho.texto.replace('\n', " "));
+                        println!("    {}\n", chunk.texto.replace('\n', " "));
                     }
                 }
                 ExitCode::SUCCESS
             }
-            Err(erro) => failure(format!("a busca falhou: {erro}")),
+            Err(error) => failure(format!("a busca falhou: {error}")),
         }
     }
 
     fn status(&self, args: StatusArgs) -> ExitCode {
-        let grupos = match &args.group {
+        let groups = match &args.group {
             Some(texto) => match parse_id::<KnowledgeGroupId>(texto) {
                 Ok(id) => match self.store.knowledge().get_group(self.org, id) {
-                    Ok(grupo) => vec![grupo],
-                    Err(erro) => return failure(describe(&erro)),
+                    Ok(group) => vec![group],
+                    Err(error) => return failure(describe(&error)),
                 },
-                Err(erro) => return failure(erro),
+                Err(error) => return failure(error),
             },
             None => match self
                 .store
                 .knowledge()
                 .list_groups(self.org, Page::with_limit(200))
             {
-                Ok(grupos) => grupos,
-                Err(erro) => return failure(describe(&erro)),
+                Ok(groups) => groups,
+                Err(error) => return failure(describe(&error)),
             },
         };
         let base = self.base().ok();
-        let mut linhas = Vec::new();
-        for grupo in &grupos {
-            let itens = self
+        let mut lines = Vec::new();
+        for group in &groups {
+            let items = self
                 .store
                 .knowledge()
-                .list_items(self.org, grupo.id, Page::with_limit(200))
+                .list_items(self.org, group.id, Page::with_limit(200))
                 .unwrap_or_default();
-            for item in itens {
+            for item in items {
                 let estado = base
                     .as_ref()
-                    .map(|base| self.estado_do_item(base, &item))
-                    .unwrap_or(EstadoIndice::Erro);
-                linhas.push(json!({
+                    .map(|base| self.item_state(base, &item))
+                    .unwrap_or(IndexState::Error);
+                lines.push(json!({
                     "item": item.id.to_string(),
-                    "group": grupo.name,
+                    "group": group.name,
                     "title": item.title,
                     "status": item.status.as_text(),
-                    "index": estado.como_texto(),
+                    "index": estado.as_text(),
                 }));
             }
         }
         if args.json {
-            imprimir(&json!({
+            print_json(&json!({
                 "versao_relatorio": 1,
-                "groups": grupos.len(),
-                "items": linhas,
+                "groups": groups.len(),
+                "items": lines,
             }));
-        } else if linhas.is_empty() {
+        } else if lines.is_empty() {
             println!("Nenhum item na base.");
         } else {
-            for linha in &linhas {
+            for line in &lines {
                 println!(
                     "{}  {:<11} {:<14} {} ({})",
-                    linha["item"].as_str().unwrap_or("?"),
-                    linha["index"].as_str().unwrap_or("?"),
-                    linha["status"].as_str().unwrap_or("?"),
-                    linha["title"].as_str().unwrap_or("?"),
-                    linha["group"].as_str().unwrap_or("?"),
+                    line["item"].as_str().unwrap_or("?"),
+                    line["index"].as_str().unwrap_or("?"),
+                    line["status"].as_str().unwrap_or("?"),
+                    line["title"].as_str().unwrap_or("?"),
+                    line["group"].as_str().unwrap_or("?"),
                 );
             }
-            println!("\n{} item(s).", linhas.len());
+            println!("\n{} item(s).", lines.len());
         }
         ExitCode::SUCCESS
     }
 
-    // ───────────────────────────── Apoio ─────────────────────────────
-
-    /// Base pronta para escrever e reindexar. O embedding passa pela fila da HR-15, com o limite
-    /// por org: escrever um item de uma org não ocupa o modelo das outras.
     fn base(&self) -> Result<Arc<KnowledgeBase>, String> {
         crate::rag::open_queued_knowledge_base(
             &self.configuracao,
@@ -1009,104 +930,97 @@ impl Contexto {
         )
     }
 
-    fn sincronizar(
-        &self,
-        base: &KnowledgeBase,
-        agente: AgentId,
-    ) -> Result<poph_rag::IndexReport, String> {
+    fn sync(&self, base: &KnowledgeBase, agente: AgentId) -> Result<poph_rag::IndexReport, String> {
         let runtime = runtime()?;
         runtime
             .block_on(base.synchronise_agent(self.org, agente))
-            .map_err(|erro| format!("não consegui reindexar o agente {agente}: {erro}"))
+            .map_err(|error| format!("não consegui reindexar o agente {agente}: {error}"))
     }
 
-    /// Sincroniza os agentes ligados ao grupo. Devolve um aviso quando o índice não pôde ser
-    /// atualizado (modelo ausente, por exemplo) — a escrita já valeu.
-    fn sincronizar_grupo(&self, grupo: KnowledgeGroupId) -> Option<String> {
-        let agentes = self
+    fn sync_group(&self, group: KnowledgeGroupId) -> Option<String> {
+        let agents = self
             .store
             .knowledge()
-            .agents_from_group(self.org, grupo)
+            .agents_from_group(self.org, group)
             .ok()?;
-        self.reindexar_agentes(&agentes)
+        self.reindex_agents(&agents)
     }
 
-    fn reindexar_agentes(&self, agentes: &[AgentId]) -> Option<String> {
-        if agentes.is_empty() {
+    fn reindex_agents(&self, agents: &[AgentId]) -> Option<String> {
+        if agents.is_empty() {
             return None;
         }
         let base = match self.base() {
             Ok(base) => base,
-            Err(erro) => return Some(format!("{erro}; rode `poph kb reindex` depois")),
+            Err(error) => return Some(format!("{error}; rode `poph kb reindex` depois")),
         };
-        for agente in agentes {
-            if let Err(erro) = self.sincronizar(&base, *agente) {
-                return Some(format!("{erro}; rode `poph kb reindex` depois"));
+        for agente in agents {
+            if let Err(error) = self.sync(&base, *agente) {
+                return Some(format!("{error}; rode `poph kb reindex` depois"));
             }
         }
         None
     }
 
-    /// Todos os agentes da org, em páginas (o teto de uma página é 200).
-    fn todos_os_agentes(&self) -> Result<Vec<AgentId>, String> {
-        let mut agentes = Vec::new();
-        let mut pagina = Page::with_limit(200);
+    fn all_agents(&self) -> Result<Vec<AgentId>, String> {
+        let mut agents = Vec::new();
+        let mut page = Page::with_limit(200);
         loop {
-            let lote = self
+            let batch = self
                 .store
                 .agents()
-                .list(self.org, pagina)
-                .map_err(|erro| describe(&erro))?;
-            if lote.is_empty() {
-                return Ok(agentes);
+                .list(self.org, page)
+                .map_err(|error| describe(&error))?;
+            if batch.is_empty() {
+                return Ok(agents);
             }
-            pagina.after = lote.last().map(|agente| agente.id.as_uuid());
-            agentes.extend(lote.into_iter().map(|agente| agente.id));
+            page.after = batch.last().map(|agente| agente.id.as_uuid());
+            agents.extend(batch.into_iter().map(|agente| agente.id));
         }
     }
 
-    fn estado_do_item(&self, base: &KnowledgeBase, item: &KnowledgeItem) -> EstadoIndice {
-        let grupo_inativo = self
+    fn item_state(&self, base: &KnowledgeBase, item: &KnowledgeItem) -> IndexState {
+        let inactive_group = self
             .store
             .knowledge()
             .get_group(self.org, item.group_id)
-            .map(|grupo| grupo.status != Status::Active)
+            .map(|group| group.status != Status::Active)
             .unwrap_or(true);
-        if item.status != Status::Active || grupo_inativo {
-            return EstadoIndice::Inativo;
+        if item.status != Status::Active || inactive_group {
+            return IndexState::Inactive;
         }
-        let agentes = match self
+        let agents = match self
             .store
             .knowledge()
             .agents_from_group(self.org, item.group_id)
         {
-            Ok(agentes) => agentes,
-            Err(_) => return EstadoIndice::Erro,
+            Ok(agents) => agents,
+            Err(_) => return IndexState::Error,
         };
-        if agentes.is_empty() {
-            return EstadoIndice::NaoVinculado;
+        if agents.is_empty() {
+            return IndexState::NotLinked;
         }
-        let esperado = source_hash(base.index().identity(), &item.title, &item.content);
-        for agente in agentes {
-            let Ok(mapa) = base.index().indexed_items(self.org, agente) else {
-                return EstadoIndice::Erro;
+        let expected = source_hash(base.index().identity(), &item.title, &item.content);
+        for agente in agents {
+            let Ok(map) = base.index().indexed_items(self.org, agente) else {
+                return IndexState::Error;
             };
-            if mapa.get(&item.id) != Some(&esperado) {
-                return EstadoIndice::Pendente;
+            if map.get(&item.id) != Some(&expected) {
+                return IndexState::Pending;
             }
         }
-        EstadoIndice::Indexado
+        IndexState::Indexed
     }
 
-    fn total_itens(&self, grupo: KnowledgeGroupId) -> usize {
+    fn total_items(&self, group: KnowledgeGroupId) -> usize {
         self.store
             .knowledge()
-            .list_items(self.org, grupo, Page::with_limit(200))
-            .map(|itens| itens.len())
+            .list_items(self.org, group, Page::with_limit(200))
+            .map(|items| items.len())
             .unwrap_or(0)
     }
 
-    fn resolver_agente(&self, texto: &str) -> Result<AgentId, String> {
+    fn resolve_agent(&self, texto: &str) -> Result<AgentId, String> {
         if uuid::Uuid::parse_str(texto).is_ok() {
             let id: AgentId = parse_id(texto)?;
             return self
@@ -1114,67 +1028,67 @@ impl Contexto {
                 .agents()
                 .get(self.org, id)
                 .map(|agente| agente.id)
-                .map_err(|erro| describe(&erro));
+                .map_err(|error| describe(&error));
         }
         self.store
             .agents()
             .by_slug(self.org, texto)
             .map(|agente| agente.id)
-            .map_err(|erro| describe(&erro))
+            .map_err(|error| describe(&error))
     }
 
-    fn saida_item(
+    fn output_item(
         &self,
         item: &KnowledgeItem,
-        json_saida: bool,
-        rotulo: &str,
-        aviso: Option<String>,
+        json_output: bool,
+        label: &str,
+        notice: Option<String>,
     ) -> ExitCode {
         let estado = self
             .base()
             .ok()
-            .map(|base| self.estado_do_item(&base, item))
-            .unwrap_or(EstadoIndice::Erro);
-        if json_saida {
-            imprimir(&json!({
+            .map(|base| self.item_state(&base, item))
+            .unwrap_or(IndexState::Error);
+        if json_output {
+            print_json(&json!({
                 "versao_relatorio": 1,
                 "item": json_item(item, estado),
-                "index": aviso,
+                "index": notice,
             }));
         } else {
             println!(
-                "{rotulo}: {}  {}\n  grupo: {}\n  versão: {}\n  índice: {}",
+                "{label}: {}  {}\n  grupo: {}\n  versão: {}\n  índice: {}",
                 item.id,
                 item.title,
                 item.group_id,
                 item.version,
-                estado.como_texto()
+                estado.as_text()
             );
-            if let Some(aviso) = aviso {
-                println!("[aviso] índice não atualizado: {aviso}");
+            if let Some(notice) = notice {
+                println!("[aviso] índice não atualizado: {notice}");
             }
         }
         ExitCode::SUCCESS
     }
 }
 
-fn ler_conteudo(inline: Option<&str>, arquivo: Option<&std::path::Path>) -> Result<String, String> {
-    let texto = match (inline, arquivo) {
+fn read_content(inline: Option<&str>, file: Option<&std::path::Path>) -> Result<String, String> {
+    let texto = match (inline, file) {
         (Some(texto), None) => texto.to_owned(),
-        (None, Some(caminho)) => std::fs::read_to_string(caminho)
-            .map_err(|erro| format!("não consegui ler {}: {erro}", caminho.display()))?,
+        (None, Some(path)) => std::fs::read_to_string(path)
+            .map_err(|error| format!("não consegui ler {}: {error}", path.display()))?,
         (None, None) => {
             return Err("informe o conteúdo com --content ou --content-file".to_owned());
         }
         (Some(_), Some(_)) => unreachable!("o clap impede --content com --content-file"),
     };
-    let caracteres = texto.trim().chars().count();
-    if caracteres == 0 {
+    let char_count = texto.trim().chars().count();
+    if char_count == 0 {
         return Err("o conteúdo do item não pode ficar vazio".to_owned());
     }
-    if caracteres > LIMITE_CONTEUDO {
+    if char_count > CONTENT_LIMIT {
         return Err(format!(
-            "o conteúdo do item passa de {LIMITE_CONTEUDO} caracteres (vieram {caracteres})"
+            "o conteúdo do item passa de {CONTENT_LIMIT} caracteres (vieram {char_count})"
         ));
     }
     Ok(texto.trim().to_owned())
@@ -1184,40 +1098,40 @@ fn runtime() -> Result<tokio::runtime::Runtime, String> {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
-        .map_err(|erro| format!("não consegui iniciar o runtime: {erro}"))
+        .map_err(|error| format!("não consegui iniciar o runtime: {error}"))
 }
 
-fn imprimir(valor: &Value) {
+fn print_json(value: &Value) {
     println!(
         "{}",
-        serde_json::to_string_pretty(valor).unwrap_or_else(|_| valor.to_string())
+        serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
     );
 }
 
-fn json_grupo(grupo: &KnowledgeGroup) -> Value {
+fn group_json(group: &KnowledgeGroup) -> Value {
     json!({
-        "id": grupo.id.to_string(),
-        "name": grupo.name,
-        "description": grupo.description,
-        "status": grupo.status.as_text(),
-        "version": grupo.version,
-        "created_at": grupo.created_at,
-        "updated_at": grupo.updated_at,
+        "id": group.id.to_string(),
+        "name": group.name,
+        "description": group.description,
+        "status": group.status.as_text(),
+        "version": group.version,
+        "created_at": group.created_at,
+        "updated_at": group.updated_at,
     })
 }
 
-fn json_indexacao(relatorio: &poph_rag::IndexReport) -> Value {
+fn index_json(report: &poph_rag::IndexReport) -> Value {
     json!({
-        "items_new": relatorio.new_items,
-        "items_changed": relatorio.changed_items,
-        "items_unchanged": relatorio.unchanged_items,
-        "items_removed": relatorio.removed_items,
-        "embeddings": relatorio.generated_embeddings,
-        "chunks": relatorio.stored_chunks,
+        "items_new": report.new_items,
+        "items_changed": report.changed_items,
+        "items_unchanged": report.unchanged_items,
+        "items_removed": report.removed_items,
+        "embeddings": report.generated_embeddings,
+        "chunks": report.stored_chunks,
     })
 }
 
-fn json_item(item: &KnowledgeItem, estado: EstadoIndice) -> Value {
+fn json_item(item: &KnowledgeItem, estado: IndexState) -> Value {
     json!({
         "id": item.id.to_string(),
         "group_id": item.group_id.to_string(),
@@ -1226,7 +1140,7 @@ fn json_item(item: &KnowledgeItem, estado: EstadoIndice) -> Value {
         "tags": item.tags,
         "position": item.position,
         "status": item.status.as_text(),
-        "index": estado.como_texto(),
+        "index": estado.as_text(),
         "version": item.version,
         "created_at": item.created_at,
         "updated_at": item.updated_at,

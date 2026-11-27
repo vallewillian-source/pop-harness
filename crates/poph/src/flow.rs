@@ -1,17 +1,3 @@
-//! `poph flow`: fluxos da org pela linha de comando (FX-31, PRD §7.3).
-//!
-//! Subcomandos: `validar`, `publicar`, `listar`, `mostrar`, `diff`, `formatar`, `liberar` e `retirar`.
-//! Operam direto no banco, como os outros comandos de org. Compilar, validar, publicar, comparar e
-//! formatar são as funções que a API chama (`poph_server::flow_service`): a CLI não tem regra
-//! própria.
-//!
-//! `--org` é obrigatório nos comandos que leem ou gravam dados da org. `validar` só precisa dele para
-//! resolver departamentos, e `formatar` nunca precisa.
-//!
-//! Saída: 0 quando deu certo; 1 quando há erro de negócio (script inválido, versão velha, fluxo ou
-//! agente inexistente...); 2 uso incorreto (o clap decide). Com `--json`, a saída tem
-//! `versao_relatorio` = 1 e as mesmas chaves que a API devolve.
-
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -27,150 +13,191 @@ use serde_json::{Value, json};
 
 use crate::config;
 use crate::support::{
-    abrir_com_configuracao, describe, failure, pagina_de, print_json, resolve_org, resolver_agente,
-    resolver_fluxo, status_de_texto,
+    describe, failure, open_with_configuration, parse_page, parse_status, print_json,
+    resolve_agent, resolve_flow, resolve_org,
 };
 
-/// Versão do formato JSON desta saída (muda só se a forma mudar).
-const VERSAO_RELATORIO: u64 = 1;
+const REPORT_VERSION: u64 = 1;
 
-/// Subcomandos de `poph flow`.
 #[derive(Debug, Subcommand)]
-pub enum AcaoFluxo {
-    /// Compila e valida um script, sem gravar nada. Sai com 1 se há erro.
-    Validar(ArquivoArgs),
-    /// Publica o script como revisão nova. Se o fluxo ainda não existe, cria e publica a revisão 1.
-    Publicar(PublicarArgs),
-    /// Lista os fluxos da org (primeira página, em ordem de id).
-    Listar(ListarArgs),
-    /// Mostra um fluxo: o rascunho e a revisão que vale hoje. Aceita id ou slug.
-    Mostrar(ReferenciaArgs),
-    /// Compara duas revisões: o que mudou e quantos atendimentos estão em cada uma.
+pub enum FlowAction {
+    #[command(
+        name = "validar",
+        about = "Compila e valida um script, sem gravar nada. Sai com 1 se há erro"
+    )]
+    Validate(FileArgs),
+    #[command(
+        name = "publicar",
+        about = "Publica o script como revisão nova. Se o fluxo ainda não existe, cria e publica a revisão 1"
+    )]
+    Publish(PublishArgs),
+    #[command(
+        name = "listar",
+        about = "Lista os fluxos da org (primeira página, em ordem de id)"
+    )]
+    List(ListArgs),
+    #[command(
+        name = "mostrar",
+        about = "Mostra um fluxo: o rascunho e a revisão que vale hoje. Aceita id ou slug"
+    )]
+    Show(ReferenceArgs),
+    #[command(
+        about = "Compara duas revisões: o que mudou e quantos atendimentos estão em cada uma"
+    )]
     Diff(DiffArgs),
-    /// Mostra o script na forma canônica. Com `--escrever`, grava no próprio arquivo.
-    Formatar(FormatarArgs),
-    /// Libera o fluxo a um agente (o agente só usa fluxos liberados a ele).
-    Liberar(PermissaoArgs),
-    /// Tira a permissão do fluxo de um agente.
-    Retirar(PermissaoArgs),
+    #[command(
+        name = "formatar",
+        about = "Mostra o script na forma canônica. Com `--escrever`, grava no próprio arquivo"
+    )]
+    Format(FormatArgs),
+    #[command(
+        name = "liberar",
+        about = "Libera o fluxo a um agente (o agente só usa fluxos liberados a ele)"
+    )]
+    Release(PermissionArgs),
+    #[command(name = "retirar", about = "Tira a permissão do fluxo de um agente")]
+    Withdraw(PermissionArgs),
 }
 
-/// Opções que só leem um arquivo de script.
 #[derive(Debug, Args)]
-pub struct ArquivoArgs {
-    /// Arquivo do script do fluxo.
-    pub arquivo: PathBuf,
+pub struct FileArgs {
+    #[arg(
+        id = "arquivo",
+        value_name = "ARQUIVO",
+        help = "Arquivo do script do fluxo"
+    )]
+    pub file: PathBuf,
 
-    /// Saída em JSON (formato estável, com `versao_relatorio`).
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON (formato estável, com `versao_relatorio`)")]
     pub json: bool,
 }
 
-/// Opções de `publicar`.
 #[derive(Debug, Args)]
-pub struct PublicarArgs {
-    /// Arquivo do script a publicar.
-    pub arquivo: PathBuf,
+pub struct PublishArgs {
+    #[arg(
+        id = "arquivo",
+        value_name = "ARQUIVO",
+        help = "Arquivo do script a publicar"
+    )]
+    pub file: PathBuf,
 
-    /// Versão do fluxo lida com `mostrar` (`If-Match`). Obrigatória quando o fluxo já existe.
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Versão do fluxo lida com `mostrar` (`If-Match`). Obrigatória quando o fluxo já existe"
+    )]
     pub if_match: Option<u64>,
 
-    /// Saída em JSON (formato estável, com `versao_relatorio`).
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON (formato estável, com `versao_relatorio`)")]
     pub json: bool,
 }
 
-/// Opções de `listar`.
 #[derive(Debug, Args)]
-pub struct ListarArgs {
-    /// Situação: `active` ou `inactive`. Sem ele, lista todos.
-    #[arg(long)]
+pub struct ListArgs {
+    #[arg(long, help = "Situação: `active` ou `inactive`. Sem ele, lista todos")]
     pub status: Option<String>,
 
-    /// Quantos fluxos trazer (1 a 200).
-    #[arg(long, default_value_t = 50)]
+    #[arg(long, default_value_t = 50, help = "Quantos fluxos trazer (1 a 200)")]
     pub limit: u32,
 
-    /// `next_cursor` da página anterior.
-    #[arg(long)]
+    #[arg(long, help = "`next_cursor` da página anterior")]
     pub cursor: Option<String>,
 
-    /// Saída em JSON (formato estável, com `versao_relatorio`).
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON (formato estável, com `versao_relatorio`)")]
     pub json: bool,
 }
 
-/// Referência a um fluxo, pelo id ou pelo slug.
 #[derive(Debug, Args)]
-pub struct ReferenciaArgs {
-    /// Id (UUID v7) ou slug do fluxo.
-    pub fluxo: String,
+pub struct ReferenceArgs {
+    #[arg(
+        id = "fluxo",
+        value_name = "FLUXO",
+        help = "Id (UUID v7) ou slug do fluxo"
+    )]
+    pub flow: String,
 
-    /// Saída em JSON (formato estável, com `versao_relatorio`).
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON (formato estável, com `versao_relatorio`)")]
     pub json: bool,
 }
 
-/// Opções de `diff`.
 #[derive(Debug, Args)]
 pub struct DiffArgs {
-    /// Id (UUID v7) ou slug do fluxo.
-    pub fluxo: String,
+    #[arg(
+        id = "fluxo",
+        value_name = "FLUXO",
+        help = "Id (UUID v7) ou slug do fluxo"
+    )]
+    pub flow: String,
 
-    /// Número da revisão antiga. Padrão: a revisão nova menos 1.
-    #[arg(long)]
-    pub de: Option<u64>,
+    #[arg(
+        long = "de",
+        value_name = "DE",
+        id = "de",
+        help = "Número da revisão antiga. Padrão: a revisão nova menos 1"
+    )]
+    pub from: Option<u64>,
 
-    /// Número da revisão nova. Padrão: a revisão que vale hoje.
-    #[arg(long)]
-    pub para: Option<u64>,
+    #[arg(
+        long = "para",
+        value_name = "PARA",
+        id = "para",
+        help = "Número da revisão nova. Padrão: a revisão que vale hoje"
+    )]
+    pub to: Option<u64>,
 
-    /// Saída em JSON (formato estável, com `versao_relatorio`).
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON (formato estável, com `versao_relatorio`)")]
     pub json: bool,
 }
 
-/// Opções de `formatar`.
 #[derive(Debug, Args)]
-pub struct FormatarArgs {
-    /// Arquivo do script a formatar.
-    pub arquivo: PathBuf,
+pub struct FormatArgs {
+    #[arg(
+        id = "arquivo",
+        value_name = "ARQUIVO",
+        help = "Arquivo do script a formatar"
+    )]
+    pub file: PathBuf,
 
-    /// Grava o resultado no próprio arquivo, em vez de mostrar.
-    #[arg(long)]
-    pub escrever: bool,
+    #[arg(
+        long = "escrever",
+        id = "escrever",
+        help = "Grava o resultado no próprio arquivo, em vez de mostrar"
+    )]
+    pub write: bool,
 
-    /// Saída em JSON (formato estável, com `versao_relatorio`).
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON (formato estável, com `versao_relatorio`)")]
     pub json: bool,
 }
 
-/// Opções de `liberar` e `retirar`.
 #[derive(Debug, Args)]
-pub struct PermissaoArgs {
-    /// Agente: id (UUID v7) ou slug.
-    pub agente: String,
+pub struct PermissionArgs {
+    #[arg(
+        id = "agente",
+        value_name = "AGENTE",
+        help = "Agente: id (UUID v7) ou slug"
+    )]
+    pub agent: String,
 
-    /// Fluxo: id (UUID v7) ou slug.
-    #[arg(long)]
-    pub fluxo: String,
+    #[arg(
+        long = "fluxo",
+        id = "fluxo",
+        value_name = "FLUXO",
+        help = "Fluxo: id (UUID v7) ou slug"
+    )]
+    pub flow: String,
 
-    /// Saída em JSON (formato estável, com `versao_relatorio`).
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON (formato estável, com `versao_relatorio`)")]
     pub json: bool,
 }
 
-/// Banco, cache de revisões e configuração de uma execução do comando.
-struct Sessao {
+struct Session {
     store: Store,
     cache: RevisionCache,
     config: HarnessConfig,
 }
 
-impl Sessao {
-    fn abrir(flag: Option<PathBuf>, ambiente: &config::Environment) -> Result<Self, String> {
-        let (store, config) = abrir_com_configuracao(flag, ambiente)?;
+impl Session {
+    fn open(flag: Option<PathBuf>, environment: &config::Environment) -> Result<Self, String> {
+        let (store, config) = open_with_configuration(flag, environment)?;
         let cache = RevisionCache::new(
             usize::try_from(config.flows.revision_cache_mb).unwrap_or(usize::MAX),
         );
@@ -181,243 +208,233 @@ impl Sessao {
         })
     }
 
-    fn operacoes(&self) -> FlowOperations<'_> {
+    fn operations(&self) -> FlowOperations<'_> {
         FlowOperations::new(&self.store, &self.cache, &self.config)
     }
 
-    fn org(&self, texto: Option<&str>) -> Result<OrgId, String> {
-        let texto =
-            texto.ok_or_else(|| "informe --org com o id (UUID v7) ou o slug da org".to_owned())?;
-        resolve_org(&self.store, texto)
+    fn org(&self, text: Option<&str>) -> Result<OrgId, String> {
+        let text =
+            text.ok_or_else(|| "informe --org com o id (UUID v7) ou o slug da org".to_owned())?;
+        resolve_org(&self.store, text)
     }
 }
 
-/// Executa um subcomando de `poph flow`.
-pub fn executar(
+pub fn run(
     flag: Option<PathBuf>,
-    ambiente: &config::Environment,
+    environment: &config::Environment,
     org: Option<&str>,
-    acao: AcaoFluxo,
+    action: FlowAction,
 ) -> ExitCode {
-    let resultado = match acao {
-        AcaoFluxo::Validar(args) => {
-            Sessao::abrir(flag, ambiente).and_then(|sessao| validar(&sessao, org, args))
+    let result = match action {
+        FlowAction::Validate(args) => {
+            Session::open(flag, environment).and_then(|session| validate(&session, org, args))
         }
-        AcaoFluxo::Formatar(args) => {
-            Sessao::abrir(flag, ambiente).and_then(|sessao| formatar(&sessao, args))
+        FlowAction::Format(args) => {
+            Session::open(flag, environment).and_then(|session| format(&session, args))
         }
-        AcaoFluxo::Publicar(args) => {
-            Sessao::abrir(flag, ambiente).and_then(|sessao| publicar(&sessao, org, args))
+        FlowAction::Publish(args) => {
+            Session::open(flag, environment).and_then(|session| publish(&session, org, args))
         }
-        AcaoFluxo::Listar(args) => {
-            Sessao::abrir(flag, ambiente).and_then(|sessao| listar(&sessao, org, args))
+        FlowAction::List(args) => {
+            Session::open(flag, environment).and_then(|session| list(&session, org, args))
         }
-        AcaoFluxo::Mostrar(args) => {
-            Sessao::abrir(flag, ambiente).and_then(|sessao| mostrar(&sessao, org, args))
+        FlowAction::Show(args) => {
+            Session::open(flag, environment).and_then(|session| show(&session, org, args))
         }
-        AcaoFluxo::Diff(args) => {
-            Sessao::abrir(flag, ambiente).and_then(|sessao| diff(&sessao, org, args))
+        FlowAction::Diff(args) => {
+            Session::open(flag, environment).and_then(|session| diff(&session, org, args))
         }
-        AcaoFluxo::Liberar(args) => {
-            Sessao::abrir(flag, ambiente).and_then(|sessao| permissao(&sessao, org, args, true))
-        }
-        AcaoFluxo::Retirar(args) => {
-            Sessao::abrir(flag, ambiente).and_then(|sessao| permissao(&sessao, org, args, false))
-        }
+        FlowAction::Release(args) => Session::open(flag, environment)
+            .and_then(|session| permission(&session, org, args, true)),
+        FlowAction::Withdraw(args) => Session::open(flag, environment)
+            .and_then(|session| permission(&session, org, args, false)),
     };
-    match resultado {
-        Ok(codigo) => codigo,
-        Err(mensagem) => failure(mensagem),
+    match result {
+        Ok(exit_code) => exit_code,
+        Err(message) => failure(message),
     }
 }
 
-fn validar(sessao: &Sessao, org: Option<&str>, args: ArquivoArgs) -> Result<ExitCode, String> {
-    let fonte = ler_script(&args.arquivo)?;
+fn validate(session: &Session, org: Option<&str>, args: FileArgs) -> Result<ExitCode, String> {
+    let source = read_script(&args.file)?;
     let org = match org {
-        Some(texto) => Some(resolve_org(&sessao.store, texto)?),
+        Some(text) => Some(resolve_org(&session.store, text)?),
         None => None,
     };
-    let validacao = sessao
-        .operacoes()
-        .validate(org, &fonte)
-        .map_err(|erro| describe(&erro))?;
+    let validation = session
+        .operations()
+        .validate(org, &source)
+        .map_err(|error| describe(&error))?;
     if args.json {
-        print_json(&com_versao(validation_json(&validacao)));
+        print_json(&with_version(validation_json(&validation)));
     } else {
-        if validacao.is_valid() {
-            println!("{}: script válido.", args.arquivo.display());
+        if validation.is_valid() {
+            println!("{}: script válido.", args.file.display());
         } else {
-            println!("{}: script inválido.", args.arquivo.display());
+            println!("{}: script inválido.", args.file.display());
         }
-        imprimir_diagnosticos(&validacao.diagnostics);
-        for resolucao in &validacao.resolutions {
-            match &resolucao.department_id {
-                Some(id) => println!("  departamento \"{}\": encontrado ({id})", resolucao.nome),
+        print_diagnostics(&validation.diagnostics);
+        for resolution in &validation.resolutions {
+            match &resolution.department_id {
+                Some(id) => println!("  departamento \"{}\": encontrado ({id})", resolution.nome),
                 None => println!(
                     "  departamento \"{}\": não encontrado nesta org",
-                    resolucao.nome
+                    resolution.nome
                 ),
             }
         }
     }
-    Ok(codigo(validacao.is_valid()))
+    Ok(exit_code(validation.is_valid()))
 }
 
-fn formatar(sessao: &Sessao, args: FormatarArgs) -> Result<ExitCode, String> {
-    let fonte = ler_script(&args.arquivo)?;
-    let texto = match sessao.operacoes().format(&fonte) {
-        Ok(texto) => texto,
-        Err(FlowError::InvalidScript(diagnosticos)) => {
-            imprimir_diagnosticos(&diagnosticos);
-            let erros = diagnosticos.iter().filter(|d| d.is_error()).count();
+fn format(session: &Session, args: FormatArgs) -> Result<ExitCode, String> {
+    let source = read_script(&args.file)?;
+    let text = match session.operations().format(&source) {
+        Ok(text) => text,
+        Err(FlowError::InvalidScript(diagnostics)) => {
+            print_diagnostics(&diagnostics);
+            let errors = diagnostics.iter().filter(|d| d.is_error()).count();
             return Err(format!(
-                "o script não compila: {erros} erro(s) a corrigir antes de formatar"
+                "o script não compila: {errors} erro(s) a corrigir antes de formatar"
             ));
         }
-        Err(outro) => return Err(outro.to_string()),
+        Err(other) => return Err(other.to_string()),
     };
-    if args.escrever {
-        fs::write(&args.arquivo, &texto)
-            .map_err(|erro| format!("não consegui gravar `{}`: {erro}", args.arquivo.display()))?;
+    if args.write {
+        fs::write(&args.file, &text)
+            .map_err(|error| format!("não consegui gravar `{}`: {error}", args.file.display()))?;
     }
     if args.json {
         print_json(&json!({
-            "versao_relatorio": VERSAO_RELATORIO,
-            "source": texto,
-            "written": args.escrever,
+            "versao_relatorio": REPORT_VERSION,
+            "source": text,
+            "written": args.write,
         }));
-    } else if args.escrever {
+    } else if args.write {
         println!(
             "{}: formatado e gravado no próprio arquivo.",
-            args.arquivo.display()
+            args.file.display()
         );
     } else {
-        print!("{texto}");
+        print!("{text}");
     }
     Ok(ExitCode::SUCCESS)
 }
 
-fn publicar(sessao: &Sessao, org: Option<&str>, args: PublicarArgs) -> Result<ExitCode, String> {
-    let org = sessao.org(org)?;
-    let fonte = ler_script(&args.arquivo)?;
-    let ops = sessao.operacoes();
-    // Compila antes para saber o slug: é o `id` do script. Um script com erro não grava nada.
-    let compilado = ops.compile(&fonte);
-    if compilado.has_error() {
-        imprimir_diagnosticos(&compilado.diagnostics);
-        let erros = compilado
-            .diagnostics
-            .iter()
-            .filter(|d| d.is_error())
-            .count();
+fn publish(session: &Session, org: Option<&str>, args: PublishArgs) -> Result<ExitCode, String> {
+    let org = session.org(org)?;
+    let source = read_script(&args.file)?;
+    let ops = session.operations();
+    let compiled = ops.compile(&source);
+    if compiled.has_error() {
+        print_diagnostics(&compiled.diagnostics);
+        let errors = compiled.diagnostics.iter().filter(|d| d.is_error()).count();
         return Err(format!(
-            "o script não passa na validação: {erros} erro(s) a corrigir; nada foi gravado"
+            "o script não passa na validação: {errors} erro(s) a corrigir; nada foi gravado"
         ));
     }
-    let Some(ir) = compilado.ir.as_ref() else {
+    let Some(ir) = compiled.ir.as_ref() else {
         return Err("erro interno: o compilador não devolveu a estrutura do script".to_owned());
     };
-    let ator = Actor::cli();
-    let existente = sessao
+    let actor = Actor::cli();
+    let existing = session
         .store
         .flows()
         .by_slug(org, &ir.fluxo.id)
-        .map_err(|erro| describe(&erro))?;
-    match existente {
+        .map_err(|error| describe(&error))?;
+    match existing {
         None => {
-            let criacao = ops
-                .create(org, &fonte, true, &ator)
-                .map_err(|erro| erro.to_string())?;
-            let feita = criacao
+            let creation = ops
+                .create(org, &source, true, &actor)
+                .map_err(|error| error.to_string())?;
+            let publication = creation
                 .publication
                 .as_ref()
                 .ok_or_else(|| "erro interno: a criação não publicou a revisão 1".to_owned())?;
             if args.json {
                 print_json(&json!({
-                    "versao_relatorio": VERSAO_RELATORIO,
+                    "versao_relatorio": REPORT_VERSION,
                     "created": true,
-                    "flow": flow_with_draft_json(&criacao.flow),
-                    "revision": revision_summary_json(&feita.revision),
-                    "warnings": feita.warnings,
+                    "flow": flow_with_draft_json(&creation.flow),
+                    "revision": revision_summary_json(&publication.revision),
+                    "warnings": publication.warnings,
                 }));
             } else {
                 println!(
                     "fluxo `{}` criado e publicado como revisão {}.",
-                    criacao.flow.slug, feita.revision.numero
+                    creation.flow.slug, publication.revision.numero
                 );
-                imprimir_diagnosticos(&feita.warnings);
+                print_diagnostics(&publication.warnings);
             }
         }
-        Some(fluxo) => {
-            let esperada = args.if_match.ok_or_else(|| {
+        Some(flow) => {
+            let expected = args.if_match.ok_or_else(|| {
                 format!(
                     "o fluxo `{}` já existe: informe --if-match com a versão atual (veja com \
                      `poph --org ... flow mostrar {}`)",
-                    fluxo.slug, fluxo.slug
+                    flow.slug, flow.slug
                 )
             })?;
-            let feita = ops
-                .publish(org, &fluxo, esperada, &fonte, &ator)
-                .map_err(|erro| erro.to_string())?;
-            // O rascunho e a auditoria da publicação já são gravados por `publicar_revisao`, na mesma
-            // escrita que cria a revisão: aqui não há segunda gravação nem auditoria duplicada.
+            let publication = ops
+                .publish(org, &flow, expected, &source, &actor)
+                .map_err(|error| error.to_string())?;
             if args.json {
                 print_json(&json!({
-                    "versao_relatorio": VERSAO_RELATORIO,
+                    "versao_relatorio": REPORT_VERSION,
                     "created": false,
-                    "flow_id": fluxo.id.to_string(),
-                    "revision": revision_summary_json(&feita.revision),
-                    "version": feita.flow_version,
-                    "warnings": feita.warnings,
+                    "flow_id": flow.id.to_string(),
+                    "revision": revision_summary_json(&publication.revision),
+                    "version": publication.flow_version,
+                    "warnings": publication.warnings,
                 }));
             } else {
                 println!(
                     "fluxo `{}` publicado como revisão {}.",
-                    fluxo.slug, feita.revision.numero
+                    flow.slug, publication.revision.numero
                 );
-                imprimir_diagnosticos(&feita.warnings);
+                print_diagnostics(&publication.warnings);
             }
         }
     }
     Ok(ExitCode::SUCCESS)
 }
 
-fn listar(sessao: &Sessao, org: Option<&str>, args: ListarArgs) -> Result<ExitCode, String> {
-    let org = sessao.org(org)?;
-    let pagina = pagina_de(args.limit, args.cursor.as_deref())?;
-    let filtro = FlowFilter {
-        status: args.status.as_deref().map(status_de_texto).transpose()?,
+fn list(session: &Session, org: Option<&str>, args: ListArgs) -> Result<ExitCode, String> {
+    let org = session.org(org)?;
+    let page = parse_page(args.limit, args.cursor.as_deref())?;
+    let filter = FlowFilter {
+        status: args.status.as_deref().map(parse_status).transpose()?,
     };
-    let fluxos = sessao
+    let flows = session
         .store
         .flows()
-        .list(org, &filtro, pagina)
-        .map_err(|erro| describe(&erro))?;
-    let next_cursor = if fluxos.len() < pagina.limit as usize {
+        .list(org, &filter, page)
+        .map_err(|error| describe(&error))?;
+    let next_cursor = if flows.len() < page.limit as usize {
         None
     } else {
-        fluxos.last().map(|fluxo| fluxo.id.to_string())
+        flows.last().map(|flow| flow.id.to_string())
     };
-    let itens: Vec<Value> = fluxos.iter().map(flow_json).collect();
+    let items: Vec<Value> = flows.iter().map(flow_json).collect();
     if args.json {
         print_json(&json!({
-            "versao_relatorio": VERSAO_RELATORIO,
+            "versao_relatorio": REPORT_VERSION,
             "org_id": org.to_string(),
-            "items": itens,
+            "items": items,
             "next_cursor": next_cursor,
         }));
-    } else if itens.is_empty() {
+    } else if items.is_empty() {
         println!("Nenhum fluxo nesta org.");
     } else {
-        for item in &itens {
+        for item in &items {
             println!(
                 "{}  {:<9} {:<28} {}  (revisão {}, versão {})",
-                texto_de(&item["id"]),
-                texto_de(&item["status"]),
-                texto_de(&item["slug"]),
-                texto_de(&item["name"]),
-                texto_de(&item["current_revision"]),
-                texto_de(&item["version"]),
+                json_value_text(&item["id"]),
+                json_value_text(&item["status"]),
+                json_value_text(&item["slug"]),
+                json_value_text(&item["name"]),
+                json_value_text(&item["current_revision"]),
+                json_value_text(&item["version"]),
             );
         }
         if let Some(cursor) = &next_cursor {
@@ -427,177 +444,165 @@ fn listar(sessao: &Sessao, org: Option<&str>, args: ListarArgs) -> Result<ExitCo
     Ok(ExitCode::SUCCESS)
 }
 
-fn mostrar(sessao: &Sessao, org: Option<&str>, args: ReferenciaArgs) -> Result<ExitCode, String> {
-    let org = sessao.org(org)?;
-    let fluxo = resolver_fluxo(&sessao.store, org, &args.fluxo)?;
-    let revisao = sessao
+fn show(session: &Session, org: Option<&str>, args: ReferenceArgs) -> Result<ExitCode, String> {
+    let org = session.org(org)?;
+    let flow = resolve_flow(&session.store, org, &args.flow)?;
+    let revision = session
         .store
         .revisions()
-        .current(org, fluxo.id)
-        .map_err(|erro| describe(&erro))?;
-    let mut corpo = flow_with_draft_json(&fluxo);
-    corpo["revision"] = revisao.as_ref().map_or(Value::Null, revision_summary_json);
+        .current(org, flow.id)
+        .map_err(|error| describe(&error))?;
+    let mut body = flow_with_draft_json(&flow);
+    body["revision"] = revision.as_ref().map_or(Value::Null, revision_summary_json);
     if args.json {
-        print_json(&com_versao(corpo));
+        print_json(&with_version(body));
         return Ok(ExitCode::SUCCESS);
     }
-    println!("fluxo `{}` — {}", fluxo.slug, fluxo.name);
-    println!("  id: {}", fluxo.id);
-    println!("  situação: {}", texto_de(&corpo["status"]));
-    println!("  versão: {}", fluxo.version);
-    match &revisao {
+    println!("fluxo `{}` — {}", flow.slug, flow.name);
+    println!("  id: {}", flow.id);
+    println!("  situação: {}", json_value_text(&body["status"]));
+    println!("  versão: {}", flow.version);
+    match &revision {
         Some(r) => println!(
             "  revisão que vale hoje: {} (publicada por {})",
             r.numero, r.publicada_por
         ),
         None => println!("  revisão que vale hoje: nenhuma (só rascunho)"),
     }
-    println!("\nRascunho:\n{}", fluxo.rascunho_fonte);
+    println!("\nRascunho:\n{}", flow.rascunho_fonte);
     Ok(ExitCode::SUCCESS)
 }
 
-fn diff(sessao: &Sessao, org: Option<&str>, args: DiffArgs) -> Result<ExitCode, String> {
-    let org = sessao.org(org)?;
-    let fluxo = resolver_fluxo(&sessao.store, org, &args.fluxo)?;
-    let comparacao = sessao
-        .operacoes()
-        .compare(org, &fluxo, args.de, args.para)
-        .map_err(|erro| erro.to_string())?;
+fn diff(session: &Session, org: Option<&str>, args: DiffArgs) -> Result<ExitCode, String> {
+    let org = session.org(org)?;
+    let flow = resolve_flow(&session.store, org, &args.flow)?;
+    let comparison = session
+        .operations()
+        .compare(org, &flow, args.from, args.to)
+        .map_err(|error| error.to_string())?;
     if args.json {
-        print_json(&com_versao(comparison_json(fluxo.id, &comparacao)));
+        print_json(&with_version(comparison_json(flow.id, &comparison)));
         return Ok(ExitCode::SUCCESS);
     }
     println!(
         "revisão {} → revisão {}: {} mudança(s).",
-        comparacao.from.numero,
-        comparacao.to.numero,
-        comparacao.changes.len()
+        comparison.from.numero,
+        comparison.to.numero,
+        comparison.changes.len()
     );
     println!(
         "  atendimentos ativos: {} na revisão {}, {} na revisão {}.",
-        comparacao.active_from, comparacao.from.numero, comparacao.active_to, comparacao.to.numero
+        comparison.active_from, comparison.from.numero, comparison.active_to, comparison.to.numero
     );
-    for mudanca in &comparacao.changes {
-        println!("  - {}", mudanca.texto);
+    for change in &comparison.changes {
+        println!("  - {}", change.texto);
     }
     Ok(ExitCode::SUCCESS)
 }
 
-fn permissao(
-    sessao: &Sessao,
+fn permission(
+    session: &Session,
     org: Option<&str>,
-    args: PermissaoArgs,
-    liberar: bool,
+    args: PermissionArgs,
+    release: bool,
 ) -> Result<ExitCode, String> {
-    let org = sessao.org(org)?;
-    let fluxo = resolver_fluxo(&sessao.store, org, &args.fluxo)?;
-    let agente = resolver_agente(&sessao.store, org, &args.agente)?;
-    let resultado = if liberar {
-        sessao.store.flows().release(org, agente.id, fluxo.id)
+    let org = session.org(org)?;
+    let flow = resolve_flow(&session.store, org, &args.flow)?;
+    let agent = resolve_agent(&session.store, org, &args.agent)?;
+    let result = if release {
+        session.store.flows().release(org, agent.id, flow.id)
     } else {
-        sessao.store.flows().revoke(org, agente.id, fluxo.id)
+        session.store.flows().revoke(org, agent.id, flow.id)
     };
-    resultado.map_err(|erro| describe(&erro))?;
+    result.map_err(|error| describe(&error))?;
     audit(
-        &sessao.store,
+        &session.store,
         org,
         &Actor::cli(),
         "agent_flows_update",
         "agent",
-        agente.id.to_string(),
+        agent.id.to_string(),
     )
-    .map_err(|erro| describe(&erro))?;
-    let acao = if liberar { "liberado" } else { "retirado" };
+    .map_err(|error| describe(&error))?;
+    let action = if release { "liberado" } else { "retirado" };
     if args.json {
         print_json(&json!({
-            "versao_relatorio": VERSAO_RELATORIO,
+            "versao_relatorio": REPORT_VERSION,
             "org_id": org.to_string(),
-            "agent_id": agente.id.to_string(),
-            "flow_id": fluxo.id.to_string(),
-            "action": acao,
+            "agent_id": agent.id.to_string(),
+            "flow_id": flow.id.to_string(),
+            "action": action,
         }));
-    } else if liberar {
-        println!(
-            "fluxo `{}` liberado ao agente `{}`.",
-            fluxo.slug, agente.name
-        );
+    } else if release {
+        println!("fluxo `{}` liberado ao agente `{}`.", flow.slug, agent.name);
     } else {
-        println!(
-            "fluxo `{}` retirado do agente `{}`.",
-            fluxo.slug, agente.name
-        );
+        println!("fluxo `{}` retirado do agente `{}`.", flow.slug, agent.name);
     }
     Ok(ExitCode::SUCCESS)
 }
 
-// ───────────────────────────── apoio local ─────────────────────────────
-
-fn ler_script(arquivo: &Path) -> Result<String, String> {
-    fs::read_to_string(arquivo)
-        .map_err(|erro| format!("não consegui ler `{}`: {erro}", arquivo.display()))
+fn read_script(file: &Path) -> Result<String, String> {
+    fs::read_to_string(file)
+        .map_err(|error| format!("não consegui ler `{}`: {error}", file.display()))
 }
 
-/// Código de saída: 0 quando não há erro, 1 quando há.
-fn codigo(sem_erro: bool) -> ExitCode {
-    if sem_erro {
+fn exit_code(without_error: bool) -> ExitCode {
+    if without_error {
         ExitCode::SUCCESS
     } else {
         ExitCode::from(1)
     }
 }
 
-/// Acrescenta `versao_relatorio` ao objeto de saída JSON.
-fn com_versao(mut valor: Value) -> Value {
-    valor["versao_relatorio"] = json!(VERSAO_RELATORIO);
-    valor
+fn with_version(mut value: Value) -> Value {
+    value["versao_relatorio"] = json!(REPORT_VERSION);
+    value
 }
 
-/// Texto de um campo JSON, sem as aspas (para a saída de texto).
-fn texto_de(valor: &Value) -> String {
-    match valor {
-        Value::String(texto) => texto.clone(),
+fn json_value_text(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
         Value::Null => "-".to_owned(),
-        outro => outro.to_string(),
+        other => other.to_string(),
     }
 }
 
-/// Uma linha por diagnóstico, com linha e coluna quando o compilador as conhece.
-fn imprimir_diagnosticos(diagnosticos: &[Diagnostic]) {
-    for diagnostico in diagnosticos {
-        let lugar = match (diagnostico.line(), diagnostico.column()) {
-            (Some(linha), Some(coluna)) => format!("linha {linha}, coluna {coluna}: "),
+fn print_diagnostics(diagnostics: &[Diagnostic]) {
+    for diagnostic in diagnostics {
+        let location = match (diagnostic.line(), diagnostic.column()) {
+            (Some(line), Some(column)) => format!("linha {line}, coluna {column}: "),
             _ => String::new(),
         };
         println!(
-            "  {lugar}{} {}: {}",
-            diagnostico.severity.as_text(),
-            diagnostico.code.as_text(),
-            diagnostico.mensagem
+            "  {location}{} {}: {}",
+            diagnostic.severity.as_text(),
+            diagnostic.code.as_text(),
+            diagnostic.mensagem
         );
     }
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
 
     #[test]
-    fn codigo_de_saida_segue_o_erro() {
-        assert_eq!(codigo(true), ExitCode::SUCCESS);
-        assert_eq!(codigo(false), ExitCode::from(1));
+    fn exit_code_reflects_error() {
+        assert_eq!(exit_code(true), ExitCode::SUCCESS);
+        assert_eq!(exit_code(false), ExitCode::from(1));
     }
 
     #[test]
-    fn texto_de_tira_as_aspas_e_marca_o_vazio() {
-        assert_eq!(texto_de(&json!("ativo")), "ativo");
-        assert_eq!(texto_de(&Value::Null), "-");
-        assert_eq!(texto_de(&json!(3)), "3");
+    fn json_value_text_unquotes_strings_and_marks_null() {
+        assert_eq!(json_value_text(&json!("ativo")), "ativo");
+        assert_eq!(json_value_text(&Value::Null), "-");
+        assert_eq!(json_value_text(&json!(3)), "3");
     }
 
     #[test]
-    fn com_versao_acrescenta_o_formato() {
-        let valor = com_versao(json!({ "valid": true }));
-        assert_eq!(valor["versao_relatorio"], 1);
-        assert_eq!(valor["valid"], true);
+    fn with_version_adds_report_version() {
+        let value = with_version(json!({ "valid": true }));
+        assert_eq!(value["versao_relatorio"], 1);
+        assert_eq!(value["valid"], true);
     }
 }

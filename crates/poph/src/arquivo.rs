@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 
 use crate::config;
 use crate::support::{
-    describe, failure, parse_id, print_json, require_offline, resolve_org, validar_limite,
+    describe, failure, parse_id, print_json, require_offline, resolve_org, validate_limit,
 };
 
 /// Subcomandos de `poph file`.
@@ -205,7 +205,7 @@ fn listar(store: &Store, org: OrgId, args: ListarArquivos) -> ExitCode {
         Ok(agente) => agente,
         Err(erro) => return failure(erro),
     };
-    let pagina: Page = match validar_limite(args.limit) {
+    let pagina: Page = match validate_limit(args.limit) {
         Ok(pagina) => pagina,
         Err(erro) => return failure(erro),
     };

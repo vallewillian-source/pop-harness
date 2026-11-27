@@ -14,7 +14,7 @@ The administrative endpoints are implemented in [`api/agents.rs`](../crates/poph
 | Instruction types | `crates/poph-types/src/instructions.rs` | `StructuredInstructions` with the same names, defaults and tolerances as POP Atende (HR-03 §9.1); closed list of V1 tools; validation on write. |
 | Composer | `crates/poph-core/src/compositor.rs` | Faithful port of `core/agent/instructions_composer.py`: same output, byte for byte. |
 | Repositories | `crates/poph-store/src/repos/agentes.rs` and `instrucoes.rs` | Agent (`V1` fields), agent↔category link, instructions with `If-Match`. |
-| CLI | `crates/poph/src/agente.rs` | `poph agent ...` and `poph instructions ...` (text and `--json`). |
+| CLI | `crates/poph/src/agent.rs` | `poph agent ...` and `poph instructions ...` (text and `--json`). |
 
 The crate `poph-agent` (D-08) does not exist yet. The composer lives in `poph-core` because it is pure code
 on top of `poph-types`: it can move to `poph-agent` without changing a line when HR-13 opens that crate.
@@ -99,8 +99,15 @@ The script only imports `core.agent.instructions_composer` and calls the same fu
 
 ## 5. CLI
 
-`--org` (UUID v7 or slug) is global and required for data commands. Writes require `--if-match` with the
-version that was read; `--json` returns a stable format (`versao_relatorio: 1`).
+`--org` (UUID v7 or slug) is global and required for data commands. Agent references accept a UUID v7
+or slug within that org. Updates require `--if-match` with the version that was read. Instruction
+creation requires that the agent have no instructions yet. Output from `--json` uses the stable
+`versao_relatorio: 1` format and omits secrets.
+
+Slug derivation lowercases the name, folds supported accented characters to ASCII, collapses runs of
+separators to a hyphen, and caps the slug at 64 characters. When instructions are saved from a manual
+Markdown file, the CLI keeps the existing structured JSON, or stores an empty object on first save.
+The CLI checks the syntax of `--jev-json` before writing an agent update.
 
 ```bash
 # create the agent (slug derived from the name: "Bia Atendente" → bia-atendente)

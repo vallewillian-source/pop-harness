@@ -12,12 +12,12 @@ use clap::{Args, Subcommand};
 use poph_store::{NewOrg, Org, OrgChange, Store};
 use serde_json::{Value, json};
 
-use crate::agente::{derivar_slug, slug_valido};
+use crate::agent::{derive_slug, is_valid_slug};
 use crate::config;
 use crate::support::{
-    abrir_banco, contar_todos, describe, failure, json_de_texto, print_json, require_offline,
-    resolve_org, status_de_texto, status_em_portugues, validar_config_json, validar_limite,
-    validar_texto,
+    abrir_banco, contar_todos, describe, failure, json_de_texto, parse_status, print_json,
+    require_offline, resolve_org, status_in_portuguese, validar_config_json, validate_limit,
+    validate_text,
 };
 
 /// Subcomandos de `poph org`.
@@ -140,12 +140,12 @@ pub fn executar(
 }
 
 fn criar(store: &Store, args: CriarOrg) -> ExitCode {
-    let nome = match validar_texto("nome", &args.name, 120) {
+    let nome = match validate_text("nome", &args.name, 120) {
         Ok(nome) => nome,
         Err(erro) => return failure(erro),
     };
-    let slug = args.slug.clone().unwrap_or_else(|| derivar_slug(&nome));
-    if !slug_valido(&slug) {
+    let slug = args.slug.clone().unwrap_or_else(|| derive_slug(&nome));
+    if !is_valid_slug(&slug) {
         return failure(format!(
             "slug `{slug}` inválido: use de 3 a 64 caracteres, só a-z, 0-9 e `-`"
         ));
@@ -167,7 +167,7 @@ fn criar(store: &Store, args: CriarOrg) -> ExitCode {
 }
 
 fn listar(store: &Store, args: ListarOrgs) -> ExitCode {
-    let pagina = match validar_limite(args.limit) {
+    let pagina = match validate_limit(args.limit) {
         Ok(pagina) => pagina,
         Err(erro) => return failure(erro),
     };
@@ -188,7 +188,7 @@ fn listar(store: &Store, args: ListarOrgs) -> ExitCode {
                         "{}  slug={:<24} status={:<9} {}",
                         org.id,
                         org.slug,
-                        status_em_portugues(org.status),
+                        status_in_portuguese(org.status),
                         org.name
                     );
                 }
@@ -224,13 +224,13 @@ fn atualizar(store: &Store, args: AtualizarOrg) -> ExitCode {
     let nome = match args
         .name
         .as_deref()
-        .map(|nome| validar_texto("nome", nome, 120))
+        .map(|nome| validate_text("nome", nome, 120))
         .transpose()
     {
         Ok(nome) => nome,
         Err(erro) => return failure(erro),
     };
-    let status = match args.status.as_deref().map(status_de_texto).transpose() {
+    let status = match args.status.as_deref().map(parse_status).transpose() {
         Ok(status) => status,
         Err(erro) => return failure(erro),
     };
@@ -396,7 +396,7 @@ fn texto_org(org: &Org, agentes: Option<usize>) -> String {
         org.id,
         org.name,
         org.slug,
-        status_em_portugues(org.status)
+        status_in_portuguese(org.status)
     );
     if let Some(total) = agentes {
         texto.push_str(&format!("  agentes: {total}\n"));
