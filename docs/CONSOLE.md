@@ -28,17 +28,20 @@ cd apps/pop-harness && cargo build -p poph         # o build.rs embute dist no b
 ./target/debug/poph serve                          # Console em http://127.0.0.1:7480/
 ```
 
-### Encadeamento do build
+### Build pipeline
 
-1. `pnpm build` roda `tsc --noEmit` e o `vite build`, gerando `console/dist` (HTML, JS, CSS e as
-   fontes copiadas para `public/res`).
-2. O `build.rs` do `crates/poph-server` percorre `console/dist` e gera uma tabela de
-   `include_bytes!` em `OUT_DIR/console_embutido.rs`. **O build do Rust não chama Node.**
-3. `cargo build` compila essa tabela dentro do binário; `poph serve` a entrega em `/`.
+1. `pnpm build` runs `tsc --noEmit` and `vite build`, producing `console/dist` with HTML, JS, CSS
+   and the fonts copied from `public/res`.
+2. `crates/poph-server/build.rs` reads the existing bundle without running Node or pnpm. It generates
+   `OUT_DIR/console_embutido.rs` with `HAS_BUNDLE = true` and a `FILES` table containing each asset's
+   relative path, MIME type and bytes. The script sorts entries by relative path for reproducible
+   output and uses `include_bytes!` to embed the assets in the binary.
+3. `poph serve` serves the embedded Console at `/`.
 
-**Sem o bundle** — clone limpo, CI offline, build de quem só quer a API — o crate compila
-normalmente e `/` devolve uma página mínima explicando como gerar o Console. A API
-(`/admin/v1`), `/healthz`, `/metrics` e `/webhook` não dependem do Console em nenhum momento.
+When `console/dist` is absent or empty, an offline or API-only build still compiles. The generated
+table has `HAS_BUNDLE = false` and a single `index.html` entry. At `/`, the embedded fallback page
+explains how to build the Console. The administrative API and the health, metrics and webhook routes
+work in either mode.
 
 ## Serviço das rotas
 

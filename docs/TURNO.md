@@ -435,6 +435,10 @@ model — a message with only an image produced a request with no content. Now:
 - **How to prove it:** `cargo test -p poph-agent --test image_attachment` (5 tests: image only, image + document, missing blob, ceiling,
   and turn without file configuration).
 
+The turn tests capture logs to check that raw image data does not leak. The G7 file-injection tests seed
+customer attachments directly in the `attachments` table so they can exercise the turn independently
+of channel ingestion.
+
 ## 14. Crash and recovery (HR-57)
 
 What happens when the process dies (`kill -9`, power loss, OOM) in the middle of a service. The rule is: **the customer's message is

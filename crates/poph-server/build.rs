@@ -1,61 +1,52 @@
-//! Build do `poph-server`: embute o bundle do Console (HR-38) no binário.
-//!
-//! O Console é uma SPA Vite em `console/` (irmã do crate). O build do Rust não roda Node: ele
-//! lê `console/dist` se existir e gera uma tabela de `include_bytes!`. Sem o bundle — CI offline,
-//! clone limpo, build de quem só quer a API — o crate compila normalmente e serve uma página
-//! mínima explicando como gerar o Console.
-//!
-//! Assim o `cargo build` nunca depende de `pnpm`, e o binário de release leva o Console dentro.
-
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 fn main() {
-    let raiz = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-    let dist = raiz.join("../../console/dist");
-    let destino =
+    let crate_root =
+        PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+    let dist = crate_root.join("../../console/dist");
+    let output_path =
         PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR")).join("console_embutido.rs");
 
     println!("cargo:rerun-if-changed={}", dist.display());
     println!("cargo:rerun-if-changed=build.rs");
 
-    let mut arquivos = Vec::new();
+    let mut files = Vec::new();
     if dist.is_dir() {
-        coletar(&dist, &dist, &mut arquivos);
+        collect_files(&dist, &dist, &mut files);
     }
-    // Ordem estável: o mesmo bundle gera o mesmo código, e o build fica reproduzível.
-    arquivos.sort_by(|a, b| a.0.cmp(&b.0));
+    files.sort_by(|a, b| a.0.cmp(&b.0));
 
-    let mut codigo = String::new();
-    codigo.push_str("// Gerado por build.rs a partir de console/dist. Não edite.\n");
+    let mut source = String::new();
 
-    if arquivos.is_empty() {
-        let aviso = destino.with_file_name("console_ausente.html");
-        std::fs::write(&aviso, AVISO_SEM_BUNDLE).expect("gravar a página de aviso do Console");
+    if files.is_empty() {
+        let notice_path = output_path.with_file_name("console_ausente.html");
+        std::fs::write(&notice_path, MISSING_BUNDLE_PAGE)
+            .expect("gravar a página de aviso do Console");
         let _ = writeln!(
-            codigo,
-            "/// `false` quando o build não encontrou `console/dist`.\npub const HAS_BUNDLE: bool = false;\n\
-             pub static FILES: &[(&str, &str, &[u8])] = &[\n    (\"index.html\", \"text/html; charset=utf-8\", include_bytes!({caminho:?})),\n];",
-            caminho = aviso.to_string_lossy()
+            source,
+            "pub const HAS_BUNDLE: bool = false;\n\
+             pub static FILES: &[(&str, &str, &[u8])] = &[\n    (\"index.html\", \"text/html; charset=utf-8\", include_bytes!({path:?})),\n];",
+            path = notice_path.to_string_lossy()
         );
     } else {
-        codigo.push_str("/// `true` quando o build encontrou `console/dist`.\npub const HAS_BUNDLE: bool = true;\n");
-        codigo.push_str("pub static FILES: &[(&str, &str, &[u8])] = &[\n");
-        for (relativo, absoluto) in &arquivos {
+        source.push_str("pub const HAS_BUNDLE: bool = true;\n");
+        source.push_str("pub static FILES: &[(&str, &str, &[u8])] = &[\n");
+        for (relative, absolute) in &files {
             let _ = writeln!(
-                codigo,
-                "    ({relativo:?}, {:?}, include_bytes!({:?})),",
-                mime(relativo),
-                absoluto.to_string_lossy()
+                source,
+                "    ({relative:?}, {:?}, include_bytes!({:?})),",
+                mime(relative),
+                absolute.to_string_lossy()
             );
         }
-        codigo.push_str("];\n");
+        source.push_str("];\n");
     }
 
-    std::fs::write(&destino, codigo).expect("gravar console_embutido.rs");
+    std::fs::write(&output_path, source).expect("gravar console_embutido.rs");
 }
 
-const AVISO_SEM_BUNDLE: &str = r#"<!doctype html>
+const MISSING_BUNDLE_PAGE: &str = r#"<!doctype html>
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
@@ -81,37 +72,31 @@ const AVISO_SEM_BUNDLE: &str = r#"<!doctype html>
 </html>
 "#;
 
-/// Percorre `dist` em ordem de caminho e coleta `(caminho relativo, caminho absoluto)`.
-fn coletar(base: &Path, pasta: &Path, saida: &mut Vec<(String, PathBuf)>) {
-    let Ok(entradas) = std::fs::read_dir(pasta) else {
+fn collect_files(base: &Path, directory: &Path, files: &mut Vec<(String, PathBuf)>) {
+    let Ok(entries) = std::fs::read_dir(directory) else {
         return;
     };
-    let mut itens: Vec<PathBuf> = entradas
-        .filter_map(|entrada| entrada.ok().map(|e| e.path()))
+    let mut paths: Vec<PathBuf> = entries
+        .filter_map(|entry| entry.ok().map(|e| e.path()))
         .collect();
-    itens.sort();
-    for caminho in itens {
-        if caminho.is_dir() {
-            coletar(base, &caminho, saida);
+    paths.sort();
+    for path in paths {
+        if path.is_dir() {
+            collect_files(base, &path, files);
             continue;
         }
-        let Ok(relativo) = caminho.strip_prefix(base) else {
+        let Ok(relative) = path.strip_prefix(base) else {
             continue;
         };
-        let relativo = relativo.to_string_lossy().replace('\\', "/");
-        println!("cargo:rerun-if-changed={}", caminho.display());
-        saida.push((relativo, caminho));
+        let relative = relative.to_string_lossy().replace('\\', "/");
+        println!("cargo:rerun-if-changed={}", path.display());
+        files.push((relative, path));
     }
 }
 
-/// Tipo do conteúdo pelo sufixo. Lista fechada: o bundle do Vite só produz estes.
-fn mime(caminho: &str) -> &'static str {
-    let extensao = caminho
-        .rsplit('.')
-        .next()
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    match extensao.as_str() {
+fn mime(path: &str) -> &'static str {
+    let extension = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    match extension.as_str() {
         "html" => "text/html; charset=utf-8",
         "js" | "mjs" => "text/javascript; charset=utf-8",
         "css" => "text/css; charset=utf-8",

@@ -20,6 +20,8 @@ Everything here is disposable: restarting the process only costs re-reading from
 
 ## 2. Hot configuration cache
 
+The hot configuration cache uses Moka to enforce entry expiration and the weighted memory cap.
+
 - **Key**: `(org_id, agent_id)`. There is no agent read without an org.
 - **Content**: `Agente` (model, tool limits, RAG top-k/cut, Jev), saved instructions, the structured JSON already
   parsed, the markdown of the stable prefix and the list of enabled tools.

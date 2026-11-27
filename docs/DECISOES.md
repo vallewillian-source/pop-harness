@@ -134,7 +134,8 @@ is still accepted (local gateway).
 - **A TLS failure is definitive**: an untrusted certificate, a server name that does not match the certificate, or a
   refused handshake become their own errors (`ErroLlm::Tls` / `JevError::Tls`), with no retry, carrying the cause's
   message (e.g. `invalid peer certificate: UnknownIssuer`). There is no public option to "ignore the certificate";
-  the test uses an extra root, never disabled validation.
+  the test uses an extra root, never disabled validation. The local TLS test server uses the fixture
+  certificates in `crates/poph-jev/tests/fixtures/tls`.
 - **What the workstation's `cargo check --target aarch64` stopped covering:** `poph-core` and `poph-jev` were
   removed from the step, because TLS brings in `aws-lc-sys`, which compiles C — the cross build fails on the
   workstation for lack of `aarch64-linux-gnu-gcc` (`error occurred in cc-rs: failed to find tool
