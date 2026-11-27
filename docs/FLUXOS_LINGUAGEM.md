@@ -592,7 +592,7 @@ Detalhes que o autor precisa saber:
 
 ### 6.3 Como a `def` roda (prazo, isolamento e custo)
 
-- O script é carregado **uma vez** (`poph_fluxos::regras::Avaliador::novo`) e o módulo congelado serve todas as regras daquela passagem — uma carga por revisão, não uma por nó.
+- O script é carregado **uma vez** (`poph_fluxos::regras::RuleEvaluator::new`) e o módulo congelado serve todas as regras daquela passagem — uma carga por revisão, não uma por nó.
 - A `def` recebe os dados como **dicionário concreto**: o que o cliente escreveu entra como **valor**, nunca como código. Não existe `eval`, e o dialeto não alcança relógio, rede, arquivo nem aleatório (§3.3).
 - Limites da regra: **10.000 ticks**, **1 MiB** de heap, **128** de pilha e **200 ms** de prazo.
 - **O prazo do Starlark não é preemptivo**: uma alocação única e enorme acontece antes da conferência de heap. Por isso a `def` (e a carga do script) roda numa thread própria, e o chamador espera no máximo o prazo mais uma margem de **25 ms**; estourou, a regra responde `regra_limite` na hora e a thread abandonada termina sozinha. É o que garante o turno do atendimento mesmo com script patológico publicado.

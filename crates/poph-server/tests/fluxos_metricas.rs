@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use poph_fluxos::{ChaveRevisao, Limites, compilar};
+use poph_fluxos::{Limites, RevisionKey, compilar};
 use poph_server::Estado;
 use poph_store::Store;
 use poph_types::HarnessConfig;
@@ -101,10 +101,10 @@ fn carregar(estado: &Estado, fluxo: &str, numero: u32) {
         .ir()
         .unwrap_or_else(|diagnosticos| panic!("exemplo não compila: {diagnosticos:?}"))
         .clone();
-    let chave = ChaveRevisao::nova(fluxo, numero, FLUXO);
+    let chave = RevisionKey::new(fluxo, numero, FLUXO);
     estado
         .cache_fluxos
-        .carregar(&chave, &ir, FLUXO, &limites)
+        .load(&chave, &ir, FLUXO, &limites)
         .unwrap_or_else(|falha| panic!("carga falhou: {falha:?}"));
 }
 
@@ -158,11 +158,11 @@ async fn revisao_carregada_pelo_motor_aparece_nas_series_do_cache() {
 #[tokio::test]
 async fn teto_do_cache_vem_da_configuracao() {
     let (padrao, pasta_padrao) = estado("teto-padrao", |_| {});
-    assert_eq!(padrao.cache_fluxos.teto_bytes(), 16 * 1024 * 1024);
+    assert_eq!(padrao.cache_fluxos.byte_cap(), 16 * 1024 * 1024);
     let _ = fs::remove_dir_all(&pasta_padrao);
 
     let (trocado, pasta_trocado) = estado("teto-3", |cfg| cfg.flows.revision_cache_mb = 3);
-    assert_eq!(trocado.cache_fluxos.teto_bytes(), 3 * 1024 * 1024);
+    assert_eq!(trocado.cache_fluxos.byte_cap(), 3 * 1024 * 1024);
     let _ = fs::remove_dir_all(&pasta_trocado);
 }
 

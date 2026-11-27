@@ -9,8 +9,8 @@ use std::time::{Duration, Instant};
 use poph_fluxos::compilador::Limites;
 use poph_fluxos::ir::Rule;
 use poph_fluxos::regras::{
-    Avaliador, Dados, ErroRegra, LimitesRegra, MAX_PROFUNDIDADE, PRAZO_DA_REGRA,
-    TOLERANCIA_DO_PRAZO, avaliar, dados_de_json,
+    DEADLINE_TOLERANCE, Dados, MAX_NESTING, RULE_DEADLINE, RuleError, RuleEvaluator, RuleLimits,
+    evaluate, snapshot_from_json,
 };
 use poph_types::DomainError;
 
@@ -68,14 +68,14 @@ def ecoa(dados):
 "#;
 
 fn dados(json: &str) -> Dados {
-    dados_de_json(json).expect("dados de teste válidos")
+    snapshot_from_json(json).expect("dados de teste válidos")
 }
 
-fn avaliador() -> Avaliador {
-    Avaliador::novo(SCRIPT).expect("o script de apoio carrega")
+fn avaliador() -> RuleEvaluator {
+    RuleEvaluator::new(SCRIPT).expect("o script de apoio carrega")
 }
 
-fn codigo(erro: &ErroRegra) -> &'static str {
+fn codigo(erro: &RuleError) -> &'static str {
     erro.api_code()
 }
 
@@ -195,7 +195,11 @@ fn igual_compara_texto_numero_booleano_e_anexo() {
         ),
     ];
     for (regra, esperado) in casos {
-        assert_eq!(avaliar(&regra, &base).unwrap(), esperado, "regra {regra:?}");
+        assert_eq!(
+            evaluate(&regra, &base).unwrap(),
+            esperado,
+            "regra {regra:?}"
+        );
     }
 }
 
@@ -203,7 +207,7 @@ fn igual_compara_texto_numero_booleano_e_anexo() {
 fn diferente_e_o_inverso_de_igual() {
     let base = dados(r#"{"relato": {"periodo": "manha"}}"#);
     assert!(
-        avaliar(
+        evaluate(
             &Rule::Diferente {
                 campo: "relato.periodo".into(),
                 value: "tarde".into()
@@ -213,7 +217,7 @@ fn diferente_e_o_inverso_de_igual() {
         .unwrap()
     );
     assert!(
-        !avaliar(
+        !evaluate(
             &Rule::Diferente {
                 campo: "relato.periodo".into(),
                 value: "manha".into()
@@ -230,7 +234,7 @@ fn maior_e_menor_comparam_numero_e_texto_numerico() {
         dados(r#"{"coleta": {"dias": 12, "dias_texto": "12", "nome": "doze", "nulo": null}}"#);
     // número × número
     assert!(
-        avaliar(
+        evaluate(
             &Rule::Maior {
                 campo: "coleta.dias".into(),
                 value: "10".into()
@@ -240,7 +244,7 @@ fn maior_e_menor_comparam_numero_e_texto_numerico() {
         .unwrap()
     );
     assert!(
-        !avaliar(
+        !evaluate(
             &Rule::Menor {
                 campo: "coleta.dias".into(),
                 value: "10".into()
@@ -251,7 +255,7 @@ fn maior_e_menor_comparam_numero_e_texto_numerico() {
     );
     // texto que é número compara pelo número: "12" > "9", o que não aconteceria em texto
     assert!(
-        avaliar(
+        evaluate(
             &Rule::Maior {
                 campo: "coleta.dias_texto".into(),
                 value: "9".into()
@@ -262,7 +266,7 @@ fn maior_e_menor_comparam_numero_e_texto_numerico() {
     );
     // texto que não é número: falso, sem erro (é o FLX60 avisado na publicação)
     assert!(
-        !avaliar(
+        !evaluate(
             &Rule::Maior {
                 campo: "coleta.nome".into(),
                 value: "9".into()
@@ -273,7 +277,7 @@ fn maior_e_menor_comparam_numero_e_texto_numerico() {
     );
     // nulo: falso
     assert!(
-        !avaliar(
+        !evaluate(
             &Rule::Maior {
                 campo: "coleta.nulo".into(),
                 value: "9".into()
@@ -285,7 +289,7 @@ fn maior_e_menor_comparam_numero_e_texto_numerico() {
     // decimal
     let decimal = dados(r#"{"coleta": {"dias": 10.5}}"#);
     assert!(
-        avaliar(
+        evaluate(
             &Rule::Maior {
                 campo: "coleta.dias".into(),
                 value: "10.25".into()
@@ -299,7 +303,7 @@ fn maior_e_menor_comparam_numero_e_texto_numerico() {
 #[test]
 fn comparar_com_literal_que_nao_e_numero_e_regra_invalida() {
     let base = dados(r#"{"coleta": {"dias": 12}}"#);
-    let erro = avaliar(
+    let erro = evaluate(
         &Rule::Maior {
             campo: "coleta.dias".into(),
             value: "dez".into(),
@@ -318,7 +322,7 @@ fn contem_ignora_caixa_e_acento_em_texto_e_em_lista() {
     );
     // texto, com acento e maiúscula do outro lado
     assert!(
-        avaliar(
+        evaluate(
             &Rule::Contem {
                 campo: "relato.resumo".into(),
                 value: "nao abre".into()
@@ -328,7 +332,7 @@ fn contem_ignora_caixa_e_acento_em_texto_e_em_lista() {
         .unwrap()
     );
     assert!(
-        avaliar(
+        evaluate(
             &Rule::Contem {
                 campo: "relato.resumo".into(),
                 value: "NÃO".into()
@@ -338,7 +342,7 @@ fn contem_ignora_caixa_e_acento_em_texto_e_em_lista() {
         .unwrap()
     );
     assert!(
-        !avaliar(
+        !evaluate(
             &Rule::Contem {
                 campo: "relato.resumo".into(),
                 value: "fechou".into()
@@ -349,7 +353,7 @@ fn contem_ignora_caixa_e_acento_em_texto_e_em_lista() {
     );
     // lista: qualquer item que contenha o trecho
     assert!(
-        avaliar(
+        evaluate(
             &Rule::Contem {
                 campo: "relato.tags".into(),
                 value: "urgen".into()
@@ -359,7 +363,7 @@ fn contem_ignora_caixa_e_acento_em_texto_e_em_lista() {
         .unwrap()
     );
     assert!(
-        avaliar(
+        evaluate(
             &Rule::Contem {
                 campo: "relato.tags".into(),
                 value: "fatura".into()
@@ -369,7 +373,7 @@ fn contem_ignora_caixa_e_acento_em_texto_e_em_lista() {
         .unwrap()
     );
     assert!(
-        !avaliar(
+        !evaluate(
             &Rule::Contem {
                 campo: "relato.tags".into(),
                 value: "cobranca".into()
@@ -396,7 +400,7 @@ fn vazio_cobre_ausente_nulo_espacos_e_lista() {
     ];
     for (campo, esperado) in casos {
         assert_eq!(
-            avaliar(
+            evaluate(
                 &Rule::Vazio {
                     campo: campo.into()
                 },
@@ -439,7 +443,7 @@ fn e_ou_nao_aninhados() {
             },
         ],
     };
-    assert!(avaliar(&regra, &base).unwrap());
+    assert!(evaluate(&regra, &base).unwrap());
 
     // e() com uma condição falsa derruba o conjunto
     let falso = Rule::E {
@@ -453,7 +457,7 @@ fn e_ou_nao_aninhados() {
             },
         ],
     };
-    assert!(!avaliar(&falso, &base).unwrap());
+    assert!(!evaluate(&falso, &base).unwrap());
 
     // ou() com todas falsas
     let nenhuma = Rule::Ou {
@@ -467,7 +471,7 @@ fn e_ou_nao_aninhados() {
             },
         ],
     };
-    assert!(!avaliar(&nenhuma, &base).unwrap());
+    assert!(!evaluate(&nenhuma, &base).unwrap());
 
     // nao() com dois argumentos é regra malformada
     let malformada = Rule::Nao {
@@ -481,7 +485,7 @@ fn e_ou_nao_aninhados() {
         ],
     };
     assert_eq!(
-        codigo(&avaliar(&malformada, &base).unwrap_err()),
+        codigo(&evaluate(&malformada, &base).unwrap_err()),
         "regra_invalida"
     );
 }
@@ -547,7 +551,11 @@ fn campo_ausente_segue_a_tabela_do_documento() {
         ),
     ];
     for (regra, esperado) in casos {
-        assert_eq!(avaliar(&regra, &base).unwrap(), esperado, "regra {regra:?}");
+        assert_eq!(
+            evaluate(&regra, &base).unwrap(),
+            esperado,
+            "regra {regra:?}"
+        );
     }
 }
 
@@ -556,10 +564,10 @@ fn regra_aninhada_alem_do_teto_e_recusada_sem_derrubar_a_pilha() {
     let mut regra = Rule::Vazio {
         campo: "relato.x".into(),
     };
-    for _ in 0..(MAX_PROFUNDIDADE + 5) {
+    for _ in 0..(MAX_NESTING + 5) {
         regra = Rule::Nao { args: vec![regra] };
     }
-    let erro = avaliar(&regra, &dados(r#"{"relato": {"x": "1"}}"#))
+    let erro = evaluate(&regra, &dados(r#"{"relato": {"x": "1"}}"#))
         .expect_err("aninhamento acima do teto tem de ser recusado");
     assert_eq!(codigo(&erro), "regra_invalida");
     assert!(erro.to_string().contains("aninhamento"), "{erro}");
@@ -577,8 +585,8 @@ fn funcao_le_os_dados_e_decide() {
     let regra = Rule::Funcao {
         nome: "grave".into(),
     };
-    assert!(avaliador.avaliar(&regra, &urgente).unwrap());
-    assert!(!avaliador.avaliar(&regra, &normal).unwrap());
+    assert!(avaliador.evaluate(&regra, &urgente).unwrap());
+    assert!(!avaliador.evaluate(&regra, &normal).unwrap());
 }
 
 #[test]
@@ -589,7 +597,7 @@ fn funcao_recebe_o_dicionario_inteiro_inclusive_anexo_e_nulo() {
     };
     assert!(
         avaliador
-            .avaliar(
+            .evaluate(
                 &regra,
                 &dados(r#"{"relato": {"anexo": {"nome": "nota.pdf"}}}"#)
             )
@@ -597,17 +605,17 @@ fn funcao_recebe_o_dicionario_inteiro_inclusive_anexo_e_nulo() {
     );
     assert!(
         !avaliador
-            .avaliar(&regra, &dados(r#"{"relato": {"anexo": null}}"#))
+            .evaluate(&regra, &dados(r#"{"relato": {"anexo": null}}"#))
             .unwrap()
     );
-    assert!(!avaliador.avaliar(&regra, &dados("{}")).unwrap());
+    assert!(!avaliador.evaluate(&regra, &dados("{}")).unwrap());
 }
 
 #[test]
 fn funcao_que_devolve_texto_e_regra_invalida() {
     let avaliador = avaliador();
     let erro = avaliador
-        .avaliar(
+        .evaluate(
             &Rule::Funcao {
                 nome: "devolve_texto".into(),
             },
@@ -622,7 +630,7 @@ fn funcao_que_devolve_texto_e_regra_invalida() {
 fn funcao_que_devolve_none_e_regra_invalida() {
     let avaliador = avaliador();
     let erro = avaliador
-        .avaliar(
+        .evaluate(
             &Rule::Funcao {
                 nome: "devolve_nada".into(),
             },
@@ -636,7 +644,7 @@ fn funcao_que_devolve_none_e_regra_invalida() {
 fn funcao_que_le_dado_inexistente_falha_sem_panico() {
     let avaliador = avaliador();
     let erro = avaliador
-        .avaliar(
+        .evaluate(
             &Rule::Funcao {
                 nome: "le_ausente".into(),
             },
@@ -651,7 +659,7 @@ fn funcao_que_estoura_ticks_e_regra_limite() {
     let avaliador = avaliador();
     let inicio = Instant::now();
     let erro = avaliador
-        .avaliar(
+        .evaluate(
             &Rule::Funcao {
                 nome: "estoura_ticks".into(),
             },
@@ -660,7 +668,7 @@ fn funcao_que_estoura_ticks_e_regra_limite() {
         .expect_err("laço longo tem de ser cortado");
     let gasto = inicio.elapsed();
     assert_eq!(codigo(&erro), "regra_limite", "{erro}");
-    assert!(gasto < PRAZO_DA_REGRA, "levou {gasto:?}");
+    assert!(gasto < RULE_DEADLINE, "levou {gasto:?}");
 }
 
 #[test]
@@ -668,7 +676,7 @@ fn funcao_recursiva_e_regra_limite() {
     let avaliador = avaliador();
     let inicio = Instant::now();
     let erro = avaliador
-        .avaliar(
+        .evaluate(
             &Rule::Funcao {
                 nome: "recursiva".into(),
             },
@@ -677,7 +685,7 @@ fn funcao_recursiva_e_regra_limite() {
         .expect_err("recursão tem de ser cortada");
     let gasto = inicio.elapsed();
     assert_eq!(codigo(&erro), "regra_limite", "{erro}");
-    assert!(gasto < PRAZO_DA_REGRA, "levou {gasto:?}");
+    assert!(gasto < RULE_DEADLINE, "levou {gasto:?}");
 }
 
 #[test]
@@ -691,7 +699,7 @@ fn funcao_que_aloca_gigante_responde_no_prazo() {
         let base = dados(&format!(r#"{{"relato": {{"n": {n}}}}}"#));
         let inicio = Instant::now();
         let erro = avaliador
-            .avaliar(
+            .evaluate(
                 &Rule::Funcao {
                     nome: "aloca_gigante".into(),
                 },
@@ -701,7 +709,7 @@ fn funcao_que_aloca_gigante_responde_no_prazo() {
         let gasto = inicio.elapsed();
         assert_eq!(codigo(&erro), "regra_limite", "n={n}: {erro}");
         assert!(
-            gasto <= PRAZO_DA_REGRA + TOLERANCIA_DO_PRAZO + Duration::from_millis(250),
+            gasto <= RULE_DEADLINE + DEADLINE_TOLERANCE + Duration::from_millis(250),
             "n={n}: a regra respondeu em {gasto:?}, acima do prazo"
         );
     }
@@ -731,7 +739,8 @@ def aloca_gigante(dados):
     return len("x" * 100000000) > 0
 "#;
     let inicio = Instant::now();
-    let erro = Avaliador::novo(fonte).expect_err("carga com constante gigante tem de ser cortada");
+    let erro =
+        RuleEvaluator::new(fonte).expect_err("carga com constante gigante tem de ser cortada");
     let gasto = inicio.elapsed();
     assert_eq!(codigo(&erro), "regra_limite", "{erro}");
     assert!(
@@ -747,7 +756,7 @@ fn limites_da_carga_viram_regra_limite() {
         max_heap_bytes: 1,
         ..Limites::default()
     };
-    let erro = Avaliador::novo_com(SCRIPT, &apertado, LimitesRegra::default())
+    let erro = RuleEvaluator::new_with(SCRIPT, &apertado, RuleLimits::default())
         .expect_err("heap de 1 byte não carrega o script");
     assert_eq!(codigo(&erro), "regra_limite", "{erro}");
 }
@@ -756,7 +765,7 @@ fn limites_da_carga_viram_regra_limite() {
 fn funcao_sem_def_e_regra_invalida() {
     let avaliador = avaliador();
     let erro = avaliador
-        .avaliar(
+        .evaluate(
             &Rule::Funcao {
                 nome: "nao_existe".into(),
             },
@@ -769,7 +778,7 @@ fn funcao_sem_def_e_regra_invalida() {
 
 #[test]
 fn funcao_sem_modulo_carregado_e_regra_invalida() {
-    let erro = avaliar(
+    let erro = evaluate(
         &Rule::Funcao {
             nome: "grave".into(),
         },
@@ -784,14 +793,14 @@ fn funcao_sem_modulo_carregado_e_regra_invalida() {
 fn os_limites_da_regra_estao_ligados_de_verdade() {
     // Orçamento de ticks apertado: o laço de 200.000 voltas não cabe em 100 ticks. (Uma `def`
     // trivial como `return True` cabe em 1 tick — o limite é de trabalho, não de chamada.)
-    let apertado = LimitesRegra {
+    let apertado = RuleLimits {
         max_ticks: 100,
-        ..LimitesRegra::default()
+        ..RuleLimits::default()
     };
-    let avaliador = Avaliador::novo_com(SCRIPT, &Limites::default(), apertado)
+    let avaliador = RuleEvaluator::new_with(SCRIPT, &Limites::default(), apertado)
         .expect("o script carrega com os limites de carga");
     let erro = avaliador
-        .avaliar(
+        .evaluate(
             &Rule::Funcao {
                 nome: "estoura_ticks".into(),
             },
@@ -801,13 +810,14 @@ fn os_limites_da_regra_estao_ligados_de_verdade() {
     assert_eq!(codigo(&erro), "regra_limite", "{erro}");
 
     // Heap apertado: a `def` não consegue nem montar o dicionário dos dados.
-    let sem_heap = LimitesRegra {
+    let sem_heap = RuleLimits {
         max_heap_bytes: 1,
-        ..LimitesRegra::default()
+        ..RuleLimits::default()
     };
-    let avaliador = Avaliador::novo_com(SCRIPT, &Limites::default(), sem_heap).expect("carrega");
+    let avaliador =
+        RuleEvaluator::new_with(SCRIPT, &Limites::default(), sem_heap).expect("carrega");
     let erro = avaliador
-        .avaliar(
+        .evaluate(
             &Rule::Funcao {
                 nome: "grave".into(),
             },
@@ -817,13 +827,14 @@ fn os_limites_da_regra_estao_ligados_de_verdade() {
     assert_eq!(codigo(&erro), "regra_limite", "{erro}");
 
     // Profundidade de chamada: a recursão bate no limite de pilha da regra (não no padrão).
-    let sem_pilha = LimitesRegra {
+    let sem_pilha = RuleLimits {
         max_callstack: 2,
-        ..LimitesRegra::default()
+        ..RuleLimits::default()
     };
-    let avaliador = Avaliador::novo_com(SCRIPT, &Limites::default(), sem_pilha).expect("carrega");
+    let avaliador =
+        RuleEvaluator::new_with(SCRIPT, &Limites::default(), sem_pilha).expect("carrega");
     let erro = avaliador
-        .avaliar(
+        .evaluate(
             &Rule::Funcao {
                 nome: "recursiva".into(),
             },
@@ -835,7 +846,7 @@ fn os_limites_da_regra_estao_ligados_de_verdade() {
 
 #[test]
 fn script_que_nao_carrega_e_regra_invalida() {
-    let erro = Avaliador::novo("fluxo(\n  id = \n").expect_err("sintaxe quebrada não carrega");
+    let erro = RuleEvaluator::new("fluxo(\n  id = \n").expect_err("sintaxe quebrada não carrega");
     assert_eq!(codigo(&erro), "regra_invalida");
 }
 
@@ -847,7 +858,7 @@ fn o_dado_do_cliente_entra_como_valor_e_nunca_como_codigo() {
     let base = dados(r#"{"relato": {"resumo": "__import__('os').system('ls')"}}"#);
     assert!(
         avaliador
-            .avaliar(
+            .evaluate(
                 &Rule::Funcao {
                     nome: "ecoa".into()
                 },
@@ -857,7 +868,7 @@ fn o_dado_do_cliente_entra_como_valor_e_nunca_como_codigo() {
     );
     // E os combinadores tratam igual: o trecho é procurado no texto, não avaliado.
     assert!(
-        avaliar(
+        evaluate(
             &Rule::Contem {
                 campo: "relato.resumo".into(),
                 value: "system('ls')".into()
@@ -870,7 +881,7 @@ fn o_dado_do_cliente_entra_como_valor_e_nunca_como_codigo() {
     let perigoso = dados(r#"{"relato": {"resumo": "load(\"x.star\", \"y\")"}}"#);
     assert!(
         avaliador
-            .avaliar(
+            .evaluate(
                 &Rule::Funcao {
                     nome: "ecoa".into()
                 },
@@ -899,9 +910,9 @@ fn a_mesma_regra_com_os_mesmos_dados_da_o_mesmo_resultado() {
             },
         ],
     };
-    let primeiro = avaliador.avaliar(&regra, &base).unwrap();
+    let primeiro = avaliador.evaluate(&regra, &base).unwrap();
     for _ in 0..5 {
-        assert_eq!(avaliador.avaliar(&regra, &base).unwrap(), primeiro);
+        assert_eq!(avaliador.evaluate(&regra, &base).unwrap(), primeiro);
     }
 }
 
@@ -933,12 +944,12 @@ fn p95_dos_combinadores_fica_dentro_da_meta() {
     };
     // Aquecimento.
     for _ in 0..1000 {
-        assert!(avaliar(&regra, &base).unwrap());
+        assert!(evaluate(&regra, &base).unwrap());
     }
     let mut tempos = Vec::with_capacity(20_000);
     for _ in 0..20_000 {
         let inicio = Instant::now();
-        let _ = avaliar(&regra, &base).unwrap();
+        let _ = evaluate(&regra, &base).unwrap();
         tempos.push(inicio.elapsed());
     }
     tempos.sort_unstable();
@@ -958,25 +969,25 @@ fn p95_da_funcao_fica_dentro_do_prazo() {
         nome: "grave".into(),
     };
     for _ in 0..50 {
-        assert!(avaliador.avaliar(&regra, &base).unwrap());
+        assert!(avaliador.evaluate(&regra, &base).unwrap());
     }
     let mut tempos = Vec::with_capacity(300);
     for _ in 0..300 {
         let inicio = Instant::now();
-        let _ = avaliador.avaliar(&regra, &base).unwrap();
+        let _ = avaliador.evaluate(&regra, &base).unwrap();
         tempos.push(inicio.elapsed());
     }
     tempos.sort_unstable();
     let p50 = tempos[tempos.len() / 2];
     let p95 = tempos[tempos.len() * 95 / 100];
     println!("função (com thread e prazo): p50 {p50:?}, p95 {p95:?} (build de teste)");
-    assert!(p95 < PRAZO_DA_REGRA, "p95 {p95:?}");
+    assert!(p95 < RULE_DEADLINE, "p95 {p95:?}");
 }
 
 #[test]
 fn cada_erro_de_regra_tem_codigo_de_api() {
     let base = dados(r#"{"relato": {}}"#);
-    let invalida = avaliar(
+    let invalida = evaluate(
         &Rule::Maior {
             campo: "relato.x".into(),
             value: "abc".into(),

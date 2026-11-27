@@ -18,7 +18,7 @@ use std::process::ExitCode;
 
 use clap::{Args, Subcommand};
 use poph_server::fluxos_servico::{
-    Ator, CacheRevisoes, Diagnostic, FalhaFluxo, Operacoes, auditar, json_comparacao, json_fluxo,
+    Ator, Diagnostic, FalhaFluxo, Operacoes, RevisionCache, auditar, json_comparacao, json_fluxo,
     json_fluxo_com_rascunho, json_revisao_resumo, json_validacao,
 };
 use poph_store::{FlowFilter, Store};
@@ -164,14 +164,14 @@ pub struct PermissaoArgs {
 /// Banco, cache de revisões e configuração de uma execução do comando.
 struct Sessao {
     store: Store,
-    cache: CacheRevisoes,
+    cache: RevisionCache,
     config: HarnessConfig,
 }
 
 impl Sessao {
     fn abrir(flag: Option<PathBuf>, ambiente: &config::Ambiente) -> Result<Self, String> {
         let (store, config) = abrir_com_configuracao(flag, ambiente)?;
-        let cache = CacheRevisoes::novo(
+        let cache = RevisionCache::new(
             usize::try_from(config.flows.revision_cache_mb).unwrap_or(usize::MAX),
         );
         Ok(Self {

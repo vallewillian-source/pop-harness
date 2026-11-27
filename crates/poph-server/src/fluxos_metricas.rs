@@ -19,7 +19,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use poph_fluxos::Metricas as MetricasCache;
+use poph_fluxos::Metrics as MetricasCache;
 use poph_types::{Counter, DomainResult, Gauge, Registry};
 
 /// Os números do módulo de fluxos. Todos os campos são handles baratos de clonar.
@@ -195,23 +195,23 @@ impl MetricasFluxos {
         let anterior = *ultimo;
         *ultimo = atual;
         self.cache_acertos
-            .increment(diferenca(atual.acertos, anterior.acertos));
+            .increment(diferenca(atual.hits, anterior.hits));
         self.cache_erros
-            .increment(diferenca(atual.erros, anterior.erros));
+            .increment(diferenca(atual.misses, anterior.misses));
         self.cache_cargas
-            .increment(diferenca(atual.cargas, anterior.cargas));
+            .increment(diferenca(atual.loads, anterior.loads));
         self.cache_esperas
-            .increment(diferenca(atual.esperas, anterior.esperas));
+            .increment(diferenca(atual.waits, anterior.waits));
         self.expulsoes
-            .increment(diferenca(atual.expulsoes, anterior.expulsoes));
+            .increment(diferenca(atual.evictions, anterior.evictions));
         self.cache_em_uso_poupadas
-            .increment(diferenca(atual.em_uso_poupadas, anterior.em_uso_poupadas));
+            .increment(diferenca(atual.in_use_spared, anterior.in_use_spared));
         self.cache_nao_cacheadas
-            .increment(diferenca(atual.nao_cacheadas, anterior.nao_cacheadas));
+            .increment(diferenca(atual.not_cached, anterior.not_cached));
         self.revisoes_em_cache
-            .set(i64::try_from(atual.entradas).unwrap_or(i64::MAX));
+            .set(i64::try_from(atual.entries).unwrap_or(i64::MAX));
         self.revisoes_em_uso
-            .set(i64::try_from(atual.em_uso).unwrap_or(i64::MAX));
+            .set(i64::try_from(atual.in_use).unwrap_or(i64::MAX));
         self.cache_bytes
             .set(i64::try_from(atual.bytes).unwrap_or(i64::MAX));
     }
@@ -264,20 +264,20 @@ mod testes {
         let registro = Registry::new();
         let metricas = MetricasFluxos::registrar(&registro).expect("registra");
         metricas.sincronizar_cache(MetricasCache {
-            acertos: 3,
-            cargas: 2,
-            erros: 2,
-            entradas: 2,
+            hits: 3,
+            loads: 2,
+            misses: 2,
+            entries: 2,
             bytes: 4096,
             ..MetricasCache::default()
         });
         // Segunda leitura: só a diferença entra, e o medidor reflete o agora.
         metricas.sincronizar_cache(MetricasCache {
-            acertos: 5,
-            cargas: 2,
-            erros: 2,
-            expulsoes: 1,
-            entradas: 1,
+            hits: 5,
+            loads: 2,
+            misses: 2,
+            evictions: 1,
+            entries: 1,
             bytes: 2048,
             ..MetricasCache::default()
         });
@@ -299,7 +299,7 @@ mod testes {
         let registro = Registry::new();
         let metricas = MetricasFluxos::registrar(&registro).expect("registra");
         let leitura = MetricasCache {
-            acertos: 7,
+            hits: 7,
             ..MetricasCache::default()
         };
         metricas.sincronizar_cache(leitura);

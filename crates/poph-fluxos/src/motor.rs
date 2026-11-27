@@ -124,7 +124,7 @@ use poph_types::{
 };
 
 use crate::ir::{Campo, Decisao, Destination, Effect, Etapa, Ir};
-use crate::regras::{Avaliador, Dados, preenchido, texto_canonico};
+use crate::regras::{Dados, RuleEvaluator, canonical_text, preenchido};
 
 /// Valores de campo informados junto de uma ação: `campo -> valor`.
 ///
@@ -149,14 +149,14 @@ pub struct Contexto<'a> {
     /// Contato do cliente na conversa (o que `{cliente.peer}` resolve).
     pub cliente_peer: &'a str,
     /// Avaliador das regras da revisão em uso.
-    pub avaliador: &'a Avaliador,
+    pub avaliador: &'a RuleEvaluator,
     /// Teto de decisões encadeadas na mesma passagem.
     pub max_saltos_decisao: usize,
 }
 
 impl<'a> Contexto<'a> {
     /// Contexto mínimo: sem Ficha, sem cliente e sem `def` no avaliador.
-    pub fn novo(avaliador: &'a Avaliador) -> Self {
+    pub fn novo(avaliador: &'a RuleEvaluator) -> Self {
         Self {
             ficha_id: "",
             cliente_peer: "",
@@ -207,7 +207,7 @@ pub struct Estado {
     /// Motivo do abandono ou da falha (`fluxo_execucoes.motivo_fim`); `None` no caminho feliz.
     pub motivo: Option<String>,
     /// Chaves de idempotência já aplicadas, com o desfecho de cada uma.
-    pub chaves: BTreeMap<String, Recibo>,
+    pub keys: BTreeMap<String, Recibo>,
 }
 
 /// O que uma chave de idempotência produziu, para a repetição devolver o mesmo desfecho.
@@ -309,7 +309,7 @@ pub fn iniciar(ir: &Ir) -> DomainResult<Estado> {
         atores_que_agiram: Vec::new(),
         resultado: None,
         motivo: None,
-        chaves: BTreeMap::new(),
+        keys: BTreeMap::new(),
     })
 }
 
@@ -356,7 +356,7 @@ pub fn executar_acao(
 
     // 2. Chave já aplicada: devolve o desfecho anterior e não grava nada de novo.
     if let Some(chave) = chave_idempotencia
-        && let Some(recibo) = estado.chaves.get(chave)
+        && let Some(recibo) = estado.keys.get(chave)
     {
         return Ok(Resultado {
             novo_estado: estado.clone(),
@@ -559,7 +559,7 @@ pub fn executar_acao(
     };
 
     if let Some(chave) = chave_idempotencia {
-        novo_estado.chaves.insert(
+        novo_estado.keys.insert(
             chave.to_owned(),
             Recibo {
                 no_atual: novo_estado.no_atual.clone(),
@@ -612,7 +612,7 @@ pub fn abandonar(
         });
     }
     if let Some(chave) = chave_idempotencia
-        && let Some(recibo) = estado.chaves.get(chave)
+        && let Some(recibo) = estado.keys.get(chave)
     {
         return Ok(Resultado {
             novo_estado: estado.clone(),
@@ -638,7 +638,7 @@ pub fn abandonar(
     }];
 
     if let Some(chave) = chave_idempotencia {
-        novo_estado.chaves.insert(
+        novo_estado.keys.insert(
             chave.to_owned(),
             Recibo {
                 no_atual: novo_estado.no_atual.clone(),
@@ -760,7 +760,7 @@ fn seguir(
                         false,
                     ));
                 }
-                let escolha = match contexto.avaliador.avaliar(&decisao.se, &estado.dados) {
+                let escolha = match contexto.avaliador.evaluate(&decisao.se, &estado.dados) {
                     Ok(escolha) => escolha,
                     // Regra defeituosa ou cara é falha da **execução** (FLXR01/FLXR03), não da
                     // chamada: a Ficha continua aberta e o atendente vê o motivo.
@@ -952,7 +952,7 @@ fn valor_da_variavel(nome: &str, dados: &Dados, contexto: &Contexto<'_>) -> Stri
             Some((etapa, campo)) => dados
                 .get(etapa)
                 .and_then(|valores| valores.get(campo))
-                .and_then(texto_canonico)
+                .and_then(canonical_text)
                 .unwrap_or_default(),
             None => String::new(),
         },

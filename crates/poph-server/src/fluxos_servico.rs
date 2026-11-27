@@ -13,13 +13,13 @@ use std::fmt;
 use std::sync::Arc;
 
 use poph_fluxos::{
-    ChaveRevisao, Compilado, Departamento, Ir, Limites, bloco_da_etapa, compilar, diferenca,
-    formatar_com, resolver_departamentos, validar,
+    Compilado, Departamento, Ir, Limites, RevisionKey, compilar, diferenca, formatar_com,
+    resolver_departamentos, stage_block, validar,
 };
 
 // Tipos que a CLI precisa para mostrar o resultado. Reexportados para o `poph` não depender de
 // `poph-fluxos` diretamente.
-pub use poph_fluxos::{CacheRevisoes, Diagnostic, Mudanca, Resolucao};
+pub use poph_fluxos::{Diagnostic, Mudanca, Resolucao, RevisionCache};
 use poph_store::{
     FlowRevision, Fluxo, NewAuditEntry, NewFlow, Page, RevisionPublication, Store, StoreError,
 };
@@ -180,14 +180,14 @@ pub struct Previa {
 /// configuração `[fluxos]`.
 pub struct Operacoes<'a> {
     store: &'a Store,
-    cache: &'a CacheRevisoes,
+    cache: &'a RevisionCache,
     limites: Limites,
     max_fluxos_por_org: u64,
 }
 
 impl<'a> Operacoes<'a> {
     /// Liga as operações ao banco, ao cache e à configuração.
-    pub fn novo(store: &'a Store, cache: &'a CacheRevisoes, config: &HarnessConfig) -> Self {
+    pub fn novo(store: &'a Store, cache: &'a RevisionCache, config: &HarnessConfig) -> Self {
         Self {
             store,
             cache,
@@ -392,13 +392,13 @@ impl<'a> Operacoes<'a> {
             );
             FalhaFluxo::Interno
         })?;
-        let chave = ChaveRevisao::com_hash(
+        let chave = RevisionKey::with_hash(
             fluxo.slug.clone(),
             u32::try_from(revisao.numero).unwrap_or(u32::MAX),
             revisao.fonte_sha256.clone(),
         );
         self.cache
-            .carregar(&chave, &gravada, &revisao.fonte, &self.limites)
+            .load(&chave, &gravada, &revisao.fonte, &self.limites)
             .map_err(|falha| {
                 tracing::error!(
                     falha = %falha.codigo(),
@@ -459,7 +459,7 @@ impl<'a> Operacoes<'a> {
         let etapa = etapa
             .filter(|texto| !texto.is_empty())
             .map_or_else(|| ir.start.clone(), str::to_owned);
-        let bloco = bloco_da_etapa(&ir, &etapa)
+        let bloco = stage_block(&ir, &etapa)
             .map_err(|erro: DomainError| FalhaFluxo::Banco(StoreError::Domain(erro)))?;
         Ok(Previa {
             etapa,

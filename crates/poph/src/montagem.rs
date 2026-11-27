@@ -18,7 +18,7 @@ use poph_agent::providers::{Providers, ResolvedProvider};
 use poph_agent::turno::{AdjustmentsFlow, DefaultRegistry, TurnEngine, TurnOptions, TurnProcessor};
 use poph_agent::{KnowledgeSearcher, ProductCatalog, ProductSearcher, QueryKnowledge, record_with};
 use poph_core::llm::{LlmLimiter, LlmProvider, OpenAiCompatibleClient, OpenAiCompatibleConfig};
-use poph_fluxos::cache::CacheRevisoes;
+use poph_fluxos::cache::RevisionCache;
 use poph_store::Store;
 use poph_types::{BaseMetrics, HarnessConfig, LlmConfig, Registry, Secret};
 
@@ -73,7 +73,7 @@ impl Metricas {
 /// o turno cria o próprio cache e os próprios contadores.
 #[derive(Default)]
 pub struct FluxosDoProcesso {
-    cache: Option<Arc<CacheRevisoes>>,
+    cache: Option<Arc<RevisionCache>>,
     g9: Option<poph_agent::metrics::MetricsG9>,
 }
 

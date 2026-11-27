@@ -13,7 +13,7 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 
 use poph_fluxos::{
-    CacheRevisoes, ChaveRevisao, FalhaCarregamento, Ir, Limites, compilar, peso_da_ir,
+    FalhaCarregamento, Ir, Limites, RevisionCache, RevisionKey, compilar, entry_weight,
 };
 
 // ------------------------------------------------------------------ auxiliares
@@ -52,9 +52,9 @@ fn ir_do_script(fonte: &str) -> Ir {
 }
 
 /// Carrega uma revisão no cache pelo caminho normal e devolve a IR (falha do teste se não carregar).
-fn carregar(cache: &CacheRevisoes, chave: &ChaveRevisao, ir: &Ir, fonte: &str) -> Arc<Ir> {
+fn carregar(cache: &RevisionCache, chave: &RevisionKey, ir: &Ir, fonte: &str) -> Arc<Ir> {
     cache
-        .carregar(chave, ir, fonte, &limites())
+        .load(chave, ir, fonte, &limites())
         .unwrap_or_else(|falha| panic!("carga de {} falhou: {falha:?}", chave.fluxo_id()))
 }
 
@@ -64,8 +64,8 @@ fn carregar(cache: &CacheRevisoes, chave: &ChaveRevisao, ir: &Ir, fonte: &str) -
 fn acerto_no_segundo_acesso_compila_uma_vez_so() {
     let fonte = script("pedido", 3, 80);
     let ir = ir_do_script(&fonte);
-    let chave = ChaveRevisao::nova("pedido", 1, &fonte);
-    let cache = CacheRevisoes::novo(1);
+    let chave = RevisionKey::new("pedido", 1, &fonte);
+    let cache = RevisionCache::new(1);
 
     let primeira = carregar(&cache, &chave, &ir, &fonte);
     let segunda = carregar(&cache, &chave, &ir, &fonte);
@@ -75,13 +75,13 @@ fn acerto_no_segundo_acesso_compila_uma_vez_so() {
         Arc::ptr_eq(&primeira, &segunda),
         "o segundo acesso devolve a mesma IR em memória, não uma cópia"
     );
-    let metricas = cache.metricas();
-    assert_eq!(metricas.cargas, 1, "uma compilação para duas consultas");
-    assert_eq!(metricas.erros, 1, "só a primeira consulta foi erro");
-    assert_eq!(metricas.acertos, 1);
-    assert_eq!(metricas.esperas, 0);
-    assert_eq!(metricas.entradas, 1);
-    assert_eq!(metricas.bytes, peso_da_ir(&ir));
+    let metricas = cache.metrics();
+    assert_eq!(metricas.loads, 1, "uma compilação para duas consultas");
+    assert_eq!(metricas.misses, 1, "só a primeira consulta foi erro");
+    assert_eq!(metricas.hits, 1);
+    assert_eq!(metricas.waits, 0);
+    assert_eq!(metricas.entries, 1);
+    assert_eq!(metricas.bytes, entry_weight(&ir));
 }
 
 #[test]
@@ -90,13 +90,13 @@ fn a_chave_separa_fluxo_numero_e_texto() {
     let ir = ir_do_script(&fonte);
     let outra_fonte = script("pedido", 2, 41);
     let outra_ir = ir_do_script(&outra_fonte);
-    let cache = CacheRevisoes::novo(1);
+    let cache = RevisionCache::new(1);
 
-    let base = ChaveRevisao::nova("pedido", 1, &fonte);
-    let por_numero = ChaveRevisao::nova("pedido", 2, &fonte);
-    let por_fluxo = ChaveRevisao::nova("outro_pedido", 1, &fonte);
-    let por_hash = ChaveRevisao::com_hash("pedido", 1, "0000");
-    let outro_texto = ChaveRevisao::nova("pedido", 1, &outra_fonte);
+    let base = RevisionKey::new("pedido", 1, &fonte);
+    let por_numero = RevisionKey::new("pedido", 2, &fonte);
+    let por_fluxo = RevisionKey::new("outro_pedido", 1, &fonte);
+    let por_hash = RevisionKey::with_hash("pedido", 1, "0000");
+    let outro_texto = RevisionKey::new("pedido", 1, &outra_fonte);
 
     assert_ne!(base, por_numero);
     assert_ne!(base, por_fluxo);
@@ -104,7 +104,7 @@ fn a_chave_separa_fluxo_numero_e_texto() {
     assert_ne!(base, outro_texto);
     assert_eq!(
         base,
-        ChaveRevisao::nova("pedido", 1, &fonte),
+        RevisionKey::new("pedido", 1, &fonte),
         "a chave é estável"
     );
 
@@ -113,9 +113,9 @@ fn a_chave_separa_fluxo_numero_e_texto() {
     }
     carregar(&cache, &outro_texto, &outra_ir, &outra_fonte);
 
-    let metricas = cache.metricas();
-    assert_eq!(metricas.entradas, 5, "cinco identidades, cinco entradas");
-    assert_eq!(metricas.cargas, 5);
+    let metricas = cache.metrics();
+    assert_eq!(metricas.entries, 5, "cinco identidades, cinco entradas");
+    assert_eq!(metricas.loads, 5);
 }
 
 // ------------------------------------------------------------------ teto e expulsão
@@ -124,17 +124,17 @@ fn a_chave_separa_fluxo_numero_e_texto() {
 fn o_teto_e_respeitado_com_mais_fluxos_do_que_cabem() {
     let fonte = script("pedido", 4, 200);
     let ir = ir_do_script(&fonte);
-    let peso = peso_da_ir(&ir);
+    let peso = entry_weight(&ir);
     // Espaço para três revisões do tamanho do exemplo, com sobra de meio peso.
     let teto = peso * 3 + peso / 2;
-    let cache = CacheRevisoes::com_teto_bytes(teto);
+    let cache = RevisionCache::with_byte_cap(teto);
 
     let mut carregadas = 0;
     for numero in 1..=12u32 {
-        let chave = ChaveRevisao::nova("pedido", numero, &fonte);
+        let chave = RevisionKey::new("pedido", numero, &fonte);
         carregar(&cache, &chave, &ir, &fonte);
         carregadas += 1;
-        let metricas = cache.metricas();
+        let metricas = cache.metrics();
         assert!(
             metricas.bytes <= teto,
             "depois de {carregadas} revisões o cache está com {} bytes e o teto é {teto}",
@@ -142,13 +142,13 @@ fn o_teto_e_respeitado_com_mais_fluxos_do_que_cabem() {
         );
     }
 
-    let metricas = cache.metricas();
-    assert_eq!(metricas.cargas, 12);
+    let metricas = cache.metrics();
+    assert_eq!(metricas.loads, 12);
     assert_eq!(
-        metricas.entradas, 3,
+        metricas.entries, 3,
         "só três revisões cabem no teto de {teto} bytes (peso {peso})"
     );
-    assert_eq!(metricas.expulsoes, 9, "as outras nove saíram");
+    assert_eq!(metricas.evictions, 9, "as outras nove saíram");
     assert!(metricas.bytes <= teto);
 }
 
@@ -160,21 +160,21 @@ fn o_menos_usado_sai_primeiro() {
     let ir_a = ir_do_script(&fonte_a);
     let ir_b = ir_do_script(&fonte_b);
     let ir_c = ir_do_script(&fonte_c);
-    let chave_a = ChaveRevisao::nova("pedido_a", 1, &fonte_a);
-    let chave_b = ChaveRevisao::nova("pedido_b", 1, &fonte_b);
-    let chave_c = ChaveRevisao::nova("pedido_c", 1, &fonte_c);
-    let teto = peso_da_ir(&ir_a) + peso_da_ir(&ir_b) + peso_da_ir(&ir_c) / 2;
-    let cache = CacheRevisoes::com_teto_bytes(teto);
+    let chave_a = RevisionKey::new("pedido_a", 1, &fonte_a);
+    let chave_b = RevisionKey::new("pedido_b", 1, &fonte_b);
+    let chave_c = RevisionKey::new("pedido_c", 1, &fonte_c);
+    let teto = entry_weight(&ir_a) + entry_weight(&ir_b) + entry_weight(&ir_c) / 2;
+    let cache = RevisionCache::with_byte_cap(teto);
 
     carregar(&cache, &chave_a, &ir_a, &fonte_a);
     carregar(&cache, &chave_b, &ir_b, &fonte_b);
     // `a` volta a ser usada: agora a menos recente é a `b`.
-    assert!(cache.obter(&chave_a).is_some(), "a está no cache");
+    assert!(cache.get(&chave_a).is_some(), "a está no cache");
 
     carregar(&cache, &chave_c, &ir_c, &fonte_c);
 
-    let metricas = cache.metricas();
-    assert_eq!(metricas.expulsoes, 1);
+    let metricas = cache.metrics();
+    assert_eq!(metricas.evictions, 1);
     assert!(cache.contem(&chave_a), "a mais usada ficou");
     assert!(!cache.contem(&chave_b), "a menos usada saiu");
     assert!(cache.contem(&chave_c), "a recém-carregada entrou");
@@ -189,11 +189,11 @@ fn a_revisao_em_uso_nao_e_expulsa() {
     let ir_a = ir_do_script(&fonte_a);
     let ir_b = ir_do_script(&fonte_b);
     let ir_c = ir_do_script(&fonte_c);
-    let chave_a = ChaveRevisao::nova("pedido_a", 1, &fonte_a);
-    let chave_b = ChaveRevisao::nova("pedido_b", 1, &fonte_b);
-    let chave_c = ChaveRevisao::nova("pedido_c", 1, &fonte_c);
-    let teto = peso_da_ir(&ir_a) + peso_da_ir(&ir_b) + peso_da_ir(&ir_c) / 2;
-    let cache = CacheRevisoes::com_teto_bytes(teto);
+    let chave_a = RevisionKey::new("pedido_a", 1, &fonte_a);
+    let chave_b = RevisionKey::new("pedido_b", 1, &fonte_b);
+    let chave_c = RevisionKey::new("pedido_c", 1, &fonte_c);
+    let teto = entry_weight(&ir_a) + entry_weight(&ir_b) + entry_weight(&ir_c) / 2;
+    let cache = RevisionCache::with_byte_cap(teto);
 
     // Duas revisões carregadas e as duas em uso (cada uma com um `Arc` na mão).
     let em_uso_a = carregar(&cache, &chave_a, &ir_a, &fonte_a);
@@ -203,15 +203,15 @@ fn a_revisao_em_uso_nao_e_expulsa() {
     let terceira = carregar(&cache, &chave_c, &ir_c, &fonte_c);
     assert_eq!(*terceira, ir_c, "a execução recebe a IR do mesmo jeito");
 
-    let metricas = cache.metricas();
+    let metricas = cache.metrics();
     assert!(cache.contem(&chave_a) && cache.contem(&chave_b));
     assert!(!cache.contem(&chave_c), "c não entra com o teto ocupado");
-    assert_eq!(metricas.nao_cacheadas, 1);
+    assert_eq!(metricas.not_cached, 1);
     assert_eq!(
-        metricas.expulsoes, 0,
+        metricas.evictions, 0,
         "nada é expulso para não guardar nada no lugar"
     );
-    assert_eq!(metricas.em_uso, 2);
+    assert_eq!(metricas.in_use, 2);
     assert!(metricas.bytes <= teto);
 
     // Soltando a `b`, o espaço volta a existir e a expulsão escolhe a menos recente — poupando a
@@ -222,10 +222,10 @@ fn a_revisao_em_uso_nao_e_expulsa() {
     assert!(!cache.contem(&chave_b), "b, agora livre, saiu");
     assert!(cache.contem(&chave_a), "a continua em uso");
     assert_eq!(*em_uso_a, ir_a);
-    let metricas = cache.metricas();
-    assert_eq!(metricas.expulsoes, 1);
+    let metricas = cache.metrics();
+    assert_eq!(metricas.evictions, 1);
     assert!(
-        metricas.em_uso_poupadas >= 1,
+        metricas.in_use_spared >= 1,
         "a entrada em uso foi poupada da expulsão"
     );
     assert!(metricas.bytes <= teto);
@@ -235,16 +235,16 @@ fn a_revisao_em_uso_nao_e_expulsa() {
 fn revisao_maior_que_o_teto_inteiro_nao_e_cacheada() {
     let fonte = script("pedido", 6, 400);
     let ir = ir_do_script(&fonte);
-    let peso = peso_da_ir(&ir);
-    let cache = CacheRevisoes::com_teto_bytes(peso / 2);
-    let chave = ChaveRevisao::nova("pedido", 1, &fonte);
+    let peso = entry_weight(&ir);
+    let cache = RevisionCache::with_byte_cap(peso / 2);
+    let chave = RevisionKey::new("pedido", 1, &fonte);
 
     let devolvida = carregar(&cache, &chave, &ir, &fonte);
 
     assert_eq!(*devolvida, ir);
-    let metricas = cache.metricas();
-    assert_eq!(metricas.entradas, 0);
-    assert_eq!(metricas.nao_cacheadas, 1);
+    let metricas = cache.metrics();
+    assert_eq!(metricas.entries, 0);
+    assert_eq!(metricas.not_cached, 1);
     assert_eq!(metricas.bytes, 0);
 }
 
@@ -252,22 +252,22 @@ fn revisao_maior_que_o_teto_inteiro_nao_e_cacheada() {
 fn limpar_esvazia_o_cache_sem_perder_as_metricas() {
     let fonte = script("pedido", 2, 40);
     let ir = ir_do_script(&fonte);
-    let cache = CacheRevisoes::novo(1);
-    let chave_1 = ChaveRevisao::nova("pedido", 1, &fonte);
-    let chave_2 = ChaveRevisao::nova("pedido", 2, &fonte);
+    let cache = RevisionCache::new(1);
+    let chave_1 = RevisionKey::new("pedido", 1, &fonte);
+    let chave_2 = RevisionKey::new("pedido", 2, &fonte);
     carregar(&cache, &chave_1, &ir, &fonte);
     carregar(&cache, &chave_2, &ir, &fonte);
 
-    assert_eq!(cache.limpar(), 2);
-    let metricas = cache.metricas();
-    assert_eq!(metricas.entradas, 0);
+    assert_eq!(cache.clear(), 2);
+    let metricas = cache.metrics();
+    assert_eq!(metricas.entries, 0);
     assert_eq!(metricas.bytes, 0);
-    assert_eq!(metricas.cargas, 2, "o histórico de cargas continua");
+    assert_eq!(metricas.loads, 2, "o histórico de cargas continua");
     assert!(!cache.contem(&chave_1));
 
     carregar(&cache, &chave_1, &ir, &fonte);
     assert_eq!(
-        cache.metricas().cargas,
+        cache.metrics().loads,
         3,
         "depois de limpar, carrega de novo"
     );
@@ -286,8 +286,8 @@ fn carga_concorrente_da_mesma_revisao_compila_uma_vez_so() {
     let mut esperas = 0u64;
 
     for rodada in 0..RODADAS {
-        let cache = CacheRevisoes::novo(4);
-        let chave = ChaveRevisao::nova("pedido", rodada as u32 + 1, &fonte);
+        let cache = RevisionCache::new(4);
+        let chave = RevisionKey::new("pedido", rodada as u32 + 1, &fonte);
         let barreira = Arc::new(Barrier::new(THREADS));
         let mut maos = Vec::with_capacity(THREADS);
         for _ in 0..THREADS {
@@ -299,7 +299,7 @@ fn carga_concorrente_da_mesma_revisao_compila_uma_vez_so() {
             maos.push(thread::spawn(move || {
                 barreira.wait();
                 cache
-                    .carregar(&chave, ir.as_ref(), &fonte, &Limites::default())
+                    .load(&chave, ir.as_ref(), &fonte, &Limites::default())
                     .map(|revisao| revisao.as_ref() == ir.as_ref())
             }));
         }
@@ -311,18 +311,18 @@ fn carga_concorrente_da_mesma_revisao_compila_uma_vez_so() {
             }
         }
 
-        let metricas = cache.metricas();
+        let metricas = cache.metrics();
         assert_eq!(
-            metricas.cargas, 1,
+            metricas.loads, 1,
             "rodada {rodada}: uma compilação por revisão"
         );
-        assert_eq!(metricas.entradas, 1, "rodada {rodada}");
+        assert_eq!(metricas.entries, 1, "rodada {rodada}");
         assert_eq!(
-            metricas.acertos + metricas.esperas,
+            metricas.hits + metricas.waits,
             (THREADS - 1) as u64,
             "rodada {rodada}: as outras sete foram servidas pela carga da primeira"
         );
-        esperas += metricas.esperas;
+        esperas += metricas.waits;
     }
 
     println!(
@@ -337,12 +337,12 @@ fn carga_concorrente_da_mesma_revisao_compila_uma_vez_so() {
 #[test]
 fn o_cache_e_compartilhado_entre_threads_e_por_clone() {
     fn exige<T: Send + Sync + 'static>() {}
-    exige::<CacheRevisoes>();
+    exige::<RevisionCache>();
 
     let fonte = script("pedido", 2, 40);
     let ir = ir_do_script(&fonte);
-    let chave = ChaveRevisao::nova("pedido", 1, &fonte);
-    let original = CacheRevisoes::novo(1);
+    let chave = RevisionKey::new("pedido", 1, &fonte);
+    let original = RevisionCache::new(1);
     let clone = original.clone();
 
     let da_thread = {
@@ -360,7 +360,7 @@ fn o_cache_e_compartilhado_entre_threads_e_por_clone() {
         original.contem(&chave),
         "o clone e o original são o mesmo cache"
     );
-    assert_eq!(clone.metricas().cargas, 1);
+    assert_eq!(clone.metrics().loads, 1);
 }
 
 // ------------------------------------------------------------------ falha fechada
@@ -369,14 +369,14 @@ fn o_cache_e_compartilhado_entre_threads_e_por_clone() {
 fn falha_de_carga_e_tipada_e_o_cache_continua_usavel() {
     let fonte = script("pedido", 3, 60);
     let ir = ir_do_script(&fonte);
-    let cache = CacheRevisoes::novo(1);
+    let cache = RevisionCache::new(1);
 
     // 1. Texto que compila, mas não gera a IR gravada: `ir_divergente`.
     let adulterada = fonte.replace("Etapa 1", "Etapa Um");
     assert_ne!(adulterada, fonte);
-    let chave_adulterada = ChaveRevisao::nova("pedido", 2, &adulterada);
+    let chave_adulterada = RevisionKey::new("pedido", 2, &adulterada);
     let falha = cache
-        .carregar(&chave_adulterada, &ir, &adulterada, &limites())
+        .load(&chave_adulterada, &ir, &adulterada, &limites())
         .expect_err("a IR gravada não corresponde ao texto adulterado");
     assert!(
         matches!(falha, FalhaCarregamento::Divergente { .. }),
@@ -390,23 +390,23 @@ fn falha_de_carga_e_tipada_e_o_cache_continua_usavel() {
 
     // 2. Texto que não compila: `fluxo_invalido`.
     let quebrada = "fluxo(id = \"pedido\",\n";
-    let chave_quebrada = ChaveRevisao::nova("pedido", 3, quebrada);
+    let chave_quebrada = RevisionKey::new("pedido", 3, quebrada);
     let falha = cache
-        .carregar(&chave_quebrada, &ir, quebrada, &limites())
+        .load(&chave_quebrada, &ir, quebrada, &limites())
         .expect_err("texto quebrado não carrega");
     assert!(matches!(falha, FalhaCarregamento::Forma(_)), "{falha:?}");
     assert_eq!(falha.codigo(), "fluxo_invalido");
     assert!(!cache.contem(&chave_quebrada));
 
     // 3. O cache continua utilizável depois das duas falhas.
-    let chave = ChaveRevisao::nova("pedido", 1, &fonte);
+    let chave = RevisionKey::new("pedido", 1, &fonte);
     let carregada = carregar(&cache, &chave, &ir, &fonte);
     assert_eq!(*carregada, ir);
-    let metricas = cache.metricas();
-    assert_eq!(metricas.cargas, 3, "três cargas tentadas");
-    assert_eq!(metricas.entradas, 1, "só a que deu certo ficou");
+    let metricas = cache.metrics();
+    assert_eq!(metricas.loads, 3, "três cargas tentadas");
+    assert_eq!(metricas.entries, 1, "só a que deu certo ficou");
     assert_eq!(carregar(&cache, &chave, &ir, &fonte).as_ref(), &ir);
-    assert_eq!(cache.metricas().acertos, 1);
+    assert_eq!(cache.metrics().hits, 1);
 }
 
 // ------------------------------------------------------------------ memória
@@ -433,7 +433,7 @@ fn ram_por_revisao_medida() {
     const REVISOES: usize = 200;
     let fonte = script("pedido", 8, 200);
     let ir = ir_do_script(&fonte);
-    let peso = peso_da_ir(&ir);
+    let peso = entry_weight(&ir);
 
     // Aquecimento: o primeiro clone aloca o que é alocação única (nada, mas garante página tocada).
     let aquecimento = Arc::new(ir.clone());

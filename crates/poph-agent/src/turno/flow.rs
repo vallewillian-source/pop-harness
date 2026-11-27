@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use poph_fluxos::Limites;
-use poph_fluxos::cache::{CacheRevisoes, ChaveRevisao};
+use poph_fluxos::cache::{RevisionCache, RevisionKey};
 use poph_fluxos::ir::Ir;
 use poph_fluxos::motor::{self, Contexto as ContextEngine, Estado as StateEngine};
-use poph_fluxos::prompt::renderizar_bloco;
-use poph_fluxos::regras::{Avaliador, Dados, LimitesRegra};
+use poph_fluxos::prompt::render_block;
+use poph_fluxos::regras::{Dados, RuleEvaluator, RuleLimits};
 use poph_jev::{G9_NONE, IdGate, JevFlow, JevResult};
 use poph_store::{
     Execution, ExecutionStart, Ficha, FlowRevision, Fluxo, JevDecision, Status, Store, StoreError,
@@ -38,7 +38,7 @@ pub struct AdjustmentsFlow {
     ativo: bool,
     limites: Limites,
     jumps: usize,
-    cache: Arc<CacheRevisoes>,
+    cache: Arc<RevisionCache>,
 }
 
 impl AdjustmentsFlow {
@@ -49,7 +49,7 @@ impl AdjustmentsFlow {
             jumps: usize::try_from(config.max_decision_hops)
                 .unwrap_or(1)
                 .max(1),
-            cache: Arc::new(CacheRevisoes::novo(
+            cache: Arc::new(RevisionCache::new(
                 usize::try_from(config.revision_cache_mb).unwrap_or(usize::MAX),
             )),
         }
@@ -63,7 +63,7 @@ impl AdjustmentsFlow {
         self.jumps
     }
 
-    pub fn with_cache(mut self, cache: Arc<CacheRevisoes>) -> Self {
+    pub fn with_cache(mut self, cache: Arc<RevisionCache>) -> Self {
         self.cache = cache;
         self
     }
@@ -204,14 +204,14 @@ fn load_ir(
             return None;
         }
     };
-    let chave = ChaveRevisao::com_hash(
+    let chave = RevisionKey::with_hash(
         fluxo.slug.clone(),
         u32::try_from(revision.numero).unwrap_or(u32::MAX),
         revision.fonte_sha256.clone(),
     );
     match adjustments
         .cache
-        .carregar(&chave, &stored, &revision.fonte, &adjustments.limites)
+        .load(&chave, &stored, &revision.fonte, &adjustments.limites)
     {
         Ok(ir) => Some(ir),
         Err(failure) => {
@@ -271,7 +271,7 @@ fn state_of_execution(
         atores_que_agiram: actors_that_acted,
         resultado: execution.result.clone(),
         motivo: execution.motivo_fim.clone(),
-        chaves: Default::default(),
+        keys: Default::default(),
     })
 }
 
@@ -297,12 +297,12 @@ pub(crate) fn block_of_execution(
     };
     let ir = load_ir(adjustments, &fluxo, &revision)?;
     let estado = state_of_execution(&ir, execution, Vec::new())?;
-    Some((renderizar_bloco(&ir, &estado), ir))
+    Some((render_block(&ir, &estado), ir))
 }
 
 pub(crate) struct LoadOfAction {
     pub ir: Arc<Ir>,
-    pub evaluator: Avaliador,
+    pub evaluator: RuleEvaluator,
     pub estado: StateEngine,
 }
 
@@ -348,11 +348,15 @@ pub(crate) fn load_for_act(
     })
 }
 
-fn evaluator_of_revision(revision: &FlowRevision, ir: &Ir, limites: &Limites) -> Option<Avaliador> {
+fn evaluator_of_revision(
+    revision: &FlowRevision,
+    ir: &Ir,
+    limites: &Limites,
+) -> Option<RuleEvaluator> {
     if ir.defs.is_empty() {
-        return Some(Avaliador::sem_funcoes());
+        return Some(RuleEvaluator::without_functions());
     }
-    match Avaliador::novo_com(&revision.fonte, limites, LimitesRegra::default()) {
+    match RuleEvaluator::new_with(&revision.fonte, limites, RuleLimits::default()) {
         Ok(evaluator) => Some(evaluator),
         Err(error) => {
             tracing::error!(
@@ -445,7 +449,7 @@ pub(crate) fn start(
             )));
         }
     };
-    let evaluator = Avaliador::sem_funcoes();
+    let evaluator = RuleEvaluator::without_functions();
     let text_of_case = ficha.id.to_string();
     let mut context = ContextEngine::novo(&evaluator)
         .com_ficha(&text_of_case)

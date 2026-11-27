@@ -22,7 +22,7 @@ use poph_fluxos::ir::{
 use poph_fluxos::motor::{
     Campos, Contexto, atores_exigidos, efeitos_de_entrada, executar_acao, iniciar,
 };
-use poph_fluxos::regras::{Avaliador, Dados};
+use poph_fluxos::regras::{Dados, RuleEvaluator};
 use poph_types::{ActionActor, ExecutionStatus, FieldKind, RecordEventKind};
 use serde_json::{Value as Json, json};
 
@@ -30,8 +30,8 @@ use serde_json::{Value as Json, json};
 
 /// Contexto mínimo das chamadas do motor (sem Ficha, sem cliente, só combinadores).
 fn contexto() -> Contexto<'static> {
-    static AVALIADOR: OnceLock<Avaliador> = OnceLock::new();
-    Contexto::novo(AVALIADOR.get_or_init(Avaliador::sem_funcoes))
+    static AVALIADOR: OnceLock<RuleEvaluator> = OnceLock::new();
+    Contexto::novo(AVALIADOR.get_or_init(RuleEvaluator::without_functions))
 }
 
 fn campo(id: &str, tipo: FieldKind, obrigatorio: bool) -> Campo {
@@ -626,7 +626,7 @@ fn acao_inexistente_devolve_as_validas_e_nao_muda_nada() {
     assert!(mensagem.contains("`cancelar`"), "{mensagem}");
     // O estado de entrada segue intacto: nada foi gravado e nenhuma chave foi consumida.
     assert!(estado.dados.is_empty());
-    assert!(estado.chaves.is_empty());
+    assert!(estado.keys.is_empty());
     assert_eq!(estado.no_atual, vai_para("orcamento"));
 }
 
@@ -706,7 +706,7 @@ fn nao_existe_estado_closing_pending() {
 /// `pop_expr` do POP Atende, agora como combinador declarativo.
 #[test]
 fn condicional_com_os_operadores_do_pop_atende_escolhe_o_ramo() {
-    let avaliador = Avaliador::sem_funcoes();
+    let avaliador = RuleEvaluator::without_functions();
     let execucao = dados(json!({
         "orcamento": {
             "tipo": "hidraulica",
@@ -848,7 +848,7 @@ fn condicional_com_os_operadores_do_pop_atende_escolhe_o_ramo() {
 
     for (nome, regra, esperado) in casos {
         let obtido = avaliador
-            .avaliar(&regra, &execucao)
+            .evaluate(&regra, &execucao)
             .unwrap_or_else(|erro| panic!("{nome}: {erro}"));
         assert_eq!(obtido, esperado, "{nome}");
     }
@@ -968,7 +968,7 @@ def grave(dados):
 /// expressão em texto. Aqui a regra pode ser uma função declarada no script.
 #[test]
 fn condicional_com_def_escolhe_o_ramo() {
-    let avaliador = Avaliador::novo(SCRIPT_COM_DEF).expect("o script de apoio carrega");
+    let avaliador = RuleEvaluator::new(SCRIPT_COM_DEF).expect("o script de apoio carrega");
     let ir = fluxo(
         "triagem",
         vec![
@@ -1537,7 +1537,7 @@ fn notificacao_e_encaminhamento_saem_como_efeito_da_acao() {
         )],
         Vec::new(),
     );
-    let avaliador = Avaliador::sem_funcoes();
+    let avaliador = RuleEvaluator::without_functions();
     let contexto = Contexto::novo(&avaliador).com_cliente("cli_ficticio");
     let estado = iniciar(&ir).expect("a execução começa");
 
@@ -1602,7 +1602,7 @@ fn mensagem_de_entrada_da_etapa_sai_ao_iniciar_a_execucao() {
         ],
         Vec::new(),
     );
-    let avaliador = Avaliador::sem_funcoes();
+    let avaliador = RuleEvaluator::without_functions();
     let contexto = Contexto::novo(&avaliador).com_cliente("cli_ficticio");
     let estado = iniciar(&ir).expect("a execução começa");
 
@@ -1646,7 +1646,7 @@ fn variavel_inexistente_no_texto_sai_vazia() {
         )],
         Vec::new(),
     );
-    let avaliador = Avaliador::sem_funcoes();
+    let avaliador = RuleEvaluator::without_functions();
     let contexto = Contexto::novo(&avaliador);
     let estado = iniciar(&ir).expect("a execução começa");
 

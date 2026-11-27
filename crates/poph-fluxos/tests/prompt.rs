@@ -9,8 +9,8 @@
 
 use poph_fluxos::ir::{Acao, Campo, Destination, Etapa, Fim, Fluxo, Gatilho, Ir};
 use poph_fluxos::motor::{Campos, Contexto, Estado, executar_acao, iniciar};
-use poph_fluxos::prompt::{TETO_DO_BLOCO, bloco_da_etapa, renderizar_bloco};
-use poph_fluxos::regras::Avaliador;
+use poph_fluxos::prompt::{BLOCK_CAP, render_block, stage_block};
+use poph_fluxos::regras::RuleEvaluator;
 use poph_types::{ActionActor, DomainError, ExecutionStatus, FieldKind};
 use serde_json::{Map, Value as Json, json};
 use std::sync::OnceLock;
@@ -114,8 +114,8 @@ fn estado_em(ir: &Ir, etapa: &str, dados: Json) -> Estado {
 ///
 /// Os testes de decisão montam o seu com o avaliador que tem as `def` do fluxo.
 fn contexto() -> Contexto<'static> {
-    static AVALIADOR: OnceLock<Avaliador> = OnceLock::new();
-    Contexto::novo(AVALIADOR.get_or_init(Avaliador::sem_funcoes))
+    static AVALIADOR: OnceLock<RuleEvaluator> = OnceLock::new();
+    Contexto::novo(AVALIADOR.get_or_init(RuleEvaluator::without_functions))
 }
 
 // ------------------------------------------------------------------ texto dourado
@@ -150,7 +150,7 @@ Mapa do fluxo:
 "#
     );
 
-    assert_eq!(renderizar_bloco(&ir, &estado), esperado);
+    assert_eq!(render_block(&ir, &estado), esperado);
 }
 
 #[test]
@@ -233,10 +233,7 @@ Mapa do fluxo:
 - Fechamento (fechamento)
 "#
     );
-    assert_eq!(
-        renderizar_bloco(&ir, &depois_do_agente.novo_estado),
-        esperado
-    );
+    assert_eq!(render_block(&ir, &depois_do_agente.novo_estado), esperado);
 }
 
 #[test]
@@ -301,7 +298,7 @@ fn quando_o_segundo_ator_age_o_bloco_mostra_a_etapa_seguinte() {
     .expect("o agente envia depois");
     assert!(avancou.aguardando.is_empty());
 
-    let texto = renderizar_bloco(&ir, &avancou.novo_estado);
+    let texto = render_block(&ir, &avancou.novo_estado);
     assert!(texto.contains("Etapa atual: Fechamento (fechamento).\n"));
     assert!(!texto.contains("Quem falta agir"));
 }
@@ -327,7 +324,7 @@ Mapa do fluxo:
 "#
     );
     assert_eq!(
-        bloco_da_etapa(&ir, "confirmacao").expect("a etapa existe"),
+        stage_block(&ir, "confirmacao").expect("a etapa existe"),
         esperado
     );
 }
@@ -335,7 +332,7 @@ Mapa do fluxo:
 #[test]
 fn preview_de_etapa_que_nao_existe_e_nao_encontrado() {
     let ir = ir_dourada_agendar_visita();
-    match bloco_da_etapa(&ir, "fantasma") {
+    match stage_block(&ir, "fantasma") {
         Err(DomainError::NotFound {
             entity: entidade,
             id,
@@ -357,7 +354,7 @@ fn execucao_no_fim_ou_fora_de_etapa_diz_que_nao_ha_acao() {
         resultado: Some("Visita agendada".to_owned()),
         ends_service: false,
     };
-    let texto = renderizar_bloco(&ir, &no_fim);
+    let texto = render_block(&ir, &no_fim);
     assert!(
         texto.contains(
             "Situação: a execução chegou ao fim concluida com o resultado \"Visita agendada\". \
@@ -368,14 +365,14 @@ fn execucao_no_fim_ou_fora_de_etapa_diz_que_nao_ha_acao() {
 
     let mut etapa_sumida = iniciar(&ir).expect("início");
     etapa_sumida.no_atual = ir_para_etapa("fantasma");
-    assert!(renderizar_bloco(&ir, &etapa_sumida).contains(
+    assert!(render_block(&ir, &etapa_sumida).contains(
         "Etapa atual: fantasma não existe na estrutura do fluxo; não há ação a executar."
     ));
 
     let mut concluida = iniciar(&ir).expect("início");
     concluida.status = ExecutionStatus::Completed;
     assert!(
-        renderizar_bloco(&ir, &concluida)
+        render_block(&ir, &concluida)
             .contains("A execução não está ativa (concluida): não há ação a executar.")
     );
 }
@@ -395,7 +392,7 @@ não exige campos. Quem executa: agente.";
         json!({ "coleta": { "endereco": malicioso } }),
     );
 
-    let texto = renderizar_bloco(&ir, &estado);
+    let texto = render_block(&ir, &estado);
 
     // O valor fica numa linha só, entre aspas, com as aspas e a quebra escapadas.
     let linha_do_campo = texto
@@ -450,7 +447,7 @@ fn valor_de_objeto_sai_com_chaves_em_ordem_fixa() {
         "envio",
         json!({ "envio": { "documento": { "tamanho": 10, "tipo": "application/pdf", "nome": "laudo.pdf" } } }),
     );
-    let texto = renderizar_bloco(&ir, &estado);
+    let texto = render_block(&ir, &estado);
     assert!(
         texto.contains(
             r#"Preenchido: {"nome": "laudo.pdf", "tamanho": 10, "tipo": "application/pdf"}."#
@@ -469,12 +466,12 @@ fn mesma_entrada_da_mesma_saida_byte_a_byte() {
         "coleta",
         json!({ "coleta": { "endereco": "Rua das Flores, 10", "periodo": "tarde" } }),
     );
-    let primeira = renderizar_bloco(&ir, &estado);
-    let segunda = renderizar_bloco(&ir, &estado);
+    let primeira = render_block(&ir, &estado);
+    let segunda = render_block(&ir, &estado);
     assert_eq!(primeira.as_bytes(), segunda.as_bytes());
     assert_eq!(
-        bloco_da_etapa(&ir, "coleta").expect("existe"),
-        bloco_da_etapa(&ir, "coleta").expect("existe"),
+        stage_block(&ir, "coleta").expect("existe"),
+        stage_block(&ir, "coleta").expect("existe"),
     );
 }
 
@@ -522,10 +519,7 @@ fn a_ordem_em_que_os_dados_foram_gravados_nao_muda_o_bloco() {
     estado_b.no_atual = ir_para_etapa("envio");
     estado_b.dados = ordem_b;
 
-    assert_eq!(
-        renderizar_bloco(&ir, &estado_a),
-        renderizar_bloco(&ir, &estado_b)
-    );
+    assert_eq!(render_block(&ir, &estado_a), render_block(&ir, &estado_b));
 }
 
 // ------------------------------------------------------------------ teto de 6.000
@@ -566,7 +560,7 @@ fn fluxo_grande_corta_o_mapa_nas_linhas_inteiras_e_termina_em_reticencias() {
     let ir = fluxo_grande(60, &instrucao);
     let estado = estado_em(&ir, "etapa_00", json!({}));
 
-    let cortado = renderizar_bloco(&ir, &estado);
+    let cortado = render_block(&ir, &estado);
 
     // O bloco de cada tamanho de mapa (1 a 60 etapas) sai sem corte quando cabe: o mapa é a
     // última parte, então o início de cada um é igual ao do fluxo grande. O corte tem de ficar
@@ -574,8 +568,8 @@ fn fluxo_grande_corta_o_mapa_nas_linhas_inteiras_e_termina_em_reticencias() {
     let mut maior_sem_corte = None;
     for total in 1..=60 {
         let parcial = fluxo_grande(total, &instrucao);
-        let texto = renderizar_bloco(&parcial, &estado_em(&parcial, "etapa_00", json!({})));
-        if texto.chars().count() < TETO_DO_BLOCO && texto.ends_with('\n') {
+        let texto = render_block(&parcial, &estado_em(&parcial, "etapa_00", json!({})));
+        if texto.chars().count() < BLOCK_CAP && texto.ends_with('\n') {
             maior_sem_corte = Some((total, texto));
         }
     }
@@ -586,7 +580,7 @@ fn fluxo_grande_corta_o_mapa_nas_linhas_inteiras_e_termina_em_reticencias() {
         "o fluxo de 60 etapas tem de passar do teto para o corte ser exercido"
     );
     assert_eq!(cortado, format!("{texto_que_cabe}…"));
-    assert!(cortado.chars().count() <= TETO_DO_BLOCO);
+    assert!(cortado.chars().count() <= BLOCK_CAP);
     assert!(cortado.ends_with("\n…"));
 }
 
@@ -596,12 +590,12 @@ fn corte_do_mapa_conta_caracteres_e_nao_bytes() {
     // Esta conferência é exata: o corte tem de ser o mesmo do maior mapa que cabe em caracteres.
     let instrucao = "Pergunte com calma e uma coisa por vez. ".repeat(20);
     let ir = fluxo_grande(60, &instrucao);
-    let cortado = renderizar_bloco(&ir, &estado_em(&ir, "etapa_00", json!({})));
+    let cortado = render_block(&ir, &estado_em(&ir, "etapa_00", json!({})));
     let mapa_que_cabe = (1..=60)
         .filter_map(|total| {
             let parcial = fluxo_grande(total, &instrucao);
-            let texto = renderizar_bloco(&parcial, &estado_em(&parcial, "etapa_00", json!({})));
-            (texto.chars().count() < TETO_DO_BLOCO && texto.ends_with('\n')).then_some(texto)
+            let texto = render_block(&parcial, &estado_em(&parcial, "etapa_00", json!({})));
+            (texto.chars().count() < BLOCK_CAP && texto.ends_with('\n')).then_some(texto)
         })
         .next_back()
         .expect("um mapa cabe");
@@ -612,8 +606,8 @@ fn corte_do_mapa_conta_caracteres_e_nao_bytes() {
 fn instrucao_gigante_nao_faz_a_etapa_sumir_e_corta_por_caracteres() {
     let instrucao = "x".repeat(7000);
     let ir = fluxo_grande(2, &instrucao);
-    let cortado = renderizar_bloco(&ir, &estado_em(&ir, "etapa_00", json!({})));
-    assert_eq!(cortado.chars().count(), TETO_DO_BLOCO);
+    let cortado = render_block(&ir, &estado_em(&ir, "etapa_00", json!({})));
+    assert_eq!(cortado.chars().count(), BLOCK_CAP);
     assert!(cortado.ends_with('…'));
     assert!(cortado.starts_with("Fluxo em andamento: Fluxo muito grande."));
     assert!(cortado.contains("Etapa atual: "));
@@ -622,8 +616,8 @@ fn instrucao_gigante_nao_faz_a_etapa_sumir_e_corta_por_caracteres() {
 #[test]
 fn texto_dentro_do_teto_nao_e_cortado() {
     let ir = ir_dourada_agendar_visita();
-    let texto = renderizar_bloco(&ir, &estado_em(&ir, "coleta", json!({})));
-    assert!(texto.chars().count() < TETO_DO_BLOCO);
+    let texto = render_block(&ir, &estado_em(&ir, "coleta", json!({})));
+    assert!(texto.chars().count() < BLOCK_CAP);
     assert!(texto.ends_with('\n'));
     assert!(!texto.contains('…'));
 }
@@ -660,7 +654,7 @@ fn campo_vazio_ou_nulo_conta_como_nao_preenchido() {
         "envio",
         json!({ "envio": { "endereco": "   ", "periodo": null } }),
     );
-    let texto = renderizar_bloco(&ir, &estado);
+    let texto = render_block(&ir, &estado);
     assert!(texto.contains("- endereco (Endereço): texto, obrigatório. Não preenchido.\n"));
     assert!(
         texto.contains("- periodo (Período): opção (manhã, tarde), opcional. Não preenchido.\n")
@@ -691,7 +685,7 @@ fn booleano_sai_no_canonico_sim_ou_nao() {
         "envio",
         json!({ "envio": { "sim_ou_nao": true, "outro": false } }),
     );
-    let texto = renderizar_bloco(&ir, &estado);
+    let texto = render_block(&ir, &estado);
     assert!(texto.contains("- sim_ou_nao (Aceita): sim ou não, obrigatório. Preenchido: sim.\n"));
     assert!(texto.contains("- outro (Outro): sim ou não, obrigatório. Preenchido: nao.\n"));
 }
@@ -719,7 +713,7 @@ fn acao_que_encerra_o_atendimento_diz_isso_em_palavras() {
             )],
         )],
     );
-    let texto = renderizar_bloco(&ir, &estado_em(&ir, "fechamento", json!({})));
+    let texto = render_block(&ir, &estado_em(&ir, "fechamento", json!({})));
     assert!(texto.contains(
         "- concluir (Concluir): não exige campos. Quem executa: agente. Encerra o fluxo com o \
          resultado \"Pedido aprovado\" e o atendimento.\n"
@@ -736,11 +730,11 @@ fn no_limite_exato_do_teto_o_item_que_nao_cabe_com_as_reticencias_sai() {
     'busca: for preenchimento in 0..=200 {
         let instrucao = format!("{base}{}", "x".repeat(preenchimento));
         for total in 2..=60 {
-            let texto = renderizar_bloco(
+            let texto = render_block(
                 &fluxo_grande(total, &instrucao),
                 &estado_em(&fluxo_grande(total, &instrucao), "etapa_00", json!({})),
             );
-            if texto.chars().count() == TETO_DO_BLOCO && texto.ends_with('\n') {
+            if texto.chars().count() == BLOCK_CAP && texto.ends_with('\n') {
                 achado = Some((instrucao, total));
                 break 'busca;
             }
@@ -749,10 +743,10 @@ fn no_limite_exato_do_teto_o_item_que_nao_cabe_com_as_reticencias_sai() {
     let (instrucao, total_exato) = achado.expect("existe um tamanho que dá o teto exato");
 
     let ir_grande = fluxo_grande(60, &instrucao);
-    let cortado = renderizar_bloco(&ir_grande, &estado_em(&ir_grande, "etapa_00", json!({})));
+    let cortado = render_block(&ir_grande, &estado_em(&ir_grande, "etapa_00", json!({})));
     let anterior = fluxo_grande(total_exato - 1, &instrucao);
-    let texto_anterior = renderizar_bloco(&anterior, &estado_em(&anterior, "etapa_00", json!({})));
+    let texto_anterior = render_block(&anterior, &estado_em(&anterior, "etapa_00", json!({})));
 
     assert_eq!(cortado, format!("{texto_anterior}…"));
-    assert!(cortado.chars().count() <= TETO_DO_BLOCO);
+    assert!(cortado.chars().count() <= BLOCK_CAP);
 }

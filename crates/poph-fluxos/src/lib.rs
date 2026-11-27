@@ -13,8 +13,8 @@ pub mod regras;
 pub mod validador;
 
 pub use cache::{
-    CUSTO_FIXO_DA_ENTRADA, CacheRevisoes, ChaveRevisao, ESPERA_MAXIMA_DO_LOTE, FATOR_DO_PESO,
-    Metricas, TETO_PADRAO_MB, peso_da_ir, sha256_da_fonte,
+    DEFAULT_CAP_MB, ENTRY_FIXED_COST, MAX_BATCH_WAIT, Metrics, RevisionCache, RevisionKey,
+    WEIGHT_FACTOR, entry_weight, sha256_of_source,
 };
 pub use compilador::{Compilado, FalhaCarregamento, Limites, carregar, compilar};
 pub use diagnostics::{Code, Diagnostic, Severity};
@@ -26,6 +26,6 @@ pub use motor::{
     abandonar, atores_exigidos, campos_faltando, dados_da_etapa, efeitos_de_entrada, executar_acao,
     iniciar,
 };
-pub use prompt::{TETO_DO_BLOCO, bloco_da_etapa, renderizar_bloco};
-pub use regras::{Avaliador, Dados, ErroRegra, LimitesRegra, avaliar, dados_de_json};
+pub use prompt::{BLOCK_CAP, render_block, stage_block};
+pub use regras::{Dados, RuleError, RuleEvaluator, RuleLimits, evaluate, snapshot_from_json};
 pub use validador::{Departamento, MAX_NOS, Resolucao, resolver_departamentos, validar};

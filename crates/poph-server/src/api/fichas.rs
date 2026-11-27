@@ -26,13 +26,13 @@ use axum::{
     extract::{Path, Query, State, rejection::JsonRejection},
     http::{HeaderMap, StatusCode},
 };
-use poph_fluxos::cache::ChaveRevisao;
+use poph_fluxos::cache::RevisionKey;
 use poph_fluxos::ir::Destination;
 use poph_fluxos::motor::{
     Campos, Contexto, Estado as EstadoMotor, abandonar as abandonar_motor, efeitos_de_entrada,
     executar_acao, iniciar,
 };
-use poph_fluxos::{Avaliador, Dados, Ir, Limites, LimitesRegra};
+use poph_fluxos::{Dados, Ir, Limites, RuleEvaluator, RuleLimits};
 use poph_store::{
     Execution, ExecutionStart, ExecutionStep, FlowRevision, RecordEvent, RecordFilter, StoreError,
     TransitionExtras,
@@ -766,13 +766,13 @@ fn ir_da_revisao(e: &Estado, revisao: &FlowRevision) -> Result<Arc<Ir>, ApiError
         tracing::error!(erro = ?erro, "IR gravada de revisão de fluxo não lê");
         ApiError::interno()
     })?;
-    let chave = ChaveRevisao::com_hash(
+    let chave = RevisionKey::with_hash(
         revisao.fluxo_id.to_string(),
         u32::try_from(revisao.numero).unwrap_or(u32::MAX),
         revisao.fonte_sha256.clone(),
     );
     e.cache_fluxos
-        .carregar(
+        .load(
             &chave,
             &gravada,
             &revisao.fonte,
@@ -790,14 +790,14 @@ fn avaliador_da_revisao(
     e: &Estado,
     revisao: &FlowRevision,
     ir: &Ir,
-) -> Result<Avaliador, ApiError> {
+) -> Result<RuleEvaluator, ApiError> {
     if ir.defs.is_empty() {
-        return Ok(Avaliador::sem_funcoes());
+        return Ok(RuleEvaluator::without_functions());
     }
-    Avaliador::novo_com(
+    RuleEvaluator::new_with(
         &revisao.fonte,
         &Limites::da_config(&e.config.flows),
-        LimitesRegra::default(),
+        RuleLimits::default(),
     )
     .map_err(|erro| {
         tracing::error!(erro = ?erro, "módulo de regras de revisão não carrega");
@@ -811,7 +811,7 @@ fn estado_para_agir(
     e: &Estado,
     org: OrgId,
     execucao: &Execution,
-) -> Result<(Arc<Ir>, Avaliador, EstadoMotor), ApiError> {
+) -> Result<(Arc<Ir>, RuleEvaluator, EstadoMotor), ApiError> {
     let revisao = e.store.revisions().get_by_id(org, execucao.revisao_id)?;
     let ir = ir_da_revisao(e, &revisao)?;
     let avaliador = avaliador_da_revisao(e, &revisao, &ir)?;
@@ -834,7 +834,7 @@ fn estado_para_agir(
         atores_que_agiram,
         resultado: execucao.result.clone(),
         motivo: execucao.motivo_fim.clone(),
-        chaves: BTreeMap::new(),
+        keys: BTreeMap::new(),
     };
     Ok((ir, avaliador, estado))
 }

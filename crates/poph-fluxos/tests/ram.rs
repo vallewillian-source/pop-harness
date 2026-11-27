@@ -20,7 +20,7 @@
 //! entrada ([`peso_da_ir`]), o que o cache diz ter guardado (entradas, expulsões, bytes) e o custo
 //! real por revisão guardada.
 
-use poph_fluxos::{CacheRevisoes, ChaveRevisao, Ir, Limites, compilar, peso_da_ir};
+use poph_fluxos::{Ir, Limites, RevisionCache, RevisionKey, compilar, entry_weight};
 
 /// Teto padrão de `fluxos.cache_revisoes_mb` (PRD §9).
 const TETO_PADRAO_MB: usize = 16;
@@ -79,30 +79,30 @@ fn ram_com_0_100_e_1000_revisoes_carregadas() {
     // O primeiro script compila antes da medida: o trabalho de carga da biblioteca não entra na
     // conta das revisões guardadas.
     let primeira = script("pedido0", 8, 200);
-    let peso = peso_da_ir(&ir_do_script(&primeira));
+    let peso = entry_weight(&ir_do_script(&primeira));
 
-    let cache = CacheRevisoes::novo(teto_mb);
+    let cache = RevisionCache::new(teto_mb);
     let sem_revisao = rss_kb();
 
     let mut rss_100 = sem_revisao;
     for numero in 1..=REVISOES {
         let fonte = script(&format!("pedido{numero}"), 8, 200);
         let ir = ir_do_script(&fonte);
-        let chave = ChaveRevisao::nova(format!("fluxo{numero}"), 1, &fonte);
+        let chave = RevisionKey::new(format!("fluxo{numero}"), 1, &fonte);
         cache
-            .carregar(&chave, &ir, &fonte, &Limites::default())
+            .load(&chave, &ir, &fonte, &Limites::default())
             .unwrap_or_else(|falha| panic!("revisão {numero} não carregou: {falha:?}"));
         if numero == 100 {
             rss_100 = rss_kb();
         }
     }
     let com_mil = rss_kb();
-    let metricas = cache.metricas();
+    let metricas = cache.metrics();
 
     println!(
         "teto {teto_mb} MB · peso estimado {peso} B por revisão · {REVISOES} revisões carregadas, \
          {} guardadas, {} expulsas, {} não cacheadas, {} B guardados",
-        metricas.entradas, metricas.expulsoes, metricas.nao_cacheadas, metricas.bytes
+        metricas.entries, metricas.evictions, metricas.not_cached, metricas.bytes
     );
     println!("RSS com 0 revisões: {sem_revisao} KB");
     println!(

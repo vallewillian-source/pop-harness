@@ -7,7 +7,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use poph_fluxos::{ChaveRevisao, Code, FalhaCarregamento, Limites, Severity, compilar};
+use poph_fluxos::{Code, FalhaCarregamento, Limites, RevisionKey, Severity, compilar};
 use poph_server::Estado;
 use poph_store::Store;
 use poph_types::HarnessConfig;
@@ -105,7 +105,7 @@ fn cache_carrega_40_kib_com_o_teto_padrao_e_recusa_com_32_kib() {
     let ir = compilar(&fonte, &publicacao)
         .ir
         .expect("publicada com 64 KiB o script compila");
-    let chave = ChaveRevisao::nova("agendar_visita", 1, &fonte);
+    let chave = RevisionKey::new("agendar_visita", 1, &fonte);
 
     let (teto64, pasta_64) = estado("cache-64", com_teto_de_fonte(65_536));
     let carregada = teto64.carregar_revisao_de_fluxo(&chave, &ir, &fonte);
@@ -123,7 +123,7 @@ fn cache_carrega_40_kib_com_o_teto_padrao_e_recusa_com_32_kib() {
         outro => panic!("com teto de 32 KiB a carga tem de falhar com FLX02, veio {outro:?}"),
     }
     assert_eq!(
-        apertado.cache_fluxos.metricas().entradas,
+        apertado.cache_fluxos.metrics().entries,
         0,
         "revisão recusada não entra no cache"
     );

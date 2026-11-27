@@ -10,7 +10,7 @@ use poph_agent::entry_output::Fluxo;
 use poph_agent::turno::TurnEngine;
 use poph_files::FileConfig;
 use poph_fluxos::{
-    CacheRevisoes, ChaveRevisao, Compilado, FalhaCarregamento, Ir, Limites, compilar,
+    Compilado, FalhaCarregamento, Ir, Limites, RevisionCache, RevisionKey, compilar,
 };
 use poph_store::Store;
 use poph_types::{BaseMetrics, ConversationId, HarnessConfig, OrgId, Registry};
@@ -87,7 +87,7 @@ pub struct Estado {
     matrix_espacos: Option<Arc<crate::matrix_inicio::EspacosDoModulo>>,
     /// Cache das revisões compiladas de fluxo (FX-19), com o teto `fluxos.cache_revisoes_mb` (FX-26).
     /// Um só por processo: `Clone` compartilha o estado.
-    pub cache_fluxos: Arc<CacheRevisoes>,
+    pub cache_fluxos: Arc<RevisionCache>,
     /// Métricas `poph_fluxos_*` (FX-26). `None` = motor de fluxos desligado (`[fluxos] ativo = false`):
     /// nenhuma `poph_fluxos_*` aparece no `/metrics`.
     metricas_fluxos: Option<Arc<MetricasFluxos>>,
@@ -135,7 +135,7 @@ impl Estado {
         let registro = Arc::new(Registry::new());
         let metricas = BaseMetrics::register(&registro)
             .map_err(|erro| format!("não consegui registrar as métricas: {erro}"))?;
-        let cache_fluxos = Arc::new(CacheRevisoes::novo(
+        let cache_fluxos = Arc::new(RevisionCache::new(
             usize::try_from(config.flows.revision_cache_mb).unwrap_or(usize::MAX),
         ));
         let metricas_fluxos = if config.flows.enabled {
@@ -195,11 +195,11 @@ impl Estado {
     /// `[fluxos]` (FX-26b). Falha com o mesmo erro tipado de [`CacheRevisoes::carregar`].
     pub fn carregar_revisao_de_fluxo(
         &self,
-        chave: &ChaveRevisao,
+        chave: &RevisionKey,
         ir_gravada: &Ir,
         fonte: &str,
     ) -> Result<Arc<Ir>, FalhaCarregamento> {
-        self.cache_fluxos.carregar(
+        self.cache_fluxos.load(
             chave,
             ir_gravada,
             fonte,

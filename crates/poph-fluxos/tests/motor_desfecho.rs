@@ -9,7 +9,7 @@ use poph_fluxos::ir::{
     Acao, Campo, Decisao, Destination, Effect, Etapa, Fim, Fluxo, Gatilho, Ir, Rule,
 };
 use poph_fluxos::motor::{Campos, Contexto, abandonar, efeitos_de_entrada, executar_acao, iniciar};
-use poph_fluxos::regras::{Avaliador, Dados};
+use poph_fluxos::regras::{Dados, RuleEvaluator};
 use poph_types::{ActionActor, DomainError, ExecutionStatus, FieldKind, RecordEventKind};
 use serde_json::{Value as Json, json};
 
@@ -175,7 +175,7 @@ fn fluxo_com_decisao(entao: Destination, senao: Destination) -> Ir {
 fn decisao_vai_para_o_ramo_verdadeiro() {
     let ir = fluxo_com_decisao(vai_para("urgente"), vai_para("normal"));
     let estado = iniciar(&ir).expect("início");
-    let avaliador = Avaliador::sem_funcoes();
+    let avaliador = RuleEvaluator::without_functions();
 
     let resultado = executar_acao(
         &ir,
@@ -215,7 +215,7 @@ fn decisao_vai_para_o_ramo_verdadeiro() {
 fn decisao_vai_para_o_ramo_falso() {
     let ir = fluxo_com_decisao(vai_para("urgente"), vai_para("normal"));
     let estado = iniciar(&ir).expect("início");
-    let avaliador = Avaliador::sem_funcoes();
+    let avaliador = RuleEvaluator::without_functions();
 
     let resultado = executar_acao(
         &ir,
@@ -258,7 +258,7 @@ fn duas_decisoes_encadeadas_chegam_a_etapa_em_uma_passagem() {
         ],
     );
     let estado = iniciar(&ir).expect("início");
-    let avaliador = Avaliador::sem_funcoes();
+    let avaliador = RuleEvaluator::without_functions();
 
     let resultado = executar_acao(
         &ir,
@@ -302,7 +302,7 @@ fn ciclo_de_decisoes_para_a_execucao_em_falha() {
         ],
     );
     let estado = iniciar(&ir).expect("início");
-    let avaliador = Avaliador::sem_funcoes();
+    let avaliador = RuleEvaluator::without_functions();
 
     let resultado = executar_acao(
         &ir,
@@ -374,7 +374,7 @@ fn dez_saltos_passam_e_onze_derrubam_a_execucao() {
         )
     }
 
-    let avaliador = Avaliador::sem_funcoes();
+    let avaliador = RuleEvaluator::without_functions();
 
     // O teto é 10 saltos: dez decisões encadeadas chegam na etapa.
     let ir = cadeia(10);
@@ -442,7 +442,7 @@ fn o_teto_de_saltos_vem_do_contexto() {
         ],
     );
     let estado = iniciar(&ir).expect("início");
-    let avaliador = Avaliador::sem_funcoes();
+    let avaliador = RuleEvaluator::without_functions();
 
     let com_teto_de_tres = executar_acao(
         &ir,
@@ -477,7 +477,7 @@ fn o_teto_de_saltos_vem_do_contexto() {
 fn decisao_que_aponta_para_etapa_inexistente_e_ir_divergente() {
     let ir = fluxo_com_decisao(vai_para("fantasma"), vai_para("normal"));
     let estado = iniciar(&ir).expect("início");
-    let avaliador = Avaliador::sem_funcoes();
+    let avaliador = RuleEvaluator::without_functions();
 
     let erro = executar_acao(
         &ir,
@@ -522,7 +522,7 @@ fn regra_que_nao_avalia_para_a_execucao_em_falha() {
         )],
     );
     let estado = iniciar(&ir).expect("início");
-    let avaliador = Avaliador::sem_funcoes();
+    let avaliador = RuleEvaluator::without_functions();
 
     let resultado = executar_acao(
         &ir,
@@ -568,7 +568,7 @@ fn fim_sem_encerrar_atendimento_conclui_a_execucao() {
         Vec::new(),
     );
     let estado = iniciar(&ir).expect("início");
-    let avaliador = Avaliador::sem_funcoes();
+    let avaliador = RuleEvaluator::without_functions();
 
     let resultado = executar_acao(
         &ir,
@@ -625,7 +625,7 @@ fn fim_com_encerra_atendimento_pede_o_encerramento() {
         Vec::new(),
     );
     let estado = iniciar(&ir).expect("início");
-    let avaliador = Avaliador::sem_funcoes();
+    let avaliador = RuleEvaluator::without_functions();
 
     let resultado = executar_acao(
         &ir,
@@ -653,7 +653,7 @@ fn fim_com_encerra_atendimento_pede_o_encerramento() {
 fn decisao_que_desemboca_num_fim_tambem_conclui() {
     let ir = fluxo_com_decisao(fim("concluido", true), vai_para("normal"));
     let estado = iniciar(&ir).expect("início");
-    let avaliador = Avaliador::sem_funcoes();
+    let avaliador = RuleEvaluator::without_functions();
 
     let resultado = executar_acao(
         &ir,
@@ -726,7 +726,7 @@ fn fluxo_com_efeitos() -> Ir {
 fn efeitos_saem_na_ordem_da_ia_com_o_texto_resolvido() {
     let ir = fluxo_com_efeitos();
     let estado = iniciar(&ir).expect("início");
-    let avaliador = Avaliador::sem_funcoes();
+    let avaliador = RuleEvaluator::without_functions();
     let contexto = Contexto::novo(&avaliador)
         .com_ficha("ficha-1")
         .com_cliente("5521900000000");
@@ -792,7 +792,7 @@ fn efeitos_saem_na_ordem_da_ia_com_o_texto_resolvido() {
 fn a_chave_do_efeito_e_estavel_para_a_mesma_entrada() {
     let ir = fluxo_com_efeitos();
     let estado = iniciar(&ir).expect("início");
-    let avaliador = Avaliador::sem_funcoes();
+    let avaliador = RuleEvaluator::without_functions();
     let contexto = Contexto::novo(&avaliador).com_ficha("ficha-1");
     let entrada = campos(json!({ "endereco": "Rua A" }));
 
@@ -842,7 +842,7 @@ fn variavel_de_efeito_que_nao_existe_vira_texto_vazio() {
         Vec::new(),
     );
     let estado = iniciar(&ir).expect("início");
-    let avaliador = Avaliador::sem_funcoes();
+    let avaliador = RuleEvaluator::without_functions();
 
     let resultado = executar_acao(
         &ir,
@@ -883,7 +883,7 @@ fn o_dado_do_cliente_entra_como_valor_no_texto_do_efeito() {
         Vec::new(),
     );
     let estado = iniciar(&ir).expect("início");
-    let avaliador = Avaliador::sem_funcoes();
+    let avaliador = RuleEvaluator::without_functions();
 
     let resultado = executar_acao(
         &ir,
@@ -920,7 +920,7 @@ fn efeitos_da_entrada_da_primeira_etapa_saem_pela_funcao_publica() {
         Vec::new(),
     );
     let estado = iniciar(&ir).expect("início");
-    let avaliador = Avaliador::sem_funcoes();
+    let avaliador = RuleEvaluator::without_functions();
     let contexto = Contexto::novo(&avaliador).com_ficha("ficha-9");
     let dados: Dados = estado.dados.clone();
 
@@ -944,7 +944,7 @@ fn efeitos_da_entrada_da_primeira_etapa_saem_pela_funcao_publica() {
 fn etapa_com_efeito_de_entrada_vira_efeito_ao_avancar() {
     let ir = fluxo_com_efeitos();
     let estado = iniciar(&ir).expect("início");
-    let avaliador = Avaliador::sem_funcoes();
+    let avaliador = RuleEvaluator::without_functions();
 
     let resultado = executar_acao(
         &ir,
@@ -1020,7 +1020,7 @@ fn abandono_sem_motivo_e_recusado_e_execucao_encerrada_nao_e_abandonada_de_novo(
 fn repetir_a_chave_nao_duplica_evento_nem_efeito() {
     let ir = fluxo_com_efeitos();
     let estado = iniciar(&ir).expect("início");
-    let avaliador = Avaliador::sem_funcoes();
+    let avaliador = RuleEvaluator::without_functions();
     let contexto = Contexto::novo(&avaliador).com_ficha("ficha-1");
     let entrada = campos(json!({ "endereco": "Rua C" }));
 
@@ -1057,14 +1057,14 @@ fn repetir_a_chave_nao_duplica_evento_nem_efeito() {
         segundo.novo_estado, primeiro.novo_estado,
         "o estado não muda na repetição"
     );
-    assert_eq!(primeiro.novo_estado.chaves.len(), 1);
+    assert_eq!(primeiro.novo_estado.keys.len(), 1);
 }
 
 #[test]
 fn a_mesma_entrada_com_decisao_e_efeito_da_o_mesmo_resultado() {
     let ir = fluxo_com_efeitos();
     let estado = iniciar(&ir).expect("início");
-    let avaliador = Avaliador::sem_funcoes();
+    let avaliador = RuleEvaluator::without_functions();
     let contexto = Contexto::novo(&avaliador)
         .com_ficha("ficha-1")
         .com_cliente("5521900000000");

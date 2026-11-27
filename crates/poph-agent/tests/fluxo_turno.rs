@@ -755,7 +755,7 @@ async fn execucao_ativa_nao_pergunta_o_jev() {
     let compiled = compilar(SCRIPT, &Limites::default());
     let ir = compiled.ir().expect("compila");
     let estado = poph_fluxos::motor::iniciar(ir).expect("estado inicial");
-    let evaluator = poph_fluxos::Avaliador::sem_funcoes();
+    let evaluator = poph_fluxos::RuleEvaluator::without_functions();
     let context = poph_fluxos::motor::Contexto::novo(&evaluator);
     let effects =
         poph_fluxos::motor::efeitos_de_entrada(ir, estado.no_atual.id(), &estado.dados, &context)

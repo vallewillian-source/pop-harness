@@ -3,7 +3,7 @@
 //! Cada chave com efeito no compilador ou na avaliação tem um teste que muda o valor e prova que
 //! o limite de fato muda (`Limites::da_config`, `LimitesRegra::da_config`, `compilar`).
 
-use poph_fluxos::{Code, Limites, LimitesRegra, Severity, compilar, formatar_com};
+use poph_fluxos::{Code, Limites, RuleLimits, Severity, compilar, formatar_com};
 use poph_types::config::FlowsConfig;
 
 /// Um dos exemplos do repositório: script válido que o compilador aceita com o padrão.
@@ -43,7 +43,7 @@ fn padroes_do_compilador_seguem_a_configuracao_padrao() {
         limites.max_nos as u32, padrao.max_nodes,
         "nós por fluxo: padrão do compilador e da configuração"
     );
-    let regra = LimitesRegra::default();
+    let regra = RuleLimits::default();
     assert_eq!(regra.max_ticks, padrao.max_rule_ticks);
     assert_eq!(regra.max_heap_bytes as u64, padrao.max_rule_heap);
 }
@@ -74,12 +74,12 @@ fn da_config_mapeia_os_limites_de_regra() {
         max_rule_heap: 262_144,
         ..FlowsConfig::default()
     };
-    let regra = LimitesRegra::da_config(&cfg);
+    let regra = RuleLimits::from_config(&cfg);
     assert_eq!(regra.max_ticks, 2_500);
     assert_eq!(regra.max_heap_bytes, 262_144);
-    let padrao = LimitesRegra::default();
+    let padrao = RuleLimits::default();
     assert_eq!(regra.max_callstack, padrao.max_callstack);
-    assert_eq!(regra.prazo, padrao.prazo);
+    assert_eq!(regra.deadline, padrao.deadline);
 }
 
 #[test]

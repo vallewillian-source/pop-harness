@@ -10,7 +10,7 @@ use poph_fluxos::ir::{Acao, Campo, Destination, Etapa, Fim, Fluxo, Gatilho, Ir};
 use poph_fluxos::motor::{
     Campos, Contexto, Estado, atores_exigidos, campos_faltando, executar_acao, iniciar,
 };
-use poph_fluxos::regras::Avaliador;
+use poph_fluxos::regras::RuleEvaluator;
 use poph_types::{ActionActor, DomainError, ExecutionStatus, FieldKind, RecordEventKind};
 use serde_json::{Value as Json, json};
 use std::sync::OnceLock;
@@ -20,8 +20,8 @@ use std::sync::OnceLock;
 ///
 /// Os testes de decisão montam o seu com o avaliador que tem as `def` do fluxo.
 fn contexto() -> Contexto<'static> {
-    static AVALIADOR: OnceLock<Avaliador> = OnceLock::new();
-    Contexto::novo(AVALIADOR.get_or_init(Avaliador::sem_funcoes))
+    static AVALIADOR: OnceLock<RuleEvaluator> = OnceLock::new();
+    Contexto::novo(AVALIADOR.get_or_init(RuleEvaluator::without_functions))
 }
 
 fn campo(id: &str, tipo: FieldKind, obrigatorio: bool, opcoes: &[&str]) -> Campo {
@@ -197,7 +197,7 @@ fn iniciar_comeca_na_etapa_de_inicio_com_o_estado_vazio() {
     );
     assert!(estado.dados.is_empty(), "a execução nova não tem dado");
     assert!(estado.atores_que_agiram.is_empty());
-    assert!(estado.chaves.is_empty());
+    assert!(estado.keys.is_empty());
     assert_eq!(estado.resultado, None);
 }
 

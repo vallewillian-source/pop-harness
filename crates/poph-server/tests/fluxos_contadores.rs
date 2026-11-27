@@ -21,7 +21,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use poph_fluxos::motor::{self, Campos, Contexto, Estado as EstadoMotor};
-use poph_fluxos::{Avaliador, Limites, compilar};
+use poph_fluxos::{Limites, RuleEvaluator, compilar};
 use poph_server::Estado;
 use poph_server::fluxos_transicao::transicao_do_motor;
 use poph_store::metrics::ExecutionMetrics;
@@ -307,7 +307,7 @@ impl Cenario {
         let ir = compilado
             .ir()
             .unwrap_or_else(|diagnosticos| panic!("script do teste não compila: {diagnosticos:?}"));
-        let avaliador = Avaliador::novo(script).expect("as regras do script carregam");
+        let avaliador = RuleEvaluator::new(script).expect("as regras do script carregam");
         let estado = estado_do_banco(execucao);
         let mut contexto = Contexto::novo(&avaliador);
         if let Some(saltos) = saltos {
@@ -379,7 +379,7 @@ fn estado_do_banco(execucao: &poph_store::Execution) -> EstadoMotor {
         atores_que_agiram: Vec::new(),
         resultado: execucao.result.clone(),
         motivo: execucao.motivo_fim.clone(),
-        chaves: Default::default(),
+        keys: Default::default(),
     }
 }
 

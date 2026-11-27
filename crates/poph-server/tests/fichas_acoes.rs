@@ -29,7 +29,7 @@ use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
 use poph_fluxos::ir::Destination;
 use poph_fluxos::motor::{Contexto, Estado as EstadoMotor, executar_acao};
-use poph_fluxos::{Avaliador, Ir, Limites, compilar};
+use poph_fluxos::{Ir, Limites, RuleEvaluator, compilar};
 use poph_server::Estado;
 use poph_server::fluxos_transicao::transicao_do_motor;
 use poph_store::{
@@ -404,9 +404,9 @@ impl Cenario {
             atores_que_agiram,
             resultado: None,
             motivo: None,
-            chaves: BTreeMap::new(),
+            keys: BTreeMap::new(),
         };
-        let avaliador = Avaliador::sem_funcoes();
+        let avaliador = RuleEvaluator::without_functions();
         let ficha_texto = execucao.ficha_id.to_string();
         let contexto = Contexto::novo(&avaliador)
             .com_ficha(&ficha_texto)

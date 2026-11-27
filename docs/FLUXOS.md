@@ -209,6 +209,111 @@ cache key uses `sha2`, the same `sha256` as `fluxo_revisoes.fonte_sha256`. `use 
 marks the dependency as used, because the Rust `unused_dependencies` lint breaks clippy with
 `-D warnings`.
 
+### 8.1 Cache of compiled revisions (`cache`)
+
+- A published revision is immutable, so the cache key is the flow id, the revision number and the
+  sha256 of the script text. The hash is what closes the key: the publisher stores it in
+  `fluxo_revisoes.fonte_sha256`, and the cache computes the same value from the text
+  (`sha256_of_source`). `RevisionKey::with_hash` takes the value already stored in the database.
+- Loads are single-flight: concurrent calls for the same key load once and the others wait for that
+  result. A waiter stops waiting after 30 s (`MAX_BATCH_WAIT`) and loads by itself, so a loader
+  that vanished (panic) cannot block the key.
+- A failed load (`ir_divergente`, `fluxo_invalido`) is returned as a typed error and is not cached.
+  The cache keeps working; the execution ends in failure (FLXR06) and the rest of the module is
+  unaffected.
+- The cap is in bytes. `RevisionCache::new` takes megabytes, the unit of
+  `fluxos.cache_revisoes_mb`; the default is 16 MB. Each entry weighs twice the length of the
+  canonical JSON of the IR plus 256 bytes. The RAM measurement (`ram_por_revisao_medida`) found
+  5,857 to 6,389 bytes per revision for 3,666 bytes of JSON, a factor of 1.60 to 1.74; the factor 2
+  errs on the safe side, so the cache sits a little below the cap in real RAM.
+- Eviction removes the least recently used entry that no caller holds (the `Arc` count is 1).
+  If there is still no room, the new revision is not cached (counted in `not_cached`) and the call
+  still returns the IR. A full cache never fails an execution; it only stops speeding it up.
+  A revision larger than the cap is not cached. A cap of 0 caches nothing and is not an error.
+- Eviction scans the entries (O(n)); this is intended, since the cap holds dozens of revisions.
+  One cache per process; `Clone` shares the state. The mutex tolerates poisoning.
+- The cache reads no configuration, touches no database and no clock (the order of use is a
+  counter), and keeps no entry forever.
+- `get` counts as use but not as hit or miss. `load` is the entry point that counts hits, misses,
+  loads and waits.
+
+### 8.2 Prompt block (`prompt`)
+
+- It is the volatile part of the agent prompt: what the agent sees about the flow in progress in
+  this turn. The stable prefix is not built here. The same function feeds the Fichas screen
+  (`stage_block`, the `preview` of PRD §6.6-5): it shows what the agent would see on entering a
+  step, with no values filled. A step the IR does not have is "not found" (HTTP 404).
+- Text is Portuguese, one piece of information per line, always ending with a newline. Order: the
+  flow in progress; the current step with its instruction; who is still missing (only when the
+  step is `parcial`); the step fields (type, required, value already filled); the actions (what
+  each requires, who runs it and where it leads, in words); and the step map last.
+- The essential sections come before the map on purpose: when the cap cuts, the map is cut first.
+- The only text that comes from the client is the field values. Each value is quoted as JSON text,
+  with quotes, line breaks and backslashes escaped, so a value that tries to open a new section
+  stays one line marked as data. The header warns the agent of this.
+- Deterministic: the same input gives the same bytes. Fields come in IR order and object keys
+  (for example an attachment `{name, type, size}`) come sorted, so the output does not depend on
+  whether `serde_json` was built with `preserve_order`.
+- Cap: at most `BLOCK_CAP` characters. When it is passed, whole lines of the map are cut and
+  `…` ends the block on its own line. If the essential part alone is over the cap (an instruction
+  written by hand that is too long), the text is cut by characters at the cap and ends with `…`, so
+  the agent still sees the start of the step. The cut depends only on the text.
+- Booleans show as the canonical `sim` / `nao`.
+
+### 8.3 Rule evaluator (`regras`)
+
+- A rule is evaluated over a snapshot of the execution data, `{"step": {"field": value}}`, sorted
+  (`BTreeMap`), so evaluation is deterministic. The data enters as a value and never as code.
+- Combinators (`igual`, `diferente`, `maior`, `menor`, `contem`, `vazio`, `e`, `ou`, `nao`) run in
+  native Rust, outside Starlark. `funcao("name")` runs the `def` in the Starlark module loaded once
+  per pass (`RuleEvaluator::new`) and must return `True` or `False`. A rule without `funcao` uses
+  `RuleEvaluator::without_functions`, which loads no module.
+- Missing field (not filled or `null`), by combinator:
+
+  | Combinator | Missing field | Why |
+  |---|---|---|
+  | `igual` | false | there is no value to compare |
+  | `diferente` | true | what does not exist differs from the literal |
+  | `maior` / `menor` | false | there is no number |
+  | `contem` | false | there is no text |
+  | `vazio` | **true** | not filled counts as empty |
+  | `e` / `ou` / `nao` | combine the results above | — |
+  | `funcao` | the `def` gets the data as it is and decides | — |
+
+- Canonical text (`canonical_text`): `igual` compares canonical text without the outer spaces.
+  Booleans accept `sim`/`nao` and `true`/`false`/`1`/`0`. A field without a single text (a list)
+  is false, so `diferente` is true. An attachment object's text is its name. Numbers are written
+  without trailing zeros (`123`, `12.5`).
+- `maior` / `menor` compare numbers. Text that is a number compares by its number (`"12"` is greater
+  than `"9"`). Text that is not a number, a list, an object or a boolean gives false (the publish
+  warning FLX60). A literal that is not a number is `RegraInvalida`: the rule could never be true.
+- `contem` ignores case and accents. On a list, it is true when any item contains the text.
+- `preenchido` (null, text of only spaces and an empty list do not count as filled) is the same
+  rule as `vazio`. The engine uses it for an action's `exige` and a field's `obrigatorio`, so the
+  two cannot diverge.
+- Time and size limits, all in the source as constants: 10,000 ticks (§3.4), 1 MiB of heap, call
+  depth 128, nesting depth 32 (an IR written by hand that is deeper gives a typed error, not a
+  crash), deadline 200 ms plus a 25 ms tolerance. The Starlark deadline is not preemptive: a huge
+  constant computed inside a `def` (`"x" * 1000000000`) is done when the script compiles, and
+  Starlark notices the deadline only seconds later (about 4 s for 10⁸, 35 s for 10⁹). So the `def`
+  runs in its own thread, the caller waits at most the deadline plus the tolerance, and a rule that
+  passes the limit answers `RegraLimite` at once. The abandoned thread ends by itself.
+- Loading the script follows the same rule: its own thread and a 1 s deadline
+  (`PRAZO_DE_CARGA`) plus the margin. Without it, a published revision like that would stall the
+  attendance turn.
+- Starlark has no error type for ticks, heap or deadline, so a load or call error counts as a
+  limit when its message says so (covered by a test). Any other error is `RegraInvalida`.
+- Two kinds of error, and both say who is at fault. `RegraInvalida` is a defect of the flow's
+  author: `funcao` without a `def`, a `def` that returned text, a `def` that failed (missing key,
+  division by zero), a literal that is not a number, a field written outside `etapa.campo`.
+  `RegraLimite` means the rule passed a tick, heap, call-depth or deadline limit. Neither stops the
+  process or the turn: the engine (FX-13) marks the execution as `falha` (FLXR01–FLXR03) and the
+  Ficha stays open.
+- A malformed `etapa.campo` (no dot, empty step or field) is `RegraInvalida`, not a missing field.
+  The compiler (FLX12) already refuses this shape, but the IR can come from outside.
+- `snapshot_from_json`: unreadable text or JSON that is not an object is a rule error (FLXR05 in the
+  engine). Nothing is evaluated on half the data.
+
 ## Medidas
 
 **Máquina:** Fedora 44, x86_64, AMD Ryzen 5 5600GT (6 núcleos, 12 threads), 32 GB de RAM.
@@ -232,7 +337,7 @@ POPH_RAM_TETO_MB=16 cargo test --release -p poph-fluxos --test ram -- --ignored 
 ```
 
 Revisões de 8 etapas com instruções de 200 caracteres: peso estimado pelo cache
-(`peso_da_ir` = JSON × 2 + 256 B) **7.592 B** por revisão.
+(`entry_weight` = JSON × 2 + 256 B) **7.592 B** por revisão.
 
 | Revisões carregadas | Teto de 4 MB (cache enche e expulsa) | Teto padrão de 16 MB (as 1.000 cabem) |
 |---|---|---|
