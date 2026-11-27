@@ -212,7 +212,7 @@ Ele falha se o arquivo sair vazio ou sem `export interface paths`.
 ## Inventário da HR-21 — rotas, paridade, versão, auditoria e isolamento
 
 Uma linha por operação publicada no OpenAPI. A tabela é conferida por teste
-(`docs_api_cobre_todas_as_rotas_publicadas`, em `crates/poph-server/tests/api.rs`): publicar rota nova
+(`api_docs_cover_all_published_routes`, em `crates/poph-server/tests/api.rs`): publicar rota nova
 sem documentar aqui, documentar rota que não existe, ou trocar uma coluna (412, auditoria,
 isolamento) faz o teste falhar.
 
@@ -367,8 +367,8 @@ A auditoria `close` grava o token que fechou como ator (`actor_kind = admin_toke
 o histórico: mensagens, turnos e a fila de saída continuam como estavam. A próxima mensagem do cliente
 abre uma conversa nova (ver `docs/ENTRADA_E_SAIDA.md`, seção 4).
 
-Provas: `fechar_conversa_cumpre_codigos_e_audita_uma_vez` (os seis status, auditoria, versão) e
-`mensagem_depois_do_fechamento_abre_conversa_nova` em `crates/poph-server/tests/api.rs`.
+Provas: `close_conversation_returns_expected_statuses_and_audits_once` (os seis status, auditoria, versão) e
+`message_after_closure_opens_new_conversation` em `crates/poph-server/tests/api.rs`.
 
 ## Transferir conversa para outro departamento (PA-119)
 
@@ -419,7 +419,7 @@ o cliente voltar a ser atendido é a mensagem nova dele, que abre outra conversa
 conversa encerrada e a Ficha dela ficam fechadas como registro do atendimento. O mesmo vale para o
 `PATCH` genérico de situação quando ele tentaria devolver uma conversa `closed` para `open`.
 
-Provas: `reabrir_conversa_encerrada_devolve_409_conversa_encerrada` em
+Provas: `reopen_closed_conversation_returns_conflict` em
 `crates/poph-server/tests/api.rs` e `reopening_closed_conversation_is_refused_and_transferred_keeps_reopening`
 em `crates/poph-store/tests/cases_invariant.rs`.
 
@@ -609,33 +609,33 @@ responderam 200". Todos os testes abaixo estão em `crates/poph-server/tests/api
 
 | Recurso | Prova de paridade CLI×API | O que é comparado |
 | --- | --- | --- |
-| Organizações | `orgs_e_tokens_paridade_cli_api` | criar, alterar e excluir: campos do JSON e ausência no banco depois da exclusão |
-| Tokens | `orgs_e_tokens_paridade_cli_api` | criar, revogar (delete) e ler: rótulo e situação |
-| Categorias | `categorias_e_departamentos_paridade_cli_api` | criar, alterar e excluir: nome, descrição e ausência depois da exclusão |
-| Departamentos | `categorias_e_departamentos_paridade_cli_api` | criar, alterar e excluir: nome, descrição e ausência depois da exclusão |
-| Agentes | `agentes_paridade_com_cli` | criar, alterar e excluir: campos do agente e ausência no banco depois da exclusão |
-| Instruções | `instrucoes_api_paridade_isolamento_e_auditoria` | gravar, alterar e apagar: campos, JSON estruturado e markdown composto, pelos dois formatos de entrada |
-| Base de conhecimento (grupos e itens) | `conhecimento_paridade_cli_criacao_edicao_exclusao` | criar, alterar e excluir grupo e item: campos gravados e ausência depois da exclusão |
-| Base × agente (vínculo e reindexação) | `vinculo_grupo_agente_paridade_cli_api`, `reindex_paridade_cli_api` | vínculo lido do banco pelos dois caminhos; reindexação cruzada (CLI e depois API, e o inverso) devolvendo o mesmo relatório de índice |
-| Produtos | `produtos_paridade_cli_estado_no_banco` | criar, alterar e excluir: preço em centavos, categoria, situação e vínculo |
-| Biblioteca de arquivos | `biblioteca_upload_paridade_cli_api`, `biblioteca_paridade_consulta_e_exclusao_cli_api` | envio: nome, descrição, mime, tamanho, `sha256` e caminho do blob iguais; consulta e exclusão: mesmos campos e ausência no banco |
-| Integrações | não se aplica (exceção) | a CLI não tem o recurso; a API é a referência (`integracoes_ciclo_isolamento_e_segredos`) |
-| Conversas, mensagens, turnos e `reopen` | não se aplica (exceção) | a CLI não tem comando de conversa; provado por `conversas_mensagens_turnos_isolam_org_e_mostram_dados` |
+| Organizações | `org_and_token_cli_api_parity` | criar, alterar e excluir: campos do JSON e ausência no banco depois da exclusão |
+| Tokens | `org_and_token_cli_api_parity` | criar, revogar (delete) e ler: rótulo e situação |
+| Categorias | `category_and_department_cli_api_parity` | criar, alterar e excluir: nome, descrição e ausência depois da exclusão |
+| Departamentos | `category_and_department_cli_api_parity` | criar, alterar e excluir: nome, descrição e ausência depois da exclusão |
+| Agentes | `agent_cli_api_parity` | criar, alterar e excluir: campos do agente e ausência no banco depois da exclusão |
+| Instruções | `instructions_api_parity_isolation_and_audit` | gravar, alterar e apagar: campos, JSON estruturado e markdown composto, pelos dois formatos de entrada |
+| Base de conhecimento (grupos e itens) | `knowledge_cli_api_create_update_delete_parity` | criar, alterar e excluir grupo e item: campos gravados e ausência depois da exclusão |
+| Base × agente (vínculo e reindexação) | `agent_knowledge_group_link_cli_api_parity`, `reindex_cli_api_parity` | vínculo lido do banco pelos dois caminhos; reindexação cruzada (CLI e depois API, e o inverso) devolvendo o mesmo relatório de índice |
+| Produtos | `product_cli_api_persistence_parity` | criar, alterar e excluir: preço em centavos, categoria, situação e vínculo |
+| Biblioteca de arquivos | `library_cli_api_upload_parity`, `library_cli_api_lookup_and_delete_parity` | envio: nome, descrição, mime, tamanho, `sha256` e caminho do blob iguais; consulta e exclusão: mesmos campos e ausência no banco |
+| Integrações | não se aplica (exceção) | a CLI não tem o recurso; a API é a referência (`integration_lifecycle_isolation_and_secrets`) |
+| Conversas, mensagens, turnos e `reopen` | não se aplica (exceção) | a CLI não tem comando de conversa; provado por `conversations_messages_and_turns_expose_org_scoped_data` |
 | Chat de teste (SSE, anexos, cancelamento, duas abas) | não se aplica (exceção) | a CLI não tem comando de chat de teste; provado por `crates/poph-server/tests/teste_chat.rs` |
 | Conteúdo de arquivo (biblioteca e anexo) | não se aplica (exceção) | a CLI lê o blob local e não tem comando de chat de teste; provado por `crates/poph-server/tests/file_content.rs` |
 
 Outras provas exigidas pela HR-21, cada uma num teste só:
 
-- **Conflito de versão (412) por recurso editável:** `todas_as_edicoes_rejeitam_versao_desatualizada`
+- **Conflito de versão (412) por recurso editável:** `all_updates_reject_stale_version`
   percorre todas as edições publicadas (org, categoria, departamento, agente, instruções, integração,
   grupo e item da base, produto e `reopen`) e exige `412 version_conflict` em cada uma.
-- **Isolamento por org de toda rota publicada:** `isolamento_por_org_cobre_todas_as_operacoes_publicadas`
+- **Isolamento por org de toda rota publicada:** `org_isolation_covers_all_published_operations`
   compara o conjunto de operações do OpenAPI com uma lista explícita e chama cada uma com token da
   org A contra a org B, exigindo 403/404. Rota publicada nova sem entrada na lista faz o teste falhar.
   As duas operações globais de org (`GET` e `POST /admin/v1/orgs`, que só o token global alcança)
-  ficam fora dele e são provadas por `token_de_org_so_enxerga_a_propria_org` e
-  `token_de_org_nao_cria_org_nem_token`.
-- **Auditoria de toda escrita publicada:** `toda_escrita_da_openapi_precisa_de_cobertura_de_auditoria`
+  ficam fora dele e são provadas por `org_token_lists_only_its_org` e
+  `org_token_cannot_create_org_or_token`.
+- **Auditoria de toda escrita publicada:** `all_openapi_writes_require_audit_coverage`
   compara as escritas do OpenAPI com uma lista explícita; rota de escrita nova sem cobertura faz o
   teste falhar.
 
@@ -1360,7 +1360,7 @@ the conversation count reuses `conversations (org_id, status, updated_at)`.
 Proofs: `crates/poph-server/tests/analytics_summary.rs` (empty org, window with Ficha open before and
 after `to`, closed inside and outside the window, mean of two closed, active runs per node with a
 finished run left out, two orgs isolated, the six invalid windows with field and reason, `401`, `403`
-and `404`) and the isolation case of `crates/poph-server/tests/isolamento_orgs.rs`.
+and `404`) and the isolation case of `crates/poph-server/tests/org_isolation.rs`.
 
 Paridade de CLI: ainda não existe; entra na FX-31.
 
@@ -1491,3 +1491,20 @@ These rules used to live as comments in `crates/poph-server/src`. They still hol
 - **Cipher** (`cipher.rs`): the cipher key is derived once at start-up and kept in memory; the key value itself is not stored or logged. An invalid key value does not stop the server: it becomes "not configured", and writing a secret then returns `503` with the orientation. Decryption failure never shows the secret content.
 - **Domain errors** (`error.rs`): a domain error with no dedicated mapping takes its status and its stable `code` from the domain error itself (the domain declares both). Before FX-07 every new case fell into `400 invalid_request`, which hid, for example, the `409 conversa_encerrada` of reopen. The message to the client is the domain error text; the internal failure detail goes to the log, not to the body.
 - **Error body** (`error.rs`): the body is `{code, message, details}` (PRD §8.1). The `WWW-Authenticate: Bearer` header appears only on `401`. The `code` is what the Console and scripts match on, never the `message`.
+
+## Organization isolation coverage (HR-54)
+
+The integration suite in `crates/poph-server/tests/org_isolation.rs` uses a running HTTP server
+and temporary databases. It checks for a test case for every published organization operation and
+rejects stale cases for removed operations. The published OpenAPI supplies the concurrency headers
+and optional force parameter used by the suite. Each organization must be able to read its own
+seeded resources, and the before and after snapshots confirm that denied requests leave its data
+intact. Lists and resource references are also checked for organization scoping.
+
+The response checks distinguish data returned by the server from values echoed from the request.
+A unique seeded label must remain private on all responses. Resource IDs are checked for leaks on
+successful responses, since an error can repeat an ID supplied by the caller.
+
+The same isolation rules apply to agent tools and knowledge search. Tool tests run an actual turn
+with a fake model and confirm that the owner's requests work while results and writes stay within
+the organization. Search tests also check the agent boundary within the organization.

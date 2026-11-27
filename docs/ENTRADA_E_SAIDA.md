@@ -205,7 +205,7 @@ and stops counting as an active service. When the customer writes again, the int
 integration's agent and an empty history. The closed conversation stays in the database, with its messages, and is
 not reopened.
 
-Proof: `mensagem_depois_do_fechamento_abre_conversa_nova` in `crates/poph-server/tests/api.rs`. The behavior already
+Proof: `message_after_closure_opens_new_conversation` in `crates/poph-server/tests/api.rs`. The behavior already
 existed (the search in `caixas.rs` filters `status IN ('open', 'transferred')`); MX-06 only documents it and proves it.
 
 ## 5. The human attendant's reply (MX-18)

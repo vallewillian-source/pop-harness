@@ -193,6 +193,11 @@ as the receiving route: 1 MiB for the Evolution webhook, 24 MiB for test chat, 6
 for the other org routes. An oversized request receives `413 payload_too_large`. The owner's response body is
 streamed back to the caller.
 
+The forwarding integration tests check that a backup export retains its attachment headers and
+complete body through the forwarding instance. Flow and Case operations follow the same owner
+routing, with writes confined to the owner. In single-instance mode, a request with peer headers
+and no configured shared secret is refused with `401`.
+
 ## What does NOT exist yet
 
 - **Automatically moving an org to another instance:** changing the map and reloading only changes routing; the

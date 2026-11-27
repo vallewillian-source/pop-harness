@@ -652,7 +652,7 @@ note A3 "coberto por cargo test -p poph-server --test matrix_resiliencia (MX-29)
 note A4 "coberto pela MX-29 (docs/MATRIZ_RESILIENCIA.md)"
 note A5 "coberto pela MX-29 (docs/MATRIZ_RESILIENCIA.md)"
 note A8 "coberto por cargo test -p poph-server --test matrix_inicio (MX-20)"
-note A9 "coberto por cargo test -p poph-server --test isolamento_matrix (MX-28)"
+note A9 "coberto por cargo test -p poph-server --test matrix_isolation (MX-28)"
 note A10 "coberto pela MX-28 (valor-canário) e MX-26"
 if [ -f "$APP/docs/MATRIZ_MEMORIA.md" ]; then
     note A13 "medido em docs/MATRIZ_MEMORIA.md (MX-30)"

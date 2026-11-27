@@ -334,3 +334,17 @@ in the file named in brackets.
   only a notice in the room; a reply in a closed conversation sends nothing and writes a notice.
 - **Metric lag (`matrix_metricas`):** the cursor lag rises while Synapse is down and returns to zero once the backlog is
   delivered.
+
+## 9. Organization isolation and secret handling (MX-28)
+
+The organization isolation tests in `crates/poph-server/tests/matrix_isolation.rs` use a running
+HTTP server, temporary storage and a local fake Synapse. The Application Service resolves a
+conversation from its room and scopes delivery to that organization. An unknown room is
+acknowledged without a write, and the unknown-room counter records it.
+
+Matrix administration follows the organization token scope. Department space changes require a
+department from the same organization. A customer name received through the WhatsApp webhook
+applies to the conversation and mirrored room of the integration's organization.
+
+The tests verify that the Matrix Application Service tokens stay out of HTTP responses, logs,
+errors, files and the delivery queue. Requests to Synapse carry authorization in a header.

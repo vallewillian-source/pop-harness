@@ -182,7 +182,7 @@ A contagem usa a listagem de produtos com `all=true` e pagina só com `cursor`. 
 produtos recusa `limit` com `400`** (defeito do servidor, ver Limites): por isso a tela não manda
 `limit` nessa rota, e a página tem o tamanho padrão do servidor.
 
-Teste de servidor: `categoria_com_vinculos_so_sai_com_force` (`crates/poph-server/tests/api.rs`).
+Teste de servidor: `deleting_linked_category_requires_force` (`crates/poph-server/tests/api.rs`).
 Mutação "apagar sem checar `force`" reprova o teste. Testes de componente em
 `DialogDeleteCategory.test.tsx`, incluindo a paginação em duas páginas e a recusa de `limit`.
 

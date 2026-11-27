@@ -144,7 +144,7 @@ Valor fora da faixa é recusado com o nome da chave. O gate G9 vem ligado no pad
 
 ### 5.3 API
 
-São 19 rotas novas: 12 de fluxos e de permissão por agente, e 7 de Fichas e execuções. Todas ficam sob o token da organização, com `If-Match` nas escritas. Caminhos, corpos e erros estão em [API.md](API.md). O cliente gerado e o `schema.d.ts` foram regenerados na FX-32. As rotas entram no encaminhamento do cluster (`encaminhamento_cluster.rs`, `rotas_de_fluxos_e_fichas_sao_encaminhadas_para_a_dona`).
+São 19 rotas novas: 12 de fluxos e de permissão por agente, e 7 de Fichas e execuções. Todas ficam sob o token da organização, com `If-Match` nas escritas. Caminhos, corpos e erros estão em [API.md](API.md). O cliente gerado e o `schema.d.ts` foram regenerados na FX-32. As rotas entram no encaminhamento do cluster (`cluster_forwarding.rs`, `flow_and_case_routes_are_forwarded_to_owner`).
 
 ### 5.4 Métricas
 
@@ -187,10 +187,10 @@ O passo a passo para descobrir o motivo está em [RUNBOOKS.md](RUNBOOKS.md), na 
 | Motor (início, ações, decisões, fim, efeitos) | `poph-flows/tests/engine.rs`, `engine_outcome.rs`, `poph-store/tests/flow_executions.rs` |
 | Gate G9 e turno | `poph-jev/tests/g9_fluxo.rs`, `poph-agent/tests/flow_turn.rs`, `flow_tools.rs` |
 | Paridade com o POP Atende | `poph-flows/tests/parity.rs` e [FLUXOS_PARIDADE.md](FLUXOS_PARIDADE.md) |
-| API, permissão, Fichas e ações humanas | `poph-server/tests/agente_fluxos.rs`, `fichas_leitura.rs`, `fichas_acoes.rs`, `isolamento_orgs.rs` |
+| API, permissão, Fichas e ações humanas | `poph-server/tests/agente_fluxos.rs`, `fichas_leitura.rs`, `fichas_acoes.rs`, `org_isolation.rs` |
 | CLI | `poph/tests/cli_flow.rs` |
 | Backup | testes de backup em `poph-store` (19), `poph-server/tests/backup_http.rs` (9) e `poph/tests/cli_backup.rs` (6) |
-| Retenção e cluster | `poph-retention/tests/database.rs`, `poph/tests/cli_retencao.rs`, `poph-server/tests/encaminhamento_cluster.rs` |
+| Retenção e cluster | `poph-retention/tests/database.rs`, `poph/tests/cli_retencao.rs`, `poph-server/tests/cluster_forwarding.rs` |
 | Prova ponta a ponta | `poph-server/tests/fluxos_e2e.rs` (7 testes) |
 | Contadores das execuções | `poph-server/tests/fluxos_contadores.rs` (7 testes) e o caso de contadores em `fluxos_e2e.rs` |
 | Desempenho | seção [Medidas](#medidas) abaixo |
