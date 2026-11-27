@@ -1,25 +1,3 @@
-//! Fila de efeitos do fluxo (FX-21): o efeito sai da fila e chega ao destino.
-//!
-//! Banco temporário, entregador de verdade ([`EfeitosFluxo`]) e uma Evolution falsa em
-//! `127.0.0.1` que registra cada requisição e responde o roteiro do teste. Nada de rede externa,
-//! nada de número real.
-//!
-//! O que fica provado aqui:
-//!
-//! - `mensagem_ao_cliente` entra na `outbox` da conversa e chega ao cliente **uma vez** (ponta a
-//!   ponta com a saída do WhatsApp, `SaidaWhatsApp`);
-//! - `notificar_whatsapp` vai **para outro número**, pela integração da conversa, e não para o
-//!   cliente;
-//! - sem chave/integração da Evolution o efeito fica `pendente`, **não** falha e não trava o laço;
-//! - a mensagem ao cliente espera o turno da conversa terminar (PRD §6.8);
-//! - queda entre enfileirar e confirmar reenvia, e a duplicata é aceita e documentada (D11);
-//! - falha definitiva (4xx) vira `falhou` com evento e métrica, sem desfazer a transição;
-//! - 5xx volta para a fila e passa na tentativa seguinte, respeitando a espera;
-//! - `encaminhar` marca a conversa como transferida, mantém a Ficha aberta e grava a auditoria
-//!   `system`;
-//! - departamento que não existe vira `falhou` sem reverter nada;
-//! - o teto de 4.000 caracteres do WhatsApp é respeitado;
-//! - o telefone (cliente e equipe) não aparece em log nem no motivo gravado.
 
 use std::fs;
 use std::path::PathBuf;
@@ -55,16 +33,11 @@ use poph_types::{
 use serde_json::{Value, json};
 use tracing_subscriber::fmt::MakeWriter;
 
-/// Número do cliente fictício (não é de ninguém).
 const TELEFONE: &str = "5521999990001";
-/// Número da equipe fictícia, o destino do `notificar_whatsapp`.
 const TELEFONE_EQUIPE: &str = "5521988880002";
-/// Chave da Evolution dos testes (só para o cabeçalho `apikey`).
 const CHAVE: &str = "chave-evo-fx21-teste";
-/// Teto de mídia do canal.
 const TETO: u64 = ATTACHMENT_CAP;
 
-// ───────────────────────── captura de logs (para provar o que NÃO sai) ─────────────────────────
 
 #[derive(Clone)]
 struct Captura(Arc<Mutex<Vec<u8>>>);
@@ -86,7 +59,6 @@ impl<'a> MakeWriter<'a> for Captura {
     }
 }
 
-/// Instala, uma vez no processo de testes, o coletor de logs. Todo teste deste arquivo usa o mesmo.
 fn logs_capturados() -> Arc<Mutex<Vec<u8>>> {
     static LOGS: OnceLock<Arc<Mutex<Vec<u8>>>> = OnceLock::new();
     LOGS.get_or_init(|| {
@@ -101,7 +73,6 @@ fn logs_capturados() -> Arc<Mutex<Vec<u8>>> {
     .clone()
 }
 
-// ───────────────────────── Evolution falsa: registra e responde o roteiro ─────────────────────────
 
 #[derive(Clone, Debug)]
 struct Registro {
@@ -167,16 +138,11 @@ async fn subir_evolucao_falsa(
     (format!("http://{endereco}"), evo, tarefa)
 }
 
-// ───────────────────────── cenário: banco, org, integração, Ficha e execução ─────────────────────────
 
-/// Como a instância da Evolution aparece para o entregador.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Instancia {
-    /// Chave presente e Evolution falsa no ar.
     Normal,
-    /// Chave ausente no ambiente: o canal existe na configuração, mas não consegue enviar.
     SemChave,
-    /// Nenhuma instância configurada para a org.
     SemCanal,
 }
 
@@ -186,7 +152,6 @@ struct Cenario {
     org: OrgId,
     agente: Agente,
     integracao: Option<IntegrationId>,
-    /// Conversa de WhatsApp do atendimento principal (nasce com Ficha).
     conversa: poph_types::ConversationId,
     ficha: RecordId,
     fluxo: FlowId,
@@ -219,7 +184,6 @@ impl Cenario {
         config.validar().expect("configuração válida");
         let blobs = config.blobs();
 
-        // Relógio injetado: a espera entre tentativas não depende do relógio de parede.
         let relogio = Arc::new(AtomicI64::new(1_700_000_000_000));
         let ponteiro = Arc::clone(&relogio);
         let store = Arc::new(
@@ -283,7 +247,6 @@ impl Cenario {
             .expect("a conversa nasce com Ficha")
             .id;
 
-        // Fluxo e revisão gravados direto: a publicação é a FX-09.
         let (fluxo, revisao) = fluxo_publicado(&store, org);
 
         let (url, evo, tarefa_evo) = subir_evolucao_falsa(roteiro).await;
@@ -340,7 +303,6 @@ impl Cenario {
             self.blobs.clone(),
             Some(Arc::clone(&self.metricas)),
             FlowEffectOptions {
-                // Espera curta para o teste não depender de relógio de parede.
                 backoff: Backoff {
                     base: Duration::from_millis(1),
                     factor: 2,
@@ -368,12 +330,10 @@ impl Cenario {
         )
     }
 
-    /// Avança o relógio injetado (a espera entre tentativas fica no passado).
     fn avancar(&self, ms: i64) {
         self.relogio.fetch_add(ms, Ordering::SeqCst);
     }
 
-    /// Abre a execução com os efeitos de entrada dados, na Ficha principal.
     fn abrir(&self, efeitos: Vec<TransitionEffect>) -> StoredExecution {
         self.abrir_na_ficha(self.ficha, efeitos)
     }
@@ -409,7 +369,6 @@ impl Cenario {
             .expect("abre a execução")
     }
 
-    /// Outra Ficha (e outra conversa) na mesma org, para o teste de laço com dois efeitos.
     fn outra_ficha(&self, integracao: Option<IntegrationId>) -> RecordId {
         let canal = if integracao.is_some() {
             "whatsapp"
@@ -467,7 +426,6 @@ impl Cenario {
             .expect("lê a outbox")
     }
 
-    /// Quantos itens existem na `outbox` da org, em qualquer estado.
     fn total_de_itens(&self) -> i64 {
         let conn = rusqlite::Connection::open(self.store.harness_path()).expect("abre para contar");
         conn.query_row(
@@ -490,7 +448,6 @@ impl Drop for Cenario {
     }
 }
 
-/// Fluxo e revisão publicados, gravados por SQL (a publicação é a FX-09).
 fn fluxo_publicado(store: &Store, org: OrgId) -> (FlowId, RevisionId) {
     let fluxo: FlowId = uuid::Uuid::now_v7().to_string().parse().expect("fluxo");
     let revisao: RevisionId = uuid::Uuid::now_v7().to_string().parse().expect("revisão");
@@ -513,9 +470,7 @@ fn fluxo_publicado(store: &Store, org: OrgId) -> (FlowId, RevisionId) {
     (fluxo, revisao)
 }
 
-// ───────────────────────── efeitos de teste (pelo tradutor do produto) ─────────────────────────
 
-/// `mensagem_ao_cliente` como o motor descreve e como a fila grava.
 fn ao_cliente(texto: &str) -> TransitionEffect {
     effect_of_transition(&ProducedEffect {
         chave: "etapa:boas_vindas/0".to_owned(),
@@ -527,7 +482,6 @@ fn ao_cliente(texto: &str) -> TransitionEffect {
     })
 }
 
-/// `notificar_whatsapp` para a equipe.
 fn notificar(mensagem: &str) -> TransitionEffect {
     effect_of_transition(&ProducedEffect {
         chave: "acao:boas_vindas.registrar/0".to_owned(),
@@ -540,7 +494,6 @@ fn notificar(mensagem: &str) -> TransitionEffect {
     })
 }
 
-/// `encaminhar` para o departamento pelo nome.
 fn encaminhar(departamento: &str) -> TransitionEffect {
     effect_of_transition(&ProducedEffect {
         chave: "acao:boas_vindas.transferir/0".to_owned(),
@@ -567,7 +520,6 @@ fn departamento(cenario: &Cenario, nome: &str) -> DepartmentId {
         .id
 }
 
-// ───────────────────────── 1. mensagem ao cliente, ponta a ponta ─────────────────────────
 
 #[tokio::test]
 async fn mensagem_ao_cliente_chega_ao_cliente_uma_vez() {
@@ -588,7 +540,6 @@ async fn mensagem_ao_cliente_chega_ao_cliente_uma_vez() {
     assert_eq!(fila[0].state, EffectState::Sent);
     assert!(fila[0].enviado_em.is_some(), "carimbo de entrega");
 
-    // A mensagem entrou na `outbox` da conversa, uma vez.
     let itens = cenario.itens_da_saida();
     assert_eq!(itens.len(), 1, "um item na outbox");
     assert_eq!(itens[0].conversation_id, cenario.conversa);
@@ -597,7 +548,6 @@ async fn mensagem_ao_cliente_chega_ao_cliente_uma_vez() {
         "Recebemos seu pedido!"
     );
 
-    // Ponta a ponta: a saída do WhatsApp entrega ao cliente pela Evolution falsa.
     let saida = cenario.saida();
     let enviados = saida.cycle().await.expect("ciclo da saída");
     assert_eq!(enviados.sent, 1);
@@ -610,7 +560,6 @@ async fn mensagem_ao_cliente_chega_ao_cliente_uma_vez() {
         "pela instância da org"
     );
 
-    // Segunda passagem: nada é reenviado.
     let relato = efeitos
         .cycle_for_org(cenario.org)
         .await
@@ -618,12 +567,10 @@ async fn mensagem_ao_cliente_chega_ao_cliente_uma_vez() {
     assert_eq!(relato.sent, 0, "efeito entregue não volta para a fila");
     assert_eq!(cenario.total_de_itens(), 1, "sem segundo item na outbox");
 
-    // Métricas: um efeito entrou na fila, um foi entregue, nenhuma falha.
     assert_eq!(cenario.metricas.pending_effects.value(), 1);
     assert_eq!(cenario.metricas.sent_effects.value(), 1);
     assert_eq!(cenario.metricas.failed_effects.value(), 0);
 
-    // Evento na linha do tempo da Ficha, uma vez.
     let enviados: Vec<_> = cenario
         .eventos(cenario.ficha)
         .into_iter()
@@ -632,7 +579,6 @@ async fn mensagem_ao_cliente_chega_ao_cliente_uma_vez() {
     assert_eq!(enviados.len(), 1, "um evento `efeito_enviado`");
 }
 
-// ───────────────────────── 2. notificação para outro número ─────────────────────────
 
 #[tokio::test]
 async fn notificar_whatsapp_vai_para_a_equipe_e_nao_para_o_cliente() {
@@ -668,7 +614,6 @@ async fn notificar_whatsapp_vai_para_a_equipe_e_nao_para_o_cliente() {
     );
 }
 
-// ───────────────────────── 3. sem integração: pendente, sem falhar ─────────────────────────
 
 #[tokio::test]
 async fn sem_integracao_o_efeito_fica_pendente_e_nao_trava_o_laco() {
@@ -687,12 +632,10 @@ async fn sem_integracao_o_efeito_fica_pendente_e_nao_trava_o_laco() {
     assert!(fila[0].ultimo_erro.is_none(), "esperar não é erro");
     assert!(fila[0].proxima_tentativa.is_some(), "a espera fica marcada");
 
-    // No ciclo seguinte, antes da espera vencer, o efeito nem é lido: nada de laço apertado.
     let relato = efeitos.cycle_for_org(cenario.org).await.expect("ciclo");
     assert_eq!(relato.deferred, 0, "a espera segura o efeito");
     assert_eq!(cenario.registros().len(), 0, "nenhuma chamada à Evolution");
 
-    // E o laço não fica preso nele: um efeito de outra Ficha é entregue no mesmo ciclo.
     let outra = cenario.outra_ficha(None);
     cenario.abrir_na_ficha(outra, vec![ao_cliente("Mensagem de outra Ficha")]);
     cenario.avancar(60);
@@ -701,7 +644,6 @@ async fn sem_integracao_o_efeito_fica_pendente_e_nao_trava_o_laco() {
     assert_eq!(relato.deferred, 1, "o da equipe continua esperando");
 }
 
-// ───────────────────────── 4. queda no meio: reenvia e aceita duplicata ─────────────────────────
 
 #[tokio::test]
 async fn queda_entre_enfileirar_e_confirmar_reenvia_e_aceita_duplicata() {
@@ -710,8 +652,6 @@ async fn queda_entre_enfileirar_e_confirmar_reenvia_e_aceita_duplicata() {
     let execucao = aberta.execution.id;
     let id = cenario.efeitos_da_ficha(execucao)[0].id;
 
-    // Simula a janela da queda: o trabalhador pegou o efeito (`enviando`) e enfileirou a mensagem,
-    // e morreu antes de confirmar. É exatamente o que o entregador faz em duas chamadas separadas.
     cenario
         .store
         .effects()
@@ -738,7 +678,6 @@ async fn queda_entre_enfileirar_e_confirmar_reenvia_e_aceita_duplicata() {
         "a marca da tentativa ficou gravada"
     );
 
-    // A passagem seguinte encontra `enviando` e entrega de novo (pelo menos uma vez, D11).
     let relato = cenario
         .efeitos()
         .cycle_for_org(cenario.org)
@@ -750,15 +689,12 @@ async fn queda_entre_enfileirar_e_confirmar_reenvia_e_aceita_duplicata() {
         EffectState::Sent
     );
 
-    // A duplicata é o preço aceito: duas mensagens iguais na fila de saída, e o cliente recebe as
-    // duas. Está documentado no PRD (entrega pelo menos uma vez).
     let itens = cenario.itens_da_saida();
     assert_eq!(itens.len(), 2, "a duplicata rara é aceita, não escondida");
     cenario.saida().cycle().await.expect("ciclo da saída");
     assert_eq!(cenario.registros().len(), 2, "as duas chegam ao cliente");
 }
 
-// ───────────────────────── 5. falha definitiva ─────────────────────────
 
 #[tokio::test]
 async fn falha_definitiva_vira_falhou_com_evento_e_metrica() {
@@ -784,7 +720,6 @@ async fn falha_definitiva_vira_falhou_com_evento_e_metrica() {
     assert_eq!(fila[0].attempts, 1);
     assert_eq!(cenario.metricas.failed_effects.value(), 1);
 
-    // A transição continua valendo (PRD L11): execução ativa, conversa aberta.
     let atual = cenario
         .store
         .executions()
@@ -800,7 +735,6 @@ async fn falha_definitiva_vira_falhou_com_evento_e_metrica() {
         .collect();
     assert_eq!(falhas.len(), 1, "um evento `efeito_falhou`");
 
-    // E o efeito não volta para a fila.
     let relato = cenario
         .efeitos()
         .cycle_for_org(cenario.org)
@@ -809,7 +743,6 @@ async fn falha_definitiva_vira_falhou_com_evento_e_metrica() {
     assert_eq!(relato, FlowEffectReport::default(), "nada mais a fazer");
 }
 
-// ───────────────────────── 6. 5xx: tenta de novo e passa ─────────────────────────
 
 #[tokio::test]
 async fn falha_transitoria_tenta_de_novo_e_passa() {
@@ -833,12 +766,10 @@ async fn falha_transitoria_tenta_de_novo_e_passa() {
     assert_eq!(fila[0].attempts, 1);
     assert!(fila[0].proxima_tentativa.is_some(), "espera marcada");
 
-    // Antes da espera vencer, não tenta de novo (não é laço apertado).
     let relato = efeitos.cycle_for_org(cenario.org).await.expect("ciclo");
     assert_eq!(relato, FlowEffectReport::default());
     assert_eq!(cenario.registros().len(), 1, "uma tentativa até aqui");
 
-    // Vencida a espera, a segunda tentativa passa.
     cenario.avancar(50);
     let relato = efeitos.cycle_for_org(cenario.org).await.expect("ciclo");
     assert_eq!(relato.sent, 1);
@@ -848,7 +779,6 @@ async fn falha_transitoria_tenta_de_novo_e_passa() {
     assert_eq!(fila[0].attempts, 2, "duas tentativas contadas");
 }
 
-// ───────────────────────── 7. encaminhar ─────────────────────────
 
 #[tokio::test]
 async fn encaminhar_transfere_a_conversa_e_mantem_a_ficha_aberta() {
@@ -864,12 +794,10 @@ async fn encaminhar_transfere_a_conversa_e_mantem_a_ficha_aberta() {
         .expect("ciclo");
     assert_eq!(relato.sent, 1);
 
-    // A conversa vai para o departamento e o agente para de responder (D12, guarda do turno).
     let conversa = cenario.conversa();
     assert_eq!(conversa.status, ConversationStatus::Transferred);
     assert_eq!(conversa.target_department, Some(comercial));
 
-    // A Ficha continua aberta.
     let ficha = cenario
         .store
         .cases()
@@ -877,7 +805,6 @@ async fn encaminhar_transfere_a_conversa_e_mantem_a_ficha_aberta() {
         .expect("lê a Ficha");
     assert_eq!(ficha.status, RecordStatus::Open);
 
-    // Auditoria da transferência, assinada pelo sistema.
     let auditoria = cenario
         .store
         .audit()
@@ -895,7 +822,6 @@ async fn encaminhar_transfere_a_conversa_e_mantem_a_ficha_aberta() {
         .expect("auditoria da transferência");
     assert_eq!(transferencia.ator_tipo, "system");
 
-    // Dois eventos: o efeito entregue e o fato de negócio (a conversa foi transferida).
     let tipos: Vec<RecordEventKind> = cenario
         .eventos(cenario.ficha)
         .into_iter()
@@ -910,13 +836,10 @@ async fn encaminhar_transfere_a_conversa_e_mantem_a_ficha_aberta() {
     );
 }
 
-// ───────────────────────── 8. departamento inexistente ─────────────────────────
 
 #[tokio::test]
 async fn departamento_inexistente_vira_falhou_sem_reverter_a_transicao() {
     let cenario = Cenario::novo("sem-departamento", Instancia::Normal, Vec::new()).await;
-    // A org tem departamentos — só não tem o que o fluxo pede. É o caso que distingue "não achei o
-    // nome" de "peguei o primeiro que apareceu".
     departamento(&cenario, "Comercial");
     departamento(&cenario, "Suporte");
     let aberta = cenario.abrir(vec![encaminhar("Financeiro")]);
@@ -937,7 +860,6 @@ async fn departamento_inexistente_vira_falhou_sem_reverter_a_transicao() {
         "o motivo diz qual departamento faltou: {motivo}"
     );
 
-    // Nada revertido: conversa aberta, execução ativa, Ficha aberta.
     assert_eq!(cenario.conversa().status, ConversationStatus::Open);
     let atual = cenario
         .store
@@ -947,7 +869,6 @@ async fn departamento_inexistente_vira_falhou_sem_reverter_a_transicao() {
     assert_eq!(atual.status, ExecutionStatus::Active);
 }
 
-// ───────────────────────── 9. limite de 4.000 caracteres ─────────────────────────
 
 #[tokio::test]
 async fn o_limite_de_4000_caracteres_do_whatsapp_e_respeitado() {
@@ -971,7 +892,6 @@ async fn o_limite_de_4000_caracteres_do_whatsapp_e_respeitado() {
     assert!(enviado.ends_with('…'), "e avisa que cortou: {enviado:.10}");
 }
 
-// ───────────────────────── 10. telefone nunca em log ─────────────────────────
 
 #[tokio::test]
 async fn o_telefone_nao_aparece_em_log_nem_no_motivo_gravado() {
@@ -985,7 +905,6 @@ async fn o_telefone_nao_aparece_em_log_nem_no_motivo_gravado() {
         ],
     )
     .await;
-    // Duas notificações: a primeira passa, a segunda é recusada (400) — sucesso e falha no log.
     cenario.abrir(vec![notificar("aviso 1")]);
     let outra = cenario.outra_ficha(cenario.integracao);
     let falha = cenario.abrir_na_ficha(outra, vec![notificar("aviso 2")]);
@@ -994,7 +913,6 @@ async fn o_telefone_nao_aparece_em_log_nem_no_motivo_gravado() {
     assert_eq!(relato.sent, 1);
     assert_eq!(relato.permanent_failures, 1);
 
-    // O motivo gravado também não leva telefone.
     let motivo = cenario.efeitos_da_ficha(falha.execution.id)[0]
         .ultimo_erro
         .clone()
@@ -1022,7 +940,6 @@ async fn o_telefone_nao_aparece_em_log_nem_no_motivo_gravado() {
     );
 }
 
-// ───────────────────────── 11. espera o turno da conversa ─────────────────────────
 
 #[tokio::test]
 async fn a_mensagem_ao_cliente_espera_o_turno_da_conversa() {
@@ -1030,7 +947,6 @@ async fn a_mensagem_ao_cliente_espera_o_turno_da_conversa() {
     let aberta = cenario.abrir(vec![ao_cliente("Mensagem fixa da etapa")]);
     let execucao = aberta.execution.id;
 
-    // O turno da conversa está rodando: a mensagem fixa não pode chegar antes da resposta.
     let turno = cenario
         .store
         .turns()
@@ -1045,7 +961,6 @@ async fn a_mensagem_ao_cliente_espera_o_turno_da_conversa() {
     assert_eq!(fila[0].state, EffectState::Pending);
     assert_eq!(fila[0].attempts, 0, "esperar o turno não consome tentativa");
 
-    // Terminado o turno, a mensagem entra na fila de saída.
     cenario
         .store
         .turns()
@@ -1064,7 +979,6 @@ async fn a_mensagem_ao_cliente_espera_o_turno_da_conversa() {
     assert_eq!(cenario.itens_da_saida().len(), 1);
 }
 
-// ───────────────────────── 12. conversa encerrada ─────────────────────────
 
 #[tokio::test]
 async fn mensagem_ao_cliente_com_conversa_encerrada_vira_falhou() {
@@ -1072,7 +986,6 @@ async fn mensagem_ao_cliente_com_conversa_encerrada_vira_falhou() {
     let aberta = cenario.abrir(vec![ao_cliente("Mensagem fixa")]);
     let execucao = aberta.execution.id;
 
-    // O atendimento fecha antes de o efeito ser entregue.
     cenario
         .store
         .conversations()
@@ -1109,7 +1022,6 @@ async fn mensagem_ao_cliente_com_conversa_encerrada_vira_falhou() {
     );
 }
 
-// ───────────────────────── 12. esgotamento de tentativas ─────────────────────────
 
 #[tokio::test]
 async fn tentativas_esgotadas_viram_falhou_com_o_motivo_certo() {

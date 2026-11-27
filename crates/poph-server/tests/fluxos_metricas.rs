@@ -1,8 +1,3 @@
-//! Métricas `poph_fluxos_*` e teto do cache de revisões no processo (FX-26).
-//!
-//! Servidor HTTP de verdade (o mesmo `servir_em` do teste de métricas do Matrix), para o `/metrics`.
-//! O cache é carregado pelo caminho que o motor vai usar (`CacheRevisoes::carregar`), e o teto vem
-//! da configuração `[fluxos]`, não de um número escrito no teste.
 
 use std::fs;
 use std::path::PathBuf;
@@ -14,10 +9,8 @@ use poph_server::ServerState;
 use poph_store::Store;
 use poph_types::HarnessConfig;
 
-/// Um dos exemplos de fluxo do repositório: script válido, o mesmo que o compilador da FX-10 aceita.
 const FLUXO: &str = include_str!("../../../tests/fluxos/exemplos/agendar_visita.star");
 
-/// Todas as séries `poph_fluxos_*` do catálogo (FX-26).
 const SERIES: [&str; 22] = [
     "poph_fluxos_cache_acertos_total",
     "poph_fluxos_cache_erros_total",
@@ -43,7 +36,6 @@ const SERIES: [&str; 22] = [
     "poph_fluxos_erros_regra_total",
 ];
 
-/// Estado do processo com a configuração dada, numa pasta própria do teste.
 fn estado(rotulo: &str, cfg: impl FnOnce(&mut HarnessConfig)) -> (ServerState, PathBuf) {
     let pasta = std::env::temp_dir().join(format!(
         "poph-fluxos-metricas-{rotulo}-{}",
@@ -59,7 +51,6 @@ fn estado(rotulo: &str, cfg: impl FnOnce(&mut HarnessConfig)) -> (ServerState, P
     (estado, pasta)
 }
 
-/// Sobe o servidor com o estado dado e devolve o texto de `/metrics`.
 async fn metricas_http(estado: ServerState) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -93,7 +84,6 @@ async fn metricas_http(estado: ServerState) -> String {
     corpo.expect("o /metrics respondeu")
 }
 
-/// Carrega a revisão pelo cache, como o motor faz: a IR vem da compilação do script.
 fn carregar(estado: &ServerState, fluxo: &str, numero: u32) {
     let limites = Limites::default();
     let compilado = compile(FLUXO, &limites);
@@ -124,7 +114,6 @@ async fn series_de_fluxos_aparecem_uma_vez_com_o_motor_ligado() {
             "{nome} deve aparecer exatamente uma vez no /metrics"
         );
     }
-    // Sem rótulo nenhum: nada de id de Ficha, telefone ou texto na série.
     for linha in texto.lines().filter(|l| l.starts_with("poph_fluxos_")) {
         assert!(!linha.contains('{'), "série com rótulo: {linha}");
     }
@@ -166,7 +155,6 @@ async fn teto_do_cache_vem_da_configuracao() {
     let _ = fs::remove_dir_all(&pasta_trocado);
 }
 
-/// Com `cache_revisoes_mb = 0` nada fica guardado: a carga conta como "não cacheada" e a execução segue.
 #[tokio::test]
 async fn cache_zero_nao_guarda_e_conta_nao_cacheada() {
     let (estado, pasta) = estado("teto-zero", |cfg| cfg.flows.revision_cache_mb = 0);

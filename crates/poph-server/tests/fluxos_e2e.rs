@@ -26,14 +26,12 @@ impl Pause for SemEspera {
     }
 }
 
-/// As três ferramentas do fluxo, como o agente as habilita (D-04).
 const TODAS: [&str; 3] = [
     poph_agent::turno::NAME_RUN_ACTION,
     poph_agent::turno::NAME_ABANDON,
     poph_agent::turno::NAME_TOOL_START,
 ];
 
-/// Banco, org, agente e conversa de verdade numa pasta temporária.
 struct Cenario {
     pasta: PathBuf,
     store: Arc<Store>,
@@ -84,7 +82,6 @@ impl Cenario {
         cenario
     }
 
-    /// Grava as instruções com as ferramentas habilitadas informadas (D-04).
     fn habilitar(&self, ferramentas: &[&str]) {
         let estruturado = json!({
             "tools": ferramentas
@@ -111,7 +108,6 @@ impl Cenario {
             .expect("grava as instruções");
     }
 
-    /// Cria um fluxo com o script dado, publica a revisão e (opcionalmente) libera ao agente.
     fn criar_fluxo(
         &self,
         slug: &str,
@@ -224,7 +220,6 @@ impl Cenario {
             ..poph_agent::summary::SummaryOptions::default()
         })
         .with_g9_metrics(MetricsG9::own());
-        // FX-24: as ferramentas do fluxo entram no registro do turno, como na montagem real.
         let registro = poph_agent::turno::register_flow_tools(
             poph_agent::turno::DefaultRegistry::new(),
             Arc::clone(&self.store),
@@ -281,7 +276,6 @@ impl Drop for Cenario {
     }
 }
 
-// ───────────────────────────────────────────────────────────────────────── utilidades
 
 fn texto(conteudo: &str) -> Script {
     Script::Events(vec![
@@ -294,7 +288,6 @@ fn texto(conteudo: &str) -> Script {
     ])
 }
 
-/// Roteiro do modelo que pede uma única ferramenta.
 fn chamada(nome: &str, argumentos: Value) -> Script {
     Script::Events(vec![
         LlmEvent::Tool(ToolCall {
@@ -576,7 +569,6 @@ async fn exemplo_entrega_notificacao_unica_e_transferencia_com_ficha_aberta() {
     .await;
     efeitos.cycle_for_org(c.org).await.unwrap();
     saida.cycle().await.unwrap();
-    // Um ciclo a mais não reenvia o que já saiu (a notificação é uma só).
     efeitos.cycle_for_org(c.org).await.unwrap();
     saida.cycle().await.unwrap();
     let enviados = envios.lock().unwrap().clone();
@@ -818,13 +810,7 @@ async fn encerramento_do_agente_e_proxima_mensagem_abrem_nova_ficha() {
     );
 }
 
-// ─────────────────────────────────────────── FX-40: contadores no caminho do turno
 
-/// Os contadores das execuções contam o turno de verdade: o G9 abre a execução antes do modelo e a
-/// ferramenta do agente conclui a **mesma** execução (uma iniciada, uma concluída, nada duplicado).
-///
-/// Os handles são os do catálogo do `/metrics`, publicados no store como `Estado::novo` faz na
-/// subida — aqui o servidor não sobe, então a publicação é explícita.
 #[tokio::test]
 async fn contadores_do_turno_contam_uma_abertura_e_uma_conclusao() {
     let c = Cenario::novo("fx40-turno");

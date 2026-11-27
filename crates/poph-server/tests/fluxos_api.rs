@@ -1,22 +1,3 @@
-//! Testes HTTP da API de fluxos (FX-27, PRD §6.2 e §7.3): validar, rascunho, publicar, revisões,
-//! diff, preview, formatar e exclusão.
-//!
-//! Servidor de verdade (porta efêmera) sobre banco temporário e cliente HTTP de verdade. O que fica
-//! provado:
-//!
-//! - `validate` devolve a IR e zero diagnósticos num script bom, e diagnóstico com linha e coluna
-//!   num script ruim, sem gravar nada;
-//! - `format` devolve a forma canônica (formatar duas vezes dá o mesmo texto);
-//! - `POST /flows` cria a partir do script e recusa script inválido com `422` sem criar nada; o
-//!   teto `fluxos.max_fluxos_por_org` vale na criação;
-//! - publicar sem `If-Match` é `428`, com versão velha é `412` e com script inválido é `422`, nos
-//!   três casos sem gravar revisão;
-//! - a revisão 2 entra e a 1 continua idêntica byte a byte (texto, hash e estrutura);
-//! - `diff` traz as mudanças do FX-17 e a contagem de execuções ativas por revisão;
-//! - `preview` devolve o bloco de prompt da etapa e `404` para etapa inexistente;
-//! - `DELETE` com execução ativa é `409` com a contagem; com `force=true` exclui, abandona a
-//!   execução e audita;
-//! - isolamento: token de outra org é `403`, sem token é `401` e fluxo de outra org é `404`.
 
 use std::fs;
 use std::path::PathBuf;
@@ -36,10 +17,8 @@ use reqwest::{Client, Method, StatusCode};
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
 
-/// Valor do token global usado nos testes (o servidor guarda só o hash).
 const TOKEN_GLOBAL: &str = "pophg_teste-global-fx27";
 
-/// Script bom (o exemplo do repositório, sem os comentários): compila sem nenhum diagnóstico.
 const SCRIPT_V1: &str = r#"fluxo(
     id = "agendar_visita",
     nome = "Agendar visita",
@@ -76,8 +55,6 @@ etapa(
 )
 "#;
 
-/// O mesmo fluxo com outra instrução na etapa `confirmacao`: a revisão 2 muda uma frase (o `diff`
-/// tem de enxergar `instrucao_mudou`) sem mexer no resto.
 const SCRIPT_V2: &str = r#"fluxo(
     id = "agendar_visita",
     nome = "Agendar visita",
@@ -114,8 +91,6 @@ etapa(
 )
 "#;
 
-/// O mesmo fluxo de [`SCRIPT_V1`] escrito numa linha por declaração: compila igual e tem de
-/// formatar para o mesmo texto canônico.
 const SCRIPT_TORTO: &str = r#"fluxo(id = "agendar_visita", nome = "Agendar visita", descricao = "Marca uma visita técnica no endereço do cliente.", inicio = "coleta", gatilho = gatilho(quando = "O cliente quer marcar, remarcar ou cancelar uma visita técnica.", nao_quando = "Só quer saber preço ou prazo, sem pedir visita.", exemplos = ["queria agendar uma visita", "pode vir aqui amanhã?"]))
 
 etapa(id = "coleta", nome = "Coletar dados", instrucao = "Pergunte o endereço e o período preferido. Uma pergunta por vez.", campos = [campo("endereco", "Endereço completo", tipo = "texto", obrigatorio = True), campo("periodo", "Período", tipo = "opcao", opcoes = ["manhã", "tarde"], obrigatorio = True)], acoes = [acao("confirmar", "Dados completos", exige = ["endereco", "periodo"], vai_para = "confirmacao"), acao("desistir", "Cliente desistiu", vai_para = fim("desistencia", resultado = "Cliente desistiu"))])
@@ -123,7 +98,6 @@ etapa(id = "coleta", nome = "Coletar dados", instrucao = "Pergunte o endereço e
 etapa(id = "confirmacao", nome = "Confirmar visita", instrucao = "Repita o endereço e o período combinados e peça a confirmação do cliente.", acoes = [acao("ok", "Visita combinada", vai_para = fim("concluida", resultado = "Visita agendada"))])
 "#;
 
-/// Outro fluxo, válido e limpo: serve para a criação já com a primeira publicação.
 const SCRIPT_ENTREGA: &str = r#"fluxo(
     id = "confirmar_entrega",
     nome = "Confirmar entrega",
@@ -146,7 +120,6 @@ etapa(
 )
 "#;
 
-/// Script com erro de sintaxe na linha 3 (o valor do `nome` não existe).
 const SCRIPT_COM_ERRO: &str = "fluxo(\n    id = \"quebrado\",\n    nome = ,\n)\n";
 
 fn hash_argon2(valor: &str) -> String {
@@ -157,7 +130,6 @@ fn hash_argon2(valor: &str) -> String {
         .to_string()
 }
 
-/// Servidor no ar, com banco e pasta próprios. O `Drop` desliga e apaga a pasta.
 struct Cenario {
     base: String,
     cliente: Client,
@@ -171,7 +143,6 @@ impl Cenario {
         Self::novo_com(rotulo, |_| {}).await
     }
 
-    /// Como [`Cenario::novo`], com um ajuste na configuração do processo (teto de fluxos, etc.).
     async fn novo_com(rotulo: &str, ajuste: impl FnOnce(&mut HarnessConfig)) -> Self {
         let carimbo = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -316,7 +287,6 @@ impl Cenario {
         corpo["id"].as_str().expect("id do agente").to_owned()
     }
 
-    /// Ficha (atendimento) aberta direto no repositório: a rota de Ficha é a FX-29/FX-30.
     fn criar_ficha(&self, org_id: &str, agente_id: &str) -> RecordId {
         let org: OrgId = org_id.parse().expect("org válida");
         let agente: AgentId = agente_id.parse().expect("agente válido");
@@ -335,8 +305,6 @@ impl Cenario {
             .id
     }
 
-    /// Abre a execução da revisão na Ficha, com o fluxo liberado ao agente (é o atendimento em
-    /// curso que o `diff` e o `DELETE` precisam ver).
     fn abrir_execucao(
         &self,
         org_id: &str,
@@ -379,7 +347,6 @@ impl Cenario {
             .expect("abre a execução");
     }
 
-    /// Fluxo criado direto no repositório (para o teto não precisar de rota).
     fn criar_fluxo(&self, org_id: &str, slug: &str) -> FlowId {
         let org: OrgId = org_id.parse().expect("org válida");
         self.store()
@@ -419,7 +386,6 @@ fn codigo(corpo: &Value) -> &str {
     corpo["code"].as_str().unwrap_or("")
 }
 
-/// Primeiro diagnóstico da resposta (`details.diagnostics[0]`).
 fn primeiro_diagnostico(corpo: &Value) -> &Value {
     &corpo["details"]["diagnostics"][0]
 }
@@ -432,7 +398,6 @@ async fn validar_formatar_criar_e_isolamento() {
     let ta = c.criar_token(&oa, "a").await;
     let tb = c.criar_token(&ob, "b").await;
 
-    // Sem token: 401.
     let (s, _) = c
         .pedir(
             Method::GET,
@@ -443,7 +408,6 @@ async fn validar_formatar_criar_e_isolamento() {
         )
         .await;
     assert_eq!(s, StatusCode::UNAUTHORIZED);
-    // Token de outra org no caminho: 403.
     let (s, corpo) = c
         .pedir(
             Method::GET,
@@ -456,7 +420,6 @@ async fn validar_formatar_criar_e_isolamento() {
     assert_eq!(s, StatusCode::FORBIDDEN, "{corpo}");
     assert_eq!(codigo(&corpo), "forbidden");
 
-    // Script bom: IR e nenhum diagnóstico.
     let (s, corpo) = c
         .pedir(
             Method::POST,
@@ -473,7 +436,6 @@ async fn validar_formatar_criar_e_isolamento() {
     assert_eq!(corpo["ir"]["fluxo"]["id"], json!("agendar_visita"));
     assert_eq!(corpo["ir"]["inicio"], json!("coleta"));
 
-    // Script ruim: diagnóstico com linha e coluna, e nenhuma IR.
     let (s, corpo) = c
         .pedir(
             Method::POST,
@@ -495,7 +457,6 @@ async fn validar_formatar_criar_e_isolamento() {
         "coluna do diagnóstico: {diagnostico}"
     );
 
-    // Formatar: forma canônica, e formatar de novo não muda nada.
     let (s, corpo) = c
         .pedir(
             Method::POST,
@@ -508,7 +469,6 @@ async fn validar_formatar_criar_e_isolamento() {
     assert_eq!(s, StatusCode::OK, "{corpo}");
     let canonico = corpo["source"].as_str().expect("texto canônico").to_owned();
     assert!(canonico.contains("etapa("), "{canonico}");
-    // O mesmo fluxo escrito torto formata exatamente para o texto canônico.
     let (s, corpo) = c
         .pedir(
             Method::POST,
@@ -544,7 +504,6 @@ async fn validar_formatar_criar_e_isolamento() {
         json!(canonico),
         "formatar duas vezes difere"
     );
-    // Script inválido: 422 com a lista, sem texto parcial.
     let (s, corpo) = c
         .pedir(
             Method::POST,
@@ -558,7 +517,6 @@ async fn validar_formatar_criar_e_isolamento() {
     assert_eq!(codigo(&corpo), "fluxo_invalido");
     assert_eq!(primeiro_diagnostico(&corpo)["linha"], json!(3));
 
-    // Criar com script inválido: 422 e nada gravado.
     let (s, corpo) = c
         .pedir(
             Method::POST,
@@ -582,7 +540,6 @@ async fn validar_formatar_criar_e_isolamento() {
     assert_eq!(s, StatusCode::OK);
     assert_eq!(corpo["items"], json!([]), "{corpo}");
 
-    // Criar com o script bom: o fluxo nasce do `fluxo(...)` do script.
     let (s, corpo) = c
         .pedir(
             Method::POST,
@@ -600,7 +557,6 @@ async fn validar_formatar_criar_e_isolamento() {
     assert_eq!(corpo["version"], json!(1));
     assert_eq!(corpo["draft_source"], json!(SCRIPT_V1));
 
-    // A lista traz o fluxo e o detalhe também.
     let (s, corpo) = c
         .pedir(
             Method::GET,
@@ -625,7 +581,6 @@ async fn validar_formatar_criar_e_isolamento() {
     assert_eq!(s, StatusCode::OK, "{corpo}");
     assert_eq!(corpo["revision"], Value::Null);
 
-    // PATCH: 428 sem If-Match, 412 com versão velha, 200 com a versão certa.
     let rota = format!("/admin/v1/orgs/{oa}/flows/{fluxo}");
     let (s, corpo) = c
         .pedir(
@@ -662,7 +617,6 @@ async fn validar_formatar_criar_e_isolamento() {
     assert_eq!(corpo["version"], json!(2));
     assert_eq!(corpo["draft_source"], json!(SCRIPT_V2));
 
-    // Isolamento do detalhe: fluxo da org A pela org B (token B) é 403; pela própria org B, 404.
     let (s, _) = c
         .pedir(
             Method::GET,
@@ -708,7 +662,6 @@ async fn publicar_recusas_revisoes_imutaveis_e_diff() {
     let rota = format!("/admin/v1/orgs/{oa}/flows/{fluxo}");
     let revisoes = format!("{rota}/revisions");
 
-    // Sem If-Match: 428. Versão velha: 412. Nenhuma revisão gravada nos dois.
     let (s, corpo) = c
         .pedir(
             Method::POST,
@@ -735,7 +688,6 @@ async fn publicar_recusas_revisoes_imutaveis_e_diff() {
     assert_eq!(s, StatusCode::OK);
     assert_eq!(corpo["items"], json!([]), "{corpo}");
 
-    // Script inválido no corpo: 422 com a lista, nada gravado, versão e rascunho intactos.
     let (s, corpo) = c
         .pedir(
             Method::POST,
@@ -755,7 +707,6 @@ async fn publicar_recusas_revisoes_imutaveis_e_diff() {
     assert_eq!(s, StatusCode::OK);
     assert_eq!(corpo["version"], json!(1), "{corpo}");
 
-    // Publica a revisão 1 a partir do rascunho.
     let (s, corpo) = c
         .pedir(
             Method::POST,
@@ -774,7 +725,6 @@ async fn publicar_recusas_revisoes_imutaveis_e_diff() {
         .expect("id da revisão")
         .to_owned();
 
-    // A revisão 1 lida por número traz o texto e a estrutura.
     let (s, um_antes) = c
         .pedir(Method::GET, &format!("{revisoes}/1"), &ta, None, None)
         .await;
@@ -787,7 +737,6 @@ async fn publicar_recusas_revisoes_imutaveis_e_diff() {
     );
     assert!(um_antes["source_sha256"].as_str().unwrap_or("").len() == 64);
 
-    // Publica a revisão 2 com outro texto no corpo (sem mexer no rascunho antes).
     let (s, corpo) = c
         .pedir(
             Method::POST,
@@ -801,7 +750,6 @@ async fn publicar_recusas_revisoes_imutaveis_e_diff() {
     assert_eq!(corpo["revision"]["number"], json!(2));
     assert_eq!(corpo["version"], json!(3));
 
-    // A revisão 1 continua idêntica: mesmo texto, mesmo hash, mesma estrutura, mesmo id.
     let (s, um_depois) = c
         .pedir(Method::GET, &format!("{revisoes}/1"), &ta, None, None)
         .await;
@@ -815,13 +763,11 @@ async fn publicar_recusas_revisoes_imutaveis_e_diff() {
     assert_eq!(lista["items"][1]["number"], json!(2));
     assert_eq!(lista["next_cursor"], Value::Null);
 
-    // Revisão inexistente: 404.
     let (s, corpo) = c
         .pedir(Method::GET, &format!("{revisoes}/9"), &ta, None, None)
         .await;
     assert_eq!(s, StatusCode::NOT_FOUND, "{corpo}");
 
-    // Diff entre 1 e 2: a instrução mudou, e as duas revisões estão com zero atendimento ativo.
     let (s, corpo) = c
         .pedir(
             Method::GET,
@@ -851,7 +797,6 @@ async fn publicar_recusas_revisoes_imutaveis_e_diff() {
         "frase do diff: {instrucao}"
     );
 
-    // Preview da etapa: o bloco do prompt (FX-18) com a instrução daquela etapa.
     let (s, corpo) = c
         .pedir(
             Method::GET,
@@ -867,7 +812,6 @@ async fn publicar_recusas_revisoes_imutaveis_e_diff() {
     let prompt = corpo["prompt"].as_str().expect("bloco do prompt");
     assert!(prompt.contains("Pergunte o endereço"), "{prompt}");
     assert!(prompt.contains("Coletar dados"), "{prompt}");
-    // Sem `etapa`, mostra a etapa de início; etapa inexistente é 404.
     let (s, corpo) = c
         .pedir(Method::GET, &format!("{rota}/preview"), &ta, None, None)
         .await;
@@ -884,7 +828,6 @@ async fn publicar_recusas_revisoes_imutaveis_e_diff() {
         .await;
     assert_eq!(s, StatusCode::NOT_FOUND, "{corpo}");
 
-    // Atendimento em curso na revisão 1: o diff da 1 para a 2 passa a contar 1 ativa na 1.
     let ficha = c.criar_ficha(&oa, &agente);
     let (s, detalhe) = c.pedir(Method::GET, &rota, &ta, None, None).await;
     assert_eq!(s, StatusCode::OK, "{detalhe}");
@@ -903,7 +846,6 @@ async fn publicar_recusas_revisoes_imutaveis_e_diff() {
     assert_eq!(corpo["from"]["active_runs"], json!(1), "{corpo}");
     assert_eq!(corpo["to"]["active_runs"], json!(0), "{corpo}");
 
-    // Isolamento: fluxo da org A pela org B.
     let (s, corpo) = c
         .pedir(
             Method::GET,
@@ -954,14 +896,12 @@ async fn excluir_com_execucao_ativa_exige_force_e_audita() {
     let ficha = c.criar_ficha(&oa, &agente);
     c.abrir_execucao(&oa, &agente, ficha, &fluxo, &revisao);
 
-    // Sem `force`: 409 com a contagem, e o fluxo continua lá.
     let (s, corpo) = c.pedir(Method::DELETE, &rota, &ta, None, None).await;
     assert_eq!(s, StatusCode::CONFLICT, "{corpo}");
     assert_eq!(corpo["details"]["active_runs"], json!(1), "{corpo}");
     let (s, _) = c.pedir(Method::GET, &rota, &ta, None, None).await;
     assert_eq!(s, StatusCode::OK);
 
-    // `force` com valor inválido: 400.
     let (s, corpo) = c
         .pedir(
             Method::DELETE,
@@ -973,7 +913,6 @@ async fn excluir_com_execucao_ativa_exige_force_e_audita() {
         .await;
     assert_eq!(s, StatusCode::BAD_REQUEST, "{corpo}");
 
-    // Com `force=true`: exclui, abandona a execução e audita.
     let (s, corpo) = c
         .pedir(
             Method::DELETE,
@@ -997,7 +936,6 @@ async fn excluir_com_execucao_ativa_exige_force_e_audita() {
     assert_eq!(exclusoes[0].entity, "flow");
     assert_eq!(exclusoes[0].entity_id.as_deref(), Some(fluxo.as_str()));
 
-    // A auditoria da publicação também ficou.
     let publicacoes: Vec<_> = c
         .auditoria(&oa)
         .into_iter()
@@ -1015,7 +953,6 @@ async fn teto_de_fluxos_por_org_vale_na_criacao() {
     let oa = c.criar_org("Org A", "fx27-teto-a").await;
     let ta = c.criar_token(&oa, "a").await;
 
-    // Um fluxo já cadastrado (pelo repositório, para o teste não depender da rota de criação).
     c.criar_fluxo(&oa, "fluxo_existente");
 
     let (s, corpo) = c
@@ -1054,7 +991,6 @@ async fn criar_com_a_primeira_publicacao() {
         "rota de fluxo não é a de Ficha: {corpo}"
     );
 
-    // Criação com `publish: true`: nasce com a revisão 1 e a versão já avançada pela publicação.
     let (s, corpo) = c
         .pedir(
             Method::POST,
@@ -1071,7 +1007,6 @@ async fn criar_com_a_primeira_publicacao() {
     assert_eq!(corpo["version"], json!(2));
     assert_eq!(corpo["revision"]["number"], json!(1));
 
-    // A revisão 1 existe e traz o texto publicado.
     let (s, revisao) = c
         .pedir(
             Method::GET,

@@ -1,19 +1,3 @@
-//! Contadores das execuções de fluxo (FX-40): `poph_fluxos_execucoes_*` e
-//! `poph_fluxos_erros_regra_total` andando nos caminhos de escrita de verdade.
-//!
-//! O servidor é montado de verdade (`Estado::novo`), que publica os cinco handles no `Store` — é o
-//! store quem escreve `fluxo_execucoes`. As operações usadas aqui são as mesmas que o turno (G9 e
-//! reserva), as ferramentas do agente e a API de ações humanas chamam: `iniciar_execucao`,
-//! `aplicar_transicao` (com o desfecho do motor), `fechar_auditado` da conversa e a exclusão do
-//! fluxo com `force`. Nada de dado real: nomes, telefones e chaves são fictícios.
-//!
-//! O que fica provado:
-//! - abertura conta uma vez, e repetir a chave de idempotência não conta de novo;
-//! - conclusão, abandono e falha contam no contador da situação, nunca em dois;
-//! - erro de regra conta em `poph_fluxos_erros_regra_total`, e a falha que **não** é de regra
-//!   (teto de saltos) não conta lá;
-//! - fechar o atendimento com execução ativa conta abandono;
-//! - `/metrics` publica os números que o store contou.
 
 use std::fs;
 use std::path::PathBuf;
@@ -31,7 +15,6 @@ use poph_store::{
 };
 use poph_types::{ActionActor, EventActor, ExecutionStatus, FlowId, HarnessConfig, RevisionId};
 
-/// Fluxo simples: uma etapa do agente e um fim que conclui sem encerrar o atendimento.
 const CONCLUSIVO: &str = r#"fluxo(
     id = "triagem_contadores",
     nome = "Triagem dos contadores",
@@ -53,8 +36,6 @@ etapa(
 )
 "#;
 
-/// Fluxo com decisão quebrada: a `def` devolve texto, então a regra **não avalia** em tempo de
-/// execução (`FLXR01`). A publicação aceita (a `def` existe); a falha aparece ao executar.
 const REGRA_QUEBRADA: &str = r#"fluxo(
     id = "quebra_de_regra",
     nome = "Quebra de regra",
@@ -88,8 +69,6 @@ def quebrada(dados):
     return "sim"
 "#;
 
-/// Fluxo com duas decisões encadeadas: com `max_saltos_decisao = 1` a segunda estoura o teto e a
-/// execução falha **sem** ser erro de regra.
 const DUAS_DECISOES: &str = r#"fluxo(
     id = "laco_de_decisoes",
     nome = "Laço de decisões",
@@ -118,8 +97,6 @@ etapa(id = "etapa_a", nome = "A", acoes = [acao("ok", "Ok", ator = "agente", vai
 etapa(id = "etapa_b", nome = "B", acoes = [acao("ok", "Ok", ator = "agente", vai_para = fim("fim_b"))])
 "#;
 
-/// Um cenário: banco temporário, org, agente e um `Estado` do servidor (que publica os contadores
-/// no store).
 struct Cenario {
     estado: Option<ServerState>,
     org: poph_types::OrgId,
@@ -179,7 +156,6 @@ impl Cenario {
         self.estado.as_ref().expect("o estado ainda está aqui")
     }
 
-    /// Retira o `Estado` do cenário (o teste do `/metrics` entrega ele ao servidor).
     fn tirar_estado(&mut self) -> ServerState {
         self.estado.take().expect("o estado ainda está aqui")
     }
@@ -188,7 +164,6 @@ impl Cenario {
         &self.estado().store
     }
 
-    /// Cria o fluxo, publica a revisão compilada e libera ao agente.
     fn fluxo(&self, script: &str, slug: &str) -> (FlowId, RevisionId) {
         let fluxo = self
             .store()
@@ -231,7 +206,6 @@ impl Cenario {
         (fluxo.id, revisao.id)
     }
 
-    /// Ficha de um atendimento novo (o caminho normal: a conversa nasce e a Ficha vem com ela).
     fn ficha(&self) -> (poph_types::ConversationId, poph_types::RecordId) {
         let conversa = self
             .store()
@@ -259,7 +233,6 @@ impl Cenario {
         (conversa.id, ficha.id)
     }
 
-    /// Abre a execução, como o turno e a API de ações fazem.
     fn abrir(
         &self,
         ficha: poph_types::RecordId,
@@ -294,7 +267,6 @@ impl Cenario {
             .execution
     }
 
-    /// Roda o motor e grava o desfecho, como a API de ações e a ferramenta do agente fazem.
     fn agir(
         &self,
         script: &str,
@@ -339,7 +311,6 @@ impl Cenario {
             .expect("grava a transição")
     }
 
-    /// Contadores publicados (os mesmos handles do `/metrics`).
     fn contadores(&self) -> ExecutionMetrics {
         self.estado()
             .flow_metrics()
@@ -365,10 +336,8 @@ impl Drop for Cenario {
     }
 }
 
-/// A execução do banco no vocabulário puro do motor (o que a API e o turno montam antes de agir).
 fn estado_do_banco(execucao: &poph_store::Execution) -> EstadoMotor {
     let ir = {
-        // O estado puro só precisa do nó e dos dados; `fluxo_id` é o slug da IR.
         &execucao.no_atual
     };
     EstadoMotor {
@@ -396,7 +365,6 @@ fn abertura_conta_uma_vez_e_repetir_a_chave_nao_conta_de_novo() {
         "a abertura conta uma execução iniciada"
     );
 
-    // Repetir a chave devolve a mesma execução e não soma nada.
     let repetida = cenario
         .store()
         .executions()
@@ -442,7 +410,6 @@ fn conclusao_conta_concluida_e_repetir_a_chave_nao_soma() {
         "iniciada e concluída, nada em abandono nem em falha"
     );
 
-    // Repetir a chave da ação não conta de novo (nem concluída, nem falha).
     let de_novo = cenario
         .store()
         .executions()
@@ -510,8 +477,6 @@ fn fechar_o_atendimento_com_execucao_ativa_conta_abandono() {
     cenario.abrir(ficha, fluxo, revisao, "fechamento-1");
     assert_eq!(cenario.valores().0, 1);
 
-    // `close` da conversa: é o caminho do encerramento (G8, API e atendente), que abandona a
-    // execução ativa da Ficha na mesma escrita.
     let versao = cenario
         .store()
         .conversations()
@@ -559,7 +524,6 @@ fn falha_que_nao_e_de_regra_nao_conta_erro_de_regra() {
     let (_, ficha) = cenario.ficha();
     let execucao = cenario.abrir(ficha, fluxo, revisao, "saltos-1");
 
-    // Teto de uma decisão encadeada: a segunda estoura e a execução para em `falha`.
     let gravada = cenario.agir(DUAS_DECISOES, &execucao, "ir", Some(1), "acao-saltos");
     assert_eq!(gravada.execution.status, ExecutionStatus::Failed);
     assert_eq!(
@@ -599,7 +563,6 @@ async fn metrics_publica_os_contadores_das_execucoes() {
     );
 }
 
-/// Sobe o servidor com o estado dado e devolve o texto de `/metrics`.
 async fn metricas_http(estado: ServerState) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await

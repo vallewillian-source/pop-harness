@@ -1,7 +1,3 @@
-//! Tetos de fluxo vêm da configuração `[fluxos]`, pelo caminho do servidor (FX-26b).
-//!
-//! Os testes passam pelo `Estado` (a porta de compilação e a do cache de revisões), e não pelo
-//! compilador direto: o que se prova é que o teto que vale é o da configuração do processo.
 
 use std::fs;
 use std::path::PathBuf;
@@ -12,17 +8,14 @@ use poph_server::ServerState;
 use poph_store::Store;
 use poph_types::HarnessConfig;
 
-/// Exemplo do repositório: script válido, que o compilador aceita com o padrão.
 const FLUXO: &str = include_str!("../../../tests/fluxos/exemplos/agendar_visita.star");
 
-/// Script de 40 KiB: o exemplo válido seguido de um comentário longo.
 fn script_de_40_kib() -> String {
     let base = format!("{FLUXO}\n# ");
     let falta = 40 * 1024 - base.len() - 1;
     format!("{base}{}\n", "x".repeat(falta))
 }
 
-/// Estado do processo com a configuração dada, numa pasta própria deste teste.
 fn estado(rotulo: &str, cfg: impl FnOnce(&mut HarnessConfig)) -> (ServerState, PathBuf) {
     let pasta = std::env::temp_dir().join(format!(
         "poph-fluxos-limites-{rotulo}-{}",
@@ -87,7 +80,6 @@ fn servidor_recusa_40_kib_quando_a_configuracao_diz_32_kib() {
 
 #[test]
 fn servidor_compila_o_exemplo_normal_com_o_teto_de_32_kib() {
-    // O teto apertado não derruba o que cabe: o exemplo de ~2 KiB continua aceito.
     let (estado, pasta) = estado("exemplo32", com_teto_de_fonte(32_768));
     let compilado = estado.compile_flow(FLUXO);
     let _ = fs::remove_dir_all(&pasta);
@@ -97,7 +89,6 @@ fn servidor_compila_o_exemplo_normal_com_o_teto_de_32_kib() {
 #[test]
 fn cache_carrega_40_kib_com_o_teto_padrao_e_recusa_com_32_kib() {
     let fonte = script_de_40_kib();
-    // A revisão foi publicada com o teto de 64 KiB: a IR gravada vem dessa compilação.
     let publicacao = Limites {
         max_fonte_bytes: 65_536,
         ..Limites::default()
