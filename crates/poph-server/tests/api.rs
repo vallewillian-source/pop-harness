@@ -28,7 +28,7 @@ struct Scenario {
     client: Client,
     directory: PathBuf,
     store: std::sync::Arc<Store>,
-    desligar: Option<oneshot::Sender<()>>,
+    shutdown: Option<oneshot::Sender<()>>,
 }
 
 impl Scenario {
@@ -58,22 +58,22 @@ impl Scenario {
         config.validar().expect("configuração válida");
 
         let store = std::sync::Arc::new(Store::open(&config).expect("abre o banco"));
-        let estado =
+        let server_state =
             ServerState::new(std::sync::Arc::clone(&store), config).expect("estado do servidor");
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("porta efêmera");
-        let endereco = listener.local_addr().expect("endereço local");
-        let (desligar, signal) = oneshot::channel();
+        let address = listener.local_addr().expect("endereço local");
+        let (shutdown, signal) = oneshot::channel();
         tokio::spawn(async move {
-            let _ = poph_server::serve_at(listener, estado, async {
+            let _ = poph_server::serve_at(listener, server_state, async {
                 let _ = signal.await;
             })
             .await;
         });
 
-        let base = format!("http://{endereco}");
+        let base = format!("http://{address}");
         let client = Client::builder()
             .timeout(Duration::from_secs(20))
             .build()
@@ -84,7 +84,7 @@ impl Scenario {
             client,
             directory,
             store,
-            desligar: Some(desligar),
+            shutdown: Some(shutdown),
         };
         scenario.wait_until_ready().await;
         scenario
@@ -136,11 +136,11 @@ impl Scenario {
         }
         let response = request.send().await.expect("pedido HTTP");
         let status = response.status();
-        let texto = response.text().await.unwrap_or_default();
-        let json = if texto.trim().is_empty() {
+        let text = response.text().await.unwrap_or_default();
+        let json = if text.trim().is_empty() {
             Value::Null
         } else {
-            serde_json::from_str(&texto).unwrap_or(Value::String(texto))
+            serde_json::from_str(&text).unwrap_or(Value::String(text))
         };
         (status, json)
     }
@@ -156,22 +156,22 @@ impl Scenario {
             .await
             .expect("pedido HTTP");
         let status = response.status();
-        let texto = response.text().await.unwrap_or_default();
-        let json = if texto.trim().is_empty() {
+        let text = response.text().await.unwrap_or_default();
+        let json = if text.trim().is_empty() {
             Value::Null
         } else {
-            serde_json::from_str(&texto).unwrap_or(Value::String(texto))
+            serde_json::from_str(&text).unwrap_or(Value::String(text))
         };
         (status, json)
     }
 
-    async fn create_org(&self, nome: &str, slug: &str) -> Value {
+    async fn create_org(&self, display_name: &str, slug: &str) -> Value {
         let (status, body) = self
             .request(
                 Method::POST,
                 "/admin/v1/orgs",
                 TOKEN_GLOBAL,
-                Some(json!({ "name": nome, "slug": slug })),
+                Some(json!({ "name": display_name, "slug": slug })),
                 None,
             )
             .await;
@@ -201,8 +201,8 @@ impl Scenario {
 
 impl Drop for Scenario {
     fn drop(&mut self) {
-        if let Some(desligar) = self.desligar.take() {
-            let _ = desligar.send(());
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(());
         }
         let _ = fs::remove_dir_all(&self.directory);
     }
@@ -717,13 +717,10 @@ async fn revoked_token_cannot_authenticate() {
             None,
         )
         .await;
-    let texto = list.to_string();
-    assert!(
-        !texto.contains(&value),
-        "o valor do token vazou na listagem"
-    );
+    let text = list.to_string();
+    assert!(!text.contains(&value), "o valor do token vazou na listagem");
     let secret = value.rsplit_once('_').map(|(_, s)| s).unwrap_or("");
-    assert!(!texto.contains(secret), "o segredo vazou na listagem");
+    assert!(!text.contains(secret), "o segredo vazou na listagem");
 }
 
 #[tokio::test]
@@ -998,15 +995,15 @@ async fn healthz_and_metrics_are_public() {
         .await
         .expect("metrics");
     assert_eq!(response.status(), StatusCode::OK);
-    let tipo = response
+    let kind = response
         .headers()
         .get("content-type")
         .and_then(|value| value.to_str().ok())
         .unwrap_or("");
-    assert!(tipo.starts_with("text/plain"), "content-type: {tipo}");
-    let texto = response.text().await.expect("texto das métricas");
+    assert!(kind.starts_with("text/plain"), "content-type: {kind}");
+    let text = response.text().await.expect("texto das métricas");
 
-    for nome in [
+    for display_name in [
         "poph_memoria_processo_bytes",
         "poph_fila_turnos",
         "poph_fila_saida",
@@ -1014,13 +1011,13 @@ async fn healthz_and_metrics_are_public() {
         "poph_latencia_etapa_segundos",
     ] {
         assert!(
-            texto.contains(nome),
-            "faltou `{nome}` no /metrics:\n{texto}"
+            text.contains(display_name),
+            "faltou `{display_name}` no /metrics:\n{text}"
         );
     }
-    assert!(texto.contains("# TYPE poph_memoria_processo_bytes gauge"));
-    assert!(texto.contains("# TYPE poph_latencia_etapa_segundos histogram"));
-    let line_ram = texto
+    assert!(text.contains("# TYPE poph_memoria_processo_bytes gauge"));
+    assert!(text.contains("# TYPE poph_latencia_etapa_segundos histogram"));
+    let line_ram = text
         .lines()
         .find(|line| line.starts_with("poph_memoria_processo_bytes "))
         .expect("linha da RAM");
@@ -1070,10 +1067,10 @@ async fn openapi_is_valid_and_covers_every_route() {
         .await
         .expect("openapi");
     assert_eq!(response.status(), StatusCode::OK);
-    let texto = response.text().await.expect("texto");
-    let document: Value = serde_json::from_str(&texto).expect("JSON válido");
+    let text = response.text().await.expect("texto");
+    let document: Value = serde_json::from_str(&text).expect("JSON válido");
 
-    oas3::from_json(&texto).expect("OpenAPI 3.1 válida");
+    oas3::from_json(&text).expect("OpenAPI 3.1 válida");
 
     let expected: &[(&str, &str)] = &[
         ("/admin/v1/orgs", "get"),
@@ -1200,12 +1197,12 @@ async fn openapi_is_valid_and_covers_every_route() {
 fn collect_refs(value: &Value, findings: &mut Vec<String>) {
     match value {
         Value::Object(map) => {
-            for (chave, child) in map {
-                if chave == "$ref"
-                    && let Some(texto) = child.as_str()
-                    && texto.starts_with("#/")
+            for (key, child) in map {
+                if key == "$ref"
+                    && let Some(text) = child.as_str()
+                    && text.starts_with("#/")
                 {
-                    findings.push(texto.to_owned());
+                    findings.push(text.to_owned());
                 }
                 collect_refs(child, findings);
             }
@@ -1363,14 +1360,14 @@ async fn conversations_messages_and_turns_expose_org_scoped_data() {
         .audit()
         .list(org, poph_store::Page::default())
         .unwrap();
-    let registro = records
+    let record = records
         .iter()
         .find(|r| {
             r.acao == "reopen" && r.entity_id.as_deref() == Some(&conversation.id.to_string())
         })
         .expect("reabertura auditada");
     assert_eq!(
-        registro.actor_id.as_deref(),
+        record.actor_id.as_deref(),
         token_b
             .strip_prefix("poph_")
             .and_then(|s| s.split_once('_'))
@@ -1508,11 +1505,11 @@ async fn write_audit_identifies_actor_and_redacts_secrets() {
             .audit()
             .list(org_id.parse().unwrap(), poph_store::Page::default())
             .unwrap();
-        for acao in ["create", "update", "delete"] {
+        for action in ["create", "update", "delete"] {
             let line = records
                 .iter()
                 .find(|r| {
-                    r.entity == entity && r.acao == acao && r.entity_id.as_deref() == Some(id)
+                    r.entity == entity && r.acao == action && r.entity_id.as_deref() == Some(id)
                 })
                 .expect("registro de auditoria");
             assert_eq!(line.ator_tipo, "admin_token");
@@ -1757,14 +1754,14 @@ async fn org_deletions_are_audited_globally_with_or_without_force() {
             .audit()
             .list_globals(poph_store::Page::default())
             .unwrap();
-        let acao = if force { "delete_force" } else { "delete" };
-        let registro = records
+        let action = if force { "delete_force" } else { "delete" };
+        let record = records
             .iter()
-            .find(|r| r.entity == "org" && r.acao == acao && r.entity_id.as_deref() == Some(id))
+            .find(|r| r.entity == "org" && r.acao == action && r.entity_id.as_deref() == Some(id))
             .expect("auditoria de exclusão");
-        assert_eq!(registro.ator_tipo, "admin_token");
-        assert_eq!(registro.actor_id.as_deref(), Some("global:teste"));
-        assert!(!format!("{registro:?}").contains(TOKEN_GLOBAL));
+        assert_eq!(record.ator_tipo, "admin_token");
+        assert_eq!(record.actor_id.as_deref(), Some("global:teste"));
+        assert!(!format!("{record:?}").contains(TOKEN_GLOBAL));
     }
 }
 
@@ -1870,14 +1867,14 @@ async fn agent_crud_enforces_scope_version_and_audit() {
         .audit()
         .list(ob.parse().unwrap(), poph_store::Page::default())
         .unwrap();
-    for acao in ["create", "update", "delete"] {
-        let registro = records
+    for action in ["create", "update", "delete"] {
+        let record = records
             .iter()
-            .find(|r| r.entity == "agent" && r.acao == acao && r.entity_id.as_deref() == Some(id))
+            .find(|r| r.entity == "agent" && r.acao == action && r.entity_id.as_deref() == Some(id))
             .unwrap();
-        assert_eq!(registro.ator_tipo, "admin_token");
-        assert_eq!(registro.actor_id.as_deref(), Some(token_id));
-        assert!(!format!("{registro:?}").contains(&tb));
+        assert_eq!(record.ator_tipo, "admin_token");
+        assert_eq!(record.actor_id.as_deref(), Some(token_id));
+        assert!(!format!("{record:?}").contains(&tb));
     }
 }
 
@@ -1923,9 +1920,9 @@ async fn agent_cli_api_parity() {
     let cli_id = cli_created["agent"]["id"].as_str().unwrap();
     let api_id = api_created["id"].as_str().unwrap();
     let compare = |mut a: Value, mut b: Value| {
-        for campo in ["id", "slug", "created_at", "updated_at"] {
-            a.as_object_mut().unwrap().remove(campo);
-            b.as_object_mut().unwrap().remove(campo);
+        for field in ["id", "slug", "created_at", "updated_at"] {
+            a.as_object_mut().unwrap().remove(field);
+            b.as_object_mut().unwrap().remove(field);
         }
         assert_eq!(a, b);
     };
@@ -2044,9 +2041,9 @@ async fn instructions_api_parity_isolation_and_audit() {
     let id = cli_id.to_string();
     let file_path = file.to_str().unwrap();
     let compare = |mut x: Value, mut y: Value| {
-        for campo in ["agent_id", "created_at", "updated_at"] {
-            x.as_object_mut().unwrap().remove(campo);
-            y.as_object_mut().unwrap().remove(campo);
+        for field in ["agent_id", "created_at", "updated_at"] {
+            x.as_object_mut().unwrap().remove(field);
+            y.as_object_mut().unwrap().remove(field);
         }
         assert_eq!(x, y);
     };
@@ -2173,12 +2170,12 @@ async fn instructions_api_parity_isolation_and_audit() {
         .audit()
         .list(org, poph_store::Page::default())
         .unwrap();
-    for acao in ["create", "update", "delete"] {
+    for action in ["create", "update", "delete"] {
         let r = records
             .iter()
             .find(|r| {
                 r.entity == "agent_instructions"
-                    && r.acao == acao
+                    && r.acao == action
                     && r.entity_id.as_deref() == Some(&api_id.to_string())
             })
             .unwrap();
@@ -2310,11 +2307,11 @@ async fn knowledge_crud_handles_conflict_and_isolation() {
         ("knowledge_group", g["id"].as_str().unwrap()),
         ("knowledge_item", i["id"].as_str().unwrap()),
     ] {
-        for acao in ["create", "update", "delete"] {
+        for action in ["create", "update", "delete"] {
             let line = records
                 .iter()
                 .find(|r| {
-                    r.entity == entity && r.acao == acao && r.entity_id.as_deref() == Some(id)
+                    r.entity == entity && r.acao == action && r.entity_id.as_deref() == Some(id)
                 })
                 .unwrap();
             assert_eq!(line.ator_tipo, "admin_token");
@@ -2412,12 +2409,12 @@ async fn knowledge_link_authorization_and_missing_model() {
         .list(aid.parse().unwrap(), poph_store::Page::default())
         .unwrap();
     let group_id = group.id.to_string();
-    for acao in ["link", "unlink"] {
+    for action in ["link", "unlink"] {
         let line = records
             .iter()
             .find(|r| {
                 r.entity == "knowledge_group"
-                    && r.acao == acao
+                    && r.acao == action
                     && r.entity_id.as_deref() == Some(group_id.as_str())
             })
             .unwrap();
@@ -2488,10 +2485,10 @@ async fn reindex_with_real_model_makes_item_searchable_and_preserves_unchanged_i
         diretorio: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../data/modelos"),
         ..Default::default()
     };
-    let modelo = poph_rag::OrtEmbedder::open_model(&cfg, None).unwrap();
+    let model = poph_rag::OrtEmbedder::open_model(&cfg, None).unwrap();
     let (index, _) = poph_rag::Index::open(
         c.store().rag_path(),
-        std::sync::Arc::new(modelo),
+        std::sync::Arc::new(model),
         Default::default(),
     )
     .unwrap();
@@ -2801,15 +2798,15 @@ async fn product_writes_enforce_version_and_isolation() {
         )
         .unwrap();
     let collection = format!("/admin/v1/orgs/{org_b}/products");
-    let dados = json!({"category_id":cat.id.to_string(),"name":"Visita", "price_cents":12345});
+    let data = json!({"category_id":cat.id.to_string(),"name":"Visita", "price_cents":12345});
     assert_eq!(
-        c.request(Method::POST, &collection, &token, Some(dados.clone()), None)
+        c.request(Method::POST, &collection, &token, Some(data.clone()), None)
             .await
             .0,
         StatusCode::FORBIDDEN
     );
     let (status, p) = c
-        .request(Method::POST, &collection, TOKEN_GLOBAL, Some(dados), None)
+        .request(Method::POST, &collection, TOKEN_GLOBAL, Some(data), None)
         .await;
     assert_eq!(status, StatusCode::CREATED);
     assert_eq!(p["price_cents"], 12345);
@@ -2880,12 +2877,12 @@ async fn product_writes_enforce_version_and_isolation() {
         .audit()
         .list(org_b.parse().unwrap(), poph_store::Page::default())
         .unwrap();
-    for acao in ["create", "update"] {
+    for action in ["create", "update"] {
         let line = records
             .iter()
             .find(|r| {
                 r.entity == "product"
-                    && r.acao == acao
+                    && r.acao == action
                     && r.entity_id.as_deref() == p["id"].as_str()
             })
             .unwrap();
@@ -2935,8 +2932,8 @@ async fn integration_lifecycle_isolation_and_secrets() {
             Ok(())
         }
     }
-    let saida = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-    let buffer = saida.clone();
+    let output = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let buffer = output.clone();
     let subscriber = tracing_subscriber::fmt()
         .with_ansi(false)
         .with_writer(move || LogCapture(buffer.clone()))
@@ -3099,7 +3096,7 @@ async fn integration_lifecycle_isolation_and_secrets() {
     assert!(!v.to_string().contains("valor-sensivel-teste"));
     let (st, _) = c.request(Method::DELETE, &item, &token_b, None, None).await;
     assert_eq!(st, StatusCode::OK);
-    let logs = String::from_utf8(saida.lock().unwrap().clone()).unwrap();
+    let logs = String::from_utf8(output.lock().unwrap().clone()).unwrap();
     assert!(logs.contains("captura de log ativa"));
     assert!(!logs.contains("valor-sensivel-teste"));
     assert!(!logs.contains(&token_b));
@@ -3109,11 +3106,11 @@ async fn integration_lifecycle_isolation_and_secrets() {
         .list(ob.parse().unwrap(), poph_store::Page::default())
         .unwrap();
     let token_id = token_b.split('_').nth(1).unwrap();
-    for acao in ["create", "update", "delete"] {
+    for action in ["create", "update", "delete"] {
         let line = records
             .iter()
             .find(|r| {
-                r.entity == "integration" && r.acao == acao && r.entity_id.as_deref() == Some(id)
+                r.entity == "integration" && r.acao == action && r.entity_id.as_deref() == Some(id)
             })
             .unwrap();
         assert_eq!(line.ator_tipo, "admin_token");
@@ -3536,9 +3533,9 @@ async fn org_isolation_covers_all_published_operations() {
         published, expected_set,
         "rota nova exige teste de isolamento"
     );
-    for (method, modelo) in expected {
-        let mut path = modelo.replace("{org_id}", org_b);
-        for nome in [
+    for (method, model) in expected {
+        let mut path = model.replace("{org_id}", org_b);
+        for display_name in [
             "agent_id",
             "file_id",
             "integration_id",
@@ -3557,17 +3554,17 @@ async fn org_isolation_covers_all_published_operations() {
             "id",
             "turn_id",
         ] {
-            path = path.replace(&format!("{{{nome}}}"), org_b);
+            path = path.replace(&format!("{{{display_name}}}"), org_b);
         }
-        let body = if *method == "post" && modelo.ends_with("/tokens") {
+        let body = if *method == "post" && model.ends_with("/tokens") {
             Some(json!({"label":"teste"}))
         } else if *method == "post"
-            && (modelo.ends_with("/categories") || modelo.ends_with("/departments"))
+            && (model.ends_with("/categories") || model.ends_with("/departments"))
         {
             Some(json!({"name":"teste"}))
-        } else if *method == "put" && modelo.ends_with("/matrix") {
+        } else if *method == "put" && model.ends_with("/matrix") {
             Some(json!({"enabled":true}))
-        } else if *method == "put" && modelo.ends_with("/matrix/spaces") {
+        } else if *method == "put" && model.ends_with("/matrix/spaces") {
             Some(json!({"department_id": org_b}))
         } else if *method == "post" || *method == "patch" {
             Some(json!({}))
@@ -3580,7 +3577,7 @@ async fn org_isolation_covers_all_published_operations() {
             .await;
         assert!(
             status == StatusCode::FORBIDDEN || status == StatusCode::NOT_FOUND,
-            "{method} {modelo}: esperado 403/404, recebido {status}: {response}"
+            "{method} {model}: esperado 403/404, recebido {status}: {response}"
         );
     }
 }
@@ -3624,7 +3621,7 @@ async fn all_updates_reject_stale_version() {
         json!({"markdown":"Instruções"}),
     )
     .await;
-    let integracao = create(
+    let integration = create(
         &c,
         &format!("{agent_path}/integrations"),
         json!({"kind":"eco"}),
@@ -3695,7 +3692,7 @@ async fn all_updates_reject_stale_version() {
             Method::PATCH,
             format!(
                 "{agent_path}/integrations/{}",
-                integracao["id"].as_str().unwrap()
+                integration["id"].as_str().unwrap()
             ),
             json!({"status":"inactive"}),
         ),
@@ -3760,7 +3757,7 @@ async fn category_and_department_cli_api_parity() {
         );
         serde_json::from_slice(&output.stdout).unwrap()
     };
-    for (resource, route, chave) in [
+    for (resource, route, key) in [
         ("category", "categories", "category"),
         ("department", "departments", "department"),
     ] {
@@ -3786,16 +3783,16 @@ async fn category_and_department_cli_api_parity() {
             )
             .await;
         assert_eq!(status, StatusCode::CREATED, "{via_api}");
-        let cli_id = via_cli[chave]["id"].as_str().unwrap();
+        let cli_id = via_cli[key]["id"].as_str().unwrap();
         let api_id = via_api["id"].as_str().unwrap();
         let compare = |mut a: Value, mut b: Value| {
-            for campo in ["id", "org_id", "created_at", "updated_at"] {
-                a.as_object_mut().unwrap().remove(campo);
-                b.as_object_mut().unwrap().remove(campo);
+            for field in ["id", "org_id", "created_at", "updated_at"] {
+                a.as_object_mut().unwrap().remove(field);
+                b.as_object_mut().unwrap().remove(field);
             }
             assert_eq!(a, b);
         };
-        compare(via_cli[chave].clone(), via_api.clone());
+        compare(via_cli[key].clone(), via_api.clone());
         let updated_cli = cli(
             resource,
             &[
@@ -3819,7 +3816,7 @@ async fn category_and_department_cli_api_parity() {
             )
             .await;
         assert_eq!(status, StatusCode::OK, "{updated_api}");
-        compare(updated_cli[chave].clone(), updated_api);
+        compare(updated_cli[key].clone(), updated_api);
         let mut args = vec!["delete", cli_id, "--json"];
         if resource == "category" {
             args.push("--force");
@@ -4082,18 +4079,18 @@ fn cli_poph_exe() -> &'static std::path::Path {
 
 fn cli_poph(directory: &std::path::Path, args: &[&str]) -> Value {
     let exe = cli_poph_exe();
-    let saida = std::process::Command::new(exe)
+    let output = std::process::Command::new(exe)
         .args(args)
         .env("POPH_DADOS_DIRETORIO", directory.join("dados"))
         .output()
         .expect("executa a CLI");
     assert!(
-        saida.status.success(),
+        output.status.success(),
         "CLI `{}`: {}",
         args.join(" "),
-        String::from_utf8_lossy(&saida.stderr)
+        String::from_utf8_lossy(&output.stderr)
     );
-    serde_json::from_slice(&saida.stdout).expect("JSON da CLI")
+    serde_json::from_slice(&output.stdout).expect("JSON da CLI")
 }
 
 #[tokio::test]
@@ -4304,7 +4301,7 @@ async fn agent_knowledge_group_link_cli_api_parity() {
     assert_eq!(status, StatusCode::OK, "{response}");
     assert_eq!(response["linked"], json!(true));
 
-    let estado = |group: &str| -> Vec<String> {
+    let server_state = |group: &str| -> Vec<String> {
         let mut agents: Vec<String> = c
             .store()
             .knowledge()
@@ -4316,8 +4313,8 @@ async fn agent_knowledge_group_link_cli_api_parity() {
         agents.sort();
         agents
     };
-    assert_eq!(estado(&group_cli_id), vec![aid.clone()]);
-    assert_eq!(estado(&group_api_id), estado(&group_cli_id));
+    assert_eq!(server_state(&group_cli_id), vec![aid.clone()]);
+    assert_eq!(server_state(&group_api_id), server_state(&group_cli_id));
 
     cli_poph(
         &c.directory,
@@ -4343,18 +4340,18 @@ async fn agent_knowledge_group_link_cli_api_parity() {
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{response}");
-    assert!(estado(&group_cli_id).is_empty());
-    assert!(estado(&group_api_id).is_empty());
+    assert!(server_state(&group_cli_id).is_empty());
+    assert!(server_state(&group_api_id).is_empty());
 
     let audit = c
         .store()
         .audit()
         .list(org_id, poph_store::Page::default())
         .expect("auditoria");
-    for acao in ["link", "unlink"] {
+    for action in ["link", "unlink"] {
         assert!(
-            audit.iter().any(|line| line.acao == acao),
-            "sem auditoria de `{acao}`: {audit:?}"
+            audit.iter().any(|line| line.acao == action),
+            "sem auditoria de `{action}`: {audit:?}"
         );
     }
 }
@@ -4497,7 +4494,7 @@ async fn api_docs_cover_all_published_routes() {
     assert_eq!(status, StatusCode::OK);
 
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/API.md");
-    let texto = fs::read_to_string(&path)
+    let text = fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("leitura de {}: {error}", path.display()));
     for section in [
         "## Inventário da HR-21",
@@ -4505,7 +4502,7 @@ async fn api_docs_cover_all_published_routes() {
         "## O que a HR-21 entrega e o que não entrega",
     ] {
         assert!(
-            texto.contains(section),
+            text.contains(section),
             "docs/API.md sem a seção `{section}`"
         );
     }
@@ -4517,13 +4514,13 @@ async fn api_docs_cover_all_published_routes() {
         version: String,
         audit: String,
         isolation: String,
-        crua: String,
+        raw_line: String,
     }
 
     const INSTANCE_GLOBALS: &[(&str, &str)] = &[("post", "/admin/v1/cluster/reload")];
     let methods = ["get", "post", "put", "patch", "delete"];
     let mut lines: Vec<Row> = Vec::new();
-    for line in texto.lines() {
+    for line in text.lines() {
         let cells: Vec<&str> = line.split('|').map(str::trim).collect();
         if cells.len() != 9 || cells[1..8].iter().any(|cell| cell.is_empty()) {
             continue;
@@ -4539,7 +4536,7 @@ async fn api_docs_cover_all_published_routes() {
             version: cells[5].to_owned(),
             audit: cells[6].to_owned(),
             isolation: cells[7].to_owned(),
-            crua: line.trim().to_owned(),
+            raw_line: line.trim().to_owned(),
         });
     }
     assert!(
@@ -4596,7 +4593,7 @@ async fn api_docs_cover_all_published_routes() {
         assert_eq!(
             line.version, expected,
             "coluna 412 errada em `{}`",
-            line.crua
+            line.raw_line
         );
 
         let so_calcula =
@@ -4611,20 +4608,20 @@ async fn api_docs_cover_all_published_routes() {
                 "n/a"
             },
             "coluna auditoria errada em `{}`",
-            line.crua
+            line.raw_line
         );
 
         assert_eq!(
             line.isolation,
             if instance_global { "n/a" } else { "sim" },
             "isolamento em `{}`",
-            line.crua
+            line.raw_line
         );
 
         assert!(
             line.cli == "sim" || line.cli.starts_with("exceção: "),
             "coluna CLI precisa de `sim` ou `exceção: <motivo>` em `{}`",
-            line.crua
+            line.raw_line
         );
     }
 }
@@ -4677,7 +4674,7 @@ async fn close_conversation_returns_expected_statuses_and_audits_once() {
             })
             .count()
     };
-    let estado = |c: &Scenario| {
+    let server_state = |c: &Scenario| {
         let current = c.store().conversations().get(org, conversation.id).unwrap();
         (current.status.as_text(), current.version)
     };
@@ -4704,7 +4701,7 @@ async fn close_conversation_returns_expected_statuses_and_audits_once() {
             .0,
         StatusCode::PRECONDITION_FAILED
     );
-    assert_eq!(estado(&c), ("open", 1));
+    assert_eq!(server_state(&c), ("open", 1));
     assert_eq!(close_audits(&c), 0);
     let missing = format!(
         "/admin/v1/orgs/{b}/conversations/{}/close",
@@ -4722,7 +4719,7 @@ async fn close_conversation_returns_expected_statuses_and_audits_once() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["status"], "closed");
     assert_eq!(body["version"], 2);
-    assert_eq!(estado(&c), ("closed", 2));
+    assert_eq!(server_state(&c), ("closed", 2));
     assert_eq!(close_audits(&c), 1, "uma auditoria `close` por fechamento");
     assert_eq!(
         c.request(Method::POST, &route, &token_b, None, Some(2))
@@ -4730,9 +4727,9 @@ async fn close_conversation_returns_expected_statuses_and_audits_once() {
             .0,
         StatusCode::CONFLICT
     );
-    assert_eq!(estado(&c), ("closed", 2), "409 não sobe a versão");
+    assert_eq!(server_state(&c), ("closed", 2), "409 não sobe a versão");
     assert_eq!(close_audits(&c), 1, "409 não grava auditoria");
-    let registro = c
+    let record = c
         .store()
         .audit()
         .list(org, poph_store::Page::default())
@@ -4741,7 +4738,7 @@ async fn close_conversation_returns_expected_statuses_and_audits_once() {
         .find(|r| r.acao == "close")
         .expect("fechamento auditado");
     assert_eq!(
-        registro.actor_id.as_deref(),
+        record.actor_id.as_deref(),
         token_b
             .strip_prefix("poph_")
             .and_then(|s| s.split_once('_'))
@@ -4768,18 +4765,18 @@ async fn message_after_closure_opens_new_conversation() {
             },
         )
         .unwrap();
-    let integracao = c
+    let integration = c
         .store()
         .create_integration(org, agent.id, "whatsapp".into(), "active".into())
         .unwrap()
         .id
         .parse::<poph_types::IntegrationId>()
         .unwrap();
-    let entry = |id_externo: &str| poph_store::NewChannelInboxItem {
-        integration_id: integracao,
+    let entry = |external_id: &str| poph_store::NewChannelInboxItem {
+        integration_id: integration,
         agent_id: agent.id,
         canal: "whatsapp".to_owned(),
-        external_id: id_externo.to_owned(),
+        external_id: external_id.to_owned(),
         peer: "5521999990000".to_owned(),
         event_json: "{}".to_owned(),
         texto: "oi".to_owned(),
@@ -4901,12 +4898,12 @@ async fn reopen_closed_conversation_returns_conflict() {
     let after = c.store().conversations().get(org, conversation.id).unwrap();
     assert_eq!(after.status, poph_store::ConversationStatus::Closed);
     assert_eq!(after.version, closed.version, "a recusa não muda a versão");
-    let ficha = c
+    let service_case = c
         .store()
         .cases()
         .by_conversation(org, conversation.id)
         .unwrap()
         .expect("a conversa fechada pelo administrador tem Ficha fechada");
-    assert_eq!(ficha.status, poph_types::RecordStatus::Closed);
-    assert_eq!(ficha.fechada_por, Some(poph_types::ClosedBy::Admin));
+    assert_eq!(service_case.status, poph_types::RecordStatus::Closed);
+    assert_eq!(service_case.fechada_por, Some(poph_types::ClosedBy::Admin));
 }
