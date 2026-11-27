@@ -306,7 +306,7 @@ nem linha em `audit_log`: quem registra o que houve é o `fechada_por = 'migraca
 **A invariante vale para conversa nova desde a FX-07.** A Ficha nasce **na mesma escrita** que cria a
 conversa, em dois pontos — os únicos que criam conversa no repositório:
 
-- `Conversas::criar` (todos os chamadores passam por ela: `fila_integracao.rs`, `teste_chat.rs`,
+- `Conversas::criar` (todos os chamadores passam por ela: `fila_integracao.rs`, `test_chat.rs`,
   `poph/src/chat.rs`, `poph-plugin-eco/src/demo.rs`);
 - `CaixaEntrada::receber_do_canal`, que insere a conversa em SQL próprio — é o caminho que o WhatsApp
   usa de fato, e é por isso que a Ficha também é criada lá. Ficha criada só em `Conversas::criar`

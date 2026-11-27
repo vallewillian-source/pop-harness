@@ -766,11 +766,14 @@ Duas rotas para o Console fechar a parte de operação. O **formato do arquivo �
 - `com_conversas` com valor que não é `true`/`false` → `400 validation_error`.
 - Arquivo da biblioteca sem conteúdo no disco → `409 backup_incompleto` (nada é entregue pela
   metade); o nome do arquivo vai em `details.name` e o caminho não aparece.
+- **Acesso:** sem token → `401`; token de outra org → `403`. Vale para as duas rotas e é checado
+  antes de ler o corpo.
 
 ### Importar — `POST /admin/v1/orgs/{org_id}/backup/import`
 
 - **Corpo cru** `application/json` com o arquivo de `…/backup` (ou de `poph backup export`), até
-  **64 MB**; acima disso → `413 payload_too_large`. Não é multipart.
+  **64 MB**; acima disso → `413 payload_too_large`, recusado sem carregar o corpo inteiro. Não é
+  multipart.
 - **A org do caminho é o destino** e precisa existir (`404` se não existir). Os ids do arquivo são
   preservados; importar não duplica nem **apaga** o que não está no arquivo.
 - **Sobrescrita é recusada por padrão (HR-48e-3):** se alguma linha do arquivo já existe na org
