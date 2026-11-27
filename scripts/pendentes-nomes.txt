@@ -3,13 +3,6 @@
 # do not edit by hand.
 M08c	3	crates/poph-store/migrations/harness/0004_audit_log_matrix_user.sql
 M11a-c	49	crates/poph-server/build.rs
-M11d	200	crates/poph-server/tests/agente_fluxos.rs
-M11d	203	crates/poph-server/tests/conversas_element.rs
-M11d	194	crates/poph-server/tests/conversas_filtros.rs
-M11d	174	crates/poph-server/tests/conversas_transferencia.rs
-M11d	398	crates/poph-server/tests/fichas_acoes.rs
-M11d	315	crates/poph-server/tests/fichas_leitura.rs
-M11d	555	crates/poph-server/tests/webhook_evolution.rs
 M12a	6	crates/poph/examples/semear_org.rs
 M12a	104	crates/poph/src/apoio.rs
 M12a	180	crates/poph/src/arquivo.rs
