@@ -13,7 +13,7 @@ const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsa
                    frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 
 pub fn has_bundle() -> bool {
-    embedded::TEM_BUNDLE
+    embedded::HAS_BUNDLE
 }
 
 pub fn server_path(path: &str) -> bool {
@@ -35,7 +35,7 @@ pub fn server_path(path: &str) -> bool {
 
 fn procurar(path: &str) -> Option<(&'static str, &'static [u8])> {
     let target = path.trim_start_matches('/');
-    embedded::ARQUIVOS
+    embedded::FILES
         .iter()
         .find(|(nome, _, _)| *nome == target)
         .map(|(_, mime, bytes)| (*mime, *bytes))

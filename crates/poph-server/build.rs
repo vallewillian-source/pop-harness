@@ -34,13 +34,13 @@ fn main() {
         std::fs::write(&aviso, AVISO_SEM_BUNDLE).expect("gravar a página de aviso do Console");
         let _ = writeln!(
             codigo,
-            "/// `false` quando o build não encontrou `console/dist`.\npub const TEM_BUNDLE: bool = false;\n\
-             pub static ARQUIVOS: &[(&str, &str, &[u8])] = &[\n    (\"index.html\", \"text/html; charset=utf-8\", include_bytes!({caminho:?})),\n];",
+            "/// `false` quando o build não encontrou `console/dist`.\npub const HAS_BUNDLE: bool = false;\n\
+             pub static FILES: &[(&str, &str, &[u8])] = &[\n    (\"index.html\", \"text/html; charset=utf-8\", include_bytes!({caminho:?})),\n];",
             caminho = aviso.to_string_lossy()
         );
     } else {
-        codigo.push_str("/// `true` quando o build encontrou `console/dist`.\npub const TEM_BUNDLE: bool = true;\n");
-        codigo.push_str("pub static ARQUIVOS: &[(&str, &str, &[u8])] = &[\n");
+        codigo.push_str("/// `true` quando o build encontrou `console/dist`.\npub const HAS_BUNDLE: bool = true;\n");
+        codigo.push_str("pub static FILES: &[(&str, &str, &[u8])] = &[\n");
         for (relativo, absoluto) in &arquivos {
             let _ = writeln!(
                 codigo,

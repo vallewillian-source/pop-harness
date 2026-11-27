@@ -173,7 +173,7 @@ pub async fn update(
 
 #[doc = " Parâmetros de exclusão de produto."]
 #[derive(Debug, Clone, Default, Deserialize, utoipa::ToSchema)]
-#[schema(as = ExclusaoProduto)]
+#[schema(as = ProductDeletion)]
 pub struct ExclusionProduct {
     #[doc = " Confirma a exclusão de um produto que está em itens de carrinho."]
     pub force: Option<bool>,

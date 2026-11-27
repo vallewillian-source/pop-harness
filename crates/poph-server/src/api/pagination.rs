@@ -6,7 +6,7 @@ use crate::error::ApiError;
 
 #[doc = " Parâmetros de listagem comuns a todas as coleções."]
 #[derive(Debug, Clone, Default, Deserialize, ToSchema)]
-#[schema(as = ConsultaPagina)]
+#[schema(as = PageQuery)]
 pub struct PageQuery {
     #[doc = " Quantos registros trazer (1 a 200). Padrão 50."]
     pub limit: Option<u32>,

@@ -235,7 +235,7 @@ pub async fn update(
 
 #[doc = " Parâmetros de exclusão de categoria."]
 #[derive(Debug, Clone, Default, Deserialize, ToSchema)]
-#[schema(as = ExclusaoCategoria)]
+#[schema(as = CategoryDeletion)]
 pub struct ExclusionCategory {
     #[doc = " Confirma a exclusão de uma categoria com produtos ou agentes vinculados."]
     pub force: Option<bool>,

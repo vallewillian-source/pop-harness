@@ -100,7 +100,7 @@ fn items_with_active_agents(
 #[doc = " com o parâmetro, `instancias` soma o estado de cada instância do mapa e cada item traz a sua"]
 #[doc = " instância em `instancia`."]
 #[derive(Debug, Clone, Serialize, ToSchema)]
-#[schema(as = ListaOrgsJson)]
+#[schema(as = OrgsListJson)]
 pub struct OrgsListJson {
     #[doc = " Os registros desta página (ou todas as orgs, com `?cluster=true`)."]
     pub items: Vec<OrgJson>,
@@ -172,7 +172,7 @@ pub struct OrgPath {
 
 #[doc = " Parâmetros de exclusão."]
 #[derive(Debug, Clone, Default, Deserialize, ToSchema)]
-#[schema(as = ExclusaoOrg)]
+#[schema(as = OrgDeletion)]
 pub struct ExclusionOrg {
     #[doc = " Confirma a exclusão de uma org que tem conteúdo."]
     pub force: Option<bool>,
