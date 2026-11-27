@@ -1,20 +1,7 @@
 # Arquivos com comentário fora da allowlist, um por linha: módulo, quantidade de comentários e caminho,
 # separados por TAB. Gerado por `bash scripts/check-comments.sh --atualizar-pendentes`; não editar à mão.
 M05	4	crates/poph-jev/Cargo.toml
-M06a	133	crates/poph-fluxos/src/formatador.rs
 M06b	8	crates/poph-fluxos/Cargo.toml
-M06b	38	crates/poph-fluxos/tests/cache.rs
-M06b	68	crates/poph-fluxos/tests/compilador.rs
-M06b	17	crates/poph-fluxos/tests/diff.rs
-M06b	43	crates/poph-fluxos/tests/formatador.rs
-M06b	10	crates/poph-fluxos/tests/limites.rs
-M06b	53	crates/poph-fluxos/tests/motor.rs
-M06b	20	crates/poph-fluxos/tests/motor_desfecho.rs
-M06b	116	crates/poph-fluxos/tests/paridade.rs
-M06b	43	crates/poph-fluxos/tests/prompt.rs
-M06b	31	crates/poph-fluxos/tests/ram.rs
-M06b	52	crates/poph-fluxos/tests/regras.rs
-M06b	28	crates/poph-fluxos/tests/validador.rs
 M10b	10	crates/poph-agent/Cargo.toml
 M11a-c	3	crates/poph-server/Cargo.toml
 M11a-c	11	crates/poph-server/build.rs
@@ -34,13 +21,6 @@ M11a-c	69	crates/poph-server/src/fluxos_servico.rs
 M11a-c	5	crates/poph-server/src/fluxos_transicao.rs
 M11a-c	22	crates/poph-server/src/lib.rs
 M11a-c	71	crates/poph-server/src/manifestos.rs
-M11a-c	280	crates/poph-server/src/matrix_espelho.rs
-M11a-c	281	crates/poph-server/src/matrix_estado.rs
-M11a-c	83	crates/poph-server/src/matrix_expiracao.rs
-M11a-c	91	crates/poph-server/src/matrix_falhas_aviso.rs
-M11a-c	116	crates/poph-server/src/matrix_inicio.rs
-M11a-c	33	crates/poph-server/src/matrix_metricas.rs
-M11a-c	264	crates/poph-server/src/matrix_resposta.rs
 M11a-c	57	crates/poph-server/src/saida_whatsapp.rs
 M11d	34	crates/poph-server/tests/agente_fluxos.rs
 M11d	123	crates/poph-server/tests/api.rs
