@@ -69,12 +69,12 @@ pub fn executar(
     acao: AcaoRag,
 ) -> std::process::ExitCode {
     match acao {
-        AcaoRag::Reindex(args) => crate::kb::executar(
+        AcaoRag::Reindex(args) => crate::kb::run(
             flag,
             ambiente,
             offline,
             org,
-            crate::kb::AcaoKb::Reindex(args),
+            crate::kb::KbAction::Reindex(args),
         ),
     }
 }

@@ -1,14 +1,3 @@
-//! `poph doctor`: confere o ambiente antes de subir o servidor.
-//!
-//! O que confere: binário e compilador usados, arquivo de configuração, pasta de dados (existe
-//! ou pode ser criada, e aceita escrita), os bancos `harness.db` e `rag.db` (formato e versão de
-//! esquema), e as variáveis de segredo obrigatórias.
-//!
-//! Regras:
-//! - Segredo aparece só como "definida" ou "ausente". O valor nunca entra no relatório.
-//! - Ausência de banco é aviso (o banco nasce na HR-07). Erro real faz a saída ser diferente de 0.
-//! - Escreve só um arquivo de teste na pasta de dados, e apaga logo em seguida.
-
 use std::fs::{self, File};
 use std::path::Path;
 
@@ -20,193 +9,164 @@ use crate::config::{
     self, ErroConfig, Segredos, VAR_ANTIGRAVITY, VAR_CIFRA, VAR_EVOLUTION, VAR_TYPESAFE,
 };
 
-/// Versão do formato do `--json`. Muda só se a forma do JSON mudar.
-pub const VERSAO_RELATORIO: u32 = 1;
+pub const REPORT_VERSION: u32 = 1;
 
-/// Resultado de uma verificação.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Nivel {
-    /// Está certo.
     Ok,
-    /// Não impede o uso, mas merece atenção (ex.: banco ainda não criado).
-    Aviso,
-    /// Impede o uso; a saída do comando vira diferente de zero.
-    Erro,
+    #[serde(rename = "aviso")]
+    Warning,
+    #[serde(rename = "erro")]
+    Error,
 }
 
-/// Uma linha do relatório.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct Verificacao {
-    /// O que foi conferido.
+pub struct Check {
     pub nome: String,
-    /// Resultado.
     pub nivel: Nivel,
-    /// Explicação em uma frase. Nunca contém valor de segredo.
-    pub detalhe: String,
+    #[serde(rename = "detalhe")]
+    pub detail: String,
 }
 
-/// Dados do binário que está rodando.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct Binario {
-    /// Nome do binário.
+pub struct Binary {
     pub nome: &'static str,
-    /// Versão do pacote.
     pub versao: &'static str,
-    /// Compilador usado para gerar este binário.
     pub rustc: &'static str,
 }
 
-/// Relatório completo do `poph doctor`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct Relatorio {
-    /// Versão do formato deste JSON (`VERSAO_RELATORIO`).
-    pub versao_relatorio: u32,
-    /// `ok` quando nenhuma verificação é erro; senão `erro`.
+pub struct Report {
+    #[serde(rename = "versao_relatorio")]
+    pub report_version: u32,
     pub status: &'static str,
-    /// Binário que gerou o relatório.
-    pub binario: Binario,
-    /// Verificações, na ordem em que foram feitas.
-    pub verificacoes: Vec<Verificacao>,
+    #[serde(rename = "binario")]
+    pub binary: Binary,
+    #[serde(rename = "verificacoes")]
+    pub checks: Vec<Check>,
 }
 
-/// O que o doctor precisa saber para conferir.
 #[derive(Debug, Clone, Copy)]
-pub struct Entrada<'a> {
-    /// Configuração carregada, ou o erro que impediu carregar.
+pub struct Input<'a> {
     pub config: Result<&'a HarnessConfig, &'a ErroConfig>,
-    /// Arquivo de configuração usado, se houver.
-    pub arquivo: Option<&'a Path>,
-    /// Segredos lidos do ambiente (só a presença é conferida).
+    pub file: Option<&'a Path>,
     pub segredos: &'a Segredos,
-    pub chave_llm: Option<&'a Secret>,
-    pub ambiente: Option<&'a crate::config::Ambiente>,
-    pub agentes_por_provedor: Option<&'a [(String, u64)]>,
+    pub llm_key: Option<&'a Secret>,
+    pub environment: Option<&'a crate::config::Ambiente>,
+    pub agents_by_provider: Option<&'a [(String, u64)]>,
 }
 
-/// Faz todas as verificações e devolve o relatório.
-pub fn gerar(entrada: Entrada<'_>) -> Relatorio {
-    let mut verificacoes = vec![binario_verificacao(), arquivo_verificacao(entrada.arquivo)];
+pub fn generate(input: Input<'_>) -> Report {
+    let mut checks = vec![binary_check(), file_check(input.file)];
 
-    match entrada.config {
-        Err(erro) => verificacoes.push(Verificacao {
+    match input.config {
+        Err(error) => checks.push(Check {
             nome: "configuração".to_owned(),
-            nivel: Nivel::Erro,
-            detalhe: erro.to_string(),
+            nivel: Nivel::Error,
+            detail: error.to_string(),
         }),
         Ok(config) => {
-            verificacoes.push(Verificacao {
+            checks.push(Check {
                 nome: "configuração".to_owned(),
                 nivel: Nivel::Ok,
-                detalhe: "valores válidos".to_owned(),
+                detail: "valores válidos".to_owned(),
             });
-            verificacoes.push(pasta_de_dados(&config.data.directory));
-            verificacoes.push(banco("harness.db", &config.harness_db()));
-            verificacoes.push(banco("rag.db", &config.rag_db()));
-            verificacoes.extend(fluxos_verificacoes(&config.flows));
-            verificacoes.extend(provedores_verificacoes(config, entrada));
+            checks.push(data_folder(&config.data.directory));
+            checks.push(database_check("harness.db", &config.harness_db()));
+            checks.push(database_check("rag.db", &config.rag_db()));
+            checks.extend(flow_checks(&config.flows));
+            checks.extend(provider_checks(config, input));
         }
     }
 
-    let jev_ativo = matches!(entrada.config, Ok(config) if config.jev.enabled);
-    let evolution_configurada = matches!(entrada.config, Ok(config) if config.evolution.is_some());
+    let jev_enabled = matches!(input.config, Ok(config) if config.jev.enabled);
+    let evolution_configured = matches!(input.config, Ok(config) if config.evolution.is_some());
 
-    verificacoes.push(variavel_obrigatoria(
-        VAR_CIFRA,
-        entrada.segredos.cifra.is_some(),
-    ));
-    let nome_da_chave_llm = match entrada.config {
+    checks.push(required_variable(VAR_CIFRA, input.segredos.cifra.is_some()));
+    let llm_key_name = match input.config {
         Ok(config) => config.llm.api_key_env.as_str(),
         Err(_) => VAR_ANTIGRAVITY,
     };
-    verificacoes.push(variavel_obrigatoria(
-        nome_da_chave_llm,
-        entrada.chave_llm.is_some(),
-    ));
-    if jev_ativo {
-        verificacoes.push(variavel_obrigatoria(
+    checks.push(required_variable(llm_key_name, input.llm_key.is_some()));
+    if jev_enabled {
+        checks.push(required_variable(
             VAR_TYPESAFE,
-            entrada.segredos.typesafe.is_some(),
+            input.segredos.typesafe.is_some(),
         ));
     }
-    if evolution_configurada {
-        verificacoes.push(variavel_obrigatoria(
+    if evolution_configured {
+        checks.push(required_variable(
             VAR_EVOLUTION,
-            entrada.segredos.evolution.is_some(),
+            input.segredos.evolution.is_some(),
         ));
     }
 
-    for verificacao in &verificacoes {
-        debug!(verificacao = %verificacao.nome, nivel = ?verificacao.nivel, "verificação do doctor");
+    for check in &checks {
+        debug!("verificacao" = %check.nome, nivel = ?check.nivel, "verificação do doctor");
     }
 
-    let tem_erro = verificacoes.iter().any(|v| v.nivel == Nivel::Erro);
-    Relatorio {
-        versao_relatorio: VERSAO_RELATORIO,
-        status: if tem_erro { "erro" } else { "ok" },
-        binario: Binario {
+    let has_error = checks.iter().any(|v| v.nivel == Nivel::Error);
+    Report {
+        report_version: REPORT_VERSION,
+        status: if has_error { "erro" } else { "ok" },
+        binary: Binary {
             nome: env!("CARGO_PKG_NAME"),
             versao: env!("CARGO_PKG_VERSION"),
             rustc: env!("POPH_RUSTC_VERSAO"),
         },
-        verificacoes,
+        checks,
     }
 }
 
-impl Relatorio {
-    /// `true` se alguma verificação é erro.
-    pub fn tem_erro(&self) -> bool {
+impl Report {
+    pub fn has_error(&self) -> bool {
         self.status == "erro"
     }
 
-    /// Texto para ler no terminal.
     pub fn texto(&self) -> String {
         let mut saida = String::from("POP Harness: diagnóstico do ambiente\n\n");
-        for verificacao in &self.verificacoes {
-            let marca = match verificacao.nivel {
+        for check in &self.checks {
+            let mark = match check.nivel {
                 Nivel::Ok => "[ok]   ",
-                Nivel::Aviso => "[aviso]",
-                Nivel::Erro => "[erro] ",
+                Nivel::Warning => "[aviso]",
+                Nivel::Error => "[erro] ",
             };
-            saida.push_str(&format!(
-                "{marca} {}: {}\n",
-                verificacao.nome, verificacao.detalhe
-            ));
+            saida.push_str(&format!("{mark} {}: {}\n", check.nome, check.detail));
         }
-        let erros = self
-            .verificacoes
+        let errors = self
+            .checks
             .iter()
-            .filter(|v| v.nivel == Nivel::Erro)
+            .filter(|v| v.nivel == Nivel::Error)
             .count();
-        let avisos = self
-            .verificacoes
+        let warnings = self
+            .checks
             .iter()
-            .filter(|v| v.nivel == Nivel::Aviso)
+            .filter(|v| v.nivel == Nivel::Warning)
             .count();
         saida.push('\n');
-        if erros == 0 {
-            saida.push_str(&format!("Ambiente pronto ({avisos} aviso(s)).\n"));
+        if errors == 0 {
+            saida.push_str(&format!("Ambiente pronto ({warnings} aviso(s)).\n"));
         } else {
             saida.push_str(&format!(
-                "{erros} erro(s) a corrigir ({avisos} aviso(s)).\n"
+                "{errors} erro(s) a corrigir ({warnings} aviso(s)).\n"
             ));
         }
         saida
     }
 
-    /// JSON estável (versão do formato em `versao_relatorio`), sem segredo.
     pub fn json(&self) -> String {
-        serde_json::to_string_pretty(self).unwrap_or_else(|erro| {
-            format!("{{\"versao_relatorio\":{VERSAO_RELATORIO},\"status\":\"erro\",\"detalhe\":\"{erro}\"}}")
+        serde_json::to_string_pretty(self).unwrap_or_else(|error| {
+            format!("{{\"versao_relatorio\":{REPORT_VERSION},\"status\":\"erro\",\"detalhe\":\"{error}\"}}")
         })
     }
 }
 
-fn binario_verificacao() -> Verificacao {
-    Verificacao {
+fn binary_check() -> Check {
+    Check {
         nome: "binário e toolchain".to_owned(),
         nivel: Nivel::Ok,
-        detalhe: format!(
+        detail: format!(
             "poph {}, compilado com {}",
             env!("CARGO_PKG_VERSION"),
             env!("POPH_RUSTC_VERSAO")
@@ -214,204 +174,195 @@ fn binario_verificacao() -> Verificacao {
     }
 }
 
-fn arquivo_verificacao(arquivo: Option<&Path>) -> Verificacao {
-    let (nivel, detalhe) = match arquivo {
+fn file_check(file: Option<&Path>) -> Check {
+    let (nivel, detail) = match file {
         None => (
             Nivel::Ok,
             "nenhum arquivo indicado; usando padrões e ambiente".to_owned(),
         ),
-        Some(caminho) if caminho.is_file() => (Nivel::Ok, format!("lido de {}", caminho.display())),
-        Some(caminho) => (Nivel::Erro, format!("{} não encontrado", caminho.display())),
+        Some(path) if path.is_file() => (Nivel::Ok, format!("lido de {}", path.display())),
+        Some(path) => (Nivel::Error, format!("{} não encontrado", path.display())),
     };
-    Verificacao {
+    Check {
         nome: "arquivo de configuração".to_owned(),
         nivel,
-        detalhe,
+        detail,
     }
 }
 
-fn provedores_verificacoes(config: &HarnessConfig, entrada: Entrada<'_>) -> Vec<Verificacao> {
-    let mut verificacoes = Vec::new();
+fn provider_checks(config: &HarnessConfig, input: Input<'_>) -> Vec<Check> {
+    let mut checks = Vec::new();
     for (nome, sobreposicao) in &config.providers {
         let efetivo = sobreposicao.effective(&config.llm);
-        let chave = match entrada.ambiente {
-            Some(ambiente) => config::chave_llm(ambiente, &efetivo.api_key_env),
+        let chave = match input.environment {
+            Some(environment) => config::chave_llm(environment, &efetivo.api_key_env),
             None => None,
         };
-        let (nivel, chave_texto) = match (entrada.ambiente, chave.is_some()) {
+        let (nivel, key_text) = match (input.environment, chave.is_some()) {
             (None, _) => (Nivel::Ok, String::new()),
             (Some(_), true) => (Nivel::Ok, format!("chave {} definida", efetivo.api_key_env)),
             (Some(_), false) => (
-                Nivel::Aviso,
+                Nivel::Warning,
                 format!("chave {} ausente no ambiente", efetivo.api_key_env),
             ),
         };
-        let sufixo = if chave_texto.is_empty() {
+        let suffix = if key_text.is_empty() {
             String::new()
         } else {
-            format!(" · {chave_texto}")
+            format!(" · {key_text}")
         };
-        verificacoes.push(Verificacao {
+        checks.push(Check {
             nome: format!("provedor {nome}"),
             nivel,
-            detalhe: format!(
-                "{} · {} chamadas simultâneas{sufixo}",
+            detail: format!(
+                "{} · {} chamadas simultâneas{suffix}",
                 efetivo.url_base, efetivo.concurrent_calls
             ),
         });
     }
-    let Some(contagem) = entrada.agentes_por_provedor else {
-        return verificacoes;
+    let Some(count) = input.agents_by_provider else {
+        return checks;
     };
-    let mut orfaos = Vec::new();
-    for (escolha, total) in contagem {
+    let mut orphans = Vec::new();
+    for (choice, total) in count {
         if *total == 0
-            || HarnessConfig::provider_is_default(escolha)
-            || config.providers.contains_key(escolha.trim())
+            || HarnessConfig::provider_is_default(choice)
+            || config.providers.contains_key(choice.trim())
         {
             continue;
         }
-        orfaos.push(format!("{escolha} ({total})"));
+        orphans.push(format!("{choice} ({total})"));
     }
-    if !orfaos.is_empty() {
-        verificacoes.push(Verificacao {
+    if !orphans.is_empty() {
+        checks.push(Check {
             nome: "provedor dos agentes".to_owned(),
-            nivel: Nivel::Aviso,
-            detalhe: format!(
+            nivel: Nivel::Warning,
+            detail: format!(
                 "{} agente(s) apontam para provedor inexistente: {}",
-                orfaos.len(),
-                orfaos.join(", ")
+                orphans.len(),
+                orphans.join(", ")
             ),
         });
     }
-    verificacoes
+    checks
 }
 
-fn pasta_de_dados(diretorio: &Path) -> Verificacao {
-    let caminho = std::path::absolute(diretorio).unwrap_or_else(|_| diretorio.to_path_buf());
-    let (nivel, detalhe) = if caminho.is_dir() {
-        if gravavel(&caminho) {
+fn data_folder(diretorio: &Path) -> Check {
+    let path = std::path::absolute(diretorio).unwrap_or_else(|_| diretorio.to_path_buf());
+    let (nivel, detail) = if path.is_dir() {
+        if gravavel(&path) {
             (
                 Nivel::Ok,
-                format!("{} existe e aceita escrita", caminho.display()),
+                format!("{} existe e aceita escrita", path.display()),
             )
         } else {
             (
-                Nivel::Erro,
-                format!("{} existe, mas não aceita escrita", caminho.display()),
+                Nivel::Error,
+                format!("{} existe, mas não aceita escrita", path.display()),
             )
         }
-    } else if caminho.exists() {
+    } else if path.exists() {
         (
-            Nivel::Erro,
-            format!("{} existe e não é uma pasta", caminho.display()),
+            Nivel::Error,
+            format!("{} existe e não é uma pasta", path.display()),
         )
     } else {
-        match caminho.ancestors().skip(1).find(|pai| pai.is_dir()) {
-            Some(pai) if gravavel(pai) => (
+        match path.ancestors().skip(1).find(|parent| parent.is_dir()) {
+            Some(parent) if gravavel(parent) => (
                 Nivel::Ok,
                 format!(
                     "{} ainda não existe; será criada (a pasta acima aceita escrita)",
-                    caminho.display()
+                    path.display()
                 ),
             ),
-            Some(pai) => (
-                Nivel::Erro,
+            Some(parent) => (
+                Nivel::Error,
                 format!(
                     "{} não existe e {} não aceita escrita",
-                    caminho.display(),
-                    pai.display()
+                    path.display(),
+                    parent.display()
                 ),
             ),
             None => (
-                Nivel::Erro,
-                format!("{} não tem pasta-pai existente", caminho.display()),
+                Nivel::Error,
+                format!("{} não tem pasta-pai existente", path.display()),
             ),
         }
     };
-    Verificacao {
+    Check {
         nome: "pasta de dados".to_owned(),
         nivel,
-        detalhe,
+        detail,
     }
 }
 
-/// Confere escrita criando e apagando um arquivo de teste na pasta.
-fn gravavel(pasta: &Path) -> bool {
-    let teste = pasta.join(format!(".poph-doctor-{}.tmp", std::process::id()));
-    let ok = File::create(&teste).is_ok();
-    let _ = fs::remove_file(&teste);
+fn gravavel(folder: &Path) -> bool {
+    let test_file = folder.join(format!(".poph-doctor-{}.tmp", std::process::id()));
+    let ok = File::create(&test_file).is_ok();
+    let _ = fs::remove_file(&test_file);
     ok
 }
 
-fn banco(nome: &str, caminho: &Path) -> Verificacao {
+fn database_check(nome: &str, path: &Path) -> Check {
     let nome = format!("banco {nome}");
-    let (nivel, detalhe) = if !caminho.exists() {
+    let (nivel, detail) = if !path.exists() {
         (
-            Nivel::Aviso,
+            Nivel::Warning,
             format!(
                 "{} ainda não existe; crie com `poph migrate`",
-                caminho.display()
+                path.display()
             ),
         )
-    } else if caminho.is_dir() {
+    } else if path.is_dir() {
         (
-            Nivel::Erro,
-            format!("{} é uma pasta, não um banco", caminho.display()),
+            Nivel::Error,
+            format!("{} é uma pasta, não um banco", path.display()),
         )
     } else {
-        // A versão vem da tabela `schema_migrations` (a mesma que o `poph migrate` mantém).
-        match poph_store::file_version(caminho) {
+        match poph_store::file_version(path) {
             Ok(Some(versao)) => (
                 Nivel::Ok,
                 format!("formato SQLite, esquema versão {versao}"),
             ),
             Ok(None) => (
-                Nivel::Aviso,
+                Nivel::Warning,
                 format!(
                     "{} existe, mas ainda não foi migrado; rode `poph migrate`",
-                    caminho.display()
+                    path.display()
                 ),
             ),
             Err(motivo) => (
-                Nivel::Erro,
-                format!(
-                    "{} não é um banco SQLite válido: {motivo}",
-                    caminho.display()
-                ),
+                Nivel::Error,
+                format!("{} não é um banco SQLite válido: {motivo}", path.display()),
             ),
         }
     };
-    Verificacao {
+    Check {
         nome,
         nivel,
-        detalhe,
+        detail,
     }
 }
 
-/// Estado do módulo de fluxos (FX-26): se o motor está ligado e os tetos em uso.
-///
-/// Desligado é aviso, não erro: a Ficha continua funcionando, só o motor fica parado. Os tetos
-/// aparecem sempre, porque valem mesmo com o motor desligado (a validação roda antes).
-fn fluxos_verificacoes(fluxos: &poph_types::FlowsConfig) -> Vec<Verificacao> {
-    let (nivel, detalhe) = if fluxos.enabled {
+fn flow_checks(fluxos: &poph_types::FlowsConfig) -> Vec<Check> {
+    let (nivel, detail) = if fluxos.enabled {
         (Nivel::Ok, "sim: o motor de fluxos roda".to_owned())
     } else {
         (
-            Nivel::Aviso,
+            Nivel::Warning,
             "não: o motor de fluxos está desligado; as Fichas continuam sendo criadas".to_owned(),
         )
     };
     vec![
-        Verificacao {
+        Check {
             nome: "fluxos.ativo".to_owned(),
             nivel,
-            detalhe,
+            detail,
         },
-        Verificacao {
+        Check {
             nome: "fluxos.tetos".to_owned(),
             nivel: Nivel::Ok,
-            detalhe: format!(
+            detail: format!(
                 "fluxos por org {}; script {} bytes; nós {}; dados {} bytes; passos de regra {}; \
                  memória de regra {} bytes; saltos de decisão {}; cache de revisões {} MB",
                 fluxos.max_flows_per_org,
@@ -427,87 +378,86 @@ fn fluxos_verificacoes(fluxos: &poph_types::FlowsConfig) -> Vec<Verificacao> {
     ]
 }
 
-fn variavel_obrigatoria(nome: &str, presente: bool) -> Verificacao {
-    let (nivel, detalhe) = if presente {
+fn required_variable(nome: &str, presente: bool) -> Check {
+    let (nivel, detail) = if presente {
         (Nivel::Ok, "definida (valor não exibido)".to_owned())
     } else {
-        (Nivel::Erro, format!("ausente; defina {nome} no ambiente"))
+        (Nivel::Error, format!("ausente; defina {nome} no ambiente"))
     };
-    Verificacao {
+    Check {
         nome: format!("variável {nome}"),
         nivel,
-        detalhe,
+        detail,
     }
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use std::path::PathBuf;
 
     use crate::config::Ambiente;
 
     use super::*;
 
-    fn pasta_temporaria(rotulo: &str) -> PathBuf {
-        let pasta = std::env::temp_dir().join(format!(
-            "poph-doctor-{rotulo}-{}-{}",
+    fn temp_folder(label: &str) -> PathBuf {
+        let folder = std::env::temp_dir().join(format!(
+            "poph-doctor-{label}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos())
                 .unwrap_or(0)
         ));
-        fs::create_dir_all(&pasta).expect("cria pasta de teste");
-        pasta
+        fs::create_dir_all(&folder).expect("cria pasta de teste");
+        folder
     }
 
-    /// Configuração de teste apontando para uma pasta própria.
-    fn config_em(pasta: &Path) -> HarnessConfig {
+    fn config_em(folder: &Path) -> HarnessConfig {
         let mut config = HarnessConfig::default();
-        config.data.directory = pasta.join("dados");
+        config.data.directory = folder.join("dados");
         config
     }
 
-    fn segredos_completos() -> Segredos {
+    fn full_secrets() -> Segredos {
         crate::config::segredos(&Ambiente::from([
             (VAR_CIFRA.to_owned(), "SEGREDO-CIFRA-XYZ-1".to_owned()),
             (VAR_ANTIGRAVITY.to_owned(), "SEGREDO-LLM-XYZ-2".to_owned()),
         ]))
     }
 
-    fn chave_llm_de_teste() -> Secret {
+    fn llm_key_for_test() -> Secret {
         Secret::new("SEGREDO-LLM-XYZ-2".to_owned())
     }
 
-    fn achar<'a>(relatorio: &'a Relatorio, nome: &str) -> &'a Verificacao {
-        relatorio
-            .verificacoes
+    fn achar<'a>(report: &'a Report, nome: &str) -> &'a Check {
+        report
+            .checks
             .iter()
             .find(|v| v.nome == nome)
             .unwrap_or_else(|| panic!("verificação {nome} não encontrada"))
     }
 
     #[test]
-    fn ambiente_correto_sai_sem_erro_e_cria_nada_fora_da_pasta_de_dados() {
-        let pasta = pasta_temporaria("ok");
-        let config = config_em(&pasta);
-        let relatorio = gerar(Entrada {
+    fn clean_environment_exits_ok_and_creates_nothing_outside_data_folder() {
+        let folder = temp_folder("ok");
+        let config = config_em(&folder);
+        let report = generate(Input {
             config: Ok(&config),
-            arquivo: None,
-            segredos: &segredos_completos(),
-            chave_llm: Some(&chave_llm_de_teste()),
-            ambiente: None,
-            agentes_por_provedor: None,
+            file: None,
+            segredos: &full_secrets(),
+            llm_key: Some(&llm_key_for_test()),
+            environment: None,
+            agents_by_provider: None,
         });
-        assert!(!relatorio.tem_erro(), "{}", relatorio.texto());
-        assert_eq!(achar(&relatorio, "banco harness.db").nivel, Nivel::Aviso);
-        assert_eq!(achar(&relatorio, "banco rag.db").nivel, Nivel::Aviso);
+        assert!(!report.has_error(), "{}", report.texto());
+        assert_eq!(achar(&report, "banco harness.db").nivel, Nivel::Warning);
+        assert_eq!(achar(&report, "banco rag.db").nivel, Nivel::Warning);
     }
 
     #[test]
-    fn doctor_lista_provedores_e_avisa_agente_com_provedor_inexistente() {
-        let pasta = pasta_temporaria("provedores");
-        let mut config = config_em(&pasta);
+    fn doctor_lists_providers_and_warns_missing_provider() {
+        let folder = temp_folder("provedores");
+        let mut config = config_em(&folder);
         config.providers.insert(
             "openai-forte".to_owned(),
             poph_types::ProviderConfig {
@@ -516,283 +466,280 @@ mod testes {
                 ..poph_types::ProviderConfig::default()
             },
         );
-        let ambiente = Ambiente::from([
+        let environment = Ambiente::from([
             (VAR_CIFRA.to_owned(), "SEGREDO-CIFRA-XYZ-1".to_owned()),
             (VAR_ANTIGRAVITY.to_owned(), "SEGREDO-LLM-XYZ-2".to_owned()),
         ]);
-        let agentes = vec![
+        let agents = vec![
             ("antigravity2api".to_owned(), 1_u64),
             ("openai-forte".to_owned(), 2_u64),
             ("sumiu-do-toml".to_owned(), 3_u64),
         ];
-        let relatorio = gerar(Entrada {
+        let report = generate(Input {
             config: Ok(&config),
-            arquivo: None,
-            segredos: &segredos_completos(),
-            chave_llm: Some(&chave_llm_de_teste()),
-            ambiente: Some(&ambiente),
-            agentes_por_provedor: Some(&agentes),
+            file: None,
+            segredos: &full_secrets(),
+            llm_key: Some(&llm_key_for_test()),
+            environment: Some(&environment),
+            agents_by_provider: Some(&agents),
         });
 
-        let linha = achar(&relatorio, "provedor openai-forte");
-        assert_eq!(linha.nivel, Nivel::Ok, "{}", linha.detalhe);
+        let line = achar(&report, "provedor openai-forte");
+        assert_eq!(line.nivel, Nivel::Ok, "{}", line.detail);
         assert!(
-            linha.detalhe.contains("https://api.exemplo.com/v1"),
+            line.detail.contains("https://api.exemplo.com/v1"),
             "{}",
-            linha.detalhe
+            line.detail
         );
         assert!(
-            linha.detalhe.contains("4 chamadas simultâneas"),
+            line.detail.contains("4 chamadas simultâneas"),
             "{}",
-            linha.detalhe
+            line.detail
         );
-        assert!(linha.detalhe.contains(VAR_ANTIGRAVITY), "{}", linha.detalhe);
-        assert!(linha.detalhe.contains("definida"), "{}", linha.detalhe);
+        assert!(line.detail.contains(VAR_ANTIGRAVITY), "{}", line.detail);
+        assert!(line.detail.contains("definida"), "{}", line.detail);
 
-        let orfaos = achar(&relatorio, "provedor dos agentes");
-        assert_eq!(orfaos.nivel, Nivel::Aviso);
+        let orphans = achar(&report, "provedor dos agentes");
+        assert_eq!(orphans.nivel, Nivel::Warning);
         assert!(
-            orfaos.detalhe.contains("sumiu-do-toml"),
+            orphans.detail.contains("sumiu-do-toml"),
             "{}",
-            orfaos.detalhe
+            orphans.detail
         );
         assert!(
-            !orfaos.detalhe.contains("openai-forte"),
+            !orphans.detail.contains("openai-forte"),
             "{}",
-            orfaos.detalhe
+            orphans.detail
         );
     }
 
-    /// O doctor mostra se o motor de fluxos roda e os tetos em uso (FX-26).
     #[test]
-    fn doctor_lista_fluxos_ativo_e_os_tetos() {
-        let pasta = pasta_temporaria("fluxos");
-        let config = config_em(&pasta);
-        let relatorio = gerar(Entrada {
+    fn doctor_lists_flows_enabled_and_caps() {
+        let folder = temp_folder("fluxos");
+        let config = config_em(&folder);
+        let report = generate(Input {
             config: Ok(&config),
-            arquivo: None,
-            segredos: &segredos_completos(),
-            chave_llm: Some(&chave_llm_de_teste()),
-            ambiente: None,
-            agentes_por_provedor: None,
+            file: None,
+            segredos: &full_secrets(),
+            llm_key: Some(&llm_key_for_test()),
+            environment: None,
+            agents_by_provider: None,
         });
-        let ativo = achar(&relatorio, "fluxos.ativo");
+        let ativo = achar(&report, "fluxos.ativo");
         assert_eq!(ativo.nivel, Nivel::Ok);
-        assert!(ativo.detalhe.starts_with("sim"), "{}", ativo.detalhe);
-        let tetos = achar(&relatorio, "fluxos.tetos");
+        assert!(ativo.detail.starts_with("sim"), "{}", ativo.detail);
+        let caps = achar(&report, "fluxos.tetos");
         assert!(
-            tetos.detalhe.contains("cache de revisões 16 MB"),
+            caps.detail.contains("cache de revisões 16 MB"),
             "{}",
-            tetos.detalhe
+            caps.detail
         );
-        assert!(tetos.detalhe.contains("nós 60"), "{}", tetos.detalhe);
+        assert!(caps.detail.contains("nós 60"), "{}", caps.detail);
         assert!(
-            tetos.detalhe.contains("saltos de decisão 10"),
+            caps.detail.contains("saltos de decisão 10"),
             "{}",
-            tetos.detalhe
+            caps.detail
         );
-        assert!(relatorio.texto().contains("fluxos.tetos"));
+        assert!(report.texto().contains("fluxos.tetos"));
     }
 
-    /// Motor desligado é aviso, e não erro: as Fichas continuam.
     #[test]
-    fn doctor_avisa_motor_de_fluxos_desligado_sem_erro() {
-        let pasta = pasta_temporaria("fluxos-off");
-        let mut config = config_em(&pasta);
+    fn doctor_warns_flow_engine_disabled_without_error() {
+        let folder = temp_folder("fluxos-off");
+        let mut config = config_em(&folder);
         config.flows.enabled = false;
-        let relatorio = gerar(Entrada {
+        let report = generate(Input {
             config: Ok(&config),
-            arquivo: None,
-            segredos: &segredos_completos(),
-            chave_llm: Some(&chave_llm_de_teste()),
-            ambiente: None,
-            agentes_por_provedor: None,
+            file: None,
+            segredos: &full_secrets(),
+            llm_key: Some(&llm_key_for_test()),
+            environment: None,
+            agents_by_provider: None,
         });
-        let ativo = achar(&relatorio, "fluxos.ativo");
-        assert_eq!(ativo.nivel, Nivel::Aviso);
-        assert!(ativo.detalhe.starts_with("não"), "{}", ativo.detalhe);
-        assert!(!relatorio.tem_erro(), "{}", relatorio.texto());
+        let ativo = achar(&report, "fluxos.ativo");
+        assert_eq!(ativo.nivel, Nivel::Warning);
+        assert!(ativo.detail.starts_with("não"), "{}", ativo.detail);
+        assert!(!report.has_error(), "{}", report.texto());
     }
 
     #[test]
-    fn variavel_ausente_vira_erro_que_diz_o_nome_da_variavel() {
-        let pasta = pasta_temporaria("sem-cifra");
-        let config = config_em(&pasta);
+    fn missing_variable_is_error_naming_it() {
+        let folder = temp_folder("sem-cifra");
+        let config = config_em(&folder);
         let segredos = crate::config::segredos(&Ambiente::from([(
             VAR_ANTIGRAVITY.to_owned(),
             "SEGREDO-LLM-XYZ-2".to_owned(),
         )]));
-        let relatorio = gerar(Entrada {
+        let report = generate(Input {
             config: Ok(&config),
-            arquivo: None,
+            file: None,
             segredos: &segredos,
-            chave_llm: Some(&chave_llm_de_teste()),
-            ambiente: None,
-            agentes_por_provedor: None,
+            llm_key: Some(&llm_key_for_test()),
+            environment: None,
+            agents_by_provider: None,
         });
-        assert!(relatorio.tem_erro());
-        let v = achar(&relatorio, "variável POPH_CHAVE_CIFRA");
-        assert_eq!(v.nivel, Nivel::Erro);
-        assert!(v.detalhe.contains("POPH_CHAVE_CIFRA"));
+        assert!(report.has_error());
+        let v = achar(&report, "variável POPH_CHAVE_CIFRA");
+        assert_eq!(v.nivel, Nivel::Error);
+        assert!(v.detail.contains("POPH_CHAVE_CIFRA"));
     }
 
     #[test]
-    fn nome_da_chave_do_llm_vem_da_configuracao() {
-        let pasta = pasta_temporaria("chave-llm");
-        let mut config = config_em(&pasta);
+    fn llm_key_name_comes_from_config() {
+        let folder = temp_folder("chave-llm");
+        let mut config = config_em(&folder);
         config.llm.api_key_env = "MINHA_CHAVE_LLM".to_owned();
-        let relatorio = gerar(Entrada {
+        let report = generate(Input {
             config: Ok(&config),
-            arquivo: None,
-            segredos: &segredos_completos(),
-            chave_llm: None,
-            ambiente: None,
-            agentes_por_provedor: None,
+            file: None,
+            segredos: &full_secrets(),
+            llm_key: None,
+            environment: None,
+            agents_by_provider: None,
         });
-        let v = achar(&relatorio, "variável MINHA_CHAVE_LLM");
-        assert_eq!(v.nivel, Nivel::Erro);
-        assert!(v.detalhe.contains("MINHA_CHAVE_LLM"), "{}", v.detalhe);
-        assert!(!relatorio.texto().contains("variável ANTIGRAVITY_API_KEY"));
+        let v = achar(&report, "variável MINHA_CHAVE_LLM");
+        assert_eq!(v.nivel, Nivel::Error);
+        assert!(v.detail.contains("MINHA_CHAVE_LLM"), "{}", v.detail);
+        assert!(!report.texto().contains("variável ANTIGRAVITY_API_KEY"));
     }
 
     #[test]
-    fn chave_do_jev_so_e_exigida_com_jev_ligado() {
-        let pasta = pasta_temporaria("jev");
-        let mut config = config_em(&pasta);
-        let segredos = segredos_completos();
-        let desligado = gerar(Entrada {
+    fn jev_key_required_only_with_jev_enabled() {
+        let folder = temp_folder("jev");
+        let mut config = config_em(&folder);
+        let segredos = full_secrets();
+        let disabled = generate(Input {
             config: Ok(&config),
-            arquivo: None,
+            file: None,
             segredos: &segredos,
-            chave_llm: Some(&chave_llm_de_teste()),
-            ambiente: None,
-            agentes_por_provedor: None,
+            llm_key: Some(&llm_key_for_test()),
+            environment: None,
+            agents_by_provider: None,
         });
         assert!(
-            desligado
-                .verificacoes
+            disabled
+                .checks
                 .iter()
                 .all(|v| v.nome != "variável TYPESAFE_API_KEY")
         );
         config.jev.enabled = true;
-        let ligado = gerar(Entrada {
+        let enabled = generate(Input {
             config: Ok(&config),
-            arquivo: None,
+            file: None,
             segredos: &segredos,
-            chave_llm: Some(&chave_llm_de_teste()),
-            ambiente: None,
-            agentes_por_provedor: None,
+            llm_key: Some(&llm_key_for_test()),
+            environment: None,
+            agents_by_provider: None,
         });
         assert_eq!(
-            achar(&ligado, "variável TYPESAFE_API_KEY").nivel,
-            Nivel::Erro
+            achar(&enabled, "variável TYPESAFE_API_KEY").nivel,
+            Nivel::Error
         );
     }
 
     #[test]
-    fn segredo_nunca_aparece_em_texto_nem_em_json() {
-        let pasta = pasta_temporaria("segredo");
-        let config = config_em(&pasta);
-        let segredos = segredos_completos();
-        let relatorio = gerar(Entrada {
+    fn secret_never_appears_in_text_or_json() {
+        let folder = temp_folder("segredo");
+        let config = config_em(&folder);
+        let segredos = full_secrets();
+        let report = generate(Input {
             config: Ok(&config),
-            arquivo: None,
+            file: None,
             segredos: &segredos,
-            chave_llm: Some(&chave_llm_de_teste()),
-            ambiente: None,
-            agentes_por_provedor: None,
+            llm_key: Some(&llm_key_for_test()),
+            environment: None,
+            agents_by_provider: None,
         });
-        let texto = relatorio.texto();
-        let json = relatorio.json();
-        for valor in ["SEGREDO-CIFRA-XYZ-1", "SEGREDO-LLM-XYZ-2"] {
-            assert!(!texto.contains(valor), "vazou no texto");
-            assert!(!json.contains(valor), "vazou no JSON");
+        let texto = report.texto();
+        let json = report.json();
+        for value in ["SEGREDO-CIFRA-XYZ-1", "SEGREDO-LLM-XYZ-2"] {
+            assert!(!texto.contains(value), "vazou no texto");
+            assert!(!json.contains(value), "vazou no JSON");
         }
     }
 
     #[test]
-    fn json_tem_formato_estavel() {
-        let pasta = pasta_temporaria("json");
-        let config = config_em(&pasta);
-        let relatorio = gerar(Entrada {
+    fn json_has_stable_format() {
+        let folder = temp_folder("json");
+        let config = config_em(&folder);
+        let report = generate(Input {
             config: Ok(&config),
-            arquivo: None,
-            segredos: &segredos_completos(),
-            chave_llm: Some(&chave_llm_de_teste()),
-            ambiente: None,
-            agentes_por_provedor: None,
+            file: None,
+            segredos: &full_secrets(),
+            llm_key: Some(&llm_key_for_test()),
+            environment: None,
+            agents_by_provider: None,
         });
-        let valor: serde_json::Value =
-            serde_json::from_str(&relatorio.json()).expect("JSON válido");
-        assert_eq!(valor["versao_relatorio"], 1);
-        assert_eq!(valor["status"], "ok");
-        assert_eq!(valor["binario"]["nome"], "poph");
-        assert!(valor["verificacoes"].is_array());
-        let primeira = &valor["verificacoes"][0];
-        assert!(primeira["nome"].is_string());
-        assert!(["ok", "aviso", "erro"].contains(&primeira["nivel"].as_str().unwrap_or("")));
+        let value: serde_json::Value = serde_json::from_str(&report.json()).expect("JSON válido");
+        assert_eq!(value["versao_relatorio"], 1);
+        assert_eq!(value["status"], "ok");
+        assert_eq!(value["binario"]["nome"], "poph");
+        assert!(value["verificacoes"].is_array());
+        let first = &value["verificacoes"][0];
+        assert!(first["nome"].is_string());
+        assert!(["ok", "aviso", "erro"].contains(&first["nivel"].as_str().unwrap_or("")));
     }
 
     #[test]
-    fn banco_migrado_mostra_a_versao_do_esquema() {
-        let pasta = pasta_temporaria("banco");
-        let harness = pasta.join("harness.db");
-        let rag = pasta.join("rag.db");
+    fn migrated_database_shows_schema_version() {
+        let folder = temp_folder("banco");
+        let harness = folder.join("harness.db");
+        let rag = folder.join("rag.db");
         let store = poph_store::Store::open_at(&harness, &rag).expect("cria os bancos");
         drop(store);
 
-        let v = banco("harness.db", &harness);
-        assert_eq!(v.nivel, Nivel::Ok, "{}", v.detalhe);
-        let esperado = format!("versão {}", poph_store::harness_target_version());
-        assert!(v.detalhe.contains(&esperado), "{}", v.detalhe);
+        let v = database_check("harness.db", &harness);
+        assert_eq!(v.nivel, Nivel::Ok, "{}", v.detail);
+        let expected = format!("versão {}", poph_store::harness_target_version());
+        assert!(v.detail.contains(&expected), "{}", v.detail);
 
-        let r = banco("rag.db", &rag);
-        assert_eq!(r.nivel, Nivel::Ok, "{}", r.detalhe);
-        assert!(r.detalhe.contains("versão 0"), "{}", r.detalhe);
+        let r = database_check("rag.db", &rag);
+        assert_eq!(r.nivel, Nivel::Ok, "{}", r.detail);
+        assert!(r.detail.contains("versão 0"), "{}", r.detail);
     }
 
     #[test]
-    fn banco_existente_sem_migracao_vira_aviso() {
-        let pasta = pasta_temporaria("sem-migracao");
-        let caminho = pasta.join("rag.db");
-        fs::write(&caminho, b"").expect("escreve arquivo vazio");
-        let v = banco("rag.db", &caminho);
-        assert_eq!(v.nivel, Nivel::Aviso, "{}", v.detalhe);
-        assert!(v.detalhe.contains("poph migrate"), "{}", v.detalhe);
+    fn unmigrated_database_is_warning() {
+        let folder = temp_folder("sem-migracao");
+        let path = folder.join("rag.db");
+        fs::write(&path, b"").expect("escreve arquivo vazio");
+        let v = database_check("rag.db", &path);
+        assert_eq!(v.nivel, Nivel::Warning, "{}", v.detail);
+        assert!(v.detail.contains("poph migrate"), "{}", v.detail);
     }
 
     #[test]
-    fn arquivo_que_nao_e_sqlite_vira_erro() {
-        let pasta = pasta_temporaria("lixo");
-        let caminho = pasta.join("rag.db");
-        fs::write(&caminho, b"isto nao e um banco").expect("escreve");
-        assert_eq!(banco("rag.db", &caminho).nivel, Nivel::Erro);
+    fn non_sqlite_file_is_error() {
+        let folder = temp_folder("lixo");
+        let path = folder.join("rag.db");
+        fs::write(&path, b"isto nao e um banco").expect("escreve");
+        assert_eq!(database_check("rag.db", &path).nivel, Nivel::Error);
     }
 
     #[test]
-    fn pasta_de_dados_como_arquivo_vira_erro() {
-        let pasta = pasta_temporaria("arquivo-no-lugar");
-        let caminho = pasta.join("dados");
-        fs::write(&caminho, b"x").expect("escreve");
-        assert_eq!(pasta_de_dados(&caminho).nivel, Nivel::Erro);
+    fn data_folder_as_file_is_error() {
+        let folder = temp_folder("arquivo-no-lugar");
+        let path = folder.join("dados");
+        fs::write(&path, b"x").expect("escreve");
+        assert_eq!(data_folder(&path).nivel, Nivel::Error);
     }
 
     #[test]
-    fn erro_de_configuracao_aparece_no_relatorio() {
-        let erro = ErroConfig::Chave {
+    fn config_error_appears_in_report() {
+        let error = ErroConfig::Chave {
             origem: "poph.toml".to_owned(),
             chave: "servidor.portaa".to_owned(),
             motivo: "unknown field".to_owned(),
         };
-        let relatorio = gerar(Entrada {
-            config: Err(&erro),
-            arquivo: None,
-            segredos: &segredos_completos(),
-            chave_llm: Some(&chave_llm_de_teste()),
-            ambiente: None,
-            agentes_por_provedor: None,
+        let report = generate(Input {
+            config: Err(&error),
+            file: None,
+            segredos: &full_secrets(),
+            llm_key: Some(&llm_key_for_test()),
+            environment: None,
+            agents_by_provider: None,
         });
-        assert!(relatorio.tem_erro());
-        assert!(relatorio.texto().contains("servidor.portaa"));
+        assert!(report.has_error());
+        assert!(report.texto().contains("servidor.portaa"));
     }
 }

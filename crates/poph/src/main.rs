@@ -95,7 +95,7 @@ enum Comando {
     Department(departamento::AcaoDepartamento),
     /// Base de conhecimento: grupos, itens, vínculo com agentes e índice (HR-17).
     #[command(subcommand)]
-    Kb(kb::AcaoKb),
+    Kb(kb::KbAction),
     /// Índice da busca semântica: `poph rag reindex` (mesmo comando do `poph kb reindex`).
     #[command(subcommand)]
     Rag(rag::AcaoRag),
@@ -190,9 +190,7 @@ fn main() -> ExitCode {
         Comando::Matrix(acao) => {
             matrix::executar(cli.config, &ambiente, cli.offline, cli.org.as_deref(), acao)
         }
-        Comando::Kb(acao) => {
-            kb::executar(cli.config, &ambiente, cli.offline, cli.org.as_deref(), acao)
-        }
+        Comando::Kb(acao) => kb::run(cli.config, &ambiente, cli.offline, cli.org.as_deref(), acao),
         Comando::Rag(acao) => {
             rag::executar(cli.config, &ambiente, cli.offline, cli.org.as_deref(), acao)
         }
@@ -311,13 +309,13 @@ fn executar_doctor(
         .as_ref()
         .ok()
         .and_then(|config| poph_store::agents_by_provider_at(&config.harness_db()).ok());
-    let relatorio = doctor::gerar(doctor::Entrada {
+    let relatorio = doctor::generate(doctor::Input {
         config: carregada.as_ref(),
-        arquivo: arquivo.as_deref(),
+        file: arquivo.as_deref(),
         segredos: &segredos,
-        chave_llm: chave_llm.as_ref(),
-        ambiente: Some(ambiente),
-        agentes_por_provedor: agentes_por_provedor.as_deref(),
+        llm_key: chave_llm.as_ref(),
+        environment: Some(ambiente),
+        agents_by_provider: agentes_por_provedor.as_deref(),
     });
 
     if args.json {
@@ -326,7 +324,7 @@ fn executar_doctor(
         print!("{}", relatorio.texto());
     }
 
-    if relatorio.tem_erro() {
+    if relatorio.has_error() {
         ExitCode::from(1)
     } else {
         ExitCode::SUCCESS
