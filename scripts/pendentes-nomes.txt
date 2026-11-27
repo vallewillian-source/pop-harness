@@ -9,16 +9,7 @@ M11d	194	crates/poph-server/tests/conversas_filtros.rs
 M11d	174	crates/poph-server/tests/conversas_transferencia.rs
 M11d	398	crates/poph-server/tests/fichas_acoes.rs
 M11d	315	crates/poph-server/tests/fichas_leitura.rs
-M11d	362	crates/poph-server/tests/fluxos_api.rs
-M11d	220	crates/poph-server/tests/fluxos_contadores.rs
-M11d	252	crates/poph-server/tests/fluxos_e2e.rs
-M11d	621	crates/poph-server/tests/fluxos_efeitos.rs
-M11d	72	crates/poph-server/tests/fluxos_limites.rs
-M11d	51	crates/poph-server/tests/fluxos_metricas.rs
-M11d	443	crates/poph-server/tests/saida_whatsapp.rs
-M11d	585	crates/poph-server/tests/turno_whatsapp.rs
 M11d	555	crates/poph-server/tests/webhook_evolution.rs
-M11d	390	crates/poph-server/tests/whatsapp_admin.rs
 M12a	6	crates/poph/examples/semear_org.rs
 M12a	104	crates/poph/src/apoio.rs
 M12a	180	crates/poph/src/arquivo.rs
