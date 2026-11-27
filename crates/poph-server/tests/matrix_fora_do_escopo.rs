@@ -23,8 +23,8 @@ use poph_matrix::error::CallError;
 use poph_matrix::format::Outbound;
 use poph_matrix::rooms::{ConversationToRoom, RoomError};
 use poph_matrix::users::Ghost;
-use poph_server::matrix_espelho::{
-    AvisoNaSala, DestinoMatrix, EnvioMidia, EspelhoMatrix, MidiaPublicada,
+use poph_server::matrix_mirror::{
+    AssetSend, MatrixMirror, MatrixTarget, PublishedAsset, RoomNotice,
 };
 use poph_store::{Direction, NewAgent, NewConversation, NewMessage, NewOrg, Origin, Role, Store};
 use poph_types::{AgentId, ConversationId, MatrixConfig, OrgId, UnsupportedContent};
@@ -236,7 +236,7 @@ fn transitoria() -> CallError {
 
 struct Sinal(Arc<Falso>);
 
-impl DestinoMatrix for Sinal {
+impl MatrixTarget for Sinal {
     fn ensure_room(
         &self,
         dados: &ConversationToRoom,
@@ -288,21 +288,21 @@ impl DestinoMatrix for Sinal {
     async fn send_asset(
         &self,
         _sala: &str,
-        _envio: &EnvioMidia,
-    ) -> Result<MidiaPublicada, CallError> {
+        _envio: &AssetSend,
+    ) -> Result<PublishedAsset, CallError> {
         // Este destino não publica mídia: nenhuma mensagem do teste tem anexo.
         Err(CallError::Configuration(
             "sem mídia neste destino".to_owned(),
         ))
     }
 
-    async fn avisar(&self, _sala: &str, _aviso: &AvisoNaSala) -> Result<(), CallError> {
+    async fn send_notice(&self, _sala: &str, _aviso: &RoomNotice) -> Result<(), CallError> {
         Ok(())
     }
 }
 
-fn espelho(cenario: &Cenario, falso: Arc<Falso>) -> EspelhoMatrix<Sinal> {
-    EspelhoMatrix::new(cenario.store(), Sinal(falso), &config()).expect("monta o espelho")
+fn espelho(cenario: &Cenario, falso: Arc<Falso>) -> MatrixMirror<Sinal> {
+    MatrixMirror::new(cenario.store(), Sinal(falso), &config()).expect("monta o espelho")
 }
 
 // ───────────────────────────── testes ─────────────────────────────
@@ -328,7 +328,7 @@ async fn os_seis_tipos_viram_aviso_na_sala_e_a_legenda_seguinte_passa() {
 
     let falso = Falso::new();
     let relatorio = espelho(&cenario, Arc::clone(&falso))
-        .ciclo()
+        .cycle()
         .await
         .expect("ciclo");
 
@@ -357,7 +357,7 @@ async fn os_seis_tipos_viram_aviso_na_sala_e_a_legenda_seguinte_passa() {
         ultimo.sender, "@ph_wa_5511977770001:matrix-dev.local",
         "a legenda de texto sai pelo fantasma do cliente, como antes"
     );
-    assert_eq!(relatorio.enviadas, 7);
+    assert_eq!(relatorio.sent, 7);
     assert_eq!(cursor(&store, org), maior_rowid_e_id(&store));
 }
 
@@ -381,9 +381,9 @@ async fn reprocessar_o_aviso_nao_duplica_na_sala() {
     let falso = Falso::new();
     *falso.falhas_transitorias.lock().unwrap() = 1;
     let espelho_ = espelho(&cenario, Arc::clone(&falso));
-    espelho_.ciclo().await.expect("primeiro ciclo");
+    espelho_.cycle().await.expect("primeiro ciclo");
     assert!(falso.textos().is_empty(), "a primeira tentativa falhou");
-    espelho_.ciclo().await.expect("segundo ciclo");
+    espelho_.cycle().await.expect("segundo ciclo");
 
     let textos = falso.textos();
     assert_eq!(textos.len(), 1, "um aviso só na sala: {textos:?}");
@@ -410,7 +410,7 @@ async fn historico_escrito_pelo_atendente_segue_como_texto() {
 
     let falso = Falso::new();
     espelho(&cenario, Arc::clone(&falso))
-        .ciclo()
+        .cycle()
         .await
         .expect("ciclo");
 

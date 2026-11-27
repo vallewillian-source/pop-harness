@@ -39,7 +39,7 @@ use axum::{Json, Router};
 use poph_evolution::{ATTACHMENT_CAP, ConfigEvolution, EvolutionClient};
 use poph_matrix::{ClientConfig, GhostIds, MatrixClient};
 use poph_server::evolution::CanalEvolution;
-use poph_server::{AsReceiver, Estado, PortaDoHarness, RespostaDoAtendente};
+use poph_server::{AsReceiver, AttendantResponse, Estado, HarnessResponsePort};
 use poph_store::{NewAgent, NewConversation, NewOrg, Origin, OutboxState, Page, Store};
 use poph_types::{ConversationId, HarnessConfig, IntegrationId, OrgId, Secret};
 use reqwest::{Client, StatusCode as StatusHttp};
@@ -499,12 +499,12 @@ impl Cenario {
         .expect("cliente do Matrix");
         let ids = GhostIds::new(PREFIXO, SERVER_NAME).expect("ids dos fantasmas");
         let entrega = Arc::new(
-            RespostaDoAtendente::new(
-                Arc::new(PortaDoHarness::fresh(Arc::clone(&self.store))),
+            AttendantResponse::new(
+                Arc::new(HarnessResponsePort::fresh(Arc::clone(&self.store))),
                 Some(cliente_matrix),
                 ids,
             )
-            .com_pasta_de_blobs(self.pasta_blobs.clone()),
+            .with_blob_folder(self.pasta_blobs.clone()),
         );
 
         let mut config = HarnessConfig::default();
@@ -611,7 +611,7 @@ impl Drop for Cenario {
 struct Servidor {
     base: String,
     client: Client,
-    entrega: Arc<RespostaDoAtendente>,
+    entrega: Arc<AttendantResponse>,
     desligar: Option<oneshot::Sender<()>>,
 }
 
@@ -1063,8 +1063,8 @@ async fn reentrega_do_mesmo_arquivo_nao_duplica_o_envio() {
     assert_eq!(
         servidor
             .entrega
-            .contadores()
-            .duplicadas
+            .counters()
+            .duplicates
             .load(Ordering::SeqCst),
         1,
         "a transação nova com o mesmo evento foi reconhecida como duplicada"
@@ -1216,7 +1216,7 @@ async fn conversa_encerrada_nao_envia_o_arquivo_e_avisa_na_sala() {
     .await;
     assert_eq!(
         unico_aviso(&cenario),
-        poph_server::matrix_resposta::AVISO_CONVERSA_ENCERRADA
+        poph_server::matrix_response::CLOSED_CONVERSATION_NOTICE
     );
     assert!(
         cenario.envios().is_empty(),
@@ -1439,8 +1439,8 @@ async fn audio_e_video_do_atendente_chegam_ao_whatsapp_sem_aviso() {
     assert_eq!(
         servidor
             .entrega
-            .contadores()
-            .duplicadas
+            .counters()
+            .duplicates
             .load(Ordering::SeqCst),
         2,
         "os dois eventos da transação nova foram reconhecidos como duplicados"

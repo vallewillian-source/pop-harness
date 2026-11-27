@@ -34,7 +34,7 @@ use poph_matrix::config::MatrixModule;
 use poph_matrix::config::MatrixSecrets;
 use poph_matrix::spaces::Spaces;
 use poph_server::Estado;
-use poph_server::matrix_inicio::{self, AjustesDeInicio, EspacosDoModulo, PortaEspacosStore};
+use poph_server::matrix_beginning::{self, ModuleSpaces, SpaceStorePort, StartupSettings};
 use poph_store::{
     Direction, NewAgent, NewConversation, NewDepartment, NewMessage, NewOrg, Origin, Role, Store,
 };
@@ -584,11 +584,11 @@ impl Cenario {
     }
 
     /// Serviço de espaços com a porta real sobre o banco, como a raiz de composição monta.
-    fn spaces(&self) -> EspacosDoModulo {
+    fn spaces(&self) -> ModuleSpaces {
         Spaces::of_config(
             poph_matrix::MatrixClient::from_parts(&self.modulo().config, &self.modulo().secrets)
                 .expect("cliente do Matrix"),
-            PortaEspacosStore(Arc::clone(&self.store)),
+            SpaceStorePort(Arc::clone(&self.store)),
             &self.modulo().config,
         )
         .expect("espaços")
@@ -774,13 +774,13 @@ async fn estado_da_org_diz_conectado_quando_a_sonda_fala_com_o_synapse() {
     let token = cenario.token(org, "conectado");
 
     let mut state = cenario.state();
-    let rodando = matrix_inicio::iniciar_com_ajustes(
+    let rodando = matrix_beginning::start_with_settings(
         &mut state,
         cenario.modulo(),
-        AjustesDeInicio {
-            periodo_da_sonda: Duration::from_millis(20),
-            teto_da_sonda: Duration::from_millis(50),
-            prazo_de_parada: Duration::from_secs(2),
+        StartupSettings {
+            probe_period: Duration::from_millis(20),
+            probe_delay_cap: Duration::from_millis(50),
+            shutdown_timeout: Duration::from_secs(2),
         },
     )
     .expect("módulo ligado");
@@ -803,7 +803,7 @@ async fn estado_da_org_diz_conectado_quando_a_sonda_fala_com_o_synapse() {
         "o atraso é número, não texto"
     );
 
-    rodando.parar().await;
+    rodando.stop().await;
     let _ = desligar.send(());
 }
 
@@ -1006,7 +1006,7 @@ async fn espaco_do_departamento_e_criado_uma_vez_ligado_e_desligado() {
 
     // Só o serviço de espaços na API (sem os laços do módulo: a asserção fica determinística).
     let mut state = cenario.state();
-    state.ligar_espacos_do_matrix(Arc::new(cenario.spaces()));
+    state.set_matrix_spaces(Arc::new(cenario.spaces()));
     let (base, desligar) = servir(state).await;
     let rota = format!("/admin/v1/orgs/{org}/matrix/spaces");
 

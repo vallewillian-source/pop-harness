@@ -75,14 +75,14 @@ pub struct Estado {
     pub matrix_as: Option<Arc<crate::api::matrix_as::AsReceiver>>,
     /// Métricas `poph_matrix_*` (MX-26), declaradas no registro só quando o módulo é preparado. Ver
     /// [`Estado::metricas_matrix`].
-    matrix_metricas: Arc<Mutex<Option<Arc<crate::matrix_metricas::MetricasMatrix>>>>,
+    matrix_metrics: Arc<Mutex<Option<Arc<crate::matrix_metrics::MetricsMatrix>>>>,
     /// Sinal de vida do módulo Matrix (MX-20): `None` = módulo desligado nesta instância. É a sonda
     /// de conexão que a API administrativa (MX-22) lê como "conectado".
-    matrix_conexao: Option<Arc<crate::matrix_inicio::SinalDeConexao>>,
+    matrix_conexao: Option<Arc<crate::matrix_beginning::ConnectionSignal>>,
     /// Espaços por departamento do módulo Matrix (MX-12), montados pela raiz de composição (MX-20)
     /// para a API administrativa (MX-22) criar e ligar espaço com a mesma peça que o laço de estado
     /// usa. `None` = módulo desligado nesta instância: as rotas de espaço respondem `409`.
-    matrix_espacos: Option<Arc<crate::matrix_inicio::EspacosDoModulo>>,
+    matrix_espacos: Option<Arc<crate::matrix_beginning::ModuleSpaces>>,
     /// Cache das revisões compiladas de fluxo (FX-19), com o teto `fluxos.cache_revisoes_mb` (FX-26).
     /// Um só por processo: `Clone` compartilha o estado.
     pub cache_fluxos: Arc<RevisionCache>,
@@ -165,7 +165,7 @@ impl Estado {
             validade_da_reserva: VALIDADE_DA_RESERVA,
             // O módulo Matrix só existe quando a raiz de composição injeta o receptor (MX-20).
             matrix_as: None,
-            matrix_metricas: Arc::new(Mutex::new(None)),
+            matrix_metrics: Arc::new(Mutex::new(None)),
             matrix_conexao: None,
             matrix_espacos: None,
             // Modo instância única até a raiz de composição ler o `cluster.toml` (HR-50a).
@@ -319,19 +319,26 @@ impl Estado {
         self
     }
 
+    pub(crate) fn matrix_blob_folder(&self) -> &std::path::Path {
+        &self.arquivos.blob_folder
+    }
+
     /// Liga o receptor já montado na instância viva (MX-20): é o que a raiz de composição usa,
     /// porque ela precisa mexer no estado que vai ser servido, não numa cópia.
-    pub fn ligar_matrix_as(&mut self, receptor: Arc<crate::api::matrix_as::AsReceiver>) {
+    pub fn set_matrix_as(&mut self, receptor: Arc<crate::api::matrix_as::AsReceiver>) {
         self.matrix_as = Some(receptor);
     }
 
     /// Guarda o sinal de vida do módulo (MX-20) para quem pergunta depois (`/admin/v1/...`).
-    pub fn ligar_sinal_do_matrix(&mut self, sinal: Arc<crate::matrix_inicio::SinalDeConexao>) {
+    pub fn set_matrix_connection_signal(
+        &mut self,
+        sinal: Arc<crate::matrix_beginning::ConnectionSignal>,
+    ) {
         self.matrix_conexao = Some(sinal);
     }
 
     /// Guarda o serviço de espaços por departamento para a API administrativa (MX-22).
-    pub fn ligar_espacos_do_matrix(&mut self, espacos: Arc<crate::matrix_inicio::EspacosDoModulo>) {
+    pub fn set_matrix_spaces(&mut self, espacos: Arc<crate::matrix_beginning::ModuleSpaces>) {
         self.matrix_espacos = Some(espacos);
     }
 
@@ -339,7 +346,7 @@ impl Estado {
     ///
     /// `None` = módulo desligado (ou sem configuração/segredos para subir): a API administrativa
     /// responde `409` e não tenta falar com o Synapse.
-    pub fn matrix_espacos(&self) -> Option<Arc<crate::matrix_inicio::EspacosDoModulo>> {
+    pub fn matrix_espacos(&self) -> Option<Arc<crate::matrix_beginning::ModuleSpaces>> {
         self.matrix_espacos.as_ref().map(Arc::clone)
     }
 
@@ -348,7 +355,7 @@ impl Estado {
     /// É o "conectado" do estado do módulo: `Some(false)` significa degradado (o servidor segue
     /// atendendo; os laços retentam com espera crescente).
     pub fn matrix_conectado(&self) -> Option<bool> {
-        self.matrix_conexao.as_ref().map(|sinal| sinal.conectado())
+        self.matrix_conexao.as_ref().map(|sinal| sinal.connected())
     }
 
     /// Métricas `poph_matrix_*` do módulo Matrix (MX-26). Declara-as no registro do processo na
@@ -358,20 +365,20 @@ impl Estado {
     /// Devolve `None` quando o módulo não está ligado nesta instância (`[matrix]` ausente ou
     /// `habilitado = false`): assim nenhuma `poph_matrix_*` entra no `/metrics` de uma instância que
     /// não usa o módulo, mesmo que quem chama não confira a configuração antes.
-    pub fn metricas_matrix(
+    pub fn matrix_metrics(
         &self,
-    ) -> poph_types::DomainResult<Option<Arc<crate::matrix_metricas::MetricasMatrix>>> {
+    ) -> poph_types::DomainResult<Option<Arc<crate::matrix_metrics::MetricsMatrix>>> {
         if !self.modulo_matrix_ligado() {
             return Ok(None);
         }
         let mut guarda = self
-            .matrix_metricas
+            .matrix_metrics
             .lock()
             .unwrap_or_else(|veneno| veneno.into_inner());
         if let Some(ja) = guarda.as_ref() {
             return Ok(Some(Arc::clone(ja)));
         }
-        let metricas = Arc::new(crate::matrix_metricas::MetricasMatrix::registrar(
+        let metricas = Arc::new(crate::matrix_metrics::MetricsMatrix::register(
             &self.registro,
         )?);
         *guarda = Some(Arc::clone(&metricas));

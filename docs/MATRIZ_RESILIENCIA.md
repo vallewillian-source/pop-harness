@@ -135,7 +135,7 @@ summary shows the median and p95 of each scenario.
   in the space and leaves with `JaPosicionada` (already positioned) before inviting. The number of failed invites comes
   back in the result, but is not stored anywhere.
 - **Impact:** the space member who did not receive the invite does not join the conversation. From the code of
-  `matrix_estado.rs`, `place` runs for each conversation changed, so the customer's next message also does not fix
+  `matrix_state.rs`, `place` runs for each conversation changed, so the customer's next message also does not fix
   this. I read this last part in the code; I did not test it end to end.
 - **What the MX-12 report said:** "the invite is repeated on the next pass". The test shows this does not happen.
 - **Owner:** `espacos.rs` belongs to MX-12. I did not fix it, as per this task's rule.

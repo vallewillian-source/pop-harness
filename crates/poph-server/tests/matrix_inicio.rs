@@ -25,8 +25,8 @@ use axum::http::{HeaderMap, Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use poph_matrix::config::{MatrixModule, MatrixSecrets};
 use poph_matrix::rooms::METADATA_KIND;
-use poph_server::matrix_inicio::AjustesDeInicio;
-use poph_server::{Estado, matrix_inicio};
+use poph_server::matrix_beginning::StartupSettings;
+use poph_server::{Estado, matrix_beginning};
 use poph_store::{
     ConversationStatus, Direction, FilterConversations, NewAgent, NewConversation, NewDepartment,
     NewMessage, NewOrg, Origin, OutboxState, Page, Role, Store,
@@ -688,7 +688,7 @@ async fn modulo_desligado_nao_sobe_tarefas_nem_publica_metricas() {
         config.matrix = secao;
         let mut state = Estado::novo(Arc::clone(&cenario.store), config).expect("estado");
 
-        let rodando = matrix_inicio::iniciar(&mut state);
+        let rodando = matrix_beginning::start(&mut state);
         assert!(
             rodando.is_none(),
             "módulo desligado não pode render tarefa do módulo"
@@ -737,7 +737,7 @@ async fn synapse_fora_na_subida_nao_impede_o_serve() {
     // Porta fechada: qualquer chamada falha na conexão.
     let cenario = Cenario::new("fora", "http://127.0.0.1:9".to_owned());
     let mut state = cenario.state();
-    let rodando = matrix_inicio::iniciar_com(&mut state, cenario.modulo())
+    let rodando = matrix_beginning::start_with(&mut state, cenario.modulo())
         .expect("módulo ligado sobe mesmo com o Synapse fora");
     assert!(state.matrix_as.is_some(), "receptor injetado");
 
@@ -755,7 +755,7 @@ async fn synapse_fora_na_subida_nao_impede_o_serve() {
     assert_eq!(status, StatusCode::OK);
 
     assert!(
-        !rodando.conectado(),
+        !rodando.connected(),
         "sem Synapse do outro lado, o módulo está degradado"
     );
     assert_eq!(
@@ -764,8 +764,8 @@ async fn synapse_fora_na_subida_nao_impede_o_serve() {
         "o estado do módulo diz 'degradado' para a API administrativa"
     );
     rodando
-        .com_prazo_de_parada(Duration::from_secs(2))
-        .parar()
+        .with_shutdown_timeout(Duration::from_secs(2))
+        .stop()
         .await;
     let _ = desligar.send(());
 }
@@ -776,27 +776,27 @@ async fn sonda_marca_conectado_e_volta_a_degradar() {
     let cenario = Cenario::new("sonda", synapse.endereco.clone());
     let mut state = cenario.state();
     // Sonda rápida: em produção ela é de 30 s, aqui de 50 ms.
-    let ajustes = AjustesDeInicio {
-        periodo_da_sonda: Duration::from_millis(50),
-        teto_da_sonda: Duration::from_millis(200),
-        prazo_de_parada: Duration::from_secs(2),
+    let ajustes = StartupSettings {
+        probe_period: Duration::from_millis(50),
+        probe_delay_cap: Duration::from_millis(200),
+        shutdown_timeout: Duration::from_secs(2),
     };
-    let rodando = matrix_inicio::iniciar_com_ajustes(&mut state, cenario.modulo(), ajustes)
+    let rodando = matrix_beginning::start_with_settings(&mut state, cenario.modulo(), ajustes)
         .expect("módulo ligado");
 
-    esperar_ate("a sonda marcar conectado", || rodando.conectado()).await;
+    esperar_ate("a sonda marcar conectado", || rodando.connected()).await;
     assert!(synapse.versoes() >= 1, "a sonda fala com o Synapse");
     assert_eq!(state.matrix_conectado(), Some(true));
 
     drop(synapse);
     esperar_ate("a sonda marcar degradado depois da queda", || {
-        !rodando.conectado()
+        !rodando.connected()
     })
     .await;
 
     rodando
-        .com_prazo_de_parada(Duration::from_secs(2))
-        .parar()
+        .with_shutdown_timeout(Duration::from_secs(2))
+        .stop()
         .await;
 }
 
@@ -836,7 +836,7 @@ async fn sala_criada_usa_o_nome_do_cliente_e_espelha_a_mensagem() {
     let cena = cena("nome", synapse.endereco.clone());
     let mut state = cena.cenario.state();
     let rodando =
-        matrix_inicio::iniciar_com(&mut state, cena.cenario.modulo()).expect("módulo ligado");
+        matrix_beginning::start_with(&mut state, cena.cenario.modulo()).expect("módulo ligado");
 
     esperar_ate("o Synapse receber a mensagem", || {
         synapse.total_de_mensagens() >= 1
@@ -884,8 +884,8 @@ async fn sala_criada_usa_o_nome_do_cliente_e_espelha_a_mensagem() {
     assert_eq!(gravada.room_id, room);
 
     rodando
-        .com_prazo_de_parada(Duration::from_secs(2))
-        .parar()
+        .with_shutdown_timeout(Duration::from_secs(2))
+        .stop()
         .await;
 }
 
@@ -900,7 +900,8 @@ async fn sala_criada_depois_da_passagem_do_estado_ja_entra_no_espaco_do_departam
     cenario.store.matrix().enable(org).expect("liga a org");
 
     let mut state = cenario.state();
-    let rodando = matrix_inicio::iniciar_com(&mut state, cenario.modulo()).expect("módulo ligado");
+    let rodando =
+        matrix_beginning::start_with(&mut state, cenario.modulo()).expect("módulo ligado");
 
     // O laço de estado vê a conversa **antes** de a sala existir (não há mensagem ainda): é o caso
     // em que antes a sala nascia fora do espaço e só entrava na próxima alteração da conversa.
@@ -983,8 +984,8 @@ async fn sala_criada_depois_da_passagem_do_estado_ja_entra_no_espaco_do_departam
     );
 
     rodando
-        .com_prazo_de_parada(Duration::from_secs(2))
-        .parar()
+        .with_shutdown_timeout(Duration::from_secs(2))
+        .stop()
         .await;
 }
 
@@ -994,7 +995,7 @@ async fn desligar_org_para_o_espelho_dela_sem_reiniciar() {
     let cena = cena("org", synapse.endereco.clone());
     let mut state = cena.cenario.state();
     let rodando =
-        matrix_inicio::iniciar_com(&mut state, cena.cenario.modulo()).expect("módulo ligado");
+        matrix_beginning::start_with(&mut state, cena.cenario.modulo()).expect("módulo ligado");
 
     esperar_ate("a primeira mensagem ser espelhada", || {
         synapse.total_de_mensagens() >= 1
@@ -1033,8 +1034,8 @@ async fn desligar_org_para_o_espelho_dela_sem_reiniciar() {
     .await;
 
     rodando
-        .com_prazo_de_parada(Duration::from_secs(2))
-        .parar()
+        .with_shutdown_timeout(Duration::from_secs(2))
+        .stop()
         .await;
 }
 
@@ -1049,7 +1050,7 @@ async fn termino_ordenado_nao_perde_mensagem_pendente() {
 
     let mut state = cena.cenario.state();
     let rodando =
-        matrix_inicio::iniciar_com(&mut state, cena.cenario.modulo()).expect("módulo ligado");
+        matrix_beginning::start_with(&mut state, cena.cenario.modulo()).expect("módulo ligado");
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(
         synapse.total_de_mensagens(),
@@ -1066,15 +1067,15 @@ async fn termino_ordenado_nao_perde_mensagem_pendente() {
     assert_eq!(cursor, 0, "o cursor não anda sem sucesso");
 
     rodando
-        .com_prazo_de_parada(Duration::from_secs(5))
-        .parar()
+        .with_shutdown_timeout(Duration::from_secs(5))
+        .stop()
         .await;
 
     // Subida seguinte, com o Synapse de volta: a mensagem pendente sai, uma vez só.
     synapse.falhar_envio(false);
     let mut state = cena.cenario.state();
     let rodando =
-        matrix_inicio::iniciar_com(&mut state, cena.cenario.modulo()).expect("módulo ligado");
+        matrix_beginning::start_with(&mut state, cena.cenario.modulo()).expect("módulo ligado");
     esperar_ate("a mensagem pendente sair na subida seguinte", || {
         synapse.total_de_mensagens() >= 1
     })
@@ -1086,8 +1087,8 @@ async fn termino_ordenado_nao_perde_mensagem_pendente() {
         "uma entrega só, sem duplicar"
     );
     rodando
-        .com_prazo_de_parada(Duration::from_secs(2))
-        .parar()
+        .with_shutdown_timeout(Duration::from_secs(2))
+        .stop()
         .await;
 }
 
@@ -1099,7 +1100,7 @@ async fn resposta_do_atendente_esta_ligada_no_servidor() {
     let cena = cena("resposta", synapse.endereco.clone());
     let mut state = cena.cenario.state();
     let rodando =
-        matrix_inicio::iniciar_com(&mut state, cena.cenario.modulo()).expect("módulo ligado");
+        matrix_beginning::start_with(&mut state, cena.cenario.modulo()).expect("módulo ligado");
     esperar_ate("a sala da conversa existir", || !synapse.rooms().is_empty()).await;
     let (room, _) = synapse.rooms().pop().expect("sala criada");
 
@@ -1149,8 +1150,8 @@ async fn resposta_do_atendente_esta_ligada_no_servidor() {
 
     let _ = desligar.send(());
     rodando
-        .com_prazo_de_parada(Duration::from_secs(2))
-        .parar()
+        .with_shutdown_timeout(Duration::from_secs(2))
+        .stop()
         .await;
 }
 
@@ -1163,7 +1164,7 @@ async fn arquivo_do_atendente_esta_ligado_no_servidor() {
     let cena = cena("arquivo", synapse.endereco.clone());
     let mut state = cena.cenario.state();
     let rodando =
-        matrix_inicio::iniciar_com(&mut state, cena.cenario.modulo()).expect("módulo ligado");
+        matrix_beginning::start_with(&mut state, cena.cenario.modulo()).expect("módulo ligado");
     esperar_ate("a sala da conversa existir", || !synapse.rooms().is_empty()).await;
     let (room, _) = synapse.rooms().pop().expect("sala criada");
 
@@ -1208,8 +1209,8 @@ async fn arquivo_do_atendente_esta_ligado_no_servidor() {
 
     let _ = desligar.send(());
     rodando
-        .com_prazo_de_parada(Duration::from_secs(2))
-        .parar()
+        .with_shutdown_timeout(Duration::from_secs(2))
+        .stop()
         .await;
 }
 
@@ -1234,7 +1235,8 @@ async fn metadata_leva_o_external_peer_sem_espacos_na_criacao_e_no_fechamento() 
     cenario.message(org, conversation, "primeira resposta do agente");
 
     let mut state = cenario.state();
-    let rodando = matrix_inicio::iniciar_com(&mut state, cenario.modulo()).expect("módulo ligado");
+    let rodando =
+        matrix_beginning::start_with(&mut state, cenario.modulo()).expect("módulo ligado");
 
     esperar_ate("a sala criada com metadata", || {
         metadata_da_sala_criada(&synapse).is_some()
@@ -1274,8 +1276,8 @@ async fn metadata_leva_o_external_peer_sem_espacos_na_criacao_e_no_fechamento() 
     );
 
     rodando
-        .com_prazo_de_parada(Duration::from_secs(2))
-        .parar()
+        .with_shutdown_timeout(Duration::from_secs(2))
+        .stop()
         .await;
 }
 
@@ -1304,7 +1306,8 @@ async fn conversa_sem_peer_usa_o_id_da_conversa_no_metadata() {
     cenario.message(org, conversation, "primeira resposta do agente");
 
     let mut state = cenario.state();
-    let rodando = matrix_inicio::iniciar_com(&mut state, cenario.modulo()).expect("módulo ligado");
+    let rodando =
+        matrix_beginning::start_with(&mut state, cenario.modulo()).expect("módulo ligado");
 
     esperar_ate("a sala criada com metadata", || {
         metadata_da_sala_criada(&synapse).is_some()
@@ -1318,8 +1321,8 @@ async fn conversa_sem_peer_usa_o_id_da_conversa_no_metadata() {
     );
 
     rodando
-        .com_prazo_de_parada(Duration::from_secs(2))
-        .parar()
+        .with_shutdown_timeout(Duration::from_secs(2))
+        .stop()
         .await;
 }
 
@@ -1338,7 +1341,8 @@ async fn listagem_por_cliente_acha_so_a_conversa_do_identificador_do_metadata() 
     cenario.message(org_a, conversa_a, "primeira resposta do agente");
 
     let mut state = cenario.state();
-    let rodando = matrix_inicio::iniciar_com(&mut state, cenario.modulo()).expect("módulo ligado");
+    let rodando =
+        matrix_beginning::start_with(&mut state, cenario.modulo()).expect("módulo ligado");
 
     esperar_ate("a sala criada com metadata", || {
         metadata_da_sala_criada(&synapse).is_some()
@@ -1385,7 +1389,7 @@ async fn listagem_por_cliente_acha_so_a_conversa_do_identificador_do_metadata() 
     );
 
     rodando
-        .com_prazo_de_parada(Duration::from_secs(2))
-        .parar()
+        .with_shutdown_timeout(Duration::from_secs(2))
+        .stop()
         .await;
 }

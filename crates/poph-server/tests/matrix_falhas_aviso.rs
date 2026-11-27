@@ -32,7 +32,7 @@ use poph_agent::Backoff;
 use poph_evolution::{ATTACHMENT_CAP, ConfigEvolution, EvolutionClient};
 use poph_matrix::{ClientConfig, GhostIds, MatrixClient};
 use poph_server::evolution::CanalEvolution;
-use poph_server::matrix_falhas_aviso::{AvisoDeFalhas, AvisoNoSynapse, PortaFalhasDoHarness};
+use poph_server::matrix_failure_notice::{FailureNotice, HarnessFailuresPort, SynapseNotice};
 use poph_server::saida_whatsapp::{OpcoesSaidaWhatsApp, SaidaWhatsApp};
 use poph_store::{
     HumanResponse, NewAgent, NewConversation, NewHumanResponse, NewOrg, NewOutboxItem, OutboxItem,
@@ -397,7 +397,7 @@ impl Cenario {
     }
 
     /// O serviço de aviso, como um processo novo o montaria (sem nada na memória).
-    fn aviso(&self, store: Arc<Store>) -> AvisoDeFalhas {
+    fn aviso(&self, store: Arc<Store>) -> FailureNotice {
         let client = MatrixClient::new(
             ClientConfig::new(
                 self.url_synapse.clone(),
@@ -408,9 +408,9 @@ impl Cenario {
         )
         .expect("cliente do Matrix");
         let ids = GhostIds::new(PREFIXO, SERVER_NAME).expect("ids dos fantasmas");
-        AvisoDeFalhas::new(
-            Arc::new(PortaFalhasDoHarness::fresh(store)),
-            AvisoNoSynapse::new(client, ids),
+        FailureNotice::new(
+            Arc::new(HarnessFailuresPort::fresh(store)),
+            SynapseNotice::new(client, ids),
         )
     }
 
@@ -502,8 +502,8 @@ async fn falha_definitiva_da_resposta_humana_avisa_a_sala_uma_vez() {
         "a fila marcou a falha"
     );
 
-    let relato = cenario.aviso(Arc::clone(&cenario.store)).passar().await;
-    assert_eq!(relato.avisados, 1, "um aviso escrito");
+    let relato = cenario.aviso(Arc::clone(&cenario.store)).pass().await;
+    assert_eq!(relato.notified, 1, "um aviso escrito");
 
     let escritas = cenario.escritas();
     assert_eq!(escritas.len(), 1, "uma escrita na sala");
@@ -524,7 +524,7 @@ async fn falha_definitiva_da_resposta_humana_avisa_a_sala_uma_vez() {
 
     // Mesma falha, nova passagem: nada a escrever, e nem chega ao Synapse.
     let chamadas_antes = cenario.synapse.chamadas.load(Ordering::SeqCst);
-    let segundo = cenario.aviso(Arc::clone(&cenario.store)).passar().await;
+    let segundo = cenario.aviso(Arc::clone(&cenario.store)).pass().await;
     assert_eq!(
         segundo,
         Default::default(),
@@ -546,8 +546,8 @@ async fn reinicio_do_processo_nao_repete_o_aviso() {
         .await;
 
     {
-        let antes = cenario.aviso(Arc::clone(&cenario.store)).passar().await;
-        assert_eq!(antes.avisados, 1);
+        let antes = cenario.aviso(Arc::clone(&cenario.store)).pass().await;
+        assert_eq!(antes.notified, 1);
     }
     assert_eq!(cenario.escritas().len(), 1);
 
@@ -559,7 +559,7 @@ async fn reinicio_do_processo_nao_repete_o_aviso() {
         )
         .expect("reabre o banco"),
     );
-    let depois = cenario.aviso(reaberto).passar().await;
+    let depois = cenario.aviso(reaberto).pass().await;
     assert_eq!(
         depois,
         Default::default(),
@@ -581,7 +581,7 @@ async fn laco_de_fundo_avisa_sozinho_e_para_no_pedido() {
         .await;
 
     let aviso = Arc::new(cenario.aviso(Arc::clone(&cenario.store)));
-    let tarefa = tokio::spawn(Arc::clone(&aviso).executar(Duration::from_millis(10)));
+    let tarefa = tokio::spawn(Arc::clone(&aviso).run(Duration::from_millis(10)));
 
     // O laço escreve o aviso sem ninguém chamar `passar`.
     let inicio = std::time::Instant::now();
@@ -595,7 +595,7 @@ async fn laco_de_fundo_avisa_sozinho_e_para_no_pedido() {
     assert_eq!(cenario.escritas().len(), 1);
 
     // Pedido de parada: o laço termina sem esperar o próximo intervalo.
-    aviso.pedir_parada();
+    aviso.ask_stop();
     tokio::time::timeout(Duration::from_secs(5), tarefa)
         .await
         .expect("o laço para no pedido")
@@ -619,7 +619,7 @@ async fn falha_transitoria_seguida_de_sucesso_nao_gera_aviso() {
     );
     assert_eq!(cenario.state(OutboxState::Failed), 0);
 
-    let no_meio = cenario.aviso(Arc::clone(&cenario.store)).passar().await;
+    let no_meio = cenario.aviso(Arc::clone(&cenario.store)).pass().await;
     assert_eq!(no_meio, Default::default(), "falha transitória não avisa");
     assert!(cenario.escritas().is_empty());
 
@@ -630,7 +630,7 @@ async fn falha_transitoria_seguida_de_sucesso_nao_gera_aviso() {
         .await;
     assert_eq!(cenario.state(OutboxState::Sent), 1, "o cliente recebeu");
 
-    let depois = cenario.aviso(Arc::clone(&cenario.store)).passar().await;
+    let depois = cenario.aviso(Arc::clone(&cenario.store)).pass().await;
     assert_eq!(depois, Default::default());
     assert!(
         cenario.escritas().is_empty(),
@@ -654,8 +654,8 @@ async fn tentativas_esgotadas_avisam_com_o_motivo_proprio() {
         "esgotou as tentativas"
     );
 
-    let relato = cenario.aviso(Arc::clone(&cenario.store)).passar().await;
-    assert_eq!(relato.avisados, 1);
+    let relato = cenario.aviso(Arc::clone(&cenario.store)).pass().await;
+    assert_eq!(relato.notified, 1);
     let escritas = cenario.escritas();
     assert_eq!(texto_do_aviso(&escritas[0]), AVISO_ESGOTADO);
 }
@@ -670,17 +670,17 @@ async fn synapse_fora_do_ar_adia_e_a_passagem_seguinte_avisa() {
 
     // O Synapse recusa o primeiro aviso com 503.
     *cenario.synapse.falhar.lock().unwrap() = 1;
-    let primeira = cenario.aviso(Arc::clone(&cenario.store)).passar().await;
+    let primeira = cenario.aviso(Arc::clone(&cenario.store)).pass().await;
     assert_eq!(
-        primeira.adiados, 1,
+        primeira.deferred, 1,
         "erro transitório: fica para a próxima passagem"
     );
-    assert_eq!(primeira.avisados, 0);
+    assert_eq!(primeira.notified, 0);
     assert!(cenario.escritas().is_empty());
 
     // Sem marca no banco, a passagem seguinte tenta de novo e escreve.
-    let segunda = cenario.aviso(Arc::clone(&cenario.store)).passar().await;
-    assert_eq!(segunda.avisados, 1);
+    let segunda = cenario.aviso(Arc::clone(&cenario.store)).pass().await;
+    assert_eq!(segunda.notified, 1);
     assert_eq!(cenario.escritas().len(), 1);
 }
 
@@ -693,15 +693,15 @@ async fn conversa_sem_sala_e_marcada_e_nao_tenta_nada() {
         .ciclo(vec![(400, json!({ "message": "recusado" }))])
         .await;
 
-    let relato = cenario.aviso(Arc::clone(&cenario.store)).passar().await;
-    assert_eq!(relato.sem_sala, 1);
+    let relato = cenario.aviso(Arc::clone(&cenario.store)).pass().await;
+    assert_eq!(relato.without_room, 1);
     assert_eq!(
         cenario.synapse.chamadas.load(Ordering::SeqCst),
         0,
         "nada chegou ao Synapse"
     );
 
-    let segundo = cenario.aviso(Arc::clone(&cenario.store)).passar().await;
+    let segundo = cenario.aviso(Arc::clone(&cenario.store)).pass().await;
     assert_eq!(
         segundo,
         Default::default(),
@@ -719,7 +719,7 @@ async fn saida_que_nao_e_resposta_humana_nao_gera_aviso() {
         .await;
     assert_eq!(cenario.state(OutboxState::Failed), 1);
 
-    let relato = cenario.aviso(Arc::clone(&cenario.store)).passar().await;
+    let relato = cenario.aviso(Arc::clone(&cenario.store)).pass().await;
     assert_eq!(relato, Default::default(), "só resposta humana é avisada");
     assert!(cenario.escritas().is_empty());
 }
@@ -737,7 +737,7 @@ async fn org_com_o_modulo_desligado_nao_recebe_aviso() {
         .matrix()
         .disable(cenario.org)
         .expect("desliga o módulo");
-    let relato = cenario.aviso(Arc::clone(&cenario.store)).passar().await;
+    let relato = cenario.aviso(Arc::clone(&cenario.store)).pass().await;
     assert_eq!(
         relato,
         Default::default(),
@@ -759,7 +759,7 @@ async fn texto_do_cliente_telefone_e_token_nao_aparecem_no_aviso_nem_no_log() {
 
     let logs = logs_capturados();
     logs.lock().unwrap().clear();
-    let _ = cenario.aviso(Arc::clone(&cenario.store)).passar().await;
+    let _ = cenario.aviso(Arc::clone(&cenario.store)).pass().await;
 
     let escritas = cenario.escritas();
     assert_eq!(escritas.len(), 1);

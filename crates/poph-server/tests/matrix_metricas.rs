@@ -15,9 +15,9 @@ use poph_matrix::error::CallError;
 use poph_matrix::format::Outbound;
 use poph_matrix::rooms::{ConversationToRoom, RoomError};
 use poph_matrix::users::GhostIds;
-use poph_server::matrix_espelho::{DestinoMatrix, EspelhoMatrix, MidiaPublicada};
-use poph_server::matrix_metricas::MetricasMatrix;
-use poph_server::{Estado, EventDelivery, PortaDoHarness, RespostaDoAtendente};
+use poph_server::matrix_metrics::MetricsMatrix;
+use poph_server::matrix_mirror::{MatrixMirror, MatrixTarget, PublishedAsset};
+use poph_server::{AttendantResponse, Estado, EventDelivery, HarnessResponsePort};
 use poph_store::{Direction, NewAgent, NewConversation, NewMessage, NewOrg, Origin, Role, Store};
 use poph_types::{AgentId, ConversationId, HarnessConfig, MatrixConfig, OrgId, Registry};
 use serde_json::{Value, json};
@@ -140,8 +140,8 @@ fn msg_cliente(store: &Store, org: OrgId, conversation: ConversationId, text: &s
         .to_string()
 }
 
-fn metricas_novas() -> Arc<MetricasMatrix> {
-    Arc::new(MetricasMatrix::registrar(&Registry::new()).expect("registra as métricas"))
+fn metricas_novas() -> Arc<MetricsMatrix> {
+    Arc::new(MetricsMatrix::register(&Registry::new()).expect("registra as métricas"))
 }
 
 // ───────────────────────────── Synapse falso ─────────────────────────────
@@ -193,7 +193,7 @@ impl Falso {
 /// O duplo que o espelho recebe: o espelho fica com uma cópia do `Arc`, o teste com outra.
 struct Sinal(Arc<Falso>);
 
-impl DestinoMatrix for Sinal {
+impl MatrixTarget for Sinal {
     fn ensure_room(
         &self,
         dados: &ConversationToRoom,
@@ -234,18 +234,18 @@ impl DestinoMatrix for Sinal {
     async fn send_asset(
         &self,
         _sala: &str,
-        _envio: &poph_server::matrix_espelho::EnvioMidia,
-    ) -> Result<MidiaPublicada, CallError> {
+        _envio: &poph_server::matrix_mirror::AssetSend,
+    ) -> Result<PublishedAsset, CallError> {
         // Este destino não publica mídia: nenhuma mensagem do teste tem anexo.
         Err(CallError::Configuration(
             "sem mídia neste destino".to_owned(),
         ))
     }
 
-    async fn avisar(
+    async fn send_notice(
         &self,
         _sala: &str,
-        _aviso: &poph_server::matrix_espelho::AvisoNaSala,
+        _aviso: &poph_server::matrix_mirror::RoomNotice,
     ) -> Result<(), CallError> {
         Ok(())
     }
@@ -306,13 +306,13 @@ async fn atraso_do_cursor_sobe_com_synapse_fora_e_volta_a_zero() {
     // Relógio do laço: 31 s depois da primeira mensagem, depois 91 s.
     let agora = Arc::new(AtomicI64::new(31_000));
     let relogio = Arc::clone(&agora);
-    let espelho = EspelhoMatrix::new(Arc::clone(&store), Sinal(Arc::clone(&falso)), &config())
+    let espelho = MatrixMirror::new(Arc::clone(&store), Sinal(Arc::clone(&falso)), &config())
         .expect("monta o espelho")
-        .com_metricas(Arc::clone(&metricas))
-        .com_relogio(Arc::new(move || relogio.load(Ordering::SeqCst)));
+        .with_metrics(Arc::clone(&metricas))
+        .with_clock(Arc::new(move || relogio.load(Ordering::SeqCst)));
 
-    espelho.ciclo().await.expect("ciclo com o Synapse fora");
-    let inicial = metricas.atraso_cursor_segundos.value();
+    espelho.cycle().await.expect("ciclo com o Synapse fora");
+    let inicial = metricas.cursor_age_seconds.value();
     assert!(
         (29..=31).contains(&inicial),
         "com o Synapse fora, a primeira mensagem tem ~30 s de atraso; veio {inicial}"
@@ -320,23 +320,23 @@ async fn atraso_do_cursor_sobe_com_synapse_fora_e_volta_a_zero() {
 
     agora.store(91_000, Ordering::SeqCst);
     espelho
-        .ciclo()
+        .cycle()
         .await
         .expect("ciclo com o Synapse ainda fora");
-    let depois = metricas.atraso_cursor_segundos.value();
+    let depois = metricas.cursor_age_seconds.value();
     assert!(
         depois > inicial && (89..=91).contains(&depois),
         "o atraso tem de subir enquanto o Synapse está fora; veio {depois} (antes {inicial})"
     );
 
     falso.definir_modo(Modo::Normal);
-    espelho.ciclo().await.expect("ciclo com o Synapse de volta");
+    espelho.cycle().await.expect("ciclo com o Synapse de volta");
     assert_eq!(
-        metricas.atraso_cursor_segundos.value(),
+        metricas.cursor_age_seconds.value(),
         0,
         "com o Synapse de volta e tudo espelhado, o atraso volta a zero"
     );
-    assert_eq!(metricas.mensagens_espelhadas.value(), 2);
+    assert_eq!(metricas.mirrored_messages.value(), 2);
 }
 
 #[tokio::test]
@@ -352,29 +352,29 @@ async fn contadores_do_espelho_contam_tentativas_erros_e_429() {
 
     let falso = Falso::new(Modo::Limite, "limite");
     let metricas = metricas_novas();
-    let espelho = EspelhoMatrix::new(Arc::clone(&store), Sinal(Arc::clone(&falso)), &config())
+    let espelho = MatrixMirror::new(Arc::clone(&store), Sinal(Arc::clone(&falso)), &config())
         .expect("monta o espelho")
-        .com_metricas(Arc::clone(&metricas));
+        .with_metrics(Arc::clone(&metricas));
 
     // Primeiro ciclo: a sala é garantida (1 tentativa) e o primeiro envio leva 429 (1 tentativa).
-    espelho.ciclo().await.expect("ciclo com limite de taxa");
-    assert_eq!(metricas.tentativas.value(), 2);
-    assert_eq!(metricas.respostas_429.value(), 1, "o 429 conta uma vez");
+    espelho.cycle().await.expect("ciclo com limite de taxa");
+    assert_eq!(metricas.attempts.value(), 2);
+    assert_eq!(metricas.responses_429.value(), 1, "o 429 conta uma vez");
     assert_eq!(
-        metricas.erros_transitorios.value(),
+        metricas.transient_errors.value(),
         1,
         "o 429 é transitório: conta como erro transitório"
     );
-    assert_eq!(metricas.erros_definitivos.value(), 0);
-    assert_eq!(metricas.mensagens_espelhadas.value(), 0);
+    assert_eq!(metricas.definitive_errors.value(), 0);
+    assert_eq!(metricas.mirrored_messages.value(), 0);
 
     // Segundo ciclo, sem limite: sala (1) + duas mensagens (2) = 3 tentativas a mais.
     falso.definir_modo(Modo::Normal);
-    espelho.ciclo().await.expect("ciclo sem limite");
-    assert_eq!(metricas.tentativas.value(), 5);
-    assert_eq!(metricas.mensagens_espelhadas.value(), 2);
+    espelho.cycle().await.expect("ciclo sem limite");
+    assert_eq!(metricas.attempts.value(), 5);
+    assert_eq!(metricas.mirrored_messages.value(), 2);
     assert_eq!(
-        metricas.respostas_429.value(),
+        metricas.responses_429.value(),
         1,
         "sem novo 429, o contador fica"
     );
@@ -393,20 +393,20 @@ async fn mensagem_venenosa_isolada_conta_e_loga_org_e_conversa() {
 
     let falso = Falso::new(Modo::Venenoso("VENENO"), "recusado");
     let metricas = metricas_novas();
-    let espelho = EspelhoMatrix::new(Arc::clone(&store), Sinal(Arc::clone(&falso)), &config())
+    let espelho = MatrixMirror::new(Arc::clone(&store), Sinal(Arc::clone(&falso)), &config())
         .expect("monta o espelho")
-        .com_metricas(Arc::clone(&metricas));
+        .with_metrics(Arc::clone(&metricas));
     let (captura, _guarda) = capturar_logs();
 
     // Três falhas definitivas seguidas isolam a mensagem venenosa; a seguinte sai no ciclo depois.
     for _ in 0..4 {
-        espelho.ciclo().await.expect("ciclo");
+        espelho.cycle().await.expect("ciclo");
     }
 
-    assert_eq!(metricas.erros_definitivos.value(), 3);
-    assert_eq!(metricas.mensagens_isoladas.value(), 1);
+    assert_eq!(metricas.definitive_errors.value(), 3);
+    assert_eq!(metricas.isolated_messages.value(), 1);
     assert_eq!(
-        metricas.mensagens_espelhadas.value(),
+        metricas.mirrored_messages.value(),
         1,
         "a mensagem seguinte sai"
     );
@@ -440,17 +440,17 @@ async fn valor_canario_nunca_aparece_no_log_do_modulo() {
     msg_cliente(&store, org, conversation, CANARIO_TEXTO);
     // O Synapse devolve o token-canário dentro da mensagem de erro (não pode ir para o log).
     let falso = Falso::new(Modo::Venenoso(CANARIO_TEXTO), CANARIO_TOKEN);
-    let espelho = EspelhoMatrix::new(Arc::clone(&store), Sinal(Arc::clone(&falso)), &config())
+    let espelho = MatrixMirror::new(Arc::clone(&store), Sinal(Arc::clone(&falso)), &config())
         .expect("monta o espelho")
-        .com_metricas(metricas_novas());
+        .with_metrics(metricas_novas());
 
     // Caminho do espelho: falhas definitivas até isolar, e uma transitória antes.
     let (captura, guarda) = capturar_logs();
     falso.definir_modo(Modo::Fora);
-    espelho.ciclo().await.expect("ciclo transitório");
+    espelho.cycle().await.expect("ciclo transitório");
     falso.definir_modo(Modo::Venenoso(CANARIO_TEXTO));
     for _ in 0..3 {
-        espelho.ciclo().await.expect("ciclo definitivo");
+        espelho.cycle().await.expect("ciclo definitivo");
     }
 
     // Caminho da resposta do atendente: uma resposta humana numa sala conhecida.
@@ -464,15 +464,15 @@ async fn valor_canario_nunca_aparece_no_log_do_modulo() {
         .mark_room_ready(org, conversation)
         .expect("sala pronta");
     let ids = GhostIds::of_config(&config()).expect("ids");
-    let entrega = RespostaDoAtendente::com_tetos(
-        Arc::new(PortaDoHarness::fresh(Arc::clone(&store))),
+    let entrega = AttendantResponse::with_caps(
+        Arc::new(HarnessResponsePort::fresh(Arc::clone(&store))),
         None,
         ids,
         16,
         16,
         Duration::from_secs(300),
     )
-    .com_metricas(metricas_novas());
+    .with_metrics(metricas_novas());
     let event: Value = json!({
         "type": "m.room.message",
         "room_id": room,
@@ -523,15 +523,15 @@ async fn contadores_da_resposta_do_atendente_viram_metrica() {
 
     let metricas = metricas_novas();
     let ids = GhostIds::of_config(&config()).expect("ids");
-    let entrega = RespostaDoAtendente::com_tetos(
-        Arc::new(PortaDoHarness::fresh(Arc::clone(&store))),
+    let entrega = AttendantResponse::with_caps(
+        Arc::new(HarnessResponsePort::fresh(Arc::clone(&store))),
         None,
         ids,
         16,
         16,
         Duration::from_secs(300),
     )
-    .com_metricas(Arc::clone(&metricas));
+    .with_metrics(Arc::clone(&metricas));
 
     let text = |event: &str, room: &str, body: Value| {
         json!({
@@ -549,15 +549,15 @@ async fn contadores_da_resposta_do_atendente_viram_metrica() {
         .deliver("txn-1", vec![text("$c-1:matrix-dev.local", room, humano())])
         .await
         .expect("entrega");
-    assert_eq!(metricas.respostas_enfileiradas.value(), 1);
+    assert_eq!(metricas.responses_queued.value(), 1);
 
     // 2) Mesmo evento de novo (reenvio do Synapse): duplicada, nada novo enfileirado.
     entrega
         .deliver("txn-2", vec![text("$c-1:matrix-dev.local", room, humano())])
         .await
         .expect("entrega");
-    assert_eq!(metricas.respostas_enfileiradas.value(), 1);
-    assert_eq!(metricas.respostas_duplicadas.value(), 1);
+    assert_eq!(metricas.responses_queued.value(), 1);
+    assert_eq!(metricas.responses_duplicated.value(), 1);
 
     // 3) Sala que ninguém conhece.
     entrega
@@ -571,7 +571,7 @@ async fn contadores_da_resposta_do_atendente_viram_metrica() {
         )
         .await
         .expect("entrega");
-    assert_eq!(metricas.salas_desconhecidas.value(), 1);
+    assert_eq!(metricas.rooms_unknown.value(), 1);
 
     // 4) Mídia do atendente: só o aviso na sala.
     entrega
@@ -585,9 +585,9 @@ async fn contadores_da_resposta_do_atendente_viram_metrica() {
         )
         .await
         .expect("entrega");
-    assert_eq!(metricas.avisos_de_midia.value(), 1);
+    assert_eq!(metricas.asset_notices.value(), 1);
     assert_eq!(
-        metricas.respostas_enfileiradas.value(),
+        metricas.responses_queued.value(),
         1,
         "mídia não vira resposta ao cliente"
     );
@@ -606,9 +606,9 @@ async fn contadores_da_resposta_do_atendente_viram_metrica() {
         .deliver("txn-5", vec![text("$c-4:matrix-dev.local", room, humano())])
         .await
         .expect("entrega");
-    assert_eq!(metricas.respostas_conversa_encerrada.value(), 1);
+    assert_eq!(metricas.responses_conversation_closed.value(), 1);
     assert_eq!(
-        metricas.respostas_enfileiradas.value(),
+        metricas.responses_queued.value(),
         1,
         "conversa encerrada não enfileira para o cliente"
     );
@@ -691,7 +691,7 @@ async fn metricas_do_modulo_nao_aparecem_com_o_modulo_desligado() {
     let (state, pasta) = estado_com_modulo("desligado", false);
     // Módulo desligado: nem quem prepara o módulo consegue declarar as métricas.
     assert!(
-        state.metricas_matrix().expect("sem erro").is_none(),
+        state.matrix_metrics().expect("sem erro").is_none(),
         "com [matrix] desligado, as métricas do módulo não são declaradas"
     );
     let text = metricas_http(state).await;
@@ -711,18 +711,18 @@ async fn metricas_do_modulo_aparecem_uma_vez_quando_preparado() {
     let (state, pasta) = estado_com_modulo("ligado", true);
     // Preparar duas vezes (como a raiz faria em reinícios internos) não duplica nada na saída.
     let primeira = state
-        .metricas_matrix()
+        .matrix_metrics()
         .expect("prepara as métricas")
         .expect("módulo ligado");
     let segunda = state
-        .metricas_matrix()
+        .matrix_metrics()
         .expect("segunda chamada")
         .expect("módulo ligado");
     assert!(
         Arc::ptr_eq(&primeira, &segunda),
         "mesmo handle nas duas chamadas"
     );
-    primeira.mensagens_espelhadas.increment(3);
+    primeira.mirrored_messages.increment(3);
     let text = metricas_http(state).await;
     let _ = fs::remove_dir_all(&pasta);
     for name in NOMES_MATRIX {
@@ -745,9 +745,9 @@ fn metricas_descartaveis_nao_aparecem_no_registro_do_processo() {
     // Handles descartáveis (usados quando ninguém injeta os números do processo) ficam fora do
     // `/metrics` do processo.
     let processo = Registry::new();
-    let _ = MetricasMatrix::registrar(&processo).expect("registra no processo");
-    let descartavel = MetricasMatrix::descartaveis();
-    descartavel.erros_definitivos.increment(1);
+    let _ = MetricsMatrix::register(&processo).expect("registra no processo");
+    let descartavel = MetricsMatrix::unregistered();
+    descartavel.definitive_errors.increment(1);
     assert!(
         !processo
             .render()

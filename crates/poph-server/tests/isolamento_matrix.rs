@@ -42,9 +42,9 @@ use axum::response::{IntoResponse, Response};
 use poph_evolution::webhook::SECRET_HEADER;
 use poph_matrix::{ClientConfig, GhostIds, MatrixClient, Spaces, VirtualUsers};
 use poph_server::evolution::CanalEvolution;
-use poph_server::matrix_estado::{DestinoDoSynapse, EstadoDasConversas, PortaEstadoStore};
-use poph_server::matrix_inicio::PortaEspacosStore;
-use poph_server::{AsReceiver, Estado, PortaAtendimento, PortaDoHarness, RespostaDoAtendente};
+use poph_server::matrix_beginning::SpaceStorePort;
+use poph_server::matrix_state::{ConversationStates, StateStorePort, SynapseTarget};
+use poph_server::{AsReceiver, AttendantResponse, Estado, HarnessResponsePort, ResponsePort};
 use poph_store::{
     ConversationStatus, HumanResponse, NewAgent, NewConversation, NewDepartment, NewHumanResponse,
     NewOrg, Origin, Page, Store,
@@ -691,9 +691,9 @@ impl Cenario {
     }
 
     /// A entrega da resposta do atendente (MX-18), como a raiz de composição monta.
-    fn entrega(&self) -> Arc<RespostaDoAtendente> {
-        Arc::new(RespostaDoAtendente::new(
-            Arc::new(PortaDoHarness::fresh(Arc::clone(&self.store))),
+    fn entrega(&self) -> Arc<AttendantResponse> {
+        Arc::new(AttendantResponse::new(
+            Arc::new(HarnessResponsePort::fresh(Arc::clone(&self.store))),
             Some(self.cliente_matrix()),
             self.ids(),
         ))
@@ -786,18 +786,18 @@ impl Cenario {
         ));
         let spaces = Spaces::of_config(
             client.clone(),
-            PortaEspacosStore(Arc::clone(&self.store)),
+            SpaceStorePort(Arc::clone(&self.store)),
             &config,
         )
         .expect("espaços");
-        let destino = DestinoDoSynapse::new(client, users, spaces);
-        let laco = EstadoDasConversas::new(
-            PortaEstadoStore::fresh(Arc::clone(&self.store)),
+        let destino = SynapseTarget::new(client, users, spaces);
+        let laco = ConversationStates::new(
+            StateStorePort::fresh(Arc::clone(&self.store)),
             destino,
             &config,
         )
         .expect("laço de estado");
-        laco.ciclo().await.expect("passagem do estado");
+        laco.cycle().await.expect("passagem do estado");
     }
 }
 
@@ -990,9 +990,9 @@ async fn evento_da_sala_a_com_ids_da_org_b_nao_toca_a_conversa_da_b() {
 
     // A operação atômica da MX-04 também recusa o par cruzado (org de A com conversa de B): a
     // conferência de org é do banco, não do chamador.
-    let porta = PortaDoHarness::fresh(Arc::clone(&cenario.store));
-    let cruzada = porta.registrar_resposta(
-        poph_server::matrix_resposta::ConversaDaSala {
+    let porta = HarnessResponsePort::fresh(Arc::clone(&cenario.store));
+    let cruzada = porta.record_response(
+        poph_server::matrix_response::RoomConversation {
             org: cenario.org_a,
             conversation: cenario.conversa_b,
         },
@@ -1060,8 +1060,8 @@ async fn sala_desconhecida_com_id_da_org_b_nao_grava_nada_e_conta_o_caso() {
     assert_eq!(cenario.pendentes(cenario.org_b), 0);
     assert_eq!(
         entrega
-            .contadores()
-            .salas_desconhecidas
+            .counters()
+            .unknown_rooms
             .load(std::sync::atomic::Ordering::Relaxed),
         1,
         "o caso fica contado"
@@ -1088,10 +1088,10 @@ async fn token_da_org_a_nao_opera_as_rotas_da_org_b() {
         .expect("desliga o módulo na org B");
     let mut state = cenario.state();
     let config = cenario.config.matrix.clone().expect("seção [matrix]");
-    state.ligar_espacos_do_matrix(Arc::new(
+    state.set_matrix_spaces(Arc::new(
         Spaces::of_config(
             cenario.cliente_matrix(),
-            PortaEspacosStore(Arc::clone(&cenario.store)),
+            SpaceStorePort(Arc::clone(&cenario.store)),
             &config,
         )
         .expect("espaços"),
@@ -1214,10 +1214,10 @@ async fn espaco_com_departamento_da_outra_org_e_recusado() {
     let cenario = Cenario::new("espaco-cruzado").await;
     let mut state = cenario.state();
     let config = cenario.config.matrix.clone().expect("seção [matrix]");
-    state.ligar_espacos_do_matrix(Arc::new(
+    state.set_matrix_spaces(Arc::new(
         Spaces::of_config(
             cenario.cliente_matrix(),
-            PortaEspacosStore(Arc::clone(&cenario.store)),
+            SpaceStorePort(Arc::clone(&cenario.store)),
             &config,
         )
         .expect("espaços"),
@@ -1442,10 +1442,10 @@ async fn tokens_canario_nao_aparecem_em_resposta_log_arquivo_nem_fila() {
         cenario.channel(cenario.org_b, cenario.conversa_b),
     ]);
     let config = cenario.config.matrix.clone().expect("seção [matrix]");
-    state.ligar_espacos_do_matrix(Arc::new(
+    state.set_matrix_spaces(Arc::new(
         Spaces::of_config(
             cenario.cliente_matrix(),
-            PortaEspacosStore(Arc::clone(&cenario.store)),
+            SpaceStorePort(Arc::clone(&cenario.store)),
             &config,
         )
         .expect("espaços"),

@@ -32,9 +32,9 @@ use axum::response::{IntoResponse, Response};
 use poph_matrix::client::{ClientConfig, MatrixClient};
 use poph_matrix::config::VAR_ADMIN_TOKEN;
 use poph_matrix::expiration::{CATEGORY_FIELD, EXPIRED_BLOCK, NAME_FIELD, SENT_AT_FIELD};
-use poph_server::matrix_expiracao::{ExpiracaoMidia, RelatoExpiracao};
-use poph_server::matrix_inicio::expiracao_do_modulo;
-use poph_server::matrix_metricas::MetricasMatrix;
+use poph_server::matrix_beginning::module_expiry;
+use poph_server::matrix_expiry::{AssetExpiry, ExpiryReport};
+use poph_server::matrix_metrics::MetricsMatrix;
 use poph_store::{
     CategoryAsset, Conversa, NewAgent, NewAsset, NewConversation, NewOrg, Org, Store,
 };
@@ -459,16 +459,16 @@ impl Cenario {
     }
 
     /// O serviço de expiração, com o relógio do cenário e esperas curtas para o teste não dormir.
-    fn servico(&self) -> ExpiracaoMidia {
+    fn servico(&self) -> AssetExpiry {
         let relogio = Arc::clone(&self.relogio);
-        ExpiracaoMidia::new(
+        AssetExpiry::new(
             Arc::clone(self.store()),
             self.synapse.client(),
             Secret::new(ADMIN_TOKEN.to_owned()),
             &self.config(),
         )
         .expect("monta a expiração")
-        .com_relogio(Arc::new(move || relogio.load(Ordering::SeqCst)))
+        .with_clock(Arc::new(move || relogio.load(Ordering::SeqCst)))
     }
 
     fn pendentes(&self) -> u32 {
@@ -494,8 +494,8 @@ async fn antes_do_prazo_nada_acontece() {
     // Três dias: dentro da retenção de quatro.
     let id = cenario.publicar("laudo.pdf", cenario.agora() - 3 * DIA);
 
-    let relato = cenario.servico().passar().await;
-    assert_eq!(relato, RelatoExpiracao::default(), "{relato:?}");
+    let relato = cenario.servico().pass().await;
+    assert_eq!(relato, ExpiryReport::default(), "{relato:?}");
     assert_eq!(
         cenario.synapse.chamadas(),
         0,
@@ -520,11 +520,11 @@ async fn depois_do_prazo_redige_e_apaga_uma_vez_so() {
     let id = cenario.publicar("laudo.pdf", sent_at);
     let servico = cenario.servico();
 
-    let relato = servico.passar().await;
-    assert_eq!(relato.vencidas, 1);
-    assert_eq!(relato.redigidas, 1);
-    assert_eq!(relato.apagadas, 1);
-    assert_eq!(relato.adiadas, 0);
+    let relato = servico.pass().await;
+    assert_eq!(relato.expired, 1);
+    assert_eq!(relato.redacted, 1);
+    assert_eq!(relato.deleted, 1);
+    assert_eq!(relato.deferred, 0);
 
     // A redação: como o fantasma do agente, no evento certo, com o bloco do frontend.
     let redacoes = cenario.synapse.redacoes();
@@ -553,8 +553,8 @@ async fn depois_do_prazo_redige_e_apaga_uma_vez_so() {
 
     // A segunda passagem no mesmo instante não repete nada: os dois carimbos estão no banco.
     let chamadas = cenario.synapse.chamadas();
-    let segunda = servico.passar().await;
-    assert_eq!(segunda, RelatoExpiracao::default(), "{segunda:?}");
+    let segunda = servico.pass().await;
+    assert_eq!(segunda, ExpiryReport::default(), "{segunda:?}");
     assert_eq!(
         cenario.synapse.chamadas(),
         chamadas,
@@ -570,25 +570,25 @@ async fn a_redacao_que_falha_nao_impede_apagar_e_o_item_volta_depois() {
     let servico = cenario.servico();
     cenario.synapse.recusar_redacao_com(500);
 
-    let relato = servico.passar().await;
-    assert_eq!(relato.redigidas, 0, "{relato:?}");
-    assert_eq!(relato.apagadas, 1, "a retenção vale mais do que a redação");
-    assert_eq!(relato.adiadas, 1);
+    let relato = servico.pass().await;
+    assert_eq!(relato.redacted, 0, "{relato:?}");
+    assert_eq!(relato.deleted, 1, "a retenção vale mais do que a redação");
+    assert_eq!(relato.deferred, 1);
     assert!(cenario.synapse.redacoes().is_empty());
     assert_eq!(cenario.synapse.apagadas().len(), 1);
     assert_eq!(cenario.pendentes(), 1, "falta só redigir");
 
     // No mesmo instante o item não volta (espera crescente).
     let chamadas = cenario.synapse.chamadas();
-    let segunda = servico.passar().await;
-    assert_eq!(segunda.vencidas, 0, "{segunda:?}");
+    let segunda = servico.pass().await;
+    assert_eq!(segunda.expired, 0, "{segunda:?}");
     assert_eq!(cenario.synapse.chamadas(), chamadas);
 
     // Passada a primeira espera, tenta de novo — e agora dá certo.
     cenario.avancar(61_000);
-    let terceira = servico.passar().await;
-    assert_eq!(terceira.redigidas, 1, "{terceira:?}");
-    assert_eq!(terceira.apagadas, 0, "o arquivo já tinha sido apagado");
+    let terceira = servico.pass().await;
+    assert_eq!(terceira.redacted, 1, "{terceira:?}");
+    assert_eq!(terceira.deleted, 0, "o arquivo já tinha sido apagado");
     assert_eq!(cenario.synapse.redacoes().len(), 1);
     assert_eq!(cenario.pendentes(), 0);
 }
@@ -601,17 +601,17 @@ async fn falha_no_apagamento_nao_vira_laco_apertado_e_a_espera_cresce() {
     cenario.synapse.recusar_apagamento_com(503);
 
     // Primeira passagem: redige e falha ao apagar.
-    let primeira = servico.passar().await;
-    assert_eq!(primeira.redigidas, 1, "{primeira:?}");
-    assert_eq!(primeira.apagadas, 0);
-    assert_eq!(primeira.adiadas, 1);
+    let primeira = servico.pass().await;
+    assert_eq!(primeira.redacted, 1, "{primeira:?}");
+    assert_eq!(primeira.deleted, 0);
+    assert_eq!(primeira.deferred, 1);
     assert_eq!(cenario.synapse.apagadas().len(), 0);
 
     // Três passagens no mesmo instante: nenhuma chamada nova (o item está adiado).
     let depois_da_primeira = cenario.synapse.chamadas();
     for _ in 0..3 {
-        let relato = servico.passar().await;
-        assert_eq!(relato.vencidas, 0, "{relato:?}");
+        let relato = servico.pass().await;
+        assert_eq!(relato.expired, 0, "{relato:?}");
     }
     assert_eq!(
         cenario.synapse.chamadas(),
@@ -622,18 +622,18 @@ async fn falha_no_apagamento_nao_vira_laco_apertado_e_a_espera_cresce() {
     // A primeira espera é de 60 s; o item volta só depois dela.
     cenario.avancar(61_000);
     cenario.synapse.recusar_apagamento_com(503);
-    let segunda = servico.passar().await;
-    assert_eq!(segunda.vencidas, 1, "{segunda:?}");
-    assert_eq!(segunda.adiadas, 1);
+    let segunda = servico.pass().await;
+    assert_eq!(segunda.expired, 1, "{segunda:?}");
+    assert_eq!(segunda.deferred, 1);
 
     // Depois da segunda falha a espera dobra: 60 s não bastam mais, 120 s bastam.
     cenario.avancar(61_000);
-    let cedo = servico.passar().await;
-    assert_eq!(cedo.vencidas, 0, "a espera dobrou: {cedo:?}");
+    let cedo = servico.pass().await;
+    assert_eq!(cedo.expired, 0, "a espera dobrou: {cedo:?}");
     cenario.avancar(60_000);
-    let na_hora = servico.passar().await;
+    let na_hora = servico.pass().await;
     assert_eq!(
-        na_hora.vencidas, 1,
+        na_hora.expired, 1,
         "na hora marcada o item volta: {na_hora:?}"
     );
 }
@@ -648,8 +648,8 @@ async fn org_com_o_modulo_desligado_nao_e_tocada() {
         .disable(cenario.org.id)
         .expect("desliga o módulo na org");
 
-    let relato = cenario.servico().passar().await;
-    assert_eq!(relato, RelatoExpiracao::default(), "{relato:?}");
+    let relato = cenario.servico().pass().await;
+    assert_eq!(relato, ExpiryReport::default(), "{relato:?}");
     assert_eq!(cenario.synapse.chamadas(), 0);
     assert_eq!(cenario.pendentes(), 1, "a linha fica como estava");
 }
@@ -663,8 +663,8 @@ async fn o_token_de_administrador_nao_aparece_no_log() {
     cenario.synapse.recusar_redacao_com(403);
     cenario.synapse.recusar_apagamento_com(403);
 
-    let relato = servico.passar().await;
-    assert_eq!(relato.adiadas, 1, "{relato:?}");
+    let relato = servico.pass().await;
+    assert_eq!(relato.deferred, 1, "{relato:?}");
 
     // O serviço também não mostra o token em `Debug`.
     assert!(!format!("{servico:?}").contains(ADMIN_TOKEN));
@@ -689,7 +689,7 @@ async fn sem_token_a_rotina_fica_desligada_com_aviso_e_sem_chamada() {
     let cenario = Cenario::new("sem-token", 1_000 * DIA).await;
     cenario.publicar("laudo.pdf", cenario.agora() - 5 * DIA);
 
-    let sem_token = expiracao_do_modulo(
+    let sem_token = module_expiry(
         Arc::clone(cenario.store()),
         cenario.synapse.client(),
         &cenario.config(),
@@ -714,7 +714,7 @@ async fn sem_token_a_rotina_fica_desligada_com_aviso_e_sem_chamada() {
     );
 
     // Com o token, a rotina existe e funciona.
-    let com_token = expiracao_do_modulo(
+    let com_token = module_expiry(
         Arc::clone(cenario.store()),
         cenario.synapse.client(),
         &cenario.config(),
@@ -723,10 +723,10 @@ async fn sem_token_a_rotina_fica_desligada_com_aviso_e_sem_chamada() {
     )
     .expect("com token a rotina é montada");
     let relogio = Arc::clone(&cenario.relogio);
-    let com_token = com_token.com_relogio(Arc::new(move || relogio.load(Ordering::SeqCst)));
-    let relato = com_token.passar().await;
-    assert_eq!(relato.redigidas, 1, "{relato:?}");
-    assert_eq!(relato.apagadas, 1);
+    let com_token = com_token.with_clock(Arc::new(move || relogio.load(Ordering::SeqCst)));
+    let relato = com_token.pass().await;
+    assert_eq!(relato.redacted, 1, "{relato:?}");
+    assert_eq!(relato.deleted, 1);
 }
 
 #[tokio::test]
@@ -739,16 +739,16 @@ async fn as_metricas_do_modulo_contam_por_entrada() {
     cenario.publicar("novo.pdf", cenario.agora() - DIA);
 
     let registro = Registry::new();
-    let metricas = Arc::new(MetricasMatrix::registrar(&registro).expect("registra"));
+    let metricas = Arc::new(MetricsMatrix::register(&registro).expect("registra"));
     let relogio = Arc::clone(&cenario.relogio);
     let servico = cenario
         .servico()
-        .com_metricas(Arc::clone(&metricas))
-        .com_relogio(Arc::new(move || relogio.load(Ordering::SeqCst)));
+        .with_metrics(Arc::clone(&metricas))
+        .with_clock(Arc::new(move || relogio.load(Ordering::SeqCst)));
 
-    let relato = servico.passar().await;
-    assert_eq!(relato.redigidas, 2, "{relato:?}");
-    assert_eq!(relato.apagadas, 2);
+    let relato = servico.pass().await;
+    assert_eq!(relato.redacted, 2, "{relato:?}");
+    assert_eq!(relato.deleted, 2);
 
     let text = registro.render();
     assert!(
@@ -779,31 +779,31 @@ async fn o_prazo_configurado_manda_no_corte() {
     // Um dia de retenção: a mídia de dois dias já venceu.
     let mut config = cenario.config();
     config.attachment_retention_days = 1;
-    let servico = ExpiracaoMidia::new(
+    let servico = AssetExpiry::new(
         Arc::clone(cenario.store()),
         cenario.synapse.client(),
         Secret::new(ADMIN_TOKEN.to_owned()),
         &config,
     )
     .expect("monta")
-    .com_relogio(Arc::new(move || relogio.load(Ordering::SeqCst)));
+    .with_clock(Arc::new(move || relogio.load(Ordering::SeqCst)));
 
-    let relato = servico.passar().await;
-    assert_eq!(relato.redigidas, 1, "{relato:?}");
+    let relato = servico.pass().await;
+    assert_eq!(relato.redacted, 1, "{relato:?}");
 
     // Com o padrão de quatro dias, a mesma mídia estaria dentro do prazo.
     let outro = Cenario::new("prazo-padrao", 1_000 * DIA).await;
     let id = outro.publicar("laudo2.pdf", outro.agora() - 2 * DIA);
     let relogio = Arc::clone(&outro.relogio);
-    let padrao = ExpiracaoMidia::new(
+    let padrao = AssetExpiry::new(
         Arc::clone(outro.store()),
         outro.synapse.client(),
         Secret::new(ADMIN_TOKEN.to_owned()),
         &outro.config(),
     )
     .expect("monta")
-    .com_relogio(Arc::new(move || relogio.load(Ordering::SeqCst)));
-    assert_eq!(padrao.passar().await.redigidas, 0);
+    .with_clock(Arc::new(move || relogio.load(Ordering::SeqCst)));
+    assert_eq!(padrao.pass().await.redacted, 0);
     let pendente = outro
         .store()
         .matrix_asset()
@@ -816,10 +816,10 @@ async fn o_prazo_configurado_manda_no_corte() {
 #[tokio::test]
 async fn o_laco_de_fundo_para_quando_pedido() {
     let cenario = Cenario::new("parada", 1_000 * DIA).await;
-    let servico = Arc::new(cenario.servico().com_periodo(Duration::from_millis(5)));
-    let tarefa = tokio::spawn(Arc::clone(&servico).executar());
+    let servico = Arc::new(cenario.servico().with_period(Duration::from_millis(5)));
+    let tarefa = tokio::spawn(Arc::clone(&servico).run());
     tokio::time::sleep(Duration::from_millis(20)).await;
-    servico.pedir_parada();
+    servico.ask_stop();
     tokio::time::timeout(Duration::from_secs(2), tarefa)
         .await
         .expect("o laço termina no desligamento")

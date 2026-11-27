@@ -30,8 +30,8 @@ use poph_matrix::error::CallError;
 use poph_matrix::format::Outbound;
 use poph_matrix::rooms::{ConversationToRoom, RoomError};
 use poph_matrix::users::Ghost;
-use poph_server::matrix_espelho::{
-    AvisoNaSala, DestinoMatrix, EnvioMidia, EspelhoMatrix, MidiaPublicada,
+use poph_server::matrix_mirror::{
+    AssetSend, MatrixMirror, MatrixTarget, PublishedAsset, RoomNotice,
 };
 use poph_store::{
     Direction, NewAgent, NewChannelAttachment, NewConversation, NewMessage, NewOrg, Origin, Role,
@@ -312,7 +312,7 @@ fn recusada() -> CallError {
 
 struct Sinal(Arc<Falso>);
 
-impl DestinoMatrix for Sinal {
+impl MatrixTarget for Sinal {
     fn ensure_room(
         &self,
         dados: &ConversationToRoom,
@@ -359,8 +359,8 @@ impl DestinoMatrix for Sinal {
     fn send_asset(
         &self,
         room: &str,
-        send: &EnvioMidia,
-    ) -> impl std::future::Future<Output = Result<MidiaPublicada, CallError>> + Send {
+        send: &AssetSend,
+    ) -> impl std::future::Future<Output = Result<PublishedAsset, CallError>> + Send {
         let falso = &self.0;
         let room = room.to_owned();
         let txn = send.asset.txn_id.clone();
@@ -386,22 +386,22 @@ impl DestinoMatrix for Sinal {
                 sender,
                 mxc: mxc.clone(),
                 conteudo,
-                bytes: send.conteudo.len(),
+                bytes: send.content.len(),
             });
         }
         drop(midias);
         // Como o destino real: o evento publicado e o `mxc` que a subida devolveu.
-        let publicada = MidiaPublicada {
+        let publicada = PublishedAsset {
             event: format!("$midia-{txn}:matrix-dev.local"),
             mxc,
         };
         async move { resultado.map(|()| publicada) }
     }
 
-    fn avisar(
+    fn send_notice(
         &self,
         room: &str,
-        aviso: &AvisoNaSala,
+        aviso: &RoomNotice,
     ) -> impl std::future::Future<Output = Result<(), CallError>> + Send {
         let falso = &self.0;
         let room = room.to_owned();
@@ -423,10 +423,10 @@ impl DestinoMatrix for Sinal {
     }
 }
 
-fn espelho(cenario: &Cenario, falso: Arc<Falso>) -> EspelhoMatrix<Sinal> {
-    EspelhoMatrix::new(cenario.store(), Sinal(falso), &config())
+fn espelho(cenario: &Cenario, falso: Arc<Falso>) -> MatrixMirror<Sinal> {
+    MatrixMirror::new(cenario.store(), Sinal(falso), &config())
         .expect("monta o espelho")
-        .com_pasta_de_blobs(cenario.blobs.clone())
+        .with_blob_folder(cenario.blobs.clone())
 }
 
 fn sala_de(conversation: ConversationId) -> String {
@@ -484,14 +484,14 @@ async fn imagem_e_pdf_do_cliente_vao_para_a_sala_depois_da_legenda() {
 
     let falso = Falso::new(Recusa::Nada);
     let relatorio = espelho(&cenario, Arc::clone(&falso))
-        .ciclo()
+        .cycle()
         .await
         .expect("ciclo");
 
     let midias = falso.midias();
     assert_eq!(midias.len(), 2, "uma imagem e um PDF:");
-    assert_eq!(relatorio.midias_enviadas, 2);
-    assert_eq!(relatorio.enviadas, 2, "as duas legendas");
+    assert_eq!(relatorio.assets_sent, 2);
+    assert_eq!(relatorio.sent, 2, "as duas legendas");
 
     // Imagem: `m.image`, pelo fantasma do cliente, com o bloco e o tamanho do blob.
     assert_eq!(midias[0].msgtype(), MSGTYPE_IMAGE);
@@ -598,16 +598,16 @@ async fn reprocessar_a_mesma_midia_nao_duplica_o_evento() {
     // Primeira passagem: a mídia falha de forma transitória e fica pendente.
     let falso = Falso::new(Recusa::MidiaTransitoria(1));
     let espelho_do_caso = espelho(&cenario, Arc::clone(&falso));
-    let primeiro = espelho_do_caso.ciclo().await.expect("ciclo 1");
-    assert_eq!(primeiro.midias_enviadas, 0);
-    assert_eq!(primeiro.pendentes, 1, "a mídia ficou pendente");
+    let primeiro = espelho_do_caso.cycle().await.expect("ciclo 1");
+    assert_eq!(primeiro.assets_sent, 0);
+    assert_eq!(primeiro.pending, 1, "a mídia ficou pendente");
     assert!(falso.midias().is_empty());
     let (rowid_pendente, _) = cursor(&store, org);
     assert_eq!(rowid_pendente, 0, "o cursor não passou da mídia pendente");
 
     // Segunda passagem: entrega. O `txnId` é o mesmo da tentativa anterior.
-    let segundo = espelho_do_caso.ciclo().await.expect("ciclo 2");
-    assert_eq!(segundo.midias_enviadas, 1);
+    let segundo = espelho_do_caso.cycle().await.expect("ciclo 2");
+    assert_eq!(segundo.assets_sent, 1);
     let midias = falso.midias();
     assert_eq!(midias.len(), 1, "um evento só, apesar das duas passagens");
     assert_eq!(
@@ -617,8 +617,8 @@ async fn reprocessar_a_mesma_midia_nao_duplica_o_evento() {
     );
 
     // Terceira passagem, sem nada novo: nenhum envio.
-    let terceiro = espelho_do_caso.ciclo().await.expect("ciclo 3");
-    assert_eq!(terceiro.midias_enviadas, 0);
+    let terceiro = espelho_do_caso.cycle().await.expect("ciclo 3");
+    assert_eq!(terceiro.assets_sent, 0);
     assert_eq!(falso.midias().len(), 1);
     assert_eq!(cursor(&store, org), maior_rowid_e_id(&store));
 }
@@ -641,7 +641,7 @@ async fn arquivo_acima_do_limite_vira_aviso_e_o_cursor_segue() {
 
     let falso = Falso::new(Recusa::Nada);
     let relatorio = espelho(&cenario, Arc::clone(&falso))
-        .ciclo()
+        .cycle()
         .await
         .expect("ciclo");
 
@@ -658,14 +658,14 @@ async fn arquivo_acima_do_limite_vira_aviso_e_o_cursor_segue() {
         "aviso: {}",
         avisos[0].body
     );
-    assert_eq!(relatorio.avisos_de_midia, 1);
+    assert_eq!(relatorio.asset_notices, 1);
     assert_eq!(
         avisos[0].sender,
         format!("@ph_ag_{agent}:matrix-dev.local"),
         "o aviso é do fantasma do agente, dono da sala"
     );
     // A mensagem seguinte foi entregue no mesmo ciclo e o cursor passou pela mídia recusada.
-    assert_eq!(relatorio.enviadas, 2, "as duas legendas passaram");
+    assert_eq!(relatorio.sent, 2, "as duas legendas passaram");
     assert_eq!(cursor(&store, org), maior_rowid_e_id(&store));
 }
 
@@ -686,7 +686,7 @@ async fn anexo_sem_blob_no_disco_vira_aviso_sem_prender_o_cursor() {
 
     let falso = Falso::new(Recusa::Nada);
     let relatorio = espelho(&cenario, Arc::clone(&falso))
-        .ciclo()
+        .cycle()
         .await
         .expect("ciclo");
 
@@ -698,7 +698,7 @@ async fn anexo_sem_blob_no_disco_vira_aviso_sem_prender_o_cursor() {
         "aviso: {}",
         avisos[0].body
     );
-    assert_eq!(relatorio.pendentes, 0);
+    assert_eq!(relatorio.pending, 0);
     assert_eq!(cursor(&store, org), maior_rowid_e_id(&store));
 }
 
@@ -718,7 +718,7 @@ async fn midia_recusada_de_vez_deixa_o_aviso_antes_de_isolar() {
     let mut ciclos = 0;
     // Até o laço desistir: `TENTATIVAS_DEFINITIVAS` passagens.
     while cursor(&store, org).0 == 0 && ciclos < 10 {
-        espelho_do_caso.ciclo().await.expect("ciclo");
+        espelho_do_caso.cycle().await.expect("ciclo");
         ciclos += 1;
     }
 

@@ -18,13 +18,13 @@ pub mod fluxos_metricas;
 pub mod fluxos_servico;
 pub mod fluxos_transicao;
 pub mod manifestos;
-pub mod matrix_espelho;
-pub mod matrix_estado;
-pub mod matrix_expiracao;
-pub mod matrix_falhas_aviso;
-pub mod matrix_inicio;
-pub mod matrix_metricas;
-pub mod matrix_resposta;
+pub mod matrix_beginning;
+pub mod matrix_expiry;
+pub mod matrix_failure_notice;
+pub mod matrix_metrics;
+pub mod matrix_mirror;
+pub mod matrix_response;
+pub mod matrix_state;
 pub mod saida_whatsapp;
 mod site_chat;
 
@@ -40,7 +40,12 @@ pub use cifra::ChaveDeCifra;
 pub use erro::{ApiError, RespostaErro};
 pub use estado::Estado;
 pub use manifestos::CatalogoManifestos;
-pub use matrix_resposta::{PortaAtendimento, PortaDoHarness, RespostaDoAtendente};
+pub use matrix_response::{AttendantResponse, HarnessResponsePort, ResponsePort};
+pub(crate) use saida_whatsapp::MOTIVO_TENTATIVAS_ESGOTADAS as WHATSAPP_ATTEMPTS_EXHAUSTED;
+
+pub(crate) fn last_response_error(failure: &poph_store::HumanResponseFailure) -> Option<&str> {
+    failure.ultimo_erro.as_deref()
+}
 
 /// Versão do servidor (a mesma do binário `poph`).
 pub const VERSAO: &str = env!("CARGO_PKG_VERSION");
@@ -81,14 +86,14 @@ where
     // Módulo Matrix (MX-20): desligado por configuração, não sobe nada e as rotas do Synapse
     // respondem `404`. Ligado, põe os laços no ar e injeta o receptor do Application Service. Falha
     // de configuração ou de conexão não impede o servidor de atender — o módulo fica degradado.
-    let matrix = matrix_inicio::iniciar(&mut estado);
+    let matrix = matrix_beginning::start(&mut estado);
     let resultado = axum::serve(listener, router(estado))
         .with_graceful_shutdown(desligamento)
         .await;
     // O módulo Matrix para antes dos outros: os laços terminam o que estão fazendo (o cursor só
     // anda depois do sucesso), então nada pendente se perde.
     if let Some(matrix) = matrix {
-        matrix.parar().await;
+        matrix.stop().await;
     }
     if let Some(saida) = saida {
         saida.abort();

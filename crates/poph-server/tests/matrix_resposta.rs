@@ -38,7 +38,7 @@ use poph_evolution::webhook::SECRET_HEADER;
 use poph_evolution::{ATTACHMENT_CAP, ConfigEvolution, EvolutionClient};
 use poph_matrix::{ClientConfig, GhostIds, MatrixClient};
 use poph_server::evolution::CanalEvolution;
-use poph_server::{AsReceiver, Estado, PortaAtendimento, PortaDoHarness, RespostaDoAtendente};
+use poph_server::{AsReceiver, AttendantResponse, Estado, HarnessResponsePort, ResponsePort};
 use poph_store::error::StoreError;
 use poph_store::{
     HumanResponse, NewAgent, NewConversation, NewHumanResponse, NewOrg, Origin, OutboxState, Page,
@@ -226,14 +226,14 @@ async fn subir_evolution_falsa() -> (String, EvolucaoFalsa) {
 
 /// A porta de verdade, com um interruptor para fingir banco fora do ar.
 struct PortaComFalha {
-    real: PortaDoHarness,
+    real: HarnessResponsePort,
     falhar: AtomicBool,
 }
 
 impl PortaComFalha {
     fn fresh(store: Arc<Store>) -> Self {
         Self {
-            real: PortaDoHarness::fresh(store),
+            real: HarnessResponsePort::fresh(store),
             falhar: AtomicBool::new(true),
         }
     }
@@ -243,79 +243,79 @@ impl PortaComFalha {
     }
 }
 
-impl PortaAtendimento for PortaComFalha {
-    fn conversa_da_sala(
+impl ResponsePort for PortaComFalha {
+    fn room_conversation(
         &self,
         room: &str,
-    ) -> Result<Option<poph_server::matrix_resposta::ConversaDaSala>, StoreError> {
+    ) -> Result<Option<poph_server::matrix_response::RoomConversation>, StoreError> {
         if self.falhar.load(Ordering::SeqCst) {
             return Err(StoreError::Internal("banco fora do ar (teste)".to_owned()));
         }
-        self.real.conversa_da_sala(room)
+        self.real.room_conversation(room)
     }
 
-    fn agente_da_conversa(
+    fn conversation_agent(
         &self,
-        alvo: poph_server::matrix_resposta::ConversaDaSala,
+        alvo: poph_server::matrix_response::RoomConversation,
     ) -> Result<Option<poph_types::AgentId>, StoreError> {
         if self.falhar.load(Ordering::SeqCst) {
             return Err(StoreError::Internal("banco fora do ar (teste)".to_owned()));
         }
-        self.real.agente_da_conversa(alvo)
+        self.real.conversation_agent(alvo)
     }
 
-    fn registrar_resposta(
+    fn record_response(
         &self,
-        alvo: poph_server::matrix_resposta::ConversaDaSala,
+        alvo: poph_server::matrix_response::RoomConversation,
         fresh: NewHumanResponse<'_>,
     ) -> Result<HumanResponse, StoreError> {
-        self.real.registrar_resposta(alvo, fresh)
+        self.real.record_response(alvo, fresh)
     }
 
-    fn registrar_resposta_com_arquivo(
+    fn record_response_with_file(
         &self,
-        alvo: poph_server::matrix_resposta::ConversaDaSala,
+        alvo: poph_server::matrix_response::RoomConversation,
         fresh: poph_store::HumanResponseWithFile<'_>,
     ) -> Result<HumanResponse, StoreError> {
-        self.real.registrar_resposta_com_arquivo(alvo, fresh)
+        self.real.record_response_with_file(alvo, fresh)
     }
 }
 
 /// A porta de verdade, mas sem saber o agente da conversa: o caso da conversa antiga, da org
 /// migrada ou do registro que sumiu. Não há fantasma para assinar o arquivo do atendente.
 struct PortaSemAgente {
-    real: PortaDoHarness,
+    real: HarnessResponsePort,
 }
 
-impl PortaAtendimento for PortaSemAgente {
-    fn conversa_da_sala(
+impl ResponsePort for PortaSemAgente {
+    fn room_conversation(
         &self,
         room: &str,
-    ) -> Result<Option<poph_server::matrix_resposta::ConversaDaSala>, StoreError> {
-        self.real.conversa_da_sala(room)
+    ) -> Result<Option<poph_server::matrix_response::RoomConversation>, StoreError> {
+        self.real.room_conversation(room)
     }
 
-    fn agente_da_conversa(
+    fn conversation_agent(
         &self,
-        _alvo: poph_server::matrix_resposta::ConversaDaSala,
+        _alvo: poph_server::matrix_response::RoomConversation,
     ) -> Result<Option<poph_types::AgentId>, StoreError> {
         Ok(None)
     }
 
-    fn registrar_resposta(
+    fn record_response(
         &self,
-        alvo: poph_server::matrix_resposta::ConversaDaSala,
+        alvo: poph_server::matrix_response::RoomConversation,
         fresh: NewHumanResponse<'_>,
     ) -> Result<HumanResponse, StoreError> {
-        self.real.registrar_resposta(alvo, fresh)
+        self.real.record_response(alvo, fresh)
     }
 
-    fn registrar_resposta_com_arquivo(
+    fn record_response_with_file(
         &self,
-        alvo: poph_server::matrix_resposta::ConversaDaSala,
+        alvo: poph_server::matrix_response::RoomConversation,
         fresh: poph_store::HumanResponseWithFile<'_>,
     ) -> Result<HumanResponse, StoreError> {
-        self.real.registrar_resposta_com_arquivo(alvo, fresh)
+        self.real.record_response_with_file(alvo, fresh)
     }
 }
 
@@ -486,7 +486,7 @@ impl Cenario {
     }
 
     /// Sobe o Harness com o receptor do Application Service e o consumidor da fila de saída.
-    async fn subir(&self, porta: Arc<dyn PortaAtendimento>) -> Servidor {
+    async fn subir(&self, porta: Arc<dyn ResponsePort>) -> Servidor {
         // Um canal por org, como na operação: a fila de cada org sai pelo canal dela.
         let canais = vec![
             self.channel(self.org, self.conversation, &self.url_evo),
@@ -504,8 +504,8 @@ impl Cenario {
         let ids = GhostIds::new(PREFIXO, SERVER_NAME).expect("ids dos fantasmas");
         // Pasta de blobs como na operação: o arquivo do atendente (MX-44) é gravado ali.
         let entrega = Arc::new(
-            RespostaDoAtendente::new(porta, Some(cliente_matrix), ids)
-                .com_pasta_de_blobs(self.pasta.join("blobs")),
+            AttendantResponse::new(porta, Some(cliente_matrix), ids)
+                .with_blob_folder(self.pasta.join("blobs")),
         );
 
         let state = Estado::novo(Arc::clone(&self.store), HarnessConfig::default())
@@ -616,7 +616,7 @@ impl Drop for Cenario {
 struct Servidor {
     base: String,
     client: Client,
-    entrega: Arc<RespostaDoAtendente>,
+    entrega: Arc<AttendantResponse>,
     desligar: Option<oneshot::Sender<()>>,
 }
 
@@ -693,8 +693,8 @@ impl Servidor {
         (status, valor)
     }
 
-    fn contadores(&self) -> &poph_server::matrix_resposta::Contadores {
-        self.entrega.contadores()
+    fn contadores(&self) -> &poph_server::matrix_response::ResponseCounters {
+        self.entrega.counters()
     }
 }
 
@@ -742,7 +742,9 @@ fn textos_enviados(envios: &[Value]) -> Vec<String> {
 async fn resposta_do_atendente_vira_um_envio_com_prefixo_e_transfere_a_conversa() {
     let cenario = Cenario::new("a2").await;
     let servidor = cenario
-        .subir(Arc::new(PortaDoHarness::fresh(Arc::clone(&cenario.store))))
+        .subir(Arc::new(HarnessResponsePort::fresh(Arc::clone(
+            &cenario.store,
+        ))))
         .await;
 
     let (status, body) = servidor
@@ -837,7 +839,7 @@ async fn resposta_do_atendente_vira_um_envio_com_prefixo_e_transfere_a_conversa(
 #[tokio::test]
 async fn reenvio_da_mesma_transacao_e_do_mesmo_evento_nao_gera_segundo_envio() {
     let cenario = Cenario::new("a3").await;
-    let porta = Arc::new(PortaDoHarness::fresh(Arc::clone(&cenario.store)));
+    let porta = Arc::new(HarnessResponsePort::fresh(Arc::clone(&cenario.store)));
     let servidor = cenario.subir(porta).await;
 
     let (primeiro, _) = servidor
@@ -884,7 +886,7 @@ async fn reenvio_da_mesma_transacao_e_do_mesmo_evento_nao_gera_segundo_envio() {
         "uma mensagem no histórico"
     );
     assert_eq!(
-        servidor.contadores().duplicadas.load(Ordering::SeqCst),
+        servidor.contadores().duplicates.load(Ordering::SeqCst),
         1,
         "o reenvio com transação nova foi reconhecido como duplicado"
     );
@@ -893,7 +895,7 @@ async fn reenvio_da_mesma_transacao_e_do_mesmo_evento_nao_gera_segundo_envio() {
 #[tokio::test]
 async fn evento_de_uma_org_nao_toca_a_conversa_da_outra() {
     let cenario = Cenario::new("a9").await;
-    let porta = Arc::new(PortaDoHarness::fresh(Arc::clone(&cenario.store)));
+    let porta = Arc::new(HarnessResponsePort::fresh(Arc::clone(&cenario.store)));
     let servidor = cenario.subir(porta).await;
 
     // Atendente responde na sala da org A.
@@ -970,7 +972,7 @@ async fn conversa_encerrada_nao_envia_e_avisa_na_sala() {
             "teste".to_owned(),
         )
         .expect("encerra a conversa");
-    let porta = Arc::new(PortaDoHarness::fresh(Arc::clone(&cenario.store)));
+    let porta = Arc::new(HarnessResponsePort::fresh(Arc::clone(&cenario.store)));
     let servidor = cenario.subir(porta).await;
 
     let (status, _) = servidor
@@ -995,7 +997,7 @@ async fn conversa_encerrada_nao_envia_e_avisa_na_sala() {
     assert_eq!(escritas.len(), 1);
     assert_eq!(
         escritas[0].body.get("body").and_then(Value::as_str),
-        Some(poph_server::matrix_resposta::AVISO_CONVERSA_ENCERRADA)
+        Some(poph_server::matrix_response::CLOSED_CONVERSATION_NOTICE)
     );
     assert_eq!(
         escritas[0].body.get("msgtype").and_then(Value::as_str),
@@ -1015,7 +1017,7 @@ async fn conversa_encerrada_nao_envia_e_avisa_na_sala() {
 #[tokio::test]
 async fn sala_que_ninguem_conhece_e_ignorada_com_200() {
     let cenario = Cenario::new("desconhecida").await;
-    let porta = Arc::new(PortaDoHarness::fresh(Arc::clone(&cenario.store)));
+    let porta = Arc::new(HarnessResponsePort::fresh(Arc::clone(&cenario.store)));
     let servidor = cenario.subir(porta).await;
 
     let (status, body) = servidor
@@ -1029,10 +1031,7 @@ async fn sala_que_ninguem_conhece_e_ignorada_com_200() {
     assert_eq!(status, StatusHttp::OK);
     assert_eq!(body, json!({}));
     assert_eq!(
-        servidor
-            .contadores()
-            .salas_desconhecidas
-            .load(Ordering::SeqCst),
+        servidor.contadores().unknown_rooms.load(Ordering::SeqCst),
         1
     );
     assert!(cenario.messages(cenario.org).is_empty());
@@ -1083,7 +1082,7 @@ async fn arquivo_que_o_synapse_nao_entrega_mais_vira_aviso_e_nao_vai_ao_cliente(
     // MX-44: o arquivo do atendente agora é baixado da sala. Quando o Synapse não o entrega (aqui,
     // porque o `mxc://` não existe), o cliente **não** recebe nada e o atendente é avisado na sala.
     let cenario = Cenario::new("midia").await;
-    let porta = Arc::new(PortaDoHarness::fresh(Arc::clone(&cenario.store)));
+    let porta = Arc::new(HarnessResponsePort::fresh(Arc::clone(&cenario.store)));
     let servidor = cenario.subir(porta).await;
 
     let (status, _) = servidor
@@ -1136,7 +1135,7 @@ async fn arquivo_que_o_synapse_nao_entrega_mais_vira_aviso_e_nao_vai_ao_cliente(
 #[tokio::test]
 async fn o_nome_do_atendente_e_lido_uma_vez_e_fica_no_cache() {
     let cenario = Cenario::new("cache-nome").await;
-    let porta = Arc::new(PortaDoHarness::fresh(Arc::clone(&cenario.store)));
+    let porta = Arc::new(HarnessResponsePort::fresh(Arc::clone(&cenario.store)));
     let servidor = cenario.subir(porta).await;
 
     let (status, _) = servidor
@@ -1163,7 +1162,7 @@ async fn o_nome_do_atendente_e_lido_uma_vez_e_fica_no_cache() {
             .iter()
             .all(|text| text.starts_with("*[Ana Atendente]*:\n"))
     );
-    assert!(servidor.entrega.validade_do_nome() > Duration::ZERO);
+    assert!(servidor.entrega.name_ttl() > Duration::ZERO);
 }
 
 #[tokio::test]
@@ -1173,7 +1172,7 @@ async fn conversa_sem_agente_nao_baixa_a_midia_nem_inventa_assinatura() {
     // do Synapse: reenviar não traria o agente de volta.
     let cenario = Cenario::new("sem-agente").await;
     let porta = Arc::new(PortaSemAgente {
-        real: PortaDoHarness::fresh(Arc::clone(&cenario.store)),
+        real: HarnessResponsePort::fresh(Arc::clone(&cenario.store)),
     });
     let servidor = cenario.subir(porta).await;
 
@@ -1215,8 +1214,8 @@ async fn conversa_sem_agente_nao_baixa_a_midia_nem_inventa_assinatura() {
     assert_eq!(
         servidor
             .entrega
-            .contadores()
-            .midias_sem_assinatura
+            .counters()
+            .unsigned_assets
             .load(Ordering::SeqCst),
         1,
         "o caso é contado para aparecer na operação"
@@ -1226,7 +1225,7 @@ async fn conversa_sem_agente_nao_baixa_a_midia_nem_inventa_assinatura() {
 #[tokio::test]
 async fn token_do_synapse_e_do_harness_nao_vazam_para_o_cliente_nem_para_a_sala() {
     let cenario = Cenario::new("canario").await;
-    let porta = Arc::new(PortaDoHarness::fresh(Arc::clone(&cenario.store)));
+    let porta = Arc::new(HarnessResponsePort::fresh(Arc::clone(&cenario.store)));
     let servidor = cenario.subir(porta).await;
 
     // Uma resposta do atendente (vai ao cliente) e uma mídia (vira aviso na sala): os dois

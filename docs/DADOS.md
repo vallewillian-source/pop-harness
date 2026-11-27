@@ -730,7 +730,7 @@ posição do cursor com o mesmo id já foi espelhada e é pulada; com outro id �
 
 ### 11.3 Espelho de mensagens (MX-14)
 
-O laço (`crates/poph-server/src/matrix_espelho.rs`, `EspelhoMatrix`) lê `messages` pela leitura de §11.2 e
+O laço (`crates/poph-server/src/matrix_mirror.rs`, `MatrixMirror`) lê `messages` pela leitura de §11.2 e
 entrega ao Synapse pelo destino injetado (`DestinoMatrix`). Regras que o código e os testes garantem:
 
 - **Cursor por org, leitura global.** Cada org ligada tem a sua linha em `matrix_estado`. O laço lê uma vez
@@ -826,7 +826,7 @@ Regras que o serviço garante:
 
 ### 11.5 Estado da conversa (MX-15)
 
-O serviço de estado (`crates/poph-server/src/matrix_estado.rs`, `EstadoDasConversas`) percorre
+O serviço de estado (`crates/poph-server/src/matrix_state.rs`, `ConversationStates`) percorre
 `conversations` pela leitura incremental de §11.2 e compara a situação de cada conversa com o que a sala já
 espelhou (`matrix_rooms.last_status`):
 
@@ -847,7 +847,7 @@ espelhou (`matrix_rooms.last_status`):
 ### 11.6 Aviso de falha da resposta humana (MX-19)
 
 Quando a resposta do atendente não sai pelo WhatsApp de vez, o módulo escreve um aviso na sala (serviço
-`crates/poph-server/src/matrix_falhas_aviso.rs`, `AvisoDeFalhas`). Os dados que ele usa:
+`crates/poph-server/src/matrix_failure_notice.rs`, `FailureNotice`). Os dados que ele usa:
 
 - **Nada de tabela de fila nova.** A falha é lida da `outbox`: item em `failed` cuja mensagem tem o mesmo
   `turn_id` e `origin = 'human'`. O aviso não mexe em `outbox`.

@@ -47,7 +47,7 @@ use poph_matrix::spaces::{DepartmentSpace, InviteLimits, Position, RoomForSpace,
 use poph_matrix::users::{Ghost, GhostIds};
 use poph_server::Estado;
 use poph_server::evolution::CanalEvolution;
-use poph_server::matrix_inicio::{self, AjustesDeInicio, MatrixRodando, PortaEspacosStore};
+use poph_server::matrix_beginning::{self, RunningMatrix, SpaceStorePort, StartupSettings};
 use poph_server::{entrada_turno, saida_whatsapp};
 use poph_store::{
     Direction, NewAgent, NewConversation, NewDepartment, NewMessage, NewOrg, Origin, OutboxState,
@@ -883,11 +883,11 @@ fn modulo_de(config: &MatrixConfig) -> MatrixModule {
 }
 
 /// Sonda curta para os testes (o padrão de produção espera 30 s entre sondas).
-fn ajustes_de_teste() -> AjustesDeInicio {
-    AjustesDeInicio {
-        periodo_da_sonda: Duration::from_millis(100),
-        teto_da_sonda: Duration::from_millis(200),
-        prazo_de_parada: Duration::from_secs(1),
+fn ajustes_de_teste() -> StartupSettings {
+    StartupSettings {
+        probe_period: Duration::from_millis(100),
+        probe_delay_cap: Duration::from_millis(200),
+        shutdown_timeout: Duration::from_secs(1),
     }
 }
 
@@ -913,8 +913,11 @@ fn processo_do_modulo(base: &Base, config: MatrixConfig) -> Hospedeiro {
             ..HarnessConfig::default()
         };
         let mut state = Estado::novo(store, harness).expect("estado do servidor");
-        let _rodando =
-            matrix_inicio::iniciar_com_ajustes(&mut state, modulo_de(&config), ajustes_de_teste());
+        let _rodando = matrix_beginning::start_with_settings(
+            &mut state,
+            modulo_de(&config),
+            ajustes_de_teste(),
+        );
         let _ = recebe.await;
     })
 }
@@ -933,8 +936,11 @@ fn processo_do_receptor(base: &Base, config: MatrixConfig, ouvinte: StdListener)
             ..HarnessConfig::default()
         };
         let mut state = Estado::novo(store, harness).expect("estado do servidor");
-        let _rodando =
-            matrix_inicio::iniciar_com_ajustes(&mut state, modulo_de(&config), ajustes_de_teste());
+        let _rodando = matrix_beginning::start_with_settings(
+            &mut state,
+            modulo_de(&config),
+            ajustes_de_teste(),
+        );
         let app = poph_server::router(state);
         tokio::spawn(async move {
             let _ = axum::serve(ouvinte, app).await;
@@ -1002,7 +1008,7 @@ struct Servidor {
     evo: EvolucaoFalsa,
     desligar: Option<oneshot::Sender<()>>,
     tarefas: Vec<tokio::task::JoinHandle<()>>,
-    modulo: Option<MatrixRodando>,
+    modulo: Option<RunningMatrix>,
 }
 
 impl Servidor {
@@ -1051,7 +1057,7 @@ impl Servidor {
             tarefa.abort();
         }
         if let Some(modulo) = self.modulo.take() {
-            modulo.parar().await;
+            modulo.stop().await;
         }
     }
 }
@@ -1062,7 +1068,7 @@ impl Servidor {
 async fn subir_servidor(
     base: &Base,
     config: Option<MatrixConfig>,
-    ajustes: AjustesDeInicio,
+    ajustes: StartupSettings,
     respostas: usize,
 ) -> Servidor {
     let store = Arc::new(Store::open_at(&base.db(), &base.rag()).expect("banco do servidor"));
@@ -1152,7 +1158,9 @@ async fn subir_servidor(
     let mut state = state.com_turno(fluxo, Duration::from_millis(20));
 
     let modulo = match config {
-        Some(config) => matrix_inicio::iniciar_com_ajustes(&mut state, modulo_de(&config), ajustes),
+        Some(config) => {
+            matrix_beginning::start_with_settings(&mut state, modulo_de(&config), ajustes)
+        }
         None => None,
     };
     let mut tarefas = Vec::new();
@@ -1775,7 +1783,7 @@ async fn medir_rodada(modo: Modo, rodada: usize, amostras: usize) -> Vec<Amostra
         }
     };
     // Roteiros de sobra: o turno chama o modelo mais de uma vez por mensagem em alguns casos.
-    let servidor = subir_servidor(&base, config, AjustesDeInicio::padrao(), amostras * 4).await;
+    let servidor = subir_servidor(&base, config, StartupSettings::defaults(), amostras * 4).await;
     let mut resultado = Vec::with_capacity(amostras);
     for i in 0..amostras {
         let antes = Instant::now();
@@ -1958,8 +1966,8 @@ async fn posicionar_com(
     let agent: Ghost = ids
         .agent(&dados.agent.to_string())
         .expect("fantasma do agente");
-    let spaces = Spaces::with(cliente_matrix(&dados.url), ids, PortaEspacosStore(store))
-        .with_limits(limites);
+    let spaces =
+        Spaces::with(cliente_matrix(&dados.url), ids, SpaceStorePort(store)).with_limits(limites);
     let room = RoomForSpace {
         org: dados.org,
         conversation: dados.conversation,

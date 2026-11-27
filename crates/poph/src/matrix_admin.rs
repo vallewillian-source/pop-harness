@@ -28,7 +28,7 @@ use poph_matrix::spaces::SpaceOrigin as OrigemGravada;
 use poph_matrix::{
     Classification, DepartmentSpace, MatrixClient, MatrixModule, SpaceError, Spaces,
 };
-use poph_server::matrix_inicio::PortaEspacosStore;
+use poph_server::matrix_beginning::SpaceStorePort;
 use poph_store::{NewAuditEntry, StateMatrixOrg, Store};
 use poph_types::{DepartmentId, HarnessConfig, OrgId};
 use serde_json::{Value, json};
@@ -405,7 +405,7 @@ fn ensure_space(
     })?;
     let spaces = Spaces::of_config(
         client,
-        PortaEspacosStore(Arc::clone(&ctx.store)),
+        SpaceStorePort(Arc::clone(&ctx.store)),
         &modulo.config,
     )
     .map_err(|_| "não consegui montar o serviço de espaços: confira a seção [matrix]".to_owned())?;

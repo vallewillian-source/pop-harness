@@ -16,9 +16,9 @@ use poph_matrix::format::{MessageOrigin, Outbound};
 use poph_matrix::rooms::{ConversationToRoom, RoomError};
 use poph_matrix::users::Ghost;
 use poph_matrix::users::GhostIds;
-use poph_server::matrix_espelho::{
-    AvisoNaSala, DestinoMatrix, EnvioMidia, EspelhoMatrix, MAX_PAGINAS_POR_CICLO, MidiaPublicada,
-    PAGINA, TENTATIVAS_DEFINITIVAS, TETO_ATRASO,
+use poph_server::matrix_mirror::{
+    AssetSend, DEFINITIVE_ATTEMPTS, MAX_DELAY, MAX_PAGES_PER_CYCLE, MatrixMirror, MatrixTarget,
+    PAGE, PublishedAsset, RoomNotice,
 };
 use poph_store::{
     Direction, NewAgent, NewConversation, NewDeviceMessage, NewMessage, NewOrg, Origin, Role, Store,
@@ -293,7 +293,7 @@ fn recusado() -> CallError {
 /// O duplo compartilhado com o teste: o espelho fica com uma cópia do `Arc`, o teste com outra.
 struct Sinal(Arc<Falso>);
 
-impl DestinoMatrix for Sinal {
+impl MatrixTarget for Sinal {
     fn ensure_room(
         &self,
         dados: &ConversationToRoom,
@@ -381,8 +381,8 @@ impl DestinoMatrix for Sinal {
     fn send_asset(
         &self,
         room: &str,
-        send: &EnvioMidia,
-    ) -> impl std::future::Future<Output = Result<MidiaPublicada, CallError>> + Send {
+        send: &AssetSend,
+    ) -> impl std::future::Future<Output = Result<PublishedAsset, CallError>> + Send {
         let falso = &self.0;
         let n = falso.chamadas_envio.fetch_add(1, Ordering::SeqCst) + 1;
         let modo = *falso.modo.lock().unwrap();
@@ -417,17 +417,17 @@ impl DestinoMatrix for Sinal {
         }
         drop(criados);
         // Como o destino real: o `mxc` sai do `txnId` do anexo e o evento é numerado na sala.
-        let publicada = MidiaPublicada {
+        let publicada = PublishedAsset {
             event: format!("$midia-{txn}:matrix-dev.local"),
             mxc: format!("mxc://matrix-dev.local/{txn}"),
         };
         async move { resultado.map(|()| publicada) }
     }
 
-    fn avisar(
+    fn send_notice(
         &self,
         room: &str,
-        aviso: &AvisoNaSala,
+        aviso: &RoomNotice,
     ) -> impl std::future::Future<Output = Result<(), CallError>> + Send {
         let falso = &self.0;
         let room = room.to_owned();
@@ -448,8 +448,8 @@ impl DestinoMatrix for Sinal {
     }
 }
 
-fn espelho(store: Arc<Store>, destino: Arc<Falso>) -> EspelhoMatrix<Sinal> {
-    EspelhoMatrix::new(store, Sinal(destino), &config()).expect("monta o espelho")
+fn espelho(store: Arc<Store>, destino: Arc<Falso>) -> MatrixMirror<Sinal> {
+    MatrixMirror::new(store, Sinal(destino), &config()).expect("monta o espelho")
 }
 
 fn sala_de(conversation: ConversationId) -> String {
@@ -485,11 +485,11 @@ async fn ordem_dentro_da_sala_e_paralelo_entre_salas() {
 
     let destino = Falso::new(Modo::Normal);
     let relatorio = espelho(Arc::clone(&store), Arc::clone(&destino))
-        .ciclo()
+        .cycle()
         .await
         .expect("ciclo");
 
-    assert_eq!(relatorio.enviadas, 6);
+    assert_eq!(relatorio.sent, 6);
     assert_eq!(destino.txns_da_sala(&sala_de(ana)), esperado_ana);
     assert_eq!(destino.txns_da_sala(&sala_de(bruno)), esperado_bruno);
 }
@@ -518,14 +518,14 @@ async fn queda_no_meio_nao_pula_nem_duplica() {
     let destino = Falso::new(Modo::FalhaNaChamada(3));
     let espelho = espelho(Arc::clone(&store), Arc::clone(&destino));
 
-    let primeiro = espelho.ciclo().await.expect("ciclo 1");
-    assert!(primeiro.pendentes >= 1, "a falha no meio deixa pendência");
+    let primeiro = espelho.cycle().await.expect("ciclo 1");
+    assert!(primeiro.pending >= 1, "a falha no meio deixa pendência");
     // O cursor não passou da primeira linha não resolvida.
     let cursor = store.matrix().read_cursors(org).expect("cursor").messages;
     assert!(cursor < 6, "cursor não pode andar além da falha: {cursor}");
 
-    espelho.ciclo().await.expect("ciclo 2");
-    espelho.ciclo().await.expect("ciclo 3");
+    espelho.cycle().await.expect("ciclo 2");
+    espelho.cycle().await.expect("ciclo 3");
 
     let criados: Vec<String> = destino.criados().into_iter().map(|c| c.txn).collect();
     assert_eq!(criados.len(), 6, "todas entregues uma vez");
@@ -562,8 +562,8 @@ async fn mensagem_venenosa_nao_trava_a_fila() {
     let espelho = espelho(Arc::clone(&store), Arc::clone(&destino));
 
     // Até o limite de tentativas, a venenosa fica pendente e a fila espera.
-    for _ in 0..(TENTATIVAS_DEFINITIVAS - 1) {
-        espelho.ciclo().await.expect("ciclo");
+    for _ in 0..(DEFINITIVE_ATTEMPTS - 1) {
+        espelho.cycle().await.expect("ciclo");
     }
     assert!(
         !destino
@@ -572,19 +572,19 @@ async fn mensagem_venenosa_nao_trava_a_fila() {
     );
 
     // Na tentativa limite, ela é isolada e a fila anda.
-    espelho.ciclo().await.expect("ciclo limite");
-    espelho.ciclo().await.expect("ciclo seguinte");
+    espelho.cycle().await.expect("ciclo limite");
+    espelho.cycle().await.expect("ciclo seguinte");
 
-    let enviadas = destino.txns_da_sala(&sala_de(conversation));
-    assert!(enviadas.contains(&antes));
-    assert!(enviadas.contains(&depois));
-    assert!(enviadas.contains(&ultima));
-    assert!(!enviadas.contains(&veneno));
+    let sent = destino.txns_da_sala(&sala_de(conversation));
+    assert!(sent.contains(&antes));
+    assert!(sent.contains(&depois));
+    assert!(sent.contains(&ultima));
+    assert!(!sent.contains(&veneno));
 
     let falhas = store.matrix().list_failures(org, 10).expect("falhas");
     assert_eq!(falhas.len(), 1, "a venenosa foi isolada uma vez");
     assert_eq!(falhas[0].motivo, "M_FORBIDDEN");
-    assert_eq!(falhas[0].attempts, TENTATIVAS_DEFINITIVAS);
+    assert_eq!(falhas[0].attempts, DEFINITIVE_ATTEMPTS);
 }
 
 #[tokio::test]
@@ -609,21 +609,21 @@ async fn synapse_fora_acumula_sem_avancar_e_depois_drena() {
     let destino = Falso::new(Modo::Fora);
     let espelho = espelho(Arc::clone(&store), Arc::clone(&destino));
     for _ in 0..3 {
-        let relatorio = espelho.ciclo().await.expect("ciclo");
-        assert_eq!(relatorio.enviadas, 0);
-        assert!(relatorio.pendentes >= 1);
+        let relatorio = espelho.cycle().await.expect("ciclo");
+        assert_eq!(relatorio.sent, 0);
+        assert!(relatorio.pending >= 1);
     }
     assert_eq!(
         store.matrix().read_cursors(org).expect("cursor").messages,
         0
     );
     assert!(
-        espelho.atraso_apos(3) > espelho.atraso_apos(1),
+        espelho.delay_after(3) > espelho.delay_after(1),
         "o atraso cresce"
     );
 
     destino.definir_modo(Modo::Normal);
-    espelho.ciclo().await.expect("ciclo de volta");
+    espelho.cycle().await.expect("ciclo de volta");
     let criados: Vec<String> = destino.criados().into_iter().map(|c| c.txn).collect();
     assert_eq!(criados, todas, "tudo entregue, na ordem, uma vez");
 }
@@ -646,12 +646,12 @@ async fn org_desligada_nao_gera_chamada_alguma() {
 
     let destino = Falso::new(Modo::Normal);
     let relatorio = espelho(Arc::clone(&store), Arc::clone(&destino))
-        .ciclo()
+        .cycle()
         .await
         .expect("ciclo");
 
-    assert_eq!(relatorio.enviadas, 1);
-    assert_eq!(relatorio.de_org_desligada, 2);
+    assert_eq!(relatorio.sent, 1);
+    assert_eq!(relatorio.from_disabled_org, 2);
     assert_eq!(destino.chamadas_sala.load(Ordering::SeqCst), 1);
     assert!(destino.criados().iter().all(|c| c.room == sala_de(conv_l)));
 }
@@ -670,11 +670,11 @@ async fn mensagem_anterior_ao_corte_nao_e_espelhada() {
 
     let destino = Falso::new(Modo::Normal);
     let relatorio = espelho(Arc::clone(&store), Arc::clone(&destino))
-        .ciclo()
+        .cycle()
         .await
         .expect("ciclo");
 
-    assert_eq!(relatorio.antes_do_corte, 1);
+    assert_eq!(relatorio.before_cutoff, 1);
     assert_eq!(destino.txns_da_sala(&sala_de(conversation)), vec![depois]);
 }
 
@@ -710,11 +710,11 @@ async fn resposta_humana_e_ferramenta_nao_viram_evento() {
 
     let destino = Falso::new(Modo::Normal);
     let relatorio = espelho(Arc::clone(&store), Arc::clone(&destino))
-        .ciclo()
+        .cycle()
         .await
         .expect("ciclo");
 
-    assert_eq!(relatorio.enviadas, 1);
+    assert_eq!(relatorio.sent, 1);
     assert_eq!(destino.txns_da_sala(&sala_de(conversation)), vec![normal]);
 }
 
@@ -733,7 +733,7 @@ async fn rowid_reaproveitado_nao_perde_a_mensagem_nova() {
 
     let destino = Falso::new(Modo::Normal);
     let espelho = espelho(Arc::clone(&store), Arc::clone(&destino));
-    espelho.ciclo().await.expect("ciclo 1");
+    espelho.cycle().await.expect("ciclo 1");
     assert_eq!(destino.criados().len(), 3);
 
     // Apaga a linha de maior rowid (já espelhada) e grava outra: o SQLite reaproveita o rowid.
@@ -760,7 +760,7 @@ async fn rowid_reaproveitado_nao_perde_a_mensagem_nova() {
         .expect("rowid novo");
     assert_eq!(rowid_novo, rowid_antigo, "o rowid foi reaproveitado");
 
-    espelho.ciclo().await.expect("ciclo 2");
+    espelho.cycle().await.expect("ciclo 2");
     assert!(
         destino
             .txns_da_sala(&sala_de(conversation))
@@ -788,13 +788,13 @@ async fn cursor_a_frente_do_maior_rowid_volta_ao_ponto_seguro() {
 
     let destino = Falso::new(Modo::Normal);
     let espelho = espelho(Arc::clone(&store), Arc::clone(&destino));
-    let relatorio = espelho.ciclo().await.expect("ciclo");
-    assert_eq!(relatorio.recuos, 1);
+    let relatorio = espelho.cycle().await.expect("ciclo");
+    assert_eq!(relatorio.rewinds, 1);
     assert!(store.matrix().read_cursors(org).expect("cursor").messages <= 2);
 
     // Mensagem nova depois do recuo é lida normalmente.
     let fresh = txn_de(&msg_cliente(&store, org, conversation, "tres"));
-    espelho.ciclo().await.expect("ciclo 2");
+    espelho.cycle().await.expect("ciclo 2");
     assert!(
         destino
             .txns_da_sala(&sala_de(conversation))
@@ -811,23 +811,23 @@ async fn memoria_do_ciclo_fica_limitada_a_uma_pagina() {
     let conversation = criar_conversa(&store, org, agent, "+5511111");
     store.matrix().enable(org).expect("liga");
 
-    let total = PAGINA as usize * 3 + 17;
+    let total = PAGE as usize * 3 + 17;
     for i in 0..total {
         msg_cliente(&store, org, conversation, &format!("m{i}"));
     }
 
     let destino = Falso::new(Modo::Normal);
     let relatorio = espelho(Arc::clone(&store), Arc::clone(&destino))
-        .ciclo()
+        .cycle()
         .await
         .expect("ciclo");
     assert!(
-        relatorio.maior_pagina <= PAGINA,
+        relatorio.largest_page <= PAGE,
         "nunca mais que uma página em memória"
     );
     assert_eq!(
-        relatorio.enviadas as usize,
-        total.min(PAGINA as usize * MAX_PAGINAS_POR_CICLO as usize)
+        relatorio.sent as usize,
+        total.min(PAGE as usize * MAX_PAGES_PER_CYCLE as usize)
     );
 }
 
@@ -835,10 +835,10 @@ async fn memoria_do_ciclo_fica_limitada_a_uma_pagina() {
 async fn atraso_cresce_com_falhas_e_para_no_teto() {
     let cenario = Cenario::new("atraso");
     let espelho = espelho(cenario.store(), Falso::new(Modo::Normal));
-    assert_eq!(espelho.atraso_apos(0), Duration::from_millis(500));
-    assert_eq!(espelho.atraso_apos(1), Duration::from_millis(1000));
-    assert_eq!(espelho.atraso_apos(2), Duration::from_millis(2000));
-    assert_eq!(espelho.atraso_apos(40), TETO_ATRASO);
+    assert_eq!(espelho.delay_after(0), Duration::from_millis(500));
+    assert_eq!(espelho.delay_after(1), Duration::from_millis(1000));
+    assert_eq!(espelho.delay_after(2), Duration::from_millis(2000));
+    assert_eq!(espelho.delay_after(40), MAX_DELAY);
 }
 
 #[tokio::test]
@@ -846,9 +846,9 @@ async fn parada_encerra_o_laco() {
     let cenario = Cenario::new("parada");
     let store = cenario.store();
     let espelho = Arc::new(espelho(Arc::clone(&store), Falso::new(Modo::Normal)));
-    let tarefa = tokio::spawn(Arc::clone(&espelho).executar());
+    let tarefa = tokio::spawn(Arc::clone(&espelho).run());
     tokio::time::sleep(Duration::from_millis(50)).await;
-    espelho.pedir_parada();
+    espelho.request_stop();
     let resultado = tokio::time::timeout(Duration::from_secs(5), tarefa).await;
     assert!(resultado.is_ok(), "o laço sai depois do pedido de parada");
 }
@@ -873,16 +873,16 @@ async fn memoria_com_50_mil_pendentes() {
     let destino = Falso::new(Modo::Fora);
     let inicio = std::time::Instant::now();
     let relatorio = espelho(Arc::clone(&store), Arc::clone(&destino))
-        .ciclo()
+        .cycle()
         .await
         .expect("ciclo");
     eprintln!(
         "ciclo com 50 mil pendentes: {:?}, {relatorio:?}",
         inicio.elapsed()
     );
-    assert_eq!(relatorio.enviadas, 0);
-    assert!(relatorio.maior_pagina <= PAGINA);
-    assert_eq!(relatorio.paginas, 1, "para na primeira página com falha");
+    assert_eq!(relatorio.sent, 0);
+    assert!(relatorio.largest_page <= PAGE);
+    assert_eq!(relatorio.pages, 1, "para na primeira página com falha");
     assert_eq!(
         store.matrix().read_cursors(org).expect("cursor").messages,
         0
@@ -975,11 +975,11 @@ async fn mensagem_do_aparelho_entra_na_sala_pelo_usuario_do_aparelho() {
     let destino = Falso::new(Modo::Normal);
     let outbox_antes = contar_outbox(&cenario);
     let relatorio = espelho(Arc::clone(&store), Arc::clone(&destino))
-        .ciclo()
+        .cycle()
         .await
         .expect("ciclo");
 
-    assert_eq!(relatorio.enviadas, 2, "a do cliente e a do aparelho");
+    assert_eq!(relatorio.sent, 2, "a do cliente e a do aparelho");
     let do_aparelho = destino.criados_do(&fantasma_do_aparelho(integracao));
     assert_eq!(do_aparelho.len(), 1, "o usuário do aparelho fala uma vez");
     assert_eq!(do_aparelho[0].txn, txn_de(&message.to_string()));
@@ -1030,8 +1030,8 @@ async fn aparelho_entra_uma_vez_por_passagem_e_repeticao_nao_duplica() {
 
     let destino = Falso::new(Modo::Normal);
     let espelho = espelho(Arc::clone(&store), Arc::clone(&destino));
-    let ciclo = espelho.ciclo().await.expect("ciclo 1");
-    assert_eq!(ciclo.enviadas, 2);
+    let ciclo = espelho.cycle().await.expect("ciclo 1");
+    assert_eq!(ciclo.sent, 2);
     assert_eq!(
         destino.chamadas_aparelho.load(Ordering::SeqCst),
         1,
@@ -1043,7 +1043,7 @@ async fn aparelho_entra_uma_vez_por_passagem_e_repeticao_nao_duplica() {
         .matrix()
         .rewind_cursor_messages(org, 0, "")
         .expect("recua o cursor");
-    espelho.ciclo().await.expect("ciclo 2");
+    espelho.cycle().await.expect("ciclo 2");
 
     let do_aparelho = destino.criados_do(&fantasma_do_aparelho(integracao));
     assert_eq!(do_aparelho.len(), 2, "cada mensagem aparece uma vez");
@@ -1065,15 +1065,15 @@ async fn aparelho_fora_da_sala_adia_a_mensagem_sem_perde_la() {
     let destino = Falso::new(Modo::Normal);
     destino.definir_falha_aparelho(true);
     let espelho = espelho(Arc::clone(&store), Arc::clone(&destino));
-    let primeiro = espelho.ciclo().await.expect("ciclo 1");
-    assert_eq!(primeiro.enviadas, 0, "sem entrar na sala, nada é enviado");
-    assert!(primeiro.pendentes >= 1, "a mensagem fica pendente");
+    let primeiro = espelho.cycle().await.expect("ciclo 1");
+    assert_eq!(primeiro.sent, 0, "sem entrar na sala, nada é enviado");
+    assert!(primeiro.pending >= 1, "a mensagem fica pendente");
     assert!(destino.criados().is_empty());
 
     // A mensagem continua gravada no Harness; quando a sala responder, sai uma vez.
     destino.definir_falha_aparelho(false);
-    let segundo = espelho.ciclo().await.expect("ciclo 2");
-    assert_eq!(segundo.enviadas, 1);
+    let segundo = espelho.cycle().await.expect("ciclo 2");
+    assert_eq!(segundo.sent, 1);
     let do_aparelho = destino.criados_do(&fantasma_do_aparelho(integracao));
     assert_eq!(do_aparelho.len(), 1);
     assert_eq!(do_aparelho[0].txn, txn_de(&message.to_string()));

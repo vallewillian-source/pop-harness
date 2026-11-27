@@ -211,7 +211,7 @@ existed (the search in `caixas.rs` filters `status IN ('open', 'transferred')`);
 ## 5. The human attendant's reply (MX-18)
 
 When an attendant replies through Element, the event arrives through the Matrix Application Service routes
-(`api/matrix_as.rs`) and is processed in `matrix_resposta.rs`. The reply enters the `outbox` through the same atomic
+(`api/matrix_as.rs`) and is processed in `matrix_response.rs`. The reply enters the `outbox` through the same atomic
 operation as MX-04 (`Mensagens::registrar_resposta_humana`): a message (`direction out`, `role assistant`,
 `origin human`, with the author's name and the Matrix event id in `external_id`), a queue item with `text` and `seq 0`,
 a conversation moved from `open` → `transferred`, and an `human_takeover` audit record, all in a single write. From
@@ -245,7 +245,7 @@ wins, cleanup, group and echo do not record, isolated failure, log canary).
 
 ## 7. The conversation state in the room (MX-15)
 
-The message loop carries the text to the room; the state loop (`matrix_estado.rs`) carries what happens to the
+The message loop carries the text to the room; the state loop (`matrix_state.rs`) carries what happens to the
 conversation. On each pass it reads the changed conversations (cursor on `updated_at` + id, `DADOS.md` §11.5) and
 compares the situation with what the room has already mirrored:
 
@@ -273,13 +273,15 @@ repetition without writing, situation race, space change, transient failure with
 conversations in the same millisecond, room being created, organization turned off, and the customer's name arriving
 after the room).
 
-Wired into `poph serve` by MX-20 (`matrix_inicio.rs`).
+Wired into `poph serve` by MX-20 (`matrix_beginning.rs`).
 
 ## 8. Wiring on the server (MX-20)
 
-The Matrix module enters `poph serve` through `matrix_inicio::iniciar`, called in `servir_em` before the server accepts
+See [Matrix runtime rules](MATRIX.md) for the worker behavior and operational limits.
+
+The Matrix module enters `poph serve` through `matrix_beginning::start`, called in `servir_em` before the server accepts
 connections. It assembles the ready parts — client, ghost ids, spaces and the three real ports over the database —,
-injects the process numbers (`Estado::metricas_matrix`) and starts the message loop (MX-14), the state loop (MX-15)
+injects the process numbers (`Estado::matrix_metrics`) and starts the message loop (MX-14), the state loop (MX-15)
 and the Application Service receiver with delivery of the attendant's reply (MX-16 + MX-18).
 
 - **Off** (`[matrix]` absent or `habilitado = false`): no task enters the runtime, no `poph_matrix_*` is declared, and
@@ -293,8 +295,9 @@ and the Application Service receiver with delivery of the attendant's reply (MX-
   retry at their own pace; the customer's turn and output do not depend on the module. The state is readable at
   `Estado::matrix_conectado()` (`None` = module off).
 - **Orderly shutdown** (`Ctrl-C`): the loops receive the stop request and finish what they are doing before leaving,
-  with a 10 s limit (`PRAZO_DE_PARADA`) and abort only after that. Since the cursor only moves after success, nothing
-  pending is lost: the next startup continues from the same point, and the repetition is idempotent through the `txnId`.
+  with a 10 s wait per task (`SHUTDOWN_TIMEOUT`). If a task exceeds that wait, the server logs a warning and moves
+  on. The cursor advances after success, so the next startup continues from the same point. Repeating the send uses
+  the same `txnId`.
 - **Customer name in the room**: the provisioning port passes `conversations.client_name` (MX-32) to
   `ConversationToRoom.client_name`, so the room and the ghost are created with the name WhatsApp sent; without a name,
   they fall back to the identifier.
@@ -309,7 +312,7 @@ route, entering the outbound queue with the conversation transferred).
 
 When the attendant's reply enters the outbound queue and WhatsApp does not accept it for good (the item becomes
 `failed`), the attendant needs to know, in the room, that the customer did not receive it. The service
-`crates/poph-server/src/matrix_falhas_aviso.rs` does this on each pass (once every 5 s in the background loop, enabled
+`crates/poph-server/src/matrix_failure_notice.rs` does this on each pass (once every 5 s in the background loop, enabled
 by `matrix_inicio`):
 
 1. finds the `failed` items whose message is a human reply (`origin = 'human'`, by `turn_id`) of the orgs with the module

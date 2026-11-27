@@ -25,9 +25,9 @@ use std::sync::{Arc, Mutex};
 use poph_matrix::error::CallError;
 use poph_matrix::rooms::RoomMetadata;
 use poph_matrix::spaces::{Position, RoomForSpace, SpaceError};
-use poph_server::matrix_estado::{
-    ConversaAlterada, ConversaEstado, CursorGravado, DestinoEstado, ErroEstado, EstadoDasConversas,
-    EstadoOrg, PAGINA, PortaEstado, PortaEstadoStore, SalaEstado,
+use poph_server::matrix_state::{
+    ConversationChanged, ConversationState, ConversationStates, OrgState, PAGE, RoomState,
+    StateError, StatePort, StateStorePort, StateTarget, StoredCursor,
 };
 use poph_store::{ConversationStatus, NewAgent, NewConversation, NewDepartment, NewOrg, Store};
 use poph_types::{AgentId, ConversationId, DepartmentId, MatrixConfig, OrgId};
@@ -371,8 +371,8 @@ impl Falso {
 /// O duplo compartilhado com o teste: o laço fica com uma cópia do `Arc`, o teste com outra.
 struct Sinal(Arc<Falso>);
 
-impl DestinoEstado for Sinal {
-    async fn avisar(
+impl StateTarget for Sinal {
+    async fn notify(
         &self,
         room: &str,
         agent: AgentId,
@@ -391,7 +391,7 @@ impl DestinoEstado for Sinal {
         Ok(())
     }
 
-    async fn escrever_metadata(
+    async fn write_metadata(
         &self,
         room: &str,
         _agente: AgentId,
@@ -408,7 +408,7 @@ impl DestinoEstado for Sinal {
         Ok(())
     }
 
-    async fn renomear(&self, room: &str, _agente: AgentId, name: &str) -> Result<(), CallError> {
+    async fn rename(&self, room: &str, _agente: AgentId, name: &str) -> Result<(), CallError> {
         if let Some(error) = self.0.falhar() {
             return Err(error);
         }
@@ -419,7 +419,7 @@ impl DestinoEstado for Sinal {
         Ok(())
     }
 
-    async fn renomear_fantasma(&self, client: &str, name: &str) -> Result<(), CallError> {
+    async fn rename_ghost(&self, client: &str, name: &str) -> Result<(), CallError> {
         if let Some(error) = self.0.falhar() {
             return Err(error);
         }
@@ -446,8 +446,8 @@ impl DestinoEstado for Sinal {
     }
 }
 
-fn laco(store: Arc<Store>, destino: Arc<Falso>) -> EstadoDasConversas<Sinal, PortaEstadoStore> {
-    EstadoDasConversas::new(PortaEstadoStore::fresh(store), Sinal(destino), &config())
+fn laco(store: Arc<Store>, destino: Arc<Falso>) -> ConversationStates<Sinal, StateStorePort> {
+    ConversationStates::new(StateStorePort::fresh(store), Sinal(destino), &config())
         .expect("monta o laço")
 }
 
@@ -487,9 +487,9 @@ async fn transferencia_avisa_e_reescreve_o_metadata() {
         mundo.conversation,
         ConversationStatus::Transferred,
     );
-    let relatorio = state.ciclo().await.expect("passagem");
+    let relatorio = state.cycle().await.expect("passagem");
 
-    assert_eq!(relatorio.avisadas, 1, "{relatorio:?}");
+    assert_eq!(relatorio.notified, 1, "{relatorio:?}");
     let avisos = destino.avisos();
     assert_eq!(avisos.len(), 1);
     assert_eq!(avisos[0].room, sala_de(mundo.conversation));
@@ -527,12 +527,12 @@ async fn reabertura_avisa_que_o_agente_voltou() {
         mundo.conversation,
         ConversationStatus::Transferred,
     );
-    state.ciclo().await.expect("primeira passagem");
+    state.cycle().await.expect("primeira passagem");
     assert_eq!(destino.avisos().len(), 1);
 
     definir_status(&store, org, mundo.conversation, ConversationStatus::Open);
-    let relatorio = state.ciclo().await.expect("segunda passagem");
-    assert_eq!(relatorio.avisadas, 1, "{relatorio:?}");
+    let relatorio = state.cycle().await.expect("segunda passagem");
+    assert_eq!(relatorio.notified, 1, "{relatorio:?}");
     let avisos = destino.avisos();
     assert_eq!(avisos.len(), 2);
     assert!(avisos[1].text.contains("retomou o atendimento"));
@@ -555,11 +555,11 @@ async fn encerramento_avisa_e_marca_o_metadata_como_closed() {
         mundo.conversation,
         ConversationStatus::Transferred,
     );
-    state.ciclo().await.expect("transferência");
+    state.cycle().await.expect("transferência");
     definir_status(&store, org, mundo.conversation, ConversationStatus::Closed);
-    let relatorio = state.ciclo().await.expect("encerramento");
+    let relatorio = state.cycle().await.expect("encerramento");
 
-    assert_eq!(relatorio.avisadas, 1, "{relatorio:?}");
+    assert_eq!(relatorio.notified, 1, "{relatorio:?}");
     let avisos = destino.avisos();
     assert_eq!(avisos.len(), 2);
     assert!(avisos[1].text.contains("Conversa encerrada"));
@@ -583,7 +583,7 @@ async fn mesma_situacao_nao_escreve_nada() {
         mundo.conversation,
         ConversationStatus::Transferred,
     );
-    state.ciclo().await.expect("primeira passagem");
+    state.cycle().await.expect("primeira passagem");
     let escritas = destino.escritas();
     assert_eq!(escritas, 2, "um aviso e um metadata na transição");
 
@@ -593,10 +593,10 @@ async fn mesma_situacao_nao_escreve_nada() {
         .conversations()
         .touch(org, mundo.conversation, 3_000_000)
         .expect("toca a conversa");
-    let relatorio = state.ciclo().await.expect("segunda passagem");
-    assert_eq!(relatorio.conferidas, 1, "{relatorio:?}");
-    assert_eq!(relatorio.sem_mudanca, 1, "{relatorio:?}");
-    assert_eq!(relatorio.avisadas, 0, "{relatorio:?}");
+    let relatorio = state.cycle().await.expect("segunda passagem");
+    assert_eq!(relatorio.checked, 1, "{relatorio:?}");
+    assert_eq!(relatorio.without_change, 1, "{relatorio:?}");
+    assert_eq!(relatorio.notified, 0, "{relatorio:?}");
     assert_eq!(destino.escritas(), escritas, "nenhuma escrita nova");
     assert_eq!(destino.avisos().len(), 1);
     assert_eq!(destino.metadatas().len(), 1);
@@ -615,8 +615,8 @@ async fn conversa_de_org_desligada_nao_gera_chamada() {
     let destino = Falso::new();
     let state = laco(Arc::clone(&store), Arc::clone(&destino));
 
-    let relatorio = state.ciclo().await.expect("passagem");
-    assert_eq!(relatorio.conferidas, 0, "{relatorio:?}");
+    let relatorio = state.cycle().await.expect("passagem");
+    assert_eq!(relatorio.checked, 0, "{relatorio:?}");
     assert_eq!(destino.escritas(), 0);
 }
 
@@ -633,8 +633,8 @@ async fn conversa_sem_sala_nao_avisa_e_o_cursor_passa() {
     let destino = Falso::new();
     let state = laco(Arc::clone(&store), Arc::clone(&destino));
 
-    let relatorio = state.ciclo().await.expect("passagem");
-    assert_eq!(relatorio.sem_sala, 1, "{relatorio:?}");
+    let relatorio = state.cycle().await.expect("passagem");
+    assert_eq!(relatorio.without_room, 1, "{relatorio:?}");
     assert_eq!(destino.escritas(), 0);
     // O cursor passou: a conversa não fica presa.
     let cursores = store.matrix().read_cursors(org).expect("cursores");
@@ -654,8 +654,8 @@ async fn sala_em_criacao_espera_a_passagem_seguinte() {
     let destino = Falso::new();
     let state = laco(Arc::clone(&store), Arc::clone(&destino));
 
-    let relatorio = state.ciclo().await.expect("passagem");
-    assert_eq!(relatorio.adiadas, 1, "{relatorio:?}");
+    let relatorio = state.cycle().await.expect("passagem");
+    assert_eq!(relatorio.deferred, 1, "{relatorio:?}");
     assert_eq!(
         destino.escritas(),
         0,
@@ -669,8 +669,8 @@ async fn sala_em_criacao_espera_a_passagem_seguinte() {
         .matrix()
         .mark_room_ready(org, conversation)
         .expect("marca pronta");
-    let relatorio = state.ciclo().await.expect("segunda passagem");
-    assert_eq!(relatorio.avisadas, 1, "{relatorio:?}");
+    let relatorio = state.cycle().await.expect("segunda passagem");
+    assert_eq!(relatorio.notified, 1, "{relatorio:?}");
     assert_eq!(destino.avisos().len(), 1);
 }
 
@@ -690,8 +690,8 @@ async fn falha_transitoria_nao_avanca_o_cursor_e_a_passagem_seguinte_aplica() {
         mundo.conversation,
         ConversationStatus::Transferred,
     );
-    let relatorio = state.ciclo().await.expect("passagem com falha");
-    assert_eq!(relatorio.adiadas, 1, "{relatorio:?}");
+    let relatorio = state.cycle().await.expect("passagem com falha");
+    assert_eq!(relatorio.deferred, 1, "{relatorio:?}");
     assert_eq!(destino.avisos().len(), 0);
     let cursores = store.matrix().read_cursors(org).expect("cursores");
     assert_eq!(
@@ -706,8 +706,8 @@ async fn falha_transitoria_nao_avanca_o_cursor_e_a_passagem_seguinte_aplica() {
     assert_eq!(room.last_status, None, "nada espelhado");
 
     // Synapse de volta: a passagem seguinte aplica o estado.
-    let relatorio = state.ciclo().await.expect("passagem seguinte");
-    assert_eq!(relatorio.avisadas, 1, "{relatorio:?}");
+    let relatorio = state.cycle().await.expect("passagem seguinte");
+    assert_eq!(relatorio.notified, 1, "{relatorio:?}");
     let avisos = destino.avisos();
     assert_eq!(avisos.len(), 1);
     assert!(avisos[0].txn.starts_with("ph_est_"));
@@ -729,9 +729,9 @@ async fn erro_definitivo_pula_a_conversa_e_nao_trava_a_fila() {
         mundo.conversation,
         ConversationStatus::Transferred,
     );
-    let relatorio = state.ciclo().await.expect("passagem");
-    assert_eq!(relatorio.puladas, 1, "{relatorio:?}");
-    assert_eq!(relatorio.adiadas, 0);
+    let relatorio = state.cycle().await.expect("passagem");
+    assert_eq!(relatorio.skipped, 1, "{relatorio:?}");
+    assert_eq!(relatorio.deferred, 0);
     assert!(destino.avisos().is_empty(), "nada foi escrito na sala");
     let cursores = store.matrix().read_cursors(org).expect("cursores");
     assert!(
@@ -741,8 +741,8 @@ async fn erro_definitivo_pula_a_conversa_e_nao_trava_a_fila() {
     // A conversa volta na próxima alteração dela, com o Synapse bom.
     destino.definir_modo(Modo::Normal);
     definir_status(&store, org, mundo.conversation, ConversationStatus::Closed);
-    let relatorio = state.ciclo().await.expect("segunda passagem");
-    assert_eq!(relatorio.avisadas, 1, "{relatorio:?}");
+    let relatorio = state.cycle().await.expect("segunda passagem");
+    assert_eq!(relatorio.notified, 1, "{relatorio:?}");
     assert_eq!(destino.avisos().len(), 1);
     assert!(destino.avisos()[0].text.contains("Conversa encerrada"));
 }
@@ -780,13 +780,13 @@ async fn duas_conversas_no_mesmo_milissegundo_nao_se_perdem() {
 
     let destino = Falso::new();
     let state = laco(Arc::clone(&store), Arc::clone(&destino));
-    let relatorio = state.ciclo().await.expect("passagem");
-    assert_eq!(relatorio.avisadas, 2, "{relatorio:?}");
+    let relatorio = state.cycle().await.expect("passagem");
+    assert_eq!(relatorio.notified, 2, "{relatorio:?}");
     assert_eq!(destino.avisos().len(), 2, "nenhuma conversa ficou de fora");
 
-    let relatorio = state.ciclo().await.expect("repetição");
+    let relatorio = state.cycle().await.expect("repetição");
     assert_eq!(
-        relatorio.avisadas, 0,
+        relatorio.notified, 0,
         "nada novo na repetição: {relatorio:?}"
     );
 }
@@ -807,20 +807,20 @@ async fn paginas_cobrem_todas_as_conversas_alteradas() {
         conversas.push(conversation);
     }
     let destino = Falso::new();
-    let state = EstadoDasConversas::new(
-        PortaEstadoStore::fresh(Arc::clone(&store)),
+    let state = ConversationStates::new(
+        StateStorePort::fresh(Arc::clone(&store)),
         Sinal(Arc::clone(&destino)),
         &config(),
     )
     .expect("monta")
-    .com_pagina(2);
+    .with_page(2);
 
-    let relatorio = state.ciclo().await.expect("passagem");
-    assert_eq!(relatorio.avisadas, 5, "{relatorio:?}");
+    let relatorio = state.cycle().await.expect("passagem");
+    assert_eq!(relatorio.notified, 5, "{relatorio:?}");
     assert_eq!(destino.avisos().len(), 5);
-    assert!(relatorio.paginas >= 3, "{relatorio:?}");
+    assert!(relatorio.pages >= 3, "{relatorio:?}");
     // A página do teste é menor que a do módulo: o laço não depende do tamanho.
-    const { assert!(PAGINA > 2) };
+    const { assert!(PAGE > 2) };
 }
 
 #[tokio::test]
@@ -849,9 +849,9 @@ async fn mudanca_de_departamento_move_a_sala_sem_aviso_duplicado() {
         .conversations()
         .transfer(org, conversation, Some(comercial), None, "{}".to_owned())
         .expect("transfere");
-    let relatorio = state.ciclo().await.expect("passagem");
-    assert_eq!(relatorio.avisadas, 1, "{relatorio:?}");
-    assert_eq!(relatorio.posicionadas, 1, "{relatorio:?}");
+    let relatorio = state.cycle().await.expect("passagem");
+    assert_eq!(relatorio.notified, 1, "{relatorio:?}");
+    assert_eq!(relatorio.positioned, 1, "{relatorio:?}");
     assert_eq!(destino.avisos().len(), 1, "um aviso só");
     let posicoes = destino.posicoes();
     assert_eq!(posicoes.len(), 1);
@@ -868,9 +868,9 @@ async fn mudanca_de_departamento_move_a_sala_sem_aviso_duplicado() {
     assert_eq!(metadatas[0].body["department_id"], comercial.to_string());
 
     // Repetir com a sala já no lugar novo: nenhum aviso novo.
-    let relatorio = state.ciclo().await.expect("repetição");
-    assert_eq!(relatorio.avisadas, 0, "{relatorio:?}");
-    assert_eq!(relatorio.posicionadas, 0, "{relatorio:?}");
+    let relatorio = state.cycle().await.expect("repetição");
+    assert_eq!(relatorio.notified, 0, "{relatorio:?}");
+    assert_eq!(relatorio.positioned, 0, "{relatorio:?}");
     assert_eq!(destino.avisos().len(), 1);
 }
 
@@ -889,7 +889,7 @@ async fn conversa_sem_departamento_nao_fala_de_espaco() {
         mundo.conversation,
         ConversationStatus::Transferred,
     );
-    state.ciclo().await.expect("passagem");
+    state.cycle().await.expect("passagem");
     assert!(
         destino.posicoes().is_empty(),
         "sem departamento, sem espaço"
@@ -911,11 +911,11 @@ async fn falha_de_espaco_nao_desfaz_o_estado_ja_espelhado() {
 
     let destino = Falso::new();
     let state = laco(Arc::clone(&store), Arc::clone(&destino));
-    let relatorio = state.ciclo().await.expect("passagem");
+    let relatorio = state.cycle().await.expect("passagem");
 
     // O espaço não tem o bot: a sala não entra, e o aviso/metadata continuam valendo.
-    assert_eq!(relatorio.avisadas, 1, "{relatorio:?}");
-    assert_eq!(relatorio.posicionadas, 0);
+    assert_eq!(relatorio.notified, 1, "{relatorio:?}");
+    assert_eq!(relatorio.positioned, 0);
     assert_eq!(destino.avisos().len(), 1);
     let room = store
         .matrix()
@@ -930,7 +930,7 @@ async fn falha_de_espaco_nao_desfaz_o_estado_ja_espelhado() {
 /// Porta que mente numa leitura de propósito: prova o que acontece quando a conversa muda entre a
 /// leitura que dispara a passagem e a reconferência de antes da escrita.
 struct PortaQueMente {
-    real: PortaEstadoStore,
+    real: StateStorePort,
     leituras: AtomicUsize,
     mentira: Mutex<Option<ConversationStatus>>,
 }
@@ -938,7 +938,7 @@ struct PortaQueMente {
 impl PortaQueMente {
     fn fresh(store: Arc<Store>) -> Self {
         Self {
-            real: PortaEstadoStore::fresh(store),
+            real: StateStorePort::fresh(store),
             leituras: AtomicUsize::new(0),
             mentira: Mutex::new(None),
         }
@@ -950,28 +950,28 @@ impl PortaQueMente {
     }
 }
 
-impl PortaEstado for PortaQueMente {
-    async fn orgs(&self) -> Result<Vec<EstadoOrg>, poph_store::error::StoreError> {
+impl StatePort for PortaQueMente {
+    async fn orgs(&self) -> Result<Vec<OrgState>, poph_store::error::StoreError> {
         self.real.orgs().await
     }
 
-    async fn cursores(&self, org: OrgId) -> Result<CursorGravado, poph_store::error::StoreError> {
-        self.real.cursores(org).await
+    async fn cursors(&self, org: OrgId) -> Result<StoredCursor, poph_store::error::StoreError> {
+        self.real.cursors(org).await
     }
 
-    async fn alteradas(
+    async fn changed_items(
         &self,
         apos: Option<(i64, ConversationId)>,
         limite: u32,
-    ) -> Result<Vec<ConversaAlterada>, poph_store::error::StoreError> {
-        self.real.alteradas(apos, limite).await
+    ) -> Result<Vec<ConversationChanged>, poph_store::error::StoreError> {
+        self.real.changed_items(apos, limite).await
     }
 
     async fn conversation(
         &self,
         org: OrgId,
         conversation: ConversationId,
-    ) -> Result<Option<ConversaEstado>, poph_store::error::StoreError> {
+    ) -> Result<Option<ConversationState>, poph_store::error::StoreError> {
         let leitura = self.leituras.fetch_add(1, Ordering::SeqCst) + 1;
         let real = self.real.conversation(org, conversation).await?;
         if leitura != 2 {
@@ -990,39 +990,41 @@ impl PortaEstado for PortaQueMente {
         &self,
         org: OrgId,
         conversation: ConversationId,
-    ) -> Result<Option<SalaEstado>, poph_store::error::StoreError> {
+    ) -> Result<Option<RoomState>, poph_store::error::StoreError> {
         self.real.room(org, conversation).await
     }
 
-    async fn definir_ultimo_status(
+    async fn define_last_status(
         &self,
         org: OrgId,
         conversation: ConversationId,
         status: ConversationStatus,
     ) -> Result<(), poph_store::error::StoreError> {
         self.real
-            .definir_ultimo_status(org, conversation, status)
+            .define_last_status(org, conversation, status)
             .await
     }
 
-    async fn definir_nome_espelhado(
+    async fn define_name_mirrored(
         &self,
         org: OrgId,
         conversation: ConversationId,
         name: &str,
     ) -> Result<(), poph_store::error::StoreError> {
         self.real
-            .definir_nome_espelhado(org, conversation, name)
+            .define_name_mirrored(org, conversation, name)
             .await
     }
 
-    async fn avancar_conversas(
+    async fn advance_conversations(
         &self,
         org: OrgId,
         atualizado_em: i64,
         id: &str,
     ) -> Result<(), poph_store::error::StoreError> {
-        self.real.avancar_conversas(org, atualizado_em, id).await
+        self.real
+            .advance_conversations(org, atualizado_em, id)
+            .await
     }
 }
 
@@ -1042,10 +1044,10 @@ async fn conversa_fechada_no_meio_da_passagem_nao_recebe_metadata_de_reabertura(
     // A leitura que dispara vê a reabertura; a reconferência vê a conversa já encerrada.
     porta.mentir_na_segunda(ConversationStatus::Closed);
     let state =
-        EstadoDasConversas::new(porta, Sinal(Arc::clone(&destino)), &config()).expect("monta");
+        ConversationStates::new(porta, Sinal(Arc::clone(&destino)), &config()).expect("monta");
 
-    let relatorio = state.ciclo().await.expect("passagem");
-    assert_eq!(relatorio.adiadas, 1, "{relatorio:?}");
+    let relatorio = state.cycle().await.expect("passagem");
+    assert_eq!(relatorio.deferred, 1, "{relatorio:?}");
     assert!(
         destino.metadatas().is_empty(),
         "nenhum metadata atrasado: a conversa fechou no meio"
@@ -1055,8 +1057,8 @@ async fn conversa_fechada_no_meio_da_passagem_nao_recebe_metadata_de_reabertura(
     // Fecha a conversa de verdade: a passagem seguinte espelha o encerramento, e o metadata de
     // reabertura nunca existiu.
     definir_status(&store, org, mundo.conversation, ConversationStatus::Closed);
-    let relatorio = state.ciclo().await.expect("segunda passagem");
-    assert_eq!(relatorio.avisadas, 1, "{relatorio:?}");
+    let relatorio = state.cycle().await.expect("segunda passagem");
+    assert_eq!(relatorio.notified, 1, "{relatorio:?}");
     let metadatas = destino.metadatas();
     assert_eq!(metadatas.len(), 1);
     assert_eq!(metadatas[0].body["status"], "closed");
@@ -1072,17 +1074,17 @@ async fn porta_do_store_le_o_que_o_banco_gravou() {
     let store = cenario.store();
     let org = criar_org(&store, "a");
     let mundo = mundo(&store, org);
-    let porta = PortaEstadoStore::fresh(Arc::clone(&store));
+    let porta = StateStorePort::fresh(Arc::clone(&store));
 
     let orgs = porta.orgs().await.expect("orgs");
     assert_eq!(orgs.len(), 1);
-    assert!(orgs[0].ligado);
+    assert!(orgs[0].enabled);
 
-    let cursores = porta.cursores(org).await.expect("cursores");
-    assert_eq!(cursores.atualizado_em, 0);
+    let cursores = porta.cursors(org).await.expect("cursores");
+    assert_eq!(cursores.updated_at, 0);
     assert_eq!(cursores.id, None);
 
-    let alteradas = porta.alteradas(None, 10).await.expect("alteradas");
+    let alteradas = porta.changed_items(None, 10).await.expect("alteradas");
     assert_eq!(alteradas.len(), 1);
     assert_eq!(alteradas[0].conversation, mundo.conversation);
 
@@ -1102,11 +1104,11 @@ async fn porta_do_store_le_o_que_o_banco_gravou() {
         .await
         .expect("sala")
         .expect("existe");
-    assert!(room.pronta);
-    assert_eq!(room.ultimo_status, None);
+    assert!(room.ready);
+    assert_eq!(room.last_status, None);
 
     porta
-        .definir_ultimo_status(org, mundo.conversation, ConversationStatus::Transferred)
+        .define_last_status(org, mundo.conversation, ConversationStatus::Transferred)
         .await
         .expect("grava situação");
     let room = porta
@@ -1114,14 +1116,14 @@ async fn porta_do_store_le_o_que_o_banco_gravou() {
         .await
         .expect("sala")
         .expect("existe");
-    assert_eq!(room.ultimo_status, Some(ConversationStatus::Transferred));
+    assert_eq!(room.last_status, Some(ConversationStatus::Transferred));
 
     porta
-        .avancar_conversas(org, 5_000, &mundo.conversation.to_string())
+        .advance_conversations(org, 5_000, &mundo.conversation.to_string())
         .await
         .expect("avança");
-    let cursores = porta.cursores(org).await.expect("cursores");
-    assert_eq!(cursores.atualizado_em, 5_000);
+    let cursores = porta.cursors(org).await.expect("cursores");
+    assert_eq!(cursores.updated_at, 5_000);
     assert_eq!(cursores.id, Some(mundo.conversation));
 }
 
@@ -1135,15 +1137,15 @@ async fn conversa_apagada_entre_a_pagina_e_a_leitura_nao_quebra_a_passagem() {
 
     // Porta que lista uma conversa que não existe mais (a remoção acontece entre as duas leituras).
     let porta = PortaQueApaga {
-        real: PortaEstadoStore::fresh(Arc::clone(&store)),
+        real: StateStorePort::fresh(Arc::clone(&store)),
     };
     let state =
-        EstadoDasConversas::new(porta, Sinal(Arc::clone(&destino)), &config()).expect("monta");
-    let relatorio = state.ciclo().await.expect("passagem");
+        ConversationStates::new(porta, Sinal(Arc::clone(&destino)), &config()).expect("monta");
+    let relatorio = state.cycle().await.expect("passagem");
     // A conversa de verdade é conferida (e nada muda); a inventada não quebra a passagem.
-    assert_eq!(relatorio.conferidas, 1, "{relatorio:?}");
-    assert_eq!(relatorio.sem_mudanca, 1, "{relatorio:?}");
-    assert_eq!(relatorio.adiadas, 0, "{relatorio:?}");
+    assert_eq!(relatorio.checked, 1, "{relatorio:?}");
+    assert_eq!(relatorio.without_change, 1, "{relatorio:?}");
+    assert_eq!(relatorio.deferred, 0, "{relatorio:?}");
     assert_eq!(destino.escritas(), 0);
     let cursores = store.matrix().read_cursors(org).expect("cursores");
     assert!(
@@ -1158,32 +1160,32 @@ const INSTANTE_INVENTADO: i64 = 9_000_000;
 
 /// Porta que lista uma conversa inventada, que não existe no banco.
 struct PortaQueApaga {
-    real: PortaEstadoStore,
+    real: StateStorePort,
 }
 
-impl PortaEstado for PortaQueApaga {
-    async fn orgs(&self) -> Result<Vec<EstadoOrg>, poph_store::error::StoreError> {
+impl StatePort for PortaQueApaga {
+    async fn orgs(&self) -> Result<Vec<OrgState>, poph_store::error::StoreError> {
         self.real.orgs().await
     }
 
-    async fn cursores(&self, org: OrgId) -> Result<CursorGravado, poph_store::error::StoreError> {
-        self.real.cursores(org).await
+    async fn cursors(&self, org: OrgId) -> Result<StoredCursor, poph_store::error::StoreError> {
+        self.real.cursors(org).await
     }
 
-    async fn alteradas(
+    async fn changed_items(
         &self,
         apos: Option<(i64, ConversationId)>,
         limite: u32,
-    ) -> Result<Vec<ConversaAlterada>, poph_store::error::StoreError> {
-        let reais = self.real.alteradas(apos, limite).await?;
+    ) -> Result<Vec<ConversationChanged>, poph_store::error::StoreError> {
+        let reais = self.real.changed_items(apos, limite).await?;
         let mut lista = reais;
         let org = lista.first().map(|alterada| alterada.org);
         if let Some(org) = org {
             // A conversa que o laço vai procurar não está mais no banco.
-            lista.push(ConversaAlterada {
+            lista.push(ConversationChanged {
                 org,
                 conversation: ConversationId::generate(),
-                atualizado_em: INSTANTE_INVENTADO,
+                updated_at: INSTANTE_INVENTADO,
             });
         }
         Ok(lista)
@@ -1193,7 +1195,7 @@ impl PortaEstado for PortaQueApaga {
         &self,
         org: OrgId,
         conversation: ConversationId,
-    ) -> Result<Option<ConversaEstado>, poph_store::error::StoreError> {
+    ) -> Result<Option<ConversationState>, poph_store::error::StoreError> {
         self.real.conversation(org, conversation).await
     }
 
@@ -1201,39 +1203,41 @@ impl PortaEstado for PortaQueApaga {
         &self,
         org: OrgId,
         conversation: ConversationId,
-    ) -> Result<Option<SalaEstado>, poph_store::error::StoreError> {
+    ) -> Result<Option<RoomState>, poph_store::error::StoreError> {
         self.real.room(org, conversation).await
     }
 
-    async fn definir_ultimo_status(
+    async fn define_last_status(
         &self,
         org: OrgId,
         conversation: ConversationId,
         status: ConversationStatus,
     ) -> Result<(), poph_store::error::StoreError> {
         self.real
-            .definir_ultimo_status(org, conversation, status)
+            .define_last_status(org, conversation, status)
             .await
     }
 
-    async fn definir_nome_espelhado(
+    async fn define_name_mirrored(
         &self,
         org: OrgId,
         conversation: ConversationId,
         name: &str,
     ) -> Result<(), poph_store::error::StoreError> {
         self.real
-            .definir_nome_espelhado(org, conversation, name)
+            .define_name_mirrored(org, conversation, name)
             .await
     }
 
-    async fn avancar_conversas(
+    async fn advance_conversations(
         &self,
         org: OrgId,
         atualizado_em: i64,
         id: &str,
     ) -> Result<(), poph_store::error::StoreError> {
-        self.real.avancar_conversas(org, atualizado_em, id).await
+        self.real
+            .advance_conversations(org, atualizado_em, id)
+            .await
     }
 }
 
@@ -1252,7 +1256,7 @@ async fn resposta_e_metadata_nao_levam_dado_de_cliente() {
         mundo.conversation,
         ConversationStatus::Transferred,
     );
-    state.ciclo().await.expect("passagem");
+    state.cycle().await.expect("passagem");
 
     for aviso in destino.avisos() {
         assert!(
@@ -1314,9 +1318,9 @@ async fn nome_que_chega_depois_renomeia_sala_metadata_e_fantasma_uma_vez_cada() 
     assert_eq!(nome_espelhado(&store, org, mundo.conversation), None);
 
     definir_nome(&store, org, mundo.conversation, "Ana Souza");
-    let relatorio = state.ciclo().await.expect("passagem do nome");
+    let relatorio = state.cycle().await.expect("passagem do nome");
 
-    assert_eq!(relatorio.renomeadas, 1, "{relatorio:?}");
+    assert_eq!(relatorio.renamed, 1, "{relatorio:?}");
     let renomeacoes = destino.renomeacoes();
     assert_eq!(renomeacoes.len(), 1, "uma renomeação de sala");
     assert_eq!(renomeacoes[0].room, sala_de(mundo.conversation));
@@ -1342,8 +1346,8 @@ async fn nome_que_chega_depois_renomeia_sala_metadata_e_fantasma_uma_vez_cada() 
     // Repetir o ciclo (a conversa volta a ser vista) não fala com o Synapse.
     let escritas = destino.escritas();
     tocar(&cenario, &store, org, mundo.conversation);
-    let relatorio = state.ciclo().await.expect("passagem repetida");
-    assert_eq!(relatorio.renomeadas, 0, "{relatorio:?}");
+    let relatorio = state.cycle().await.expect("passagem repetida");
+    assert_eq!(relatorio.renamed, 0, "{relatorio:?}");
     assert_eq!(destino.escritas(), escritas, "repetir não escreve nada");
     assert_eq!(destino.renomeacoes().len(), 1);
     assert_eq!(destino.metadatas().len(), 1);
@@ -1351,8 +1355,8 @@ async fn nome_que_chega_depois_renomeia_sala_metadata_e_fantasma_uma_vez_cada() 
 
     // Um segundo nome novo atualiza de novo, uma vez cada.
     definir_nome(&store, org, mundo.conversation, "Ana Maria");
-    let relatorio = state.ciclo().await.expect("passagem do nome novo");
-    assert_eq!(relatorio.renomeadas, 1, "{relatorio:?}");
+    let relatorio = state.cycle().await.expect("passagem do nome novo");
+    assert_eq!(relatorio.renamed, 1, "{relatorio:?}");
     assert_eq!(destino.renomeacoes().len(), 2);
     assert_eq!(destino.renomeacoes()[1].name, "Ana Maria");
     assert_eq!(destino.metadatas()[1].body["client_name"], "Ana Maria");
@@ -1376,9 +1380,9 @@ async fn queda_entre_o_nome_e_o_metadata_retoma_sem_sala_nem_aviso_duplicado() {
     // A segunda escrita da passagem (o metadata) falha de forma transitória: é a queda entre as
     // três chamadas do nome.
     *destino.modo.lock().unwrap() = Modo::FalhaNaEscrita(2);
-    let relatorio = state.ciclo().await.expect("passagem que cai");
+    let relatorio = state.cycle().await.expect("passagem que cai");
 
-    assert_eq!(relatorio.adiadas, 1, "{relatorio:?}");
+    assert_eq!(relatorio.deferred, 1, "{relatorio:?}");
     assert_eq!(destino.renomeacoes().len(), 1, "a sala foi renomeada");
     assert!(destino.metadatas().is_empty(), "o metadata não saiu");
     assert!(
@@ -1392,8 +1396,8 @@ async fn queda_entre_o_nome_e_o_metadata_retoma_sem_sala_nem_aviso_duplicado() {
     );
 
     // A passagem seguinte refaz o caminho: as chamadas são idempotentes, e nada duplica.
-    let relatorio = state.ciclo().await.expect("passagem da retomada");
-    assert_eq!(relatorio.renomeadas, 1, "{relatorio:?}");
+    let relatorio = state.cycle().await.expect("passagem da retomada");
+    assert_eq!(relatorio.renamed, 1, "{relatorio:?}");
     assert_eq!(destino.renomeacoes().len(), 2, "a renomeação se repete");
     assert_eq!(destino.renomeacoes()[1].name, "Ana Souza");
     assert_eq!(destino.metadatas().len(), 1, "um metadata só");
@@ -1432,11 +1436,11 @@ async fn nome_atrasado_nao_devolve_conversa_fechada_para_active_no_metadata() {
     // A porta devolve a situação velha na primeira leitura da passagem: o laço lê a conversa como
     // aberta e a renomeação só não publica `active` porque relê antes de escrever.
     let atrasada = PortaAtrasada::fresh(Arc::clone(&store));
-    let state = EstadoDasConversas::new(atrasada, Sinal(Arc::clone(&destino)), &config())
+    let state = ConversationStates::new(atrasada, Sinal(Arc::clone(&destino)), &config())
         .expect("monta o laço");
 
-    let relatorio = state.ciclo().await.expect("passagem do nome");
-    assert_eq!(relatorio.renomeadas, 1, "{relatorio:?}");
+    let relatorio = state.cycle().await.expect("passagem do nome");
+    assert_eq!(relatorio.renamed, 1, "{relatorio:?}");
     let metadatas = destino.metadatas();
     assert_eq!(metadatas.len(), 1);
     assert_eq!(
@@ -1482,26 +1486,26 @@ async fn conversa_sem_nome_novo_e_org_desligada_nao_falam_com_o_synapse() {
 
     // Sem nome do cliente e com a sala já pronta: a passagem não escreve nada.
     tocar(&cenario, &store, org, mundo.conversation);
-    let relatorio = state.ciclo().await.expect("passagem sem nome");
-    assert_eq!(relatorio.renomeadas, 0, "{relatorio:?}");
+    let relatorio = state.cycle().await.expect("passagem sem nome");
+    assert_eq!(relatorio.renamed, 0, "{relatorio:?}");
     assert!(destino.renomeacoes().is_empty());
     assert!(destino.metadatas().is_empty());
     assert!(destino.fantasmas().is_empty());
 
     // Nome igual ao já espelhado também não escreve.
     definir_nome(&store, org, mundo.conversation, "Ana Souza");
-    state.ciclo().await.expect("passagem do nome");
+    state.cycle().await.expect("passagem do nome");
     let escritas = destino.escritas();
     tocar(&cenario, &store, org, mundo.conversation);
-    state.ciclo().await.expect("passagem repetida");
+    state.cycle().await.expect("passagem repetida");
     assert_eq!(destino.escritas(), escritas);
 
     // Org com o módulo desligado não gera chamada nenhuma, mesmo com nome novo na conversa.
     store.matrix().disable(org).expect("desliga a org");
     definir_nome(&store, org, mundo.conversation, "Ana Maria");
     let escritas = destino.escritas();
-    let relatorio = state.ciclo().await.expect("passagem com a org desligada");
-    assert_eq!(relatorio.renomeadas, 0, "{relatorio:?}");
+    let relatorio = state.cycle().await.expect("passagem com a org desligada");
+    assert_eq!(relatorio.renamed, 0, "{relatorio:?}");
     assert_eq!(destino.escritas(), escritas, "org desligada não escreve");
     assert_eq!(
         nome_espelhado(&store, org, mundo.conversation).as_deref(),
@@ -1513,41 +1517,41 @@ async fn conversa_sem_nome_novo_e_org_desligada_nao_falam_com_o_synapse() {
 /// Porta que devolve a situação **aberta** na primeira leitura de cada conversa (o atraso do ciclo)
 /// e a situação real nas seguintes.
 struct PortaAtrasada {
-    real: PortaEstadoStore,
+    real: StateStorePort,
     atrasadas: Mutex<std::collections::BTreeSet<String>>,
 }
 
 impl PortaAtrasada {
     fn fresh(store: Arc<Store>) -> Self {
         Self {
-            real: PortaEstadoStore::fresh(store),
+            real: StateStorePort::fresh(store),
             atrasadas: Mutex::new(std::collections::BTreeSet::new()),
         }
     }
 }
 
-impl PortaEstado for PortaAtrasada {
-    async fn orgs(&self) -> Result<Vec<EstadoOrg>, poph_store::error::StoreError> {
+impl StatePort for PortaAtrasada {
+    async fn orgs(&self) -> Result<Vec<OrgState>, poph_store::error::StoreError> {
         self.real.orgs().await
     }
 
-    async fn cursores(&self, org: OrgId) -> Result<CursorGravado, poph_store::error::StoreError> {
-        self.real.cursores(org).await
+    async fn cursors(&self, org: OrgId) -> Result<StoredCursor, poph_store::error::StoreError> {
+        self.real.cursors(org).await
     }
 
-    async fn alteradas(
+    async fn changed_items(
         &self,
         apos: Option<(i64, ConversationId)>,
         limite: u32,
-    ) -> Result<Vec<ConversaAlterada>, poph_store::error::StoreError> {
-        self.real.alteradas(apos, limite).await
+    ) -> Result<Vec<ConversationChanged>, poph_store::error::StoreError> {
+        self.real.changed_items(apos, limite).await
     }
 
     async fn conversation(
         &self,
         org: OrgId,
         conversation: ConversationId,
-    ) -> Result<Option<ConversaEstado>, poph_store::error::StoreError> {
+    ) -> Result<Option<ConversationState>, poph_store::error::StoreError> {
         let primeira = self
             .atrasadas
             .lock()
@@ -1568,45 +1572,47 @@ impl PortaEstado for PortaAtrasada {
         &self,
         org: OrgId,
         conversation: ConversationId,
-    ) -> Result<Option<SalaEstado>, poph_store::error::StoreError> {
+    ) -> Result<Option<RoomState>, poph_store::error::StoreError> {
         self.real.room(org, conversation).await
     }
 
-    async fn definir_ultimo_status(
+    async fn define_last_status(
         &self,
         org: OrgId,
         conversation: ConversationId,
         status: ConversationStatus,
     ) -> Result<(), poph_store::error::StoreError> {
         self.real
-            .definir_ultimo_status(org, conversation, status)
+            .define_last_status(org, conversation, status)
             .await
     }
 
-    async fn definir_nome_espelhado(
+    async fn define_name_mirrored(
         &self,
         org: OrgId,
         conversation: ConversationId,
         name: &str,
     ) -> Result<(), poph_store::error::StoreError> {
         self.real
-            .definir_nome_espelhado(org, conversation, name)
+            .define_name_mirrored(org, conversation, name)
             .await
     }
 
-    async fn avancar_conversas(
+    async fn advance_conversations(
         &self,
         org: OrgId,
         atualizado_em: i64,
         id: &str,
     ) -> Result<(), poph_store::error::StoreError> {
-        self.real.avancar_conversas(org, atualizado_em, id).await
+        self.real
+            .advance_conversations(org, atualizado_em, id)
+            .await
     }
 }
 
 #[test]
 fn erro_de_relatorio_tem_codigo_curto() {
     // O código do erro do banco é curto e não carrega SQL nem valor de linha.
-    let error = ErroEstado::Armazenamento(poph_store::error::StoreError::WriterClosed);
+    let error = StateError::Armazenamento(poph_store::error::StoreError::WriterClosed);
     assert_eq!(error.code(), "armazenamento_indisponivel");
 }
