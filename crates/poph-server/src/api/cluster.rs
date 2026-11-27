@@ -1,13 +1,3 @@
-//! Recarga do mapa de cluster (HR-50a): `POST /admin/v1/cluster/reload`.
-//!
-//! Relê o `cluster.toml` **no processo vivo** e troca o mapa em uso. Só token global: o mapa vale
-//! para todas as orgs da instância, então token de org recebe `403` como nas outras ações globais.
-//!
-//! **Arquivo inválido mantém o mapa antigo:** a leitura e a validação acontecem antes da troca; o
-//! operador não derruba o roteamento por um erro de digitação. Arquivo ausente volta para o modo
-//! instância única (é o que a recarga reflete). A resposta traz a impressão digital antes e depois
-//! e o que mudou — é o que a HR-50b usa para comparar instâncias.
-
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -30,29 +20,29 @@ use crate::estado::Estado;
         (status = 403, description = "token de org (a recarga exige token global)", body = crate::erro::RespostaErro)
     )
 )]
-pub async fn recarregar(
-    State(estado): State<Estado>,
+pub async fn reload(
+    State(state): State<Estado>,
     ident: Identidade,
 ) -> Result<Json<Value>, ApiError> {
     ident.exigir_global()?;
-    match cluster::recarregar(&estado) {
-        Ok(relato) => Ok(Json(
-            serde_json::to_value(relato).unwrap_or_else(|_| json!({})),
+    match cluster::recarregar(&state) {
+        Ok(report) => Ok(Json(
+            serde_json::to_value(report).unwrap_or_else(|_| json!({})),
         )),
-        Err(erro) => {
-            let problemas = erro.problemas();
-            let primeiro = problemas
+        Err(error) => {
+            let problem = error.problemas();
+            let first = problem
                 .first()
                 .cloned()
-                .unwrap_or_else(|| erro.to_string());
+                .unwrap_or_else(|| error.to_string());
             Err(ApiError::novo(
                 StatusCode::BAD_REQUEST,
                 "cluster_invalido",
-                format!("cluster.toml inválido: {primeiro}"),
+                format!("cluster.toml inválido: {first}"),
             )
             .com_detalhes(json!({
-                "arquivo": estado.cluster().caminho.display().to_string(),
-                "problemas": problemas,
+                "arquivo": state.cluster().caminho.display().to_string(),
+                "problemas": problem,
             })))
         }
     }

@@ -1,30 +1,3 @@
-//! API administrativa do módulo Matrix (MX-22): estado por org, liga/desliga e espaços por
-//! departamento.
-//!
-//! Rotas (PRD §10), todas com token de org valendo só na própria org:
-//!
-//! - `GET /admin/v1/orgs/{org}/matrix` — estado: ligado, corte do backfill, "conectado" (sonda da
-//!   MX-20), atraso do cursor (quantas mensagens faltam e a idade da mais antiga), falhas pendentes e
-//!   o motivo curto da última;
-//! - `PUT /admin/v1/orgs/{org}/matrix` — liga/desliga a org, com `If-Match` no `updated_at` da
-//!   linha (`matrix_orgs`): `428` sem o cabeçalho, `412` com valor velho. Quem grava o corte do
-//!   backfill é o repositório (`ligar`); desligar preserva `enabled_at` e não apaga sala nem espaço;
-//! - `GET /admin/v1/orgs/{org}/matrix/spaces` — espaços por departamento;
-//! - `PUT /admin/v1/orgs/{org}/matrix/spaces` — cria o espaço do departamento (sem `space`) ou liga
-//!   um espaço que já existe no Element (`space` = id `!…` ou alias `#…`);
-//! - `DELETE /admin/v1/orgs/{org}/matrix/spaces/{department}` — desliga o espaço do departamento.
-//!
-//! ## O que vale saber
-//!
-//! - **Nada aqui decide o que os laços decidem.** O `PUT` de espaço usa o mesmo serviço que o laço
-//!   de estado usa (MX-12) e grava pela mesma porta; quem posiciona sala continua sendo a MX-15.
-//! - **Módulo desligado nesta instância** (`[matrix]` ausente ou `habilitado = false`): o estado
-//!   responde com `connected: null` e as rotas de espaço respondem `409`, sem falar com o Synapse.
-//! - **Sem série de métrica nova** e sem coluna nova: o "conectado" vem de `Estado::matrix_conectado`
-//!   e o ETag do `updated_at` de `matrix_orgs`.
-//! - **Nada de segredo nem dado de cliente** na resposta: ids, estados, números e o motivo curto da
-//!   falha (código de no máximo 64 caracteres, o mesmo que a MX-08 aceita).
-
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
@@ -34,108 +7,112 @@ use poph_types::{DepartmentId, OrgId};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use super::orgs::CaminhoOrg;
-use super::versao_do_if_match;
+use super::if_match_version;
+use super::orgs::OrgPath;
 use crate::auth::Identidade;
-use crate::erro::{ApiError, id_da_url};
+use crate::erro::{ApiError, id_da_url as parse_path_id};
 use crate::estado::Estado;
 
-/// Como o módulo está numa org.
+#[doc = " Como o módulo está numa org."]
 #[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct EstadoMatrixJson {
-    /// Org dona.
+#[schema(as = EstadoMatrixJson, description = "Como o módulo está numa org.")]
+pub struct MatrixStateJson {
+    #[doc = " Org dona."]
     pub org_id: String,
-    /// Módulo ligado nesta org (`matrix_orgs.enabled`).
+    #[doc = " Módulo ligado nesta org (`matrix_orgs.enabled`)."]
     pub enabled: bool,
-    /// Corte do backfill (ms): só o que foi gravado depois disto é espelhado. `null` quando a org
-    /// nunca ligou o módulo.
+    #[doc = " Corte do backfill (ms): só o que foi gravado depois disto é espelhado. `null` quando a org"]
+    #[doc = " nunca ligou o módulo."]
     pub enabled_at: Option<i64>,
-    /// Última alteração da linha (ms) — é o valor que vai no `If-Match` do `PUT`.
+    #[doc = " Última alteração da linha (ms) — é o valor que vai no `If-Match` do `PUT`."]
     pub updated_at: i64,
-    /// O módulo desta instância está falando com o Synapse? `null` = módulo não configurado aqui.
+    #[doc = " O módulo desta instância está falando com o Synapse? `null` = módulo não configurado aqui."]
     pub connected: Option<bool>,
-    /// O que ainda falta espelhar nesta org.
-    pub backlog: AtrasoJson,
-    /// Quantas mensagens estão isoladas em `matrix_falhas`.
+    #[doc = " O que ainda falta espelhar nesta org."]
+    pub backlog: DelayJson,
+    #[doc = " Quantas mensagens estão isoladas em `matrix_falhas`."]
     pub pending_failures: u64,
-    /// Motivo curto da falha mais recente (nunca texto de cliente), ou `null`.
+    #[doc = " Motivo curto da falha mais recente (nunca texto de cliente), ou `null`."]
     pub last_failure: Option<String>,
 }
 
-/// Atraso do cursor de mensagens da org.
+#[doc = " Atraso do cursor de mensagens da org."]
 #[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct AtrasoJson {
-    /// Mensagens gravadas depois do cursor e ainda não espelhadas.
+#[schema(as = AtrasoJson, description = "Atraso do cursor de mensagens da org.")]
+pub struct DelayJson {
+    #[doc = " Mensagens gravadas depois do cursor e ainda não espelhadas."]
     pub messages: u64,
-    /// Idade, em segundos, da mais antiga delas (`0` quando não há nenhuma pendente).
+    #[doc = " Idade, em segundos, da mais antiga delas (`0` quando não há nenhuma pendente)."]
     pub oldest_seconds: u64,
 }
 
-/// Espaço de um departamento.
+#[doc = " Espaço de um departamento."]
 #[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct EspacoJson {
-    /// Departamento dono do espaço.
+#[schema(as = EspacoJson, description = "Espaço de um departamento.")]
+pub struct SpaceJson {
+    #[doc = " Departamento dono do espaço."]
     pub department_id: String,
-    /// Nome do departamento (o mesmo que o espaço mostra), quando ele ainda existe.
+    #[doc = " Nome do departamento (o mesmo que o espaço mostra), quando ele ainda existe."]
     pub department_name: Option<String>,
-    /// Id do espaço no Synapse (`!…:servidor`).
+    #[doc = " Id do espaço no Synapse (`!…:servidor`)."]
     pub space_room_id: String,
-    /// Alias do departamento no módulo (`#dep_<id>:<servidor>`). Num espaço ligado a um que já
-    /// existia, é o nome do departamento para o módulo — quem deu alias no Element foi o operador.
+    #[doc = " Alias do departamento no módulo (`#dep_<id>:<servidor>`). Num espaço ligado a um que já"]
+    #[doc = " existia, é o nome do departamento para o módulo — quem deu alias no Element foi o operador."]
     pub alias: String,
-    /// `auto` (o módulo criou) ou `linked` (já existia no Element).
+    #[doc = " `auto` (o módulo criou) ou `linked` (já existia no Element)."]
     pub origin: String,
-    /// Criação da linha (ms).
+    #[doc = " Criação da linha (ms)."]
     pub created_at: i64,
-    /// Última alteração da linha (ms).
+    #[doc = " Última alteração da linha (ms)."]
     pub updated_at: i64,
 }
 
-/// Lista de espaços da org.
+#[doc = " Lista de espaços da org."]
 #[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct EspacosJson {
-    /// Espaços, na ordem de criação.
-    pub items: Vec<EspacoJson>,
+#[schema(as = EspacosJson, description = "Lista de espaços da org.")]
+pub struct SpacesJson {
+    #[doc = " Espaços, na ordem de criação."]
+    pub items: Vec<SpaceJson>,
 }
 
-/// Corpo do `PUT …/matrix`.
+#[doc = " Corpo do `PUT …/matrix`."]
 #[derive(Debug, Clone, Deserialize, ToSchema)]
-pub struct LigarDesligar {
-    /// `true` liga o módulo na org (grava o corte do backfill); `false` desliga.
+#[schema(as = LigarDesligar, description = "Corpo do `PUT …/matrix`.")]
+pub struct EnableDisable {
+    #[doc = " `true` liga o módulo na org (grava o corte do backfill); `false` desliga."]
     pub enabled: bool,
 }
 
-/// Corpo do `PUT …/matrix/spaces`.
+#[doc = " Corpo do `PUT …/matrix/spaces`."]
 #[derive(Debug, Clone, Deserialize, ToSchema)]
-pub struct LigarEspaco {
-    /// Departamento dono do espaço (id UUID v7 da própria org).
+#[schema(as = LigarEspaco, description = "Corpo do `PUT …/matrix/spaces`.")]
+pub struct EnableSpace {
+    #[doc = " Departamento dono do espaço (id UUID v7 da própria org)."]
     pub department_id: String,
-    /// Espaço que já existe no Element: id `!…` ou alias `#…`. Ausente = o módulo cria o espaço
-    /// pelo alias do departamento.
+    #[doc = " Espaço que já existe no Element: id `!…` ou alias `#…`. Ausente = o módulo cria o espaço"]
+    #[doc = " pelo alias do departamento."]
     pub space: Option<String>,
 }
 
-/// Caminho do espaço de um departamento.
 #[derive(Debug, Clone, Deserialize)]
-pub struct CaminhoEspaco {
+pub struct SpacePath {
     org_id: String,
     department_id: String,
 }
 
-/// Resposta do `DELETE …/matrix/spaces/{department}`.
+#[doc = " Resposta do `DELETE …/matrix/spaces/{department}`."]
 #[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct EspacoDesligadoJson {
-    /// Departamento do espaço desligado.
+#[schema(as = EspacoDesligadoJson, description = "Resposta do `DELETE …/matrix/spaces/{department}`.")]
+pub struct SpaceDisabledJson {
+    #[doc = " Departamento do espaço desligado."]
     pub department_id: String,
-    /// Havia espaço gravado e a linha saiu.
+    #[doc = " Havia espaço gravado e a linha saiu."]
     pub removed: bool,
-    /// Salas que deixaram de estar registradas naquele espaço.
+    #[doc = " Salas que deixaram de estar registradas naquele espaço."]
     pub rooms_forgotten: u64,
 }
 
-// ───────────────────────────── estado da org ─────────────────────────────
-
-/// `GET /admin/v1/orgs/{org_id}/matrix`.
+#[doc = " `GET /admin/v1/orgs/{org_id}/matrix`."]
 #[utoipa::path(
     get,
     path = "/admin/v1/orgs/{org_id}/matrix",
@@ -144,23 +121,25 @@ pub struct EspacoDesligadoJson {
     security(("bearer" = [])),
     params(("org_id" = String, Path, description = "Id da org")),
     responses(
-        (status = 200, description = "Estado do módulo Matrix na org", body = EstadoMatrixJson),
+        (status = 200, description = "Estado do módulo Matrix na org", body = MatrixStateJson),
         (status = 401, description = "Sem token", body = crate::erro::RespostaErro),
         (status = 403, description = "Token de outra org", body = crate::erro::RespostaErro),
         (status = 404, description = "Org inexistente", body = crate::erro::RespostaErro)
     )
+,
+    summary = "`GET /admin/v1/orgs/{org_id}/matrix`.",
 )]
-pub async fn mostrar(
+pub async fn show(
     State(state): State<Estado>,
-    identidade: Identidade,
-    Path(caminho): Path<CaminhoOrg>,
+    identity: Identidade,
+    Path(path): Path<OrgPath>,
 ) -> Result<Response, ApiError> {
-    let org = id_da_url::<OrgId>(&caminho.org_id)?;
-    identidade.exigir_org(org)?;
-    estado_da_org(&state, org)
+    let org = parse_path_id::<OrgId>(&path.org_id)?;
+    identity.exigir_org(org)?;
+    org_state(&state, org)
 }
 
-/// `PUT /admin/v1/orgs/{org_id}/matrix` (exige `If-Match` com o `updated_at` lido antes).
+#[doc = " `PUT /admin/v1/orgs/{org_id}/matrix` (exige `If-Match` com o `updated_at` lido antes)."]
 #[utoipa::path(
     put,
     path = "/admin/v1/orgs/{org_id}/matrix",
@@ -171,38 +150,37 @@ pub async fn mostrar(
         ("org_id" = String, Path, description = "Id da org"),
         ("If-Match" = String, Header, description = "`updated_at` lido antes no GET")
     ),
-    request_body = LigarDesligar,
+    request_body = EnableDisable,
     responses(
-        (status = 200, description = "Estado do módulo depois da alteração", body = EstadoMatrixJson),
+        (status = 200, description = "Estado do módulo depois da alteração", body = MatrixStateJson),
         (status = 401, description = "Sem token", body = crate::erro::RespostaErro),
         (status = 403, description = "Token de outra org", body = crate::erro::RespostaErro),
         (status = 404, description = "Org inexistente", body = crate::erro::RespostaErro),
         (status = 412, description = "`If-Match` desatualizado", body = crate::erro::RespostaErro),
         (status = 428, description = "Sem o cabeçalho `If-Match`", body = crate::erro::RespostaErro)
     )
+,
+    summary = "`PUT /admin/v1/orgs/{org_id}/matrix` (exige `If-Match` com o `updated_at` lido antes).",
 )]
-pub async fn atualizar(
+pub async fn update(
     State(state): State<Estado>,
-    identidade: Identidade,
-    Path(caminho): Path<CaminhoOrg>,
+    identity: Identidade,
+    Path(path): Path<OrgPath>,
     headers: HeaderMap,
-    Json(body): Json<LigarDesligar>,
+    Json(body): Json<EnableDisable>,
 ) -> Result<Response, ApiError> {
-    let org = id_da_url::<OrgId>(&caminho.org_id)?;
-    identidade.exigir_org(org)?;
+    let org = parse_path_id::<OrgId>(&path.org_id)?;
+    identity.exigir_org(org)?;
     state.store.orgs().get(org)?;
-    let esperada = versao_do_if_match(&headers, "módulo Matrix da org")?;
-    let atual = state.store.matrix().state(org)?;
-    let atual_etag = u64::try_from(atual.updated_at).unwrap_or(0);
-    if esperada != atual_etag {
-        // `updated_at` é o ETag e também o que muda quando a org liga ou desliga (o `ligar`/`desligar`
-        // só escreve quando o estado muda de fato): repetir o mesmo pedido com o mesmo `If-Match` é
-        // aceito de novo, e não é conflito.
+    let expected = if_match_version(&headers, "módulo Matrix da org")?;
+    let current = state.store.matrix().state(org)?;
+    let current_etag = u64::try_from(current.updated_at).unwrap_or(0);
+    if expected != current_etag {
         return Err(ApiError::conflito_de_versao(
             "módulo Matrix da org",
             &org.to_string(),
-            esperada,
-            atual_etag,
+            expected,
+            current_etag,
         ));
     }
     if body.enabled {
@@ -210,65 +188,61 @@ pub async fn atualizar(
     } else {
         state.store.matrix().disable(org)?;
     }
-    super::auditoria::registrar(
+    super::audit::register(
         &state,
-        &identidade,
+        &identity,
         Some(org),
         "update",
         "matrix",
         org.to_string(),
     )?;
-    estado_da_org(&state, org)
+    org_state(&state, org)
 }
 
-/// Monta o estado da org e devolve com o `ETag` da linha.
-fn estado_da_org(state: &Estado, org: OrgId) -> Result<Response, ApiError> {
+fn org_state(state: &Estado, org: OrgId) -> Result<Response, ApiError> {
     state.store.orgs().get(org)?;
-    let linha = state.store.matrix().state(org)?;
-    let cursores = state.store.matrix().read_cursors(org)?;
-    let atraso = state
+    let line = state.store.matrix().state(org)?;
+    let cursors = state.store.matrix().read_cursors(org)?;
+    let delay = state
         .store
         .matrix()
-        .delay_of_messages(org, cursores.messages)?;
-    let agora = state.store.now();
-    let idade_segundos = atraso
+        .delay_of_messages(org, cursors.messages)?;
+    let now = state.store.now();
+    let age_second = delay
         .oldest_at
-        .map(|criada_em| u64::try_from((agora - criada_em).max(0) / 1000).unwrap_or(0))
+        .map(|created_at| u64::try_from((now - created_at).max(0) / 1000).unwrap_or(0))
         .unwrap_or(0);
-    let falhas = state.store.matrix().count_failures(org)?;
-    let ultima_falha = state
+    let failure = state.store.matrix().count_failures(org)?;
+    let last_failure = state
         .store
         .matrix()
         .list_failures(org, 1)?
         .first()
-        .map(|falha| falha.motivo.clone());
-    let body = EstadoMatrixJson {
+        .map(|failure| failure.motivo.clone());
+    let body = MatrixStateJson {
         org_id: org.to_string(),
-        enabled: linha.linked,
-        enabled_at: linha.linked_at,
-        updated_at: linha.updated_at,
+        enabled: line.linked,
+        enabled_at: line.linked_at,
+        updated_at: line.updated_at,
         connected: state.matrix_conectado(),
-        backlog: AtrasoJson {
-            messages: atraso.pending,
-            oldest_seconds: idade_segundos,
+        backlog: DelayJson {
+            messages: delay.pending,
+            oldest_seconds: age_second,
         },
-        pending_failures: falhas,
-        last_failure: ultima_falha,
+        pending_failures: failure,
+        last_failure,
     };
-    com_etag(body, linha.updated_at)
+    with_etag(body, line.updated_at)
 }
 
-/// Resposta com o `ETag` do estado, para o cliente guardar e mandar no `If-Match`.
-fn com_etag(body: EstadoMatrixJson, etag: i64) -> Result<Response, ApiError> {
-    let valor = HeaderValue::from_str(&format!("\"{etag}\"")).map_err(|_| ApiError::interno())?;
-    let mut resposta = Json(body).into_response();
-    resposta.headers_mut().insert(header::ETAG, valor);
-    Ok(resposta)
+fn with_etag(body: MatrixStateJson, etag: i64) -> Result<Response, ApiError> {
+    let value = HeaderValue::from_str(&format!("\"{etag}\"")).map_err(|_| ApiError::interno())?;
+    let mut response = Json(body).into_response();
+    response.headers_mut().insert(header::ETAG, value);
+    Ok(response)
 }
 
-// ───────────────────────────── espaços ─────────────────────────────
-
-/// `GET /admin/v1/orgs/{org_id}/matrix/spaces`.
+#[doc = " `GET /admin/v1/orgs/{org_id}/matrix/spaces`."]
 #[utoipa::path(
     get,
     path = "/admin/v1/orgs/{org_id}/matrix/spaces",
@@ -277,26 +251,28 @@ fn com_etag(body: EstadoMatrixJson, etag: i64) -> Result<Response, ApiError> {
     security(("bearer" = [])),
     params(("org_id" = String, Path, description = "Id da org")),
     responses(
-        (status = 200, description = "Espaços por departamento", body = EspacosJson),
+        (status = 200, description = "Espaços por departamento", body = SpacesJson),
         (status = 401, description = "Sem token", body = crate::erro::RespostaErro),
         (status = 403, description = "Token de outra org", body = crate::erro::RespostaErro),
         (status = 404, description = "Org inexistente", body = crate::erro::RespostaErro)
     )
+,
+    summary = "`GET /admin/v1/orgs/{org_id}/matrix/spaces`.",
 )]
-pub async fn listar_espacos(
+pub async fn list_space(
     State(state): State<Estado>,
-    identidade: Identidade,
-    Path(caminho): Path<CaminhoOrg>,
-) -> Result<Json<EspacosJson>, ApiError> {
-    let org = id_da_url::<OrgId>(&caminho.org_id)?;
-    identidade.exigir_org(org)?;
+    identity: Identidade,
+    Path(path): Path<OrgPath>,
+) -> Result<Json<SpacesJson>, ApiError> {
+    let org = parse_path_id::<OrgId>(&path.org_id)?;
+    identity.exigir_org(org)?;
     state.store.orgs().get(org)?;
     let items = state
         .store
         .matrix()
         .list_spaces(org)?
         .iter()
-        .map(|space| EspacoJson {
+        .map(|space| SpaceJson {
             department_id: space.departamento.to_string(),
             department_name: state
                 .store
@@ -311,10 +287,10 @@ pub async fn listar_espacos(
             updated_at: space.updated_at,
         })
         .collect();
-    Ok(Json(EspacosJson { items }))
+    Ok(Json(SpacesJson { items }))
 }
 
-/// `PUT /admin/v1/orgs/{org_id}/matrix/spaces` — cria o espaço do departamento ou liga um existente.
+#[doc = " `PUT /admin/v1/orgs/{org_id}/matrix/spaces` — cria o espaço do departamento ou liga um existente."]
 #[utoipa::path(
     put,
     path = "/admin/v1/orgs/{org_id}/matrix/spaces",
@@ -322,9 +298,9 @@ pub async fn listar_espacos(
     operation_id = "matrix_espacos_ligar",
     security(("bearer" = [])),
     params(("org_id" = String, Path, description = "Id da org")),
-    request_body = LigarEspaco,
+    request_body = EnableSpace,
     responses(
-        (status = 200, description = "Espaço do departamento", body = EspacoJson),
+        (status = 200, description = "Espaço do departamento", body = SpaceJson),
         (status = 400, description = "Departamento ou espaço inválido", body = crate::erro::RespostaErro),
         (status = 401, description = "Sem token", body = crate::erro::RespostaErro),
         (status = 403, description = "Token de outra org", body = crate::erro::RespostaErro),
@@ -332,20 +308,22 @@ pub async fn listar_espacos(
         (status = 409, description = "Sem permissão no espaço, ou módulo desligado nesta instância", body = crate::erro::RespostaErro),
         (status = 503, description = "Synapse ou armazenamento não respondeu; tente de novo", body = crate::erro::RespostaErro)
     )
+,
+    summary = "`PUT /admin/v1/orgs/{org_id}/matrix/spaces` — cria o espaço do departamento ou liga um existente.",
 )]
-pub async fn ligar_espaco(
+pub async fn enable_space(
     State(state): State<Estado>,
-    identidade: Identidade,
-    Path(caminho): Path<CaminhoOrg>,
-    Json(body): Json<LigarEspaco>,
-) -> Result<Json<EspacoJson>, ApiError> {
-    let org = id_da_url::<OrgId>(&caminho.org_id)?;
-    identidade.exigir_org(org)?;
+    identity: Identidade,
+    Path(path): Path<OrgPath>,
+    Json(body): Json<EnableSpace>,
+) -> Result<Json<SpaceJson>, ApiError> {
+    let org = parse_path_id::<OrgId>(&path.org_id)?;
+    identity.exigir_org(org)?;
     state.store.orgs().get(org)?;
-    let departamento_id = id_da_url::<DepartmentId>(&body.department_id)?;
-    let department = state.store.departments().get(org, departamento_id)?;
-    let spaces = state.matrix_espacos().ok_or_else(modulo_desligado)?;
-    let alvo = DepartmentSpace {
+    let department_id = parse_path_id::<DepartmentId>(&body.department_id)?;
+    let department = state.store.departments().get(org, department_id)?;
+    let spaces = state.matrix_espacos().ok_or_else(module_disabled)?;
+    let target = DepartmentSpace {
         id: department.id,
         name: department.name.clone(),
     };
@@ -354,24 +332,24 @@ pub async fn ligar_espaco(
         .as_deref()
         .map(str::trim)
         .filter(|text| !text.is_empty());
-    let gravado = spaces
-        .ensure_space(org, &alvo, existing)
+    let stored = spaces
+        .ensure_space(org, &target, existing)
         .await
-        .map_err(erro_do_espaco)?;
-    super::auditoria::registrar(
+        .map_err(space_error)?;
+    super::audit::register(
         &state,
-        &identidade,
+        &identity,
         Some(org),
         "update",
         "matrix_space",
         department.id.to_string(),
     )?;
-    Ok(Json(EspacoJson {
+    Ok(Json(SpaceJson {
         department_id: department.id.to_string(),
         department_name: Some(department.name),
-        space_room_id: gravado.room_id,
-        alias: gravado.alias,
-        origin: match gravado.origin {
+        space_room_id: stored.room_id,
+        alias: stored.alias,
+        origin: match stored.origin {
             poph_matrix::spaces::SpaceOrigin::Automatic => "auto".to_owned(),
             poph_matrix::spaces::SpaceOrigin::Linked => "linked".to_owned(),
         },
@@ -380,7 +358,7 @@ pub async fn ligar_espaco(
     }))
 }
 
-/// `DELETE /admin/v1/orgs/{org_id}/matrix/spaces/{department_id}`.
+#[doc = " `DELETE /admin/v1/orgs/{org_id}/matrix/spaces/{department_id}`."]
 #[utoipa::path(
     delete,
     path = "/admin/v1/orgs/{org_id}/matrix/spaces/{department_id}",
@@ -392,43 +370,41 @@ pub async fn ligar_espaco(
         ("department_id" = String, Path, description = "Id do departamento")
     ),
     responses(
-        (status = 200, description = "Espaço desligado", body = EspacoDesligadoJson),
+        (status = 200, description = "Espaço desligado", body = SpaceDisabledJson),
         (status = 401, description = "Sem token", body = crate::erro::RespostaErro),
         (status = 403, description = "Token de outra org", body = crate::erro::RespostaErro),
         (status = 404, description = "Org ou departamento inexistente", body = crate::erro::RespostaErro)
     )
+,
+    summary = "`DELETE /admin/v1/orgs/{org_id}/matrix/spaces/{department_id}`.",
 )]
-pub async fn desligar_espaco(
+pub async fn disable_space(
     State(state): State<Estado>,
-    identidade: Identidade,
-    Path(caminho): Path<CaminhoEspaco>,
-) -> Result<Json<EspacoDesligadoJson>, ApiError> {
-    let org = id_da_url::<OrgId>(&caminho.org_id)?;
-    identidade.exigir_org(org)?;
+    identity: Identidade,
+    Path(path): Path<SpacePath>,
+) -> Result<Json<SpaceDisabledJson>, ApiError> {
+    let org = parse_path_id::<OrgId>(&path.org_id)?;
+    identity.exigir_org(org)?;
     state.store.orgs().get(org)?;
-    let department = id_da_url::<DepartmentId>(&caminho.department_id)?;
-    // Departamento de outra org (ou inexistente) é 404 e nada muda.
+    let department = parse_path_id::<DepartmentId>(&path.department_id)?;
     state.store.departments().get(org, department)?;
-    let desligado = state.store.matrix().disable_space(org, department)?;
-    super::auditoria::registrar(
+    let disabled = state.store.matrix().disable_space(org, department)?;
+    super::audit::register(
         &state,
-        &identidade,
+        &identity,
         Some(org),
         "delete",
         "matrix_space",
         department.to_string(),
     )?;
-    Ok(Json(EspacoDesligadoJson {
+    Ok(Json(SpaceDisabledJson {
         department_id: department.to_string(),
-        removed: desligado.removed,
-        rooms_forgotten: desligado.rooms_forgotten,
+        removed: disabled.removed,
+        rooms_forgotten: disabled.rooms_forgotten,
     }))
 }
 
-// ───────────────────────────── erros ─────────────────────────────
-
-/// Módulo Matrix não montado nesta instância: não há como falar com o Synapse.
-fn modulo_desligado() -> ApiError {
+fn module_disabled() -> ApiError {
     ApiError::novo(
         StatusCode::CONFLICT,
         "matrix_desligado",
@@ -436,12 +412,7 @@ fn modulo_desligado() -> ApiError {
     )
 }
 
-/// Traduz a falha do serviço de espaços para a resposta da API.
-///
-/// Nada do corpo do Synapse nem id de cliente vai para a resposta: falta de permissão vira `409` com
-/// o que o operador precisa fazer no Element; falha de rede/armazenamento vira `503` (tentar de novo
-/// resolve); defeito do módulo vira `500`.
-fn erro_do_espaco(error: SpaceError) -> ApiError {
+fn space_error(error: SpaceError) -> ApiError {
     match error {
         SpaceError::WithoutPermission { what_is_missing } => ApiError::conflito(what_is_missing),
         SpaceError::InvalidSpace { reason } => ApiError::validacao("space", reason.to_owned()),
@@ -458,7 +429,7 @@ fn erro_do_espaco(error: SpaceError) -> ApiError {
             "matrix_indisponivel",
             "o armazenamento do módulo Matrix não respondeu: tente de novo",
         ),
-        SpaceError::Call(chamada) => match chamada.classification() {
+        SpaceError::Call(call) => match call.classification() {
             poph_matrix::Classification::Transient => ApiError::novo(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "synapse_indisponivel",

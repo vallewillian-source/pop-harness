@@ -44,7 +44,7 @@ use poph_matrix::{ClientConfig, GhostIds, MatrixClient, Spaces, VirtualUsers};
 use poph_server::evolution::CanalEvolution;
 use poph_server::matrix_estado::{DestinoDoSynapse, EstadoDasConversas, PortaEstadoStore};
 use poph_server::matrix_inicio::PortaEspacosStore;
-use poph_server::{Estado, PortaAtendimento, PortaDoHarness, ReceptorAs, RespostaDoAtendente};
+use poph_server::{AsReceiver, Estado, PortaAtendimento, PortaDoHarness, RespostaDoAtendente};
 use poph_store::{
     ConversationStatus, HumanResponse, NewAgent, NewConversation, NewDepartment, NewHumanResponse,
     NewOrg, Origin, Page, Store,
@@ -922,7 +922,7 @@ async fn evento_da_sala_a_com_ids_da_org_b_nao_toca_a_conversa_da_b() {
             cenario.channel(cenario.org_a, cenario.conversa_a),
             cenario.channel(cenario.org_b, cenario.conversa_b),
         ])
-        .com_matrix_as(Arc::new(ReceptorAs::new(
+        .com_matrix_as(Arc::new(AsReceiver::new(
             PREFIXO,
             SERVIDOR,
             Secret::new(HS_TOKEN.to_owned()),
@@ -1020,7 +1020,7 @@ async fn evento_da_sala_a_com_ids_da_org_b_nao_toca_a_conversa_da_b() {
 async fn sala_desconhecida_com_id_da_org_b_nao_grava_nada_e_conta_o_caso() {
     let cenario = Cenario::new("sala-desconhecida").await;
     let entrega = cenario.entrega();
-    let state = cenario.state().com_matrix_as(Arc::new(ReceptorAs::new(
+    let state = cenario.state().com_matrix_as(Arc::new(AsReceiver::new(
         PREFIXO,
         SERVIDOR,
         Secret::new(HS_TOKEN.to_owned()),
@@ -1450,7 +1450,7 @@ async fn tokens_canario_nao_aparecem_em_resposta_log_arquivo_nem_fila() {
         )
         .expect("espaços"),
     ));
-    let state = state.com_matrix_as(Arc::new(ReceptorAs::new(
+    let state = state.com_matrix_as(Arc::new(AsReceiver::new(
         PREFIXO,
         SERVIDOR,
         Secret::new(HS_TOKEN.to_owned()),

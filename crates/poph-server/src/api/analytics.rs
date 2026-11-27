@@ -10,7 +10,7 @@ use utoipa::ToSchema;
 use poph_types::OrgId;
 
 use crate::auth::Identidade;
-use crate::erro::{ApiError, id_da_url};
+use crate::erro::{ApiError, id_da_url as parse_path_id};
 use crate::estado::Estado;
 
 #[derive(Deserialize)]
@@ -57,23 +57,20 @@ pub struct OperationalSummaryJson {
     )
 )]
 pub async fn operational_summary(
-    State(estado): State<Estado>,
-    identidade: Identidade,
-    Path(caminho): Path<OrgPath>,
+    State(state): State<Estado>,
+    identity: Identidade,
+    Path(path): Path<OrgPath>,
     Query(query): Query<SummaryQuery>,
 ) -> Result<Json<OperationalSummaryJson>, ApiError> {
-    let org = id_da_url::<OrgId>(&caminho.org_id)?;
-    identidade.exigir_org(org)?;
+    let org = parse_path_id::<OrgId>(&path.org_id)?;
+    identity.exigir_org(org)?;
     let from = parse_milliseconds("from", query.from.as_deref())?;
     let to = parse_milliseconds("to", query.to.as_deref())?;
     if from >= to {
         return Err(invalid_field("from", "from must be before to."));
     }
-    estado.store.orgs().get(org)?;
-    let summary = estado
-        .store
-        .analytics()
-        .operational_summary(org, from, to)?;
+    state.store.orgs().get(org)?;
+    let summary = state.store.analytics().operational_summary(org, from, to)?;
     Ok(Json(OperationalSummaryJson {
         open_fichas: summary.open_fichas,
         closed_fichas: summary.closed_fichas,

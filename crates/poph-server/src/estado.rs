@@ -73,8 +73,8 @@ pub struct Estado {
     pub validade_da_reserva: Duration,
     /// Receptor do Application Service do Matrix (MX-16). `None` = módulo Matrix desligado nesta
     /// instância: as rotas `/_matrix/app/...` respondem `404`. Quem injeta é a raiz de composição
-    /// (`poph serve`, MX-20), com `ModuloMatrix::preparar` + `ReceptorAs::do_modulo`.
-    pub matrix_as: Option<Arc<crate::api::matrix_as::ReceptorAs>>,
+    /// (`poph serve`, MX-20), com `ModuloMatrix::preparar` + `AsReceiver::of_module`.
+    pub matrix_as: Option<Arc<crate::api::matrix_as::AsReceiver>>,
     /// Métricas `poph_matrix_*` (MX-26), declaradas no registro só quando o módulo é preparado. Ver
     /// [`Estado::metricas_matrix`].
     matrix_metricas: Arc<Mutex<Option<Arc<crate::matrix_metricas::MetricasMatrix>>>>,
@@ -316,14 +316,14 @@ impl Estado {
 
     /// Liga o receptor do Application Service do Matrix (MX-16). Sem ele, as rotas do Synapse
     /// respondem `404` — é o módulo desligado.
-    pub fn com_matrix_as(mut self, receptor: Arc<crate::api::matrix_as::ReceptorAs>) -> Self {
+    pub fn com_matrix_as(mut self, receptor: Arc<crate::api::matrix_as::AsReceiver>) -> Self {
         self.matrix_as = Some(receptor);
         self
     }
 
     /// Liga o receptor já montado na instância viva (MX-20): é o que a raiz de composição usa,
     /// porque ela precisa mexer no estado que vai ser servido, não numa cópia.
-    pub fn ligar_matrix_as(&mut self, receptor: Arc<crate::api::matrix_as::ReceptorAs>) {
+    pub fn ligar_matrix_as(&mut self, receptor: Arc<crate::api::matrix_as::AsReceiver>) {
         self.matrix_as = Some(receptor);
     }
 

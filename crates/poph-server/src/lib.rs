@@ -34,7 +34,7 @@ use axum::Router;
 use tokio::net::TcpListener;
 
 pub use api::matrix_as::{
-    EntregaDeEventos, ErroEntrega, FuturoDaEntrega, ReceptorAs, TETO_CORPO, TETO_PADRAO_TRANSACOES,
+    AsReceiver, CAP_BODY, CAP_DEFAULT_TRANSACTION, DeliveryError, DeliveryFuture, EventDelivery,
 };
 pub use cifra::ChaveDeCifra;
 pub use erro::{ApiError, RespostaErro};
@@ -52,7 +52,7 @@ pub fn router(estado: Estado) -> Router {
 
 /// Documento OpenAPI da API administrativa.
 pub fn openapi() -> utoipa::openapi::OpenApi {
-    api::documento()
+    api::document()
 }
 
 /// Sobe o servidor num `TcpListener` já aberto (é o que os testes usam com porta efêmera).

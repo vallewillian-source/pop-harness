@@ -1,31 +1,3 @@
-//! WhatsApp administrativo (HR-44b): pareamento com QR, estado ao vivo e desconexão.
-//!
-//! A aba Integrações do Console (HR-44) ficou sem estas três operações: a integração sabia dizer
-//! que era `whatsapp`, mas não havia como parear o aparelho, ver se ele está conectado nem
-//! desconectar. Aqui elas entram no contrato de **admin** — nada muda para o cliente final.
-//!
-//! Onde mora a configuração: numa instância da Evolution por integração (`[evolution].instancias`
-//! na configuração, com `org_id`, `instancia` e `integracao_id`). O endereço vem de
-//! `[evolution].url_base` e a chave de `EVOLUTION_API_KEY` no ambiente; as duas já eram usadas pelo
-//! webhook (HR-26b). Quem não declarou a instância recebe `409 whatsapp_nao_configurado`, e a
-//! mensagem diz o que falta — o servidor não inventa nome de instância.
-//!
-//! Regras que valem para as três rotas:
-//!
-//! - **A integração é do agente e da org do caminho**: outro agente/org recebe `404 not_found`,
-//!   como nas demais rotas administrativas.
-//! - **`If-Match` obrigatório nas duas escritas** (`qrcode` e `disconnect`): as duas agem na
-//!   instância da Evolution, e o operador tem de estar vendo a configuração atual. Sem o
-//!   cabeçalho `428`; versão velha `412 version_conflict`. Elas **não** sobem a versão: o estado de
-//!   conexão é execução, não edição de configuração (mesma regra do webhook, que também grava
-//!   `connection_state` sem tocar `version`).
-//! - **Segredo nunca sai**: a chave da Evolution vai só no cabeçalho `apikey`, e o texto de erro do
-//!   provedor já é limpo pelo cliente (`poph-evolution`). A resposta traz no máximo o nome da
-//!   instância, o estado e o QR.
-//! - **O QR não tem prazo**: a Evolution v2 devolve o QR e um contador (`count`), sem validade.
-//!   A resposta devolve `expira_em: null` e o contador — quem desenha o QR pede outro quando o
-//!   cliente demorar (o código gira a cada ~20 s).
-
 use axum::{
     Json,
     extract::{Path, State, rejection::JsonRejection},
@@ -37,65 +9,62 @@ use poph_types::{AgentId, IntegrationId, OrgId};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use super::versao_do_if_match;
+use super::if_match_version;
 use crate::{
     auth::Identidade,
-    erro::{ApiError, id_da_url},
+    erro::{ApiError, id_da_url as parse_path_id},
     estado::Estado,
 };
 
-/// Caminho de uma integração dentro do agente.
 #[derive(Deserialize)]
-pub struct Caminho {
+pub struct PathParams {
     org_id: String,
     agent_id: String,
     integration_id: String,
 }
 
-/// Corpo opcional do pareamento.
+#[doc = " Corpo opcional do pareamento."]
 #[derive(Deserialize, utoipa::ToSchema, Default)]
 #[serde(deny_unknown_fields)]
-pub struct DadosPareamento {
-    /// Número do WhatsApp que vai parear, só dígitos com DDI (`5511999998888`). Sem ele, o
-    /// pareamento é pelo QR; com ele, a Evolution também devolve o código de 8 caracteres.
+#[schema(as = DadosPareamento)]
+pub struct PairingData {
+    #[doc = " Número do WhatsApp que vai parear, só dígitos com DDI (`5511999998888`). Sem ele, o"]
+    #[doc = " pareamento é pelo QR; com ele, a Evolution também devolve o código de 8 caracteres."]
     number: Option<String>,
 }
 
-/// O que a rota precisa ter resolvido antes de falar com a Evolution.
-struct Alvo {
+struct Target {
     org: OrgId,
     id: IntegrationId,
-    integracao: AdminIntegration,
-    /// Nome da instância na Evolution (o mesmo do caminho do webhook).
+    integration: AdminIntegration,
     instancia: String,
-    cliente: EvolutionClient,
+    client: EvolutionClient,
 }
 
-impl Alvo {
+impl Target {
     fn id(&self) -> &str {
-        &self.integracao.id
+        &self.integration.id
     }
 }
 
-/// Resolve a integração, confere que ela é WhatsApp e acha a instância configurada.
-fn alvo(e: &Estado, ident: &Identidade, c: &Caminho) -> Result<Alvo, ApiError> {
-    let org: OrgId = id_da_url(&c.org_id)?;
+fn target(e: &Estado, ident: &Identidade, c: &PathParams) -> Result<Target, ApiError> {
+    let org: OrgId = parse_path_id(&c.org_id)?;
     ident.exigir_org(org)?;
-    let agente: AgentId = id_da_url(&c.agent_id)?;
-    let id: IntegrationId = id_da_url(&c.integration_id)?;
-    let integracao = e.store.get_integration(org, agente, id)?;
-    if !integracao.kind.trim().eq_ignore_ascii_case("whatsapp") {
+    let agent_id: AgentId = parse_path_id(&c.agent_id)?;
+    let id: IntegrationId = parse_path_id(&c.integration_id)?;
+    let integration = e.store.get_integration(org, agent_id, id)?;
+    if !integration.kind.trim().eq_ignore_ascii_case("whatsapp") {
         return Err(ApiError::novo(
             StatusCode::CONFLICT,
             "integracao_nao_e_whatsapp",
             format!(
                 "esta integração é do tipo `{}`; só a de tipo `whatsapp` tem pareamento, estado e desconexão",
-                integracao.kind
+                integration.kind
             ),
         )
-        .com_detalhes(json!({ "kind": integracao.kind })));
+        .com_detalhes(json!({ "kind": integration.kind })));
     }
-    let canal = e.canal_evolution_da_integracao(org, id).ok_or_else(|| {
+    let channel = e.canal_evolution_da_integracao(org, id).ok_or_else(|| {
         ApiError::novo(
             StatusCode::CONFLICT,
             "whatsapp_nao_configurado",
@@ -104,91 +73,82 @@ fn alvo(e: &Estado, ident: &Identidade, c: &Caminho) -> Result<Alvo, ApiError> {
         )
         .com_detalhes(json!({ "integration_id": id.to_string() }))
     })?;
-    let cliente = canal.cliente.clone().ok_or_else(|| {
+    let client = channel.cliente.clone().ok_or_else(|| {
         ApiError::novo(
             StatusCode::SERVICE_UNAVAILABLE,
             "evolution_indisponivel",
             "o servidor não tem como falar com a Evolution: falta `EVOLUTION_API_KEY` no ambiente",
         )
     })?;
-    Ok(Alvo {
+    Ok(Target {
         org,
         id,
-        integracao,
-        instancia: canal.instancia.clone(),
-        cliente,
+        integration,
+        instancia: channel.instancia.clone(),
+        client,
     })
 }
 
-/// Confere o `If-Match` contra a versão da integração (428 sem cabeçalho, 412 com versão velha).
-fn conferir_versao(alvo: &Alvo, h: &HeaderMap) -> Result<(), ApiError> {
-    let versao = versao_do_if_match(h, "integração")?;
-    if versao != alvo.integracao.version {
+fn check_version(target: &Target, h: &HeaderMap) -> Result<(), ApiError> {
+    let version = if_match_version(h, "integração")?;
+    if version != target.integration.version {
         return Err(ApiError::conflito_de_versao(
             "integração",
-            alvo.id(),
-            versao,
-            alvo.integracao.version,
+            target.id(),
+            version,
+            target.integration.version,
         ));
     }
     Ok(())
 }
 
-/// Grava o estado de conexão na integração (sem subir a versão).
-fn gravar_estado(e: &Estado, alvo: &Alvo, estado: &str) -> Result<(), ApiError> {
+fn write_state(e: &Estado, target: &Target, state: &str) -> Result<(), ApiError> {
     e.store
-        .set_integration_connection_state(alvo.org, alvo.id, estado)?;
+        .set_integration_connection_state(target.org, target.id, state)?;
     Ok(())
 }
 
-/// Erro da Evolution no formato da API. A mensagem do provedor já vem limpa (sem chave, sem
-/// número e cortada) do cliente.
-fn erro_evolution(erro: EvolutionError, operacao: &str) -> ApiError {
-    match &erro {
+fn evolution_error(error: EvolutionError, operation: &str) -> ApiError {
+    match &error {
         EvolutionError::Network(_) => ApiError::novo(
             StatusCode::SERVICE_UNAVAILABLE,
             "evolution_indisponivel",
-            format!("não consegui falar com a Evolution em `{operacao}`; tente de novo"),
+            format!("não consegui falar com a Evolution em `{operation}`; tente de novo"),
         ),
         EvolutionError::Response { status, message } => ApiError::novo(
             StatusCode::BAD_GATEWAY,
             "evolution_recusou",
-            format!("a Evolution recusou `{operacao}`: {message}"),
+            format!("a Evolution recusou `{operation}`: {message}"),
         )
         .com_detalhes(json!({ "evolution_status": status })),
-        EvolutionError::InvalidResponse(motivo) => ApiError::novo(
+        EvolutionError::InvalidResponse(reason) => ApiError::novo(
             StatusCode::BAD_GATEWAY,
             "evolution_resposta_invalida",
-            format!("a resposta da Evolution não serve para `{operacao}`: {motivo}"),
+            format!("a resposta da Evolution não serve para `{operation}`: {reason}"),
         ),
-        outro => ApiError::novo(
+        other => ApiError::novo(
             StatusCode::BAD_GATEWAY,
             "evolution_falhou",
-            format!("falha em `{operacao}` com a Evolution: {outro}"),
+            format!("falha em `{operation}` com a Evolution: {other}"),
         ),
     }
 }
 
-/// A Evolution recusa a criação quando a instância já existe (403/409/422 com "already in use").
-///
-/// Nesse caso a instância é reaproveitada: quem clica em "gerar QR" de novo não pode receber erro
-/// só porque a instância foi criada na primeira vez.
-fn instancia_ja_existe(erro: &EvolutionError) -> bool {
-    match erro {
+fn instance_already_exists(error: &EvolutionError) -> bool {
+    match error {
         EvolutionError::Response { status, message } => {
-            let texto = message.to_ascii_lowercase();
+            let text = message.to_ascii_lowercase();
             (*status == 403 || *status == 409 || *status == 422)
                 && ["already", "in use", "existe"]
                     .iter()
-                    .any(|pista| texto.contains(pista))
+                    .any(|pista| text.contains(pista))
         }
         _ => false,
     }
 }
 
-/// Estado da Evolution (`open`/`connecting`/`close`) no vocabulário da integração.
-fn connection_state(bruto: &str) -> &'static str {
-    match bruto {
+fn connection_state(raw: &str) -> &'static str {
+    match raw {
         "open" => "connected",
         "connecting" => "awaiting_scan",
         "close" | "closed" => "disconnected",
@@ -196,37 +156,35 @@ fn connection_state(bruto: &str) -> &'static str {
     }
 }
 
-/// Lê o estado ao vivo, sem derrubar a rota quando a Evolution não responde.
-async fn estado_opcional(cliente: &EvolutionClient) -> Option<String> {
-    cliente
+async fn optional_state(client: &EvolutionClient) -> Option<String> {
+    client
         .connection_state()
         .await
         .ok()
-        .map(|estado| estado.trim().to_ascii_lowercase())
+        .map(|state| state.trim().to_ascii_lowercase())
 }
 
-#[utoipa::path(post,path="/admin/v1/orgs/{org_id}/agents/{agent_id}/integrations/{integration_id}/whatsapp/qrcode",tag="integrations",params(("org_id"=String,Path),("agent_id"=String,Path),("integration_id"=String,Path),("If-Match"=String,Header)),security(("bearer"=[])),request_body=DadosPareamento,responses((status=200,description="QR de pareamento",body=Value),(status=412,description="Conflito de versão",body=crate::erro::RespostaErro)))]
+#[utoipa::path(operation_id = "qrcode", post,path="/admin/v1/orgs/{org_id}/agents/{agent_id}/integrations/{integration_id}/whatsapp/qrcode",tag="integrations",params(("org_id"=String,Path),("agent_id"=String,Path),("integration_id"=String,Path),("If-Match"=String,Header)),security(("bearer"=[])),request_body=PairingData,responses((status=200,description="QR de pareamento",body=Value),(status=412,description="Conflito de versão",body=crate::erro::RespostaErro)))]
 pub async fn qrcode(
     State(e): State<Estado>,
     ident: Identidade,
-    Path(c): Path<Caminho>,
+    Path(c): Path<PathParams>,
     h: HeaderMap,
-    corpo: Result<Json<DadosPareamento>, JsonRejection>,
+    body: Result<Json<PairingData>, JsonRejection>,
 ) -> Result<Json<Value>, ApiError> {
-    let alvo = alvo(&e, &ident, &c)?;
-    conferir_versao(&alvo, &h)?;
-    let numero = corpo
+    let target = target(&e, &ident, &c)?;
+    check_version(&target, &h)?;
+    let number = body
         .ok()
-        .and_then(|Json(dados)| dados.number)
-        .map(|numero| numero.trim().to_owned())
-        .filter(|numero| !numero.is_empty());
+        .and_then(|Json(data)| data.number)
+        .map(|number| number.trim().to_owned())
+        .filter(|number| !number.is_empty());
 
-    // Instância já conectada: não há QR a mostrar, e pedir pareamento de novo só confunde.
-    if estado_opcional(&alvo.cliente).await.as_deref() == Some("open") {
-        gravar_estado(&e, &alvo, "connected")?;
+    if optional_state(&target.client).await.as_deref() == Some("open") {
+        write_state(&e, &target, "connected")?;
         return Ok(Json(json!({
-            "integration_id": alvo.id(),
-            "instance": alvo.instancia,
+            "integration_id": target.id(),
+            "instance": target.instancia,
             "state": "open",
             "connection_state": "connected",
             "qrcode": Value::Null,
@@ -234,22 +192,18 @@ pub async fn qrcode(
         })));
     }
 
-    // Cria a instância quando ela ainda não existe; se já existe, segue para o pareamento.
-    match alvo.cliente.create_instance().await {
+    match target.client.create_instance().await {
         Ok(_) => {}
-        Err(erro) if instancia_ja_existe(&erro) => {}
-        Err(erro) => return Err(erro_evolution(erro, "criar instância")),
+        Err(error) if instance_already_exists(&error) => {}
+        Err(error) => return Err(evolution_error(error, "criar instância")),
     }
-    let pareamento = alvo
-        .cliente
-        .connect(numero.as_deref())
+    let pairing = target
+        .client
+        .connect(number.as_deref())
         .await
-        .map_err(|erro| erro_evolution(erro, "parear"))?;
+        .map_err(|error| evolution_error(error, "parear"))?;
 
-    if pareamento.qr_base64.is_none()
-        && pareamento.qr_text.is_none()
-        && pareamento.pairing_code.is_none()
-    {
+    if pairing.qr_base64.is_none() && pairing.qr_text.is_none() && pairing.pairing_code.is_none() {
         return Err(ApiError::novo(
             StatusCode::BAD_GATEWAY,
             "evolution_sem_qr",
@@ -257,80 +211,80 @@ pub async fn qrcode(
         ));
     }
 
-    gravar_estado(&e, &alvo, "awaiting_scan")?;
-    super::auditoria::registrar(
+    write_state(&e, &target, "awaiting_scan")?;
+    super::audit::register(
         &e,
         &ident,
-        Some(alvo.org),
+        Some(target.org),
         "whatsapp_qrcode",
         "integration",
-        alvo.id().to_owned(),
+        target.id().to_owned(),
     )?;
     Ok(Json(json!({
-        "integration_id": alvo.id(),
-        "instance": alvo.instancia,
+        "integration_id": target.id(),
+        "instance": target.instancia,
         "state": "connecting",
         "connection_state": "awaiting_scan",
         "qrcode": {
-            "base64": pareamento.qr_base64,
-            "code": pareamento.qr_text,
-            "count": pareamento.counter,
+            "base64": pairing.qr_base64,
+            "code": pairing.qr_text,
+            "count": pairing.counter,
         },
-        // A Evolution v2 não informa prazo: o QR gira a cada ~20 s e o `count` é o sinal.
         "expira_em": Value::Null,
-        "pairing_code": pareamento.pairing_code,
+        "pairing_code": pairing.pairing_code,
     })))
 }
 
-#[utoipa::path(get,path="/admin/v1/orgs/{org_id}/agents/{agent_id}/integrations/{integration_id}/whatsapp/state",tag="integrations",params(("org_id"=String,Path),("agent_id"=String,Path),("integration_id"=String,Path)),security(("bearer"=[])),responses((status=200,description="Estado da conexão",body=Value)))]
-pub async fn estado(
+#[utoipa::path(operation_id = "estado", get,path="/admin/v1/orgs/{org_id}/agents/{agent_id}/integrations/{integration_id}/whatsapp/state",tag="integrations",params(("org_id"=String,Path),("agent_id"=String,Path),("integration_id"=String,Path)),security(("bearer"=[])),responses((status=200,description="Estado da conexão",body=Value)))]
+pub async fn status(
     State(e): State<Estado>,
     ident: Identidade,
-    Path(c): Path<Caminho>,
+    Path(c): Path<PathParams>,
 ) -> Result<Json<Value>, ApiError> {
-    let alvo = alvo(&e, &ident, &c)?;
-    let bruto = alvo
-        .cliente
+    let target = target(&e, &ident, &c)?;
+    let raw = target
+        .client
         .connection_state()
         .await
-        .map_err(|erro| erro_evolution(erro, "estado"))?
+        .map_err(|error| evolution_error(error, "estado"))?
         .trim()
         .to_ascii_lowercase();
-    let nosso = connection_state(&bruto);
-    gravar_estado(&e, &alvo, nosso)?;
+    let normalized = connection_state(&raw);
+    write_state(&e, &target, normalized)?;
     Ok(Json(json!({
-        "integration_id": alvo.id(),
-        "instance": alvo.instancia,
-        "state": bruto,
-        "connection_state": nosso,
+        "integration_id": target.id(),
+        "instance": target.instancia,
+        "state": raw,
+        "connection_state": normalized,
     })))
 }
 
-#[utoipa::path(post,path="/admin/v1/orgs/{org_id}/agents/{agent_id}/integrations/{integration_id}/whatsapp/disconnect",tag="integrations",params(("org_id"=String,Path),("agent_id"=String,Path),("integration_id"=String,Path),("If-Match"=String,Header)),security(("bearer"=[])),responses((status=200,description="Instância desconectada",body=Value),(status=412,description="Conflito de versão",body=crate::erro::RespostaErro)))]
-pub async fn desconectar(
+#[utoipa::path(operation_id = "desconectar", post,path="/admin/v1/orgs/{org_id}/agents/{agent_id}/integrations/{integration_id}/whatsapp/disconnect",tag="integrations",params(("org_id"=String,Path),("agent_id"=String,Path),("integration_id"=String,Path),("If-Match"=String,Header)),security(("bearer"=[])),responses((status=200,description="Instância desconectada",body=Value),(status=412,description="Conflito de versão",body=crate::erro::RespostaErro)))]
+pub async fn disconnect(
     State(e): State<Estado>,
     ident: Identidade,
-    Path(c): Path<Caminho>,
+    Path(c): Path<PathParams>,
     h: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    let alvo = alvo(&e, &ident, &c)?;
-    conferir_versao(&alvo, &h)?;
-    alvo.cliente
+    let target = target(&e, &ident, &c)?;
+    check_version(&target, &h)?;
+    target
+        .client
         .desconectar()
         .await
-        .map_err(|erro| erro_evolution(erro, "desconectar"))?;
-    gravar_estado(&e, &alvo, "disconnected")?;
-    super::auditoria::registrar(
+        .map_err(|error| evolution_error(error, "desconectar"))?;
+    write_state(&e, &target, "disconnected")?;
+    super::audit::register(
         &e,
         &ident,
-        Some(alvo.org),
+        Some(target.org),
         "whatsapp_disconnect",
         "integration",
-        alvo.id().to_owned(),
+        target.id().to_owned(),
     )?;
     Ok(Json(json!({
-        "integration_id": alvo.id(),
-        "instance": alvo.instancia,
+        "integration_id": target.id(),
+        "instance": target.instancia,
         "connection_state": "disconnected",
         "disconnected": true,
     })))

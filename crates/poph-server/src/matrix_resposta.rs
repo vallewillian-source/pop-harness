@@ -1,7 +1,7 @@
 //! Resposta do atendente → cliente (MX-18): o que o atendente escreve no Element chega ao
 //! WhatsApp.
 //!
-//! Este módulo implementa a [`EntregaDeEventos`] da MX-16. Para cada evento que o Synapse entrega
+//! Este módulo implementa a [`EventDelivery`] da MX-16. Para cada evento que o Synapse entrega
 //! numa transação, ele chama o classificador da MX-17 e:
 //!
 //! - `RespostaHumana` → acha a conversa pela sala, resolve o nome do atendente, converte o corpo
@@ -82,7 +82,7 @@ use poph_store::{HumanResponse, HumanResponseWithFile, NewHumanResponse, Respons
 use poph_types::{AgentId, ConversationId, OrgId};
 use serde_json::{Value, json};
 
-use crate::api::matrix_as::{EntregaDeEventos, ErroEntrega, FuturoDaEntrega};
+use crate::api::matrix_as::{DeliveryError, DeliveryFuture, EventDelivery};
 use crate::matrix_metricas::MetricasMatrix;
 
 /// Nome usado quando o perfil do atendente não traz nome de exibição.
@@ -364,7 +364,7 @@ impl RespostaDoAtendente {
     /// Monta sobre o banco do Harness, a partir do módulo já preparado (config + segredos).
     ///
     /// É o que a MX-20 chama: `RespostaDoAtendente::do_modulo(store, &modulo)` e depois
-    /// `ReceptorAs::do_modulo(modulo, Arc::new(entrega))`.
+    /// `AsReceiver::of_module(modulo, Arc::new(entrega))`.
     pub fn do_modulo(
         store: Arc<Store>,
         modulo: &MatrixModule,
@@ -569,7 +569,7 @@ impl RespostaDoAtendente {
         event_id: &str,
         sender: &str,
         text: &str,
-    ) -> Result<(), ErroEntrega> {
+    ) -> Result<(), DeliveryError> {
         let alvo = match self.conversa_da_sala(room) {
             Ok(Some(alvo)) => alvo,
             Ok(None) => {
@@ -590,7 +590,7 @@ impl RespostaDoAtendente {
                     room,
                     "não consegui achar a conversa da sala agora"
                 );
-                return Err(ErroEntrega::new(MOTIVO_BANCO));
+                return Err(DeliveryError::new(MOTIVO_BANCO));
             }
         };
 
@@ -680,7 +680,7 @@ impl RespostaDoAtendente {
                     reason = "banco_indisponivel",
                     "não consegui gravar a resposta do atendente agora"
                 );
-                Err(ErroEntrega::new(MOTIVO_BANCO))
+                Err(DeliveryError::new(MOTIVO_BANCO))
             }
         }
     }
@@ -705,7 +705,7 @@ impl RespostaDoAtendente {
         &self,
         transacao: &str,
         event: ArquivoDoEvento<'_>,
-    ) -> Result<(), ErroEntrega> {
+    ) -> Result<(), DeliveryError> {
         let ArquivoDoEvento {
             room,
             event_id,
@@ -738,7 +738,7 @@ impl RespostaDoAtendente {
                     reason = "banco_indisponivel",
                     "não consegui achar a conversa da sala agora"
                 );
-                return Err(ErroEntrega::new(MOTIVO_BANCO));
+                return Err(DeliveryError::new(MOTIVO_BANCO));
             }
         };
 
@@ -748,7 +748,7 @@ impl RespostaDoAtendente {
             Ok(Some(assinatura)) => assinatura,
             // Reenviar não traria o agente de volta, e insistir gastaria a fila do Synapse.
             Ok(None) => return Ok(()),
-            Err(_) => return Err(ErroEntrega::new(MOTIVO_BANCO)),
+            Err(_) => return Err(DeliveryError::new(MOTIVO_BANCO)),
         };
 
         let Some(pasta) = self.pasta_blobs.clone() else {
@@ -794,7 +794,7 @@ impl RespostaDoAtendente {
                         kind = kind.msgtype(),
                         "não consegui baixar o arquivo do atendente agora: volta no reenvio do Synapse"
                     );
-                    return Err(ErroEntrega::new(MOTIVO_MIDIA));
+                    return Err(DeliveryError::new(MOTIVO_MIDIA));
                 }
                 if let AssetError::Call(chamada) = &error {
                     self.contar_erro(chamada);
@@ -944,7 +944,7 @@ impl RespostaDoAtendente {
                     reason = "banco_indisponivel",
                     "não consegui gravar o arquivo do atendente agora"
                 );
-                Err(ErroEntrega::new(MOTIVO_BANCO))
+                Err(DeliveryError::new(MOTIVO_BANCO))
             }
         }
     }
@@ -980,7 +980,7 @@ impl RespostaDoAtendente {
             .await;
     }
 
-    async fn process(&self, transacao: &str, events: Vec<Value>) -> Result<(), ErroEntrega> {
+    async fn process(&self, transacao: &str, events: Vec<Value>) -> Result<(), DeliveryError> {
         for event in &events {
             match classify(&self.ids, event) {
                 Action::HumanResponse {
@@ -1027,8 +1027,8 @@ impl RespostaDoAtendente {
     }
 }
 
-impl EntregaDeEventos for RespostaDoAtendente {
-    fn entregar(&self, transacao: &str, events: Vec<Value>) -> FuturoDaEntrega<'_> {
+impl EventDelivery for RespostaDoAtendente {
+    fn deliver(&self, transacao: &str, events: Vec<Value>) -> DeliveryFuture<'_> {
         // O id da transação vira dono: o futuro devolvido só empresta `self` (é o que o trait
         // permite), e `transacao` chega emprestada de quem chamou.
         let transacao = transacao.to_owned();

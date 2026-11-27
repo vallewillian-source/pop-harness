@@ -1,8 +1,3 @@
-//! Tokens de acesso: CRUD em `/admin/v1/orgs/{org_id}/tokens`.
-//!
-//! O valor em claro aparece **uma única vez**, na criação. Depois disso nem a listagem nem o
-//! detalhe devolvem o valor (a API guarda só o hash argon2).
-
 use std::fmt::Write as _;
 
 use argon2::Argon2;
@@ -16,26 +11,26 @@ use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use super::paginacao::{ConsultaPagina, ListaJson, proximo_cursor};
+use super::pagination::{ListJson, PageQuery, next_cursor};
 use crate::auth::Identidade;
 use crate::auth::PREFIXO_ORG;
-use crate::erro::{ApiError, id_da_url};
+use crate::erro::{ApiError, id_da_url as parse_path_id};
 use crate::estado::Estado;
 
-/// Token na resposta da API (nunca traz o segredo).
+#[doc = " Token na resposta da API (nunca traz o segredo)."]
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct TokenJson {
-    /// Id (UUID v7).
+    #[doc = " Id (UUID v7)."]
     pub id: String,
-    /// Org dona (`null` para token global).
+    #[doc = " Org dona (`null` para token global)."]
     pub org_id: Option<String>,
-    /// Rótulo.
+    #[doc = " Rótulo."]
     pub label: String,
-    /// `active` ou `revoked`.
+    #[doc = " `active` ou `revoked`."]
     pub status: String,
-    /// Criação (ms).
+    #[doc = " Criação (ms)."]
     pub created_at: i64,
-    /// Revogação (ms), quando houve.
+    #[doc = " Revogação (ms), quando houve."]
     pub revoked_at: Option<i64>,
 }
 
@@ -56,32 +51,31 @@ impl TokenJson {
     }
 }
 
-/// Corpo de criação de token.
+#[doc = " Corpo de criação de token."]
 #[derive(Debug, Clone, Deserialize, ToSchema)]
-pub struct CriarToken {
-    /// Rótulo para reconhecer o token (1 a 80 caracteres).
+#[schema(as = CriarToken)]
+pub struct CreateToken {
+    #[doc = " Rótulo para reconhecer o token (1 a 80 caracteres)."]
     pub label: String,
 }
 
-/// Resposta da criação: o token e o valor em claro (só aparece aqui).
+#[doc = " Resposta da criação: o token e o valor em claro (só aparece aqui)."]
 #[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct TokenCriadoJson {
-    /// O registro criado (sem segredo).
+#[schema(as = TokenCriadoJson)]
+pub struct TokenCreatedJson {
+    #[doc = " O registro criado (sem segredo)."]
     pub token: TokenJson,
-    /// Valor do token, no formato `poph_<uuid>_<segredo>`. **Só aparece nesta resposta.**
+    #[doc = " Valor do token, no formato `poph_<uuid>_<segredo>`. **Só aparece nesta resposta.**"]
     pub value: String,
 }
 
-/// Caminho de um token: org + token.
 #[derive(Debug, Clone, Deserialize)]
-pub struct CaminhoToken {
-    /// Id da org.
+pub struct TokenPath {
     pub org_id: String,
-    /// Id do token.
     pub token_id: String,
 }
 
-/// `GET /admin/v1/orgs/{org_id}/tokens`.
+#[doc = " `GET /admin/v1/orgs/{org_id}/tokens`."]
 #[utoipa::path(
     get,
     path = "/admin/v1/orgs/{org_id}/tokens",
@@ -94,26 +88,26 @@ pub struct CaminhoToken {
         ("cursor" = Option<String>, Query, description = "Último id da página anterior")
     ),
     responses(
-        (status = 200, description = "Página de tokens", body = ListaJson<TokenJson>),
+        (status = 200, description = "Página de tokens", body = ListJson<TokenJson>),
         (status = 403, description = "Org de outro token", body = crate::erro::RespostaErro)
     )
 )]
-pub async fn listar(
-    State(estado): State<Estado>,
-    identidade: Identidade,
-    Path(caminho): Path<super::orgs::CaminhoOrg>,
-    Query(consulta): Query<ConsultaPagina>,
-) -> Result<Json<ListaJson<TokenJson>>, ApiError> {
-    let org = id_da_url::<OrgId>(&caminho.org_id)?;
-    identidade.exigir_org(org)?;
-    let pagina = consulta.pagina()?;
-    let tokens = estado.store.tokens().list(org, pagina)?;
+pub async fn list(
+    State(state): State<Estado>,
+    identity: Identidade,
+    Path(path): Path<super::orgs::OrgPath>,
+    Query(query): Query<PageQuery>,
+) -> Result<Json<ListJson<TokenJson>>, ApiError> {
+    let org = parse_path_id::<OrgId>(&path.org_id)?;
+    identity.exigir_org(org)?;
+    let page = query.page()?;
+    let tokens = state.store.tokens().list(org, page)?;
     let items: Vec<TokenJson> = tokens.iter().map(TokenJson::de).collect();
-    let next_cursor = proximo_cursor(&items, pagina.limit, |item| item.id.clone());
-    Ok(Json(ListaJson { items, next_cursor }))
+    let next_cursor = next_cursor(&items, page.limit, |item| item.id.clone());
+    Ok(Json(ListJson { items, next_cursor }))
 }
 
-/// `POST /admin/v1/orgs/{org_id}/tokens` (só token global).
+#[doc = " `POST /admin/v1/orgs/{org_id}/tokens` (só token global)."]
 #[utoipa::path(
     post,
     path = "/admin/v1/orgs/{org_id}/tokens",
@@ -121,52 +115,51 @@ pub async fn listar(
     operation_id = "tokens_criar",
     security(("bearer" = [])),
     params(("org_id" = String, Path, description = "Id da org")),
-    request_body = CriarToken,
+    request_body = CreateToken,
     responses(
-        (status = 201, description = "Token criado (valor aparece só aqui)", body = TokenCriadoJson),
+        (status = 201, description = "Token criado (valor aparece só aqui)", body = TokenCreatedJson),
         (status = 403, description = "Só token global cria token", body = crate::erro::RespostaErro),
         (status = 404, description = "Org não encontrada", body = crate::erro::RespostaErro)
     )
 )]
-pub async fn criar(
-    State(estado): State<Estado>,
-    identidade: Identidade,
-    Path(caminho): Path<super::orgs::CaminhoOrg>,
-    Json(corpo): Json<CriarToken>,
-) -> Result<(StatusCode, Json<TokenCriadoJson>), ApiError> {
-    let org = id_da_url::<OrgId>(&caminho.org_id)?;
-    identidade.exigir_global()?;
-    let rotulo = corpo.label.trim();
-    if rotulo.is_empty() || rotulo.chars().count() > 80 {
+pub async fn create(
+    State(state): State<Estado>,
+    identity: Identidade,
+    Path(path): Path<super::orgs::OrgPath>,
+    Json(body): Json<CreateToken>,
+) -> Result<(StatusCode, Json<TokenCreatedJson>), ApiError> {
+    let org = parse_path_id::<OrgId>(&path.org_id)?;
+    identity.exigir_global()?;
+    let label = body.label.trim();
+    if label.is_empty() || label.chars().count() > 80 {
         return Err(ApiError::validacao(
             "label",
             "deve ter de 1 a 80 caracteres",
         ));
     }
-    // A org precisa existir (erro 404 antes de qualquer gravação).
-    estado.store.orgs().get(org)?;
-    let segredo = gerar_segredo();
-    let hash = gerar_hash(&segredo)?;
-    let token = estado.store.tokens().create(Some(org), rotulo, &hash)?;
-    super::auditoria::registrar(
-        &estado,
-        &identidade,
+    state.store.orgs().get(org)?;
+    let secret = generate_secret();
+    let hash = generate_hash(&secret)?;
+    let token = state.store.tokens().create(Some(org), label, &hash)?;
+    super::audit::register(
+        &state,
+        &identity,
         Some(org),
         "create",
         "token",
         token.id.to_string(),
     )?;
-    let value = format!("{PREFIXO_ORG}{}_{segredo}", token.id);
+    let value = format!("{PREFIXO_ORG}{}_{secret}", token.id);
     Ok((
         StatusCode::CREATED,
-        Json(TokenCriadoJson {
+        Json(TokenCreatedJson {
             token: TokenJson::de(&token),
             value,
         }),
     ))
 }
 
-/// `GET /admin/v1/orgs/{org_id}/tokens/{token_id}`.
+#[doc = " `GET /admin/v1/orgs/{org_id}/tokens/{token_id}`."]
 #[utoipa::path(
     get,
     path = "/admin/v1/orgs/{org_id}/tokens/{token_id}",
@@ -182,19 +175,19 @@ pub async fn criar(
         (status = 404, description = "Token não encontrado", body = crate::erro::RespostaErro)
     )
 )]
-pub async fn mostrar(
-    State(estado): State<Estado>,
-    identidade: Identidade,
-    Path(caminho): Path<CaminhoToken>,
+pub async fn show(
+    State(state): State<Estado>,
+    identity: Identidade,
+    Path(path): Path<TokenPath>,
 ) -> Result<Json<TokenJson>, ApiError> {
-    let org = id_da_url::<OrgId>(&caminho.org_id)?;
-    let token = id_da_url::<AdminTokenId>(&caminho.token_id)?;
-    identidade.exigir_org(org)?;
-    let registro = estado.store.tokens().get(org, token)?;
-    Ok(Json(TokenJson::de(&registro)))
+    let org = parse_path_id::<OrgId>(&path.org_id)?;
+    let token = parse_path_id::<AdminTokenId>(&path.token_id)?;
+    identity.exigir_org(org)?;
+    let record = state.store.tokens().get(org, token)?;
+    Ok(Json(TokenJson::de(&record)))
 }
 
-/// `DELETE /admin/v1/orgs/{org_id}/tokens/{token_id}` — revoga (só token global).
+#[doc = " `DELETE /admin/v1/orgs/{org_id}/tokens/{token_id}` — revoga (só token global)."]
 #[utoipa::path(
     delete,
     path = "/admin/v1/orgs/{org_id}/tokens/{token_id}",
@@ -210,20 +203,19 @@ pub async fn mostrar(
         (status = 403, description = "Só token global revoga", body = crate::erro::RespostaErro)
     )
 )]
-pub async fn revogar(
-    State(estado): State<Estado>,
-    identidade: Identidade,
-    Path(caminho): Path<CaminhoToken>,
+pub async fn revoke(
+    State(state): State<Estado>,
+    identity: Identidade,
+    Path(path): Path<TokenPath>,
 ) -> Result<StatusCode, ApiError> {
-    let org = id_da_url::<OrgId>(&caminho.org_id)?;
-    let token = id_da_url::<AdminTokenId>(&caminho.token_id)?;
-    identidade.exigir_global()?;
-    // Revogar token de outra org não pode acontecer por engano: confere a existência na org.
-    estado.store.tokens().get(org, token)?;
-    estado.store.tokens().revoke(org, token)?;
-    super::auditoria::registrar(
-        &estado,
-        &identidade,
+    let org = parse_path_id::<OrgId>(&path.org_id)?;
+    let token = parse_path_id::<AdminTokenId>(&path.token_id)?;
+    identity.exigir_global()?;
+    state.store.tokens().get(org, token)?;
+    state.store.tokens().revoke(org, token)?;
+    super::audit::register(
+        &state,
+        &identity,
         Some(org),
         "revoke",
         "token",
@@ -232,29 +224,28 @@ pub async fn revogar(
     Ok(StatusCode::NO_CONTENT)
 }
 
-fn gerar_segredo() -> String {
+fn generate_secret() -> String {
     let mut bytes = [0u8; 32];
     OsRng.fill_bytes(&mut bytes);
-    let mut segredo = String::with_capacity(bytes.len() * 2);
+    let mut secret = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
-        let _ = write!(segredo, "{byte:02x}");
+        let _ = write!(secret, "{byte:02x}");
     }
-    segredo
+    secret
 }
 
-fn gerar_hash(valor: &str) -> Result<String, ApiError> {
-    let sal = SaltString::generate(&mut OsRng);
+fn generate_hash(value: &str) -> Result<String, ApiError> {
+    let salt = SaltString::generate(&mut OsRng);
     Argon2::default()
-        .hash_password(valor.as_bytes(), &sal)
+        .hash_password(value.as_bytes(), &salt)
         .map(|hash| hash.to_string())
-        .map_err(|erro| {
-            tracing::error!(erro = %erro, "falha ao gerar o hash do token");
+        .map_err(|error| {
+            tracing::error!(error = %error, "falha ao gerar o hash do token");
             ApiError::interno()
         })
 }
 
-/// Página padrão usada em testes e em chamadas internas.
 #[allow(dead_code)]
-pub(crate) fn pagina_padrao() -> Page {
+pub(crate) fn default_page() -> Page {
     Page::default()
 }

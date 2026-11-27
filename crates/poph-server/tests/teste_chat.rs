@@ -26,7 +26,7 @@ use poph_agent::turno::{DefaultRegistry, ToolRegistry, TurnEngine, TurnOptions, 
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, LlmProvider, Request, Script};
 use poph_files::FileConfig;
 use poph_server::Estado;
-use poph_server::api::teste_chat::CANAL_DE_TESTE;
+use poph_server::api::test_chat::CHANNEL_OF_TEST;
 use poph_store::{ConversationStatus, Direction, NewAgent, NewOrg, Page, Store, TurnState};
 use poph_types::config::GlobalTokenConfig;
 use poph_types::{
@@ -372,7 +372,7 @@ impl Cenario {
             .expect("criar conversa");
         assert_eq!(resposta.status(), StatusCode::CREATED);
         let corpo: Value = resposta.json().await.expect("json da conversa");
-        assert_eq!(corpo["channel"], CANAL_DE_TESTE);
+        assert_eq!(corpo["channel"], CHANNEL_OF_TEST);
         assert_eq!(corpo["status"], "open");
         assert_eq!(corpo["agent_id"], self.agente.to_string());
         corpo["id"].as_str().expect("id da conversa").to_owned()

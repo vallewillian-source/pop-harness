@@ -4,6 +4,8 @@
 
 **Status (23/11/2026):** implementado de FX-01 a FX-36, com commits locais no submódulo, sem push e sem produção. Pendente: a medição do G9 com o Jev real (FX-37), que depende de autorização do Willian para gastar a chave do Jev. Só backend: a interface do Console não mudou.
 
+The administrative routes for flows and cases live in [`api/flows.rs`](../crates/poph-server/src/api/flows.rs) and [`api/cases.rs`](../crates/poph-server/src/api/cases.rs). The public route names and JSON fields are documented in [API.md](API.md).
+
 ## 1. Visão
 
 Cada atendimento (uma conversa) tem uma **Ficha**: o registro do que aconteceu nele. Dentro da Ficha ficam as **execuções de fluxo**, com as respostas e o status de cada etapa.

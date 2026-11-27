@@ -18,6 +18,10 @@ o banco .../harness.db está na versão 0 e o código espera a 1: rode `poph mig
 parado e suba de novo
 ```
 
+## Route implementation
+
+The administrative router and OpenAPI registration live in [`crates/poph-server/src/api/mod.rs`](../crates/poph-server/src/api/mod.rs). Handlers declare their published operation IDs and schema names explicitly so Rust module and function names can change independently of the generated Console client.
+
 ## Autenticação
 
 Tudo em `/admin/v1` pede `Authorization: Bearer <valor>`. São dois tipos de token:

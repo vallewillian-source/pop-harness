@@ -16,7 +16,7 @@ use tokio::sync::broadcast;
 use utoipa::ToSchema;
 
 use crate::auth::Identidade;
-use crate::erro::id_da_url;
+use crate::erro::id_da_url as parse_path_id;
 use crate::{ApiError, Estado};
 
 pub fn routes() -> Router<Estado> {
@@ -116,7 +116,7 @@ fn query<T>(value: Result<Query<T>, QueryRejection>) -> Result<T, ApiError> {
 }
 
 fn scoped_org(identity: &Identidade, raw: &str) -> Result<OrgId, ApiError> {
-    let org = id_da_url::<OrgId>(raw)?;
+    let org = parse_path_id::<OrgId>(raw)?;
     identity.exigir_org(org)?;
     Ok(org)
 }
@@ -152,7 +152,7 @@ fn scoped_conversation(
     raw_id: &str,
 ) -> Result<(OrgId, ConversationId), ApiError> {
     let org = scoped_org(identity, raw_org)?;
-    let id = id_da_url::<ConversationId>(raw_id)?;
+    let id = parse_path_id::<ConversationId>(raw_id)?;
     let conversation = state.store.conversations().get(org, id)?;
     if conversation.canal != "site" {
         return Err(ApiError::nao_encontrado("conversa", raw_id));
@@ -196,7 +196,7 @@ fn limit(raw: Option<&str>, max: u32, default: u32) -> Result<u32, ApiError> {
     })
 }
 
-#[utoipa::path(post, path="/admin/v1/orgs/{org_id}/agents/{agent_id}/site-conversations", tag="site-conversations", security(("bearer"=[])), params(("org_id"=String, Path), ("agent_id"=String, Path)), request_body=CreateBody, responses((status=201, description="Conversa criada", body=Value), (status=200, description="Conversa existente", body=Value), (status=422, description="Agente ou dados recusados", body=crate::RespostaErro)))]
+#[utoipa::path(operation_id = "create", post, path="/admin/v1/orgs/{org_id}/agents/{agent_id}/site-conversations", tag="site-conversations", security(("bearer"=[])), params(("org_id"=String, Path), ("agent_id"=String, Path)), request_body=CreateBody, responses((status=201, description="Conversa criada", body=Value), (status=200, description="Conversa existente", body=Value), (status=422, description="Agente ou dados recusados", body=crate::RespostaErro)))]
 pub async fn create(
     State(state): State<Estado>,
     identity: Identidade,
@@ -204,7 +204,7 @@ pub async fn create(
     json: Result<Json<CreateBody>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     let org = scoped_org(&identity, &path.org_id)?;
-    let agent = id_da_url::<AgentId>(&path.agent_id)?;
+    let agent = parse_path_id::<AgentId>(&path.agent_id)?;
     allowed_agent(&state, org, agent)?;
     let data = body(json)?;
     if !(1..=128).contains(&data.external_ref.chars().count()) {
@@ -215,7 +215,7 @@ pub async fn create(
         .site_chat()
         .create(org, agent, data.external_ref)?;
     if created {
-        super::auditoria::registrar(
+        super::audit::register(
             &state,
             &identity,
             Some(org),
@@ -232,7 +232,7 @@ pub async fn create(
     Ok((status, Json(json!({"conversation_id": conversation}))).into_response())
 }
 
-#[utoipa::path(post, path="/admin/v1/orgs/{org_id}/site-conversations/{id}/messages", tag="site-conversations", security(("bearer"=[])), params(("org_id"=String, Path), ("id"=String, Path)), request_body=MessageBody, responses((status=202, description="Mensagem aceita", body=Value), (status=200, description="Repetição da mensagem", body=Value), (status=409, description="Turno ativo ou chave já usada para outro texto", body=crate::RespostaErro), (status=422, description="Agente ou dados recusados", body=crate::RespostaErro)))]
+#[utoipa::path(operation_id = "submit", post, path="/admin/v1/orgs/{org_id}/site-conversations/{id}/messages", tag="site-conversations", security(("bearer"=[])), params(("org_id"=String, Path), ("id"=String, Path)), request_body=MessageBody, responses((status=202, description="Mensagem aceita", body=Value), (status=200, description="Repetição da mensagem", body=Value), (status=409, description="Turno ativo ou chave já usada para outro texto", body=crate::RespostaErro), (status=422, description="Agente ou dados recusados", body=crate::RespostaErro)))]
 pub async fn submit(
     State(state): State<Estado>,
     identity: Identidade,
@@ -258,7 +258,7 @@ pub async fn submit(
             .submit(org, conversation, data.idempotency_key, data.text)?
         {
             SiteSubmission::Accepted(message, turn) => {
-                super::auditoria::registrar(
+                super::audit::register(
                     &state,
                     &identity,
                     Some(org),
@@ -300,7 +300,7 @@ pub async fn submit(
         .into_response())
 }
 
-#[utoipa::path(get, path="/admin/v1/orgs/{org_id}/site-conversations/{id}/turns/{turn_id}", tag="site-conversations", security(("bearer"=[])), params(("org_id"=String, Path), ("id"=String, Path), ("turn_id"=String, Path)), responses((status=200, description="Estado do turno", body=Value), (status=404, description="Turno não encontrado", body=crate::RespostaErro)))]
+#[utoipa::path(operation_id = "turn", get, path="/admin/v1/orgs/{org_id}/site-conversations/{id}/turns/{turn_id}", tag="site-conversations", security(("bearer"=[])), params(("org_id"=String, Path), ("id"=String, Path), ("turn_id"=String, Path)), responses((status=200, description="Estado do turno", body=Value), (status=404, description="Turno não encontrado", body=crate::RespostaErro)))]
 pub async fn turn(
     State(state): State<Estado>,
     identity: Identidade,
@@ -310,7 +310,7 @@ pub async fn turn(
     Ok(Json(json!(state.store.site_chat().turn(key)?)))
 }
 
-#[utoipa::path(post, path="/admin/v1/orgs/{org_id}/site-conversations/{id}/turns/{turn_id}/cancel", tag="site-conversations", security(("bearer"=[])), params(("org_id"=String, Path), ("id"=String, Path), ("turn_id"=String, Path)), responses((status=200, description="Estado final do turno", body=Value), (status=404, description="Turno não encontrado", body=crate::RespostaErro)))]
+#[utoipa::path(operation_id = "cancel", post, path="/admin/v1/orgs/{org_id}/site-conversations/{id}/turns/{turn_id}/cancel", tag="site-conversations", security(("bearer"=[])), params(("org_id"=String, Path), ("id"=String, Path), ("turn_id"=String, Path)), responses((status=200, description="Estado final do turno", body=Value), (status=404, description="Turno não encontrado", body=crate::RespostaErro)))]
 pub async fn cancel(
     State(state): State<Estado>,
     identity: Identidade,
@@ -324,7 +324,7 @@ pub async fn cancel(
         .finish(key, SiteOutcome::Cancelled)?;
     state.site_workers.cancel(key);
     if previous.status != "cancelled" && result.status == "cancelled" {
-        super::auditoria::registrar(
+        super::audit::register(
             &state,
             &identity,
             Some(key.org),
@@ -336,7 +336,7 @@ pub async fn cancel(
     Ok(Json(json!(result)))
 }
 
-#[utoipa::path(get, path="/admin/v1/orgs/{org_id}/site-conversations/{id}/messages", tag="site-conversations", security(("bearer"=[])), params(("org_id"=String, Path), ("id"=String, Path), ("before"=Option<String>, Query), ("limit"=Option<u32>, Query)), responses((status=200, description="Mensagens de visitante e agente, da mais nova para a mais antiga", body=Value), (status=404, description="Conversa não encontrada", body=crate::RespostaErro)))]
+#[utoipa::path(operation_id = "history", get, path="/admin/v1/orgs/{org_id}/site-conversations/{id}/messages", tag="site-conversations", security(("bearer"=[])), params(("org_id"=String, Path), ("id"=String, Path), ("before"=Option<String>, Query), ("limit"=Option<u32>, Query)), responses((status=200, description="Mensagens de visitante e agente, da mais nova para a mais antiga", body=Value), (status=404, description="Conversa não encontrada", body=crate::RespostaErro)))]
 pub async fn history(
     State(state): State<Estado>,
     identity: Identidade,
@@ -358,7 +358,7 @@ pub async fn history(
     ))
 }
 
-#[utoipa::path(get, path="/admin/v1/orgs/{org_id}/site-conversations/{id}/events", tag="site-conversations", security(("bearer"=[])), params(("org_id"=String, Path), ("id"=String, Path), ("after"=Option<i64>, Query), ("limit"=Option<u32>, Query)), responses((status=200, description="Eventos ordenados após o cursor", body=Value), (status=404, description="Conversa não encontrada", body=crate::RespostaErro)))]
+#[utoipa::path(operation_id = "events", get, path="/admin/v1/orgs/{org_id}/site-conversations/{id}/events", tag="site-conversations", security(("bearer"=[])), params(("org_id"=String, Path), ("id"=String, Path), ("after"=Option<i64>, Query), ("limit"=Option<u32>, Query)), responses((status=200, description="Eventos ordenados após o cursor", body=Value), (status=404, description="Conversa não encontrada", body=crate::RespostaErro)))]
 pub async fn events(
     State(state): State<Estado>,
     identity: Identidade,
@@ -374,7 +374,7 @@ pub async fn events(
     ))
 }
 
-#[utoipa::path(get, path="/admin/v1/orgs/{org_id}/site-conversations/{id}/events/stream", tag="site-conversations", security(("bearer"=[])), params(("org_id"=String, Path), ("id"=String, Path), ("after"=Option<i64>, Query), ("Last-Event-ID"=Option<String>, Header)), responses((status=200, description="Eventos do site em SSE", body=String, content_type="text/event-stream"), (status=404, description="Conversa não encontrada", body=crate::RespostaErro)))]
+#[utoipa::path(operation_id = "events_stream", get, path="/admin/v1/orgs/{org_id}/site-conversations/{id}/events/stream", tag="site-conversations", security(("bearer"=[])), params(("org_id"=String, Path), ("id"=String, Path), ("after"=Option<i64>, Query), ("Last-Event-ID"=Option<String>, Header)), responses((status=200, description="Eventos do site em SSE", body=String, content_type="text/event-stream"), (status=404, description="Conversa não encontrada", body=crate::RespostaErro)))]
 pub async fn events_stream(
     State(state): State<Estado>,
     identity: Identidade,

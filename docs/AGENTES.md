@@ -1,5 +1,7 @@
 # Agents, instructions and composer (HR-09)
 
+The administrative endpoints are implemented in [`api/agents.rs`](../crates/poph-server/src/api/agents.rs) and [`api/instructions.rs`](../crates/poph-server/src/api/instructions.rs). Agent flow assignments are handled in [`api/agent_flows.rs`](../crates/poph-server/src/api/agent_flows.rs).
+
 > HR-09 deliverable. Covers the agent entity with the `V1` fields, the structured instructions, the
 > composer (ported from POP Atende, the product the project originated from) and the `poph agent` /
 > `poph instructions` CLI.

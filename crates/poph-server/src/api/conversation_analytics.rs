@@ -1,6 +1,6 @@
 use crate::{
     auth::Identidade,
-    erro::{ApiError, id_da_url},
+    erro::{ApiError, id_da_url as parse_path_id},
     estado::Estado,
 };
 use axum::{
@@ -71,7 +71,7 @@ pub async fn report(
     Path(path): Path<OrgPath>,
     Query(query): Query<ConversationQuery>,
 ) -> Result<Json<ConversationReportJson>, ApiError> {
-    let org = id_da_url::<OrgId>(&path.org_id)?;
+    let org = parse_path_id::<OrgId>(&path.org_id)?;
     identity.exigir_org(org)?;
     let from = parse("from", query.from.as_deref())?;
     let to = parse("to", query.to.as_deref())?;

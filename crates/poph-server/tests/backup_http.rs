@@ -1031,7 +1031,7 @@ async fn corpo_acima_do_limite_da_413() {
     let token = c.criar_token(&id, "limite").await;
 
     // Um byte além do teto: o servidor recusa em vez de carregar o corpo.
-    let grande = vec![b' '; poph_server::api::LIMITE_IMPORTACAO + 1];
+    let grande = vec![b' '; poph_server::api::LIMIT_IMPORT + 1];
     let (status, erro) = c.importar(&id, &token, &grande).await;
     assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{erro}");
     assert_eq!(codigo(&erro), "payload_too_large");

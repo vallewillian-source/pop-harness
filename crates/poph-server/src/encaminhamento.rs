@@ -77,7 +77,7 @@ use poph_types::Secret;
 use ring::hmac;
 use serde_json::json;
 
-use crate::api::LIMITE_IMPORTACAO_BYTES;
+use crate::api::LIMIT_IMPORT_BYTES;
 use crate::cluster::ClusterVivo;
 use crate::erro::ApiError;
 use crate::estado::Estado;
@@ -171,7 +171,7 @@ fn teto_do_caminho(caminho: &str) -> usize {
         return poph_evolution::DEFAULT_BODY_CAP as usize;
     }
     if caminho.ends_with("/backup/import") {
-        return LIMITE_IMPORTACAO_BYTES as usize;
+        return LIMIT_IMPORT_BYTES as usize;
     }
     if caminho.contains("/test-chat/") && caminho.ends_with("/messages") {
         return TETO_DO_CHAT_DE_TESTE;
@@ -793,7 +793,7 @@ mod testes {
         );
         assert_eq!(
             teto_do_caminho("/admin/v1/orgs/org_01/backup/import"),
-            LIMITE_IMPORTACAO_BYTES as usize
+            LIMIT_IMPORT_BYTES as usize
         );
         assert_eq!(
             teto_do_caminho("/admin/v1/orgs/org_01/agents/agt_1/test-chat/c/messages"),

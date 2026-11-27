@@ -1,31 +1,3 @@
-//! Exportar e importar uma organização pela API administrativa (HR-48e-1).
-//!
-//! Duas rotas, no mesmo formato da CLI (`poph backup export`/`import`, HR-53):
-//!
-//! - `GET /admin/v1/orgs/{org_id}/backup?com_conversas=true|false` devolve o arquivo do retrato da
-//!   org (JSON, `Content-Disposition: attachment`). Sem o parâmetro, as conversas **não** entram —
-//!   é o mesmo padrão do CLI.
-//! - `POST /admin/v1/orgs/{org_id}/backup/import` recebe esse arquivo no corpo cru
-//!   (`application/json`, teto de [`LIMITE_IMPORTACAO_BYTES`]) e reconstrói o estado na org do
-//!   caminho, devolvendo o relatório do que entrou.
-//!
-//! As regras são as da importação que o `poph-store` já executa (e que a CLI usa):
-//! conflito de chave natural é recusado **antes** de gravar (`409`, com a lista, via
-//! [`poph_store::Store::conferir_conflitos_importacao`]); arquivo corrompido ou de versão
-//! desconhecida é recusado (`400`, nada gravado); importar não duplica nem apaga o que já existe;
-//! segredo de integração nunca viaja (só a marca e os nomes dos campos); os ids são preservados.
-//!
-//! **Sobrescrita é recusada por padrão (HR-48e-3).** Reimportar um arquivo antigo na mesma org
-//! reverteria o que mudou depois dele, então a importação que atualizaria linha existente responde
-//! `409 importacao_sobrescreve` — com tabelas, total e até cinco exemplos, e **nada gravado** — a
-//! menos que venha `?sobrescrever=true` (decisão do mantenedor, 21/11/2026). Destino limpo entra sem
-//! o parâmetro. Conflito de chave natural (mesmo slug com outro id) continua recusado mesmo com o
-//! parâmetro: não há "merge".
-//!
-//! O que este módulo acrescenta à CLI é o transporte: limite de corpo, org de destino vindo do
-//! caminho, cabeçalhos de download, `403`/`401` das outras rotas e o relatório em JSON. O formato
-//! do arquivo é o de [`poph_store::backup_document`], o mesmo nos dois lados.
-
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -43,190 +15,174 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 use crate::auth::Identidade;
-use crate::erro::{ApiError, id_da_url};
+use crate::erro::{ApiError, id_da_url as parse_path_id};
 use crate::estado::Estado;
 
-use super::auditoria;
+use super::audit;
 
-/// Teto do arquivo aceito na importação (64 MB).
-///
-/// O arquivo leva os blobs da biblioteca e dos anexos em base64 (~33% maior que os bytes). O teto
-/// existe para o servidor não carregar um corpo sem limite na memória; acima dele a resposta é
-/// `413` **antes** de ler o corpo inteiro (quando o `Content-Length` vem no pedido).
-pub const LIMITE_IMPORTACAO_BYTES: u64 = 64 * 1024 * 1024;
+pub const LIMIT_IMPORT_BYTES: u64 = 64 * 1024 * 1024;
 
-/// Teto do corpo em bytes, no tipo que o `DefaultBodyLimit` usa.
-pub const LIMITE_IMPORTACAO: usize = LIMITE_IMPORTACAO_BYTES as usize;
+pub const LIMIT_IMPORT: usize = LIMIT_IMPORT_BYTES as usize;
 
 #[derive(Deserialize)]
-pub struct CaminhoOrg {
+pub struct OrgPath {
     org_id: String,
 }
 
-/// Parâmetros da exportação. `com_conversas` é lido como texto para o erro sair no formato da API
-/// (o `Query` do axum responderia texto puro num valor inválido).
 #[derive(Debug, Default, Deserialize)]
-pub struct ParametrosExportacao {
+pub struct ExportParameters {
     #[serde(default)]
-    pub com_conversas: Option<String>,
+    #[serde(rename = "com_conversas")]
+    pub include_conversations: Option<String>,
 }
 
-/// Parâmetros da importação. `sobrescrever` é lido como texto pelo mesmo motivo de
-/// `com_conversas`: valor que não é booleano vira `400 validation_error`, não erro do axum.
 #[derive(Debug, Default, Deserialize)]
-pub struct ParametrosImportacao {
+pub struct ImportParameters {
     #[serde(default)]
-    pub sobrescrever: Option<String>,
+    #[serde(rename = "sobrescrever")]
+    pub overwrite: Option<String>,
 }
 
-impl ParametrosImportacao {
-    /// `true` só com `sobrescrever=true`; ausente é `false` (recusa sobrescrita).
-    fn sobrescrever(&self) -> Result<bool, ApiError> {
-        match self.sobrescrever.as_deref() {
+impl ImportParameters {
+    fn overwrite(&self) -> Result<bool, ApiError> {
+        match self.overwrite.as_deref() {
             None => Ok(false),
-            Some(texto) if texto.eq_ignore_ascii_case("true") => Ok(true),
-            Some(texto) if texto.eq_ignore_ascii_case("false") => Ok(false),
-            Some(outro) => Err(ApiError::validacao(
+            Some(text) if text.eq_ignore_ascii_case("true") => Ok(true),
+            Some(text) if text.eq_ignore_ascii_case("false") => Ok(false),
+            Some(other) => Err(ApiError::validacao(
                 "sobrescrever",
-                format!("`{outro}` não é um booleano; use true ou false"),
+                format!("`{other}` não é um booleano; use true ou false"),
             )),
         }
     }
 }
 
-/// `GET …/backup`: devolve o arquivo do retrato da org.
+#[doc = " `GET …/backup`: devolve o arquivo do retrato da org."]
 #[utoipa::path(get, operation_id="backup_exportar", path="/admin/v1/orgs/{org_id}/backup", tag="backup", security(("bearer" = [])), params(("org_id" = String, Path), ("com_conversas" = Option<bool>, Query, description = "Inclui conversas, mensagens, turnos, as duas filas e os carrinhos (padrão: `false`)")), responses((status = 200, description = "Arquivo do backup da org (JSON no formato `poph-backup-org`, versão 1), como anexo. Segredo de integração sai só com a marca e o nome do campo; caminho de blob não sai", body = Value, content_type = "application/json"), (status = 400, description = "`com_conversas` inválido", body = crate::erro::RespostaErro), (status = 401, description = "Sem token", body = crate::erro::RespostaErro), (status = 403, description = "Org de outro token", body = crate::erro::RespostaErro), (status = 404, description = "Org não encontrada", body = crate::erro::RespostaErro), (status = 409, description = "Arquivo da biblioteca sem conteúdo no disco", body = crate::erro::RespostaErro)))]
-pub async fn exportar(
+pub async fn export(
     State(e): State<Estado>,
     ident: Identidade,
-    Path(c): Path<CaminhoOrg>,
-    Query(q): Query<ParametrosExportacao>,
+    Path(c): Path<OrgPath>,
+    Query(q): Query<ExportParameters>,
 ) -> Result<Response, ApiError> {
-    let org = id_da_url::<OrgId>(&c.org_id)?;
+    let org = parse_path_id::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
-    let com_conversas = match q.com_conversas.as_deref() {
+    let include_conversations = match q.include_conversations.as_deref() {
         None => false,
-        Some(texto) if texto.eq_ignore_ascii_case("true") => true,
-        Some(texto) if texto.eq_ignore_ascii_case("false") => false,
-        Some(outro) => {
+        Some(text) if text.eq_ignore_ascii_case("true") => true,
+        Some(text) if text.eq_ignore_ascii_case("false") => false,
+        Some(other) => {
             return Err(ApiError::validacao(
                 "com_conversas",
-                format!("`{outro}` não é um booleano; use true ou false"),
+                format!("`{other}` não é um booleano; use true ou false"),
             ));
         }
     };
     e.store.orgs().get(org)?;
 
-    let estado = e.clone();
-    let (bytes, nome) =
-        tokio::task::spawn_blocking(move || montar_arquivo(&estado, org, com_conversas))
+    let state = e.clone();
+    let (bytes, name) =
+        tokio::task::spawn_blocking(move || build_file(&state, org, include_conversations))
             .await
             .map_err(|_| ApiError::interno())??;
 
-    let mut resposta = (StatusCode::OK, bytes).into_response();
-    let cabecalhos = resposta.headers_mut();
-    cabecalhos.insert(
+    let mut response = (StatusCode::OK, bytes).into_response();
+    let header = response.headers_mut();
+    header.insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static("application/json"),
     );
-    cabecalhos.insert(
+    header.insert(
         header::CONTENT_DISPOSITION,
-        HeaderValue::from_str(&format!("attachment; filename=\"{nome}\""))
+        HeaderValue::from_str(&format!("attachment; filename=\"{name}\""))
             .unwrap_or_else(|_| HeaderValue::from_static("attachment")),
     );
-    cabecalhos.insert(
+    header.insert(
         header::X_CONTENT_TYPE_OPTIONS,
         HeaderValue::from_static("nosniff"),
     );
-    cabecalhos.insert(
+    header.insert(
         header::CACHE_CONTROL,
         HeaderValue::from_static("private, no-store"),
     );
-    Ok(resposta)
+    Ok(response)
 }
 
-/// Monta o arquivo (retrato + blobs + documento) e devolve os bytes e o nome sugerido.
-///
-/// Roda fora do worker do tokio: lê o banco e o disco e serializa os blobs em base64.
-fn montar_arquivo(
+fn build_file(
     e: &Estado,
     org: OrgId,
-    com_conversas: bool,
+    include_conversations: bool,
 ) -> Result<(Vec<u8>, String), ApiError> {
-    let retrato = e.store.org_snapshot(org, com_conversas)?;
-    let blobs = ler_blobs(e, &retrato, org)?;
-    let chave = e.chave_de_cifra.clone();
-    // A chave só serve para ler os **nomes** dos campos de segredo; o valor nunca sai do banco.
-    let nomes_do_segredo = move |blob: &[u8]| -> Option<Vec<String>> {
-        let mapa = chave.as_ref()?.decifrar(blob).ok()?;
-        Some(mapa.keys().cloned().collect())
+    let snapshot = e.store.org_snapshot(org, include_conversations)?;
+    let blobs = read_blobs(e, &snapshot, org)?;
+    let key = e.chave_de_cifra.clone();
+    let name_of_secret = move |blob: &[u8]| -> Option<Vec<String>> {
+        let map = key.as_ref()?.decifrar(blob).ok()?;
+        Some(map.keys().cloned().collect())
     };
-    let documento = backup_document::document(
-        &retrato,
-        com_conversas,
+    let document = backup_document::document(
+        &snapshot,
+        include_conversations,
         e.store.now(),
         &blobs,
-        &nomes_do_segredo,
+        &name_of_secret,
     );
-    let bytes = serde_json::to_vec(&documento).map_err(|_| {
+    let bytes = serde_json::to_vec(&document).map_err(|_| {
         ApiError::novo(
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal",
             "não consegui montar o arquivo de backup",
         )
     })?;
-    let slug = retrato
+    let slug = snapshot
         .org
         .get("slug")
         .and_then(Value::as_str)
         .unwrap_or("org");
-    Ok((bytes, nome_do_arquivo(slug, e.store.now())))
+    Ok((bytes, file_name(slug, e.store.now())))
 }
 
-/// Lê do disco o conteúdo de cada blob citado no retrato (biblioteca e anexos).
-fn ler_blobs(
+fn read_blobs(
     e: &Estado,
-    retrato: &OrgSnapshot,
+    snapshot: &OrgSnapshot,
     org: OrgId,
 ) -> Result<BTreeMap<String, Vec<u8>>, ApiError> {
-    let mut nomes = BTreeMap::new();
-    for tabela in ["file_library", "attachments"] {
-        for linha in retrato.tables.get(tabela).into_iter().flatten() {
-            let (Some(sha), Some(nome)) = (
-                linha.get("sha256").and_then(Value::as_str),
-                linha.get("name").and_then(Value::as_str),
+    let mut names_by_sha = BTreeMap::new();
+    for table in ["file_library", "attachments"] {
+        for line in snapshot.tables.get(table).into_iter().flatten() {
+            let (Some(sha), Some(name)) = (
+                line.get("sha256").and_then(Value::as_str),
+                line.get("name").and_then(Value::as_str),
             ) else {
                 continue;
             };
-            nomes
+            names_by_sha
                 .entry(sha.to_owned())
-                .or_insert_with(|| nome.to_owned());
+                .or_insert_with(|| name.to_owned());
         }
     }
-    let pasta = &e.arquivos.blob_folder;
-    let limite = e.arquivos.byte_limit;
+    let folder = &e.arquivos.blob_folder;
+    let limit = e.arquivos.byte_limit;
     let mut blobs = BTreeMap::new();
-    for (sha, nome) in nomes {
-        let bytes = poph_files::blob::read(pasta, org, &sha, limite).map_err(|erro| {
-            // O motivo do `ErroArquivo` é escrito sem caminho e sem conteúdo.
-            tracing::warn!(org = %org, sha = %sha, motivo = %erro, "exportação sem o conteúdo de um arquivo");
+    for (sha, name) in names_by_sha {
+        let bytes = poph_files::blob::read(folder, org, &sha, limit).map_err(|error| {
+            tracing::warn!(org = %org, sha = %sha, reason = %error, "exportação sem o conteúdo de um arquivo");
             ApiError::novo(
                 StatusCode::CONFLICT,
                 "backup_incompleto",
                 format!(
-                    "o conteúdo do arquivo `{nome}` da biblioteca não está no disco: a \
+                    "o conteúdo do arquivo `{name}` da biblioteca não está no disco: a \
                      exportação não sai pela metade; restaure o arquivo e exporte de novo"
                 ),
             )
-            .com_detalhes(json!({ "name": nome }))
+            .com_detalhes(json!({ "name": name }))
         })?;
         blobs.insert(sha, bytes);
     }
     Ok(blobs)
 }
 
-/// Nome do arquivo entregue: `<slug>-backup-<AAAAMMDD-HHMM>.json`.
-fn nome_do_arquivo(slug: &str, agora_ms: i64) -> String {
+fn file_name(slug: &str, now_ms: i64) -> String {
     let slug: String = slug
         .chars()
         .map(|c| {
@@ -242,132 +198,121 @@ fn nome_do_arquivo(slug: &str, agora_ms: i64) -> String {
     } else {
         slug
     };
-    format!("{slug}-backup-{}.json", carimbo(agora_ms))
+    format!("{slug}-backup-{}.json", stamp(now_ms))
 }
 
-/// Carimbo `AAAAMMDD-HHMM` em UTC a partir de milissegundos desde a época.
-fn carimbo(agora_ms: i64) -> String {
-    let segundos = agora_ms.div_euclid(1000);
-    let dias = segundos.div_euclid(86_400);
-    let no_dia = segundos.rem_euclid(86_400);
-    let (ano, mes, dia) = data_civil(dias);
-    let hora = no_dia / 3_600;
-    let minuto = (no_dia % 3_600) / 60;
-    format!("{ano:04}{mes:02}{dia:02}-{hora:02}{minuto:02}")
+fn stamp(now_ms: i64) -> String {
+    let second = now_ms.div_euclid(1000);
+    let days = second.div_euclid(86_400);
+    let in_day = second.rem_euclid(86_400);
+    let (year, month, day) = civil_date(days);
+    let hour = in_day / 3_600;
+    let minute = (in_day % 3_600) / 60;
+    format!("{year:04}{month:02}{day:02}-{hour:02}{minute:02}")
 }
 
-/// Data civil (ano, mês, dia) de um número de dias desde 1970-01-01, em UTC.
-///
-/// Algoritmo de Howard Hinnant (`civil_from_days`): aritmética inteira, sem dependência de data.
-fn data_civil(dias: i64) -> (i64, u32, u32) {
-    let z = dias + 719_468;
+fn civil_date(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
     let era = z.div_euclid(146_097);
-    let dia_da_era = z.rem_euclid(146_097);
-    let ano_da_era =
-        (dia_da_era - dia_da_era / 1_460 + dia_da_era / 36_524 - dia_da_era / 146_096) / 365;
-    let ano = ano_da_era + era * 400;
-    let dia_do_ano = dia_da_era - (365 * ano_da_era + ano_da_era / 4 - ano_da_era / 100);
-    let mes_ajustado = (5 * dia_do_ano + 2) / 153;
-    let dia = dia_do_ano - (153 * mes_ajustado + 2) / 5 + 1;
-    let mes = if mes_ajustado < 10 {
-        mes_ajustado + 3
+    let day_of_era = z.rem_euclid(146_097);
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let adjusted_month = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * adjusted_month + 2) / 5 + 1;
+    let month = if adjusted_month < 10 {
+        adjusted_month + 3
     } else {
-        mes_ajustado - 9
+        adjusted_month - 9
     };
-    let ano = if mes <= 2 { ano + 1 } else { ano };
-    (ano, mes as u32, dia as u32)
+    let year = if month <= 2 { year + 1 } else { year };
+    (year, month as u32, day as u32)
 }
 
-/// `POST …/backup/import`: reconstrói a org do caminho a partir do arquivo do corpo.
+#[doc = " `POST …/backup/import`: reconstrói a org do caminho a partir do arquivo do corpo."]
 #[utoipa::path(post, operation_id="backup_importar", path="/admin/v1/orgs/{org_id}/backup/import", tag="backup", security(("bearer" = [])), params(("org_id" = String, Path), ("sobrescrever" = Option<bool>, Query, description = "Autoriza a importação a atualizar linhas que já existem na org (padrão: `false`, que recusa com `409 importacao_sobrescreve` e nada grava)")), request_body(content = Value, content_type = "application/json", description = "Arquivo gerado por `GET …/backup` (ou `poph backup export`), até 64 MB"), responses((status = 200, description = "Relatório da importação: linhas inseridas/atualizadas por tabela, segredos a digitar de novo e o índice", body = Value), (status = 400, description = "Arquivo corrompido, formato ou versão desconhecidos, ou `sobrescrever` que não é booleano", body = crate::erro::RespostaErro), (status = 401, description = "Sem token", body = crate::erro::RespostaErro), (status = 403, description = "Org de outro token", body = crate::erro::RespostaErro), (status = 404, description = "Org de destino não encontrada", body = crate::erro::RespostaErro), (status = 409, description = "`importacao_sobrescreve` (atualizaria linhas existentes sem `sobrescrever=true`), conflito de chave natural ou arquivo da biblioteca sem conteúdo no disco; nada foi gravado", body = crate::erro::RespostaErro), (status = 413, description = "Arquivo acima do limite", body = crate::erro::RespostaErro)))]
-pub async fn importar(
+pub async fn import(
     State(e): State<Estado>,
     ident: Identidade,
-    Path(c): Path<CaminhoOrg>,
-    Query(q): Query<ParametrosImportacao>,
-    cabecalhos: HeaderMap,
-    corpo: Result<Bytes, BytesRejection>,
+    Path(c): Path<OrgPath>,
+    Query(q): Query<ImportParameters>,
+    header: HeaderMap,
+    body: Result<Bytes, BytesRejection>,
 ) -> Result<Json<Value>, ApiError> {
-    let org = id_da_url::<OrgId>(&c.org_id)?;
+    let org = parse_path_id::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
-    let sobrescrever = q.sobrescrever()?;
+    let overwrite = q.overwrite()?;
 
-    // Teto antes de ler o corpo: o `Content-Length` já diz que não cabe.
-    if let Some(tamanho) = cabecalhos
+    if let Some(size) = header
         .get(header::CONTENT_LENGTH)
-        .and_then(|valor| valor.to_str().ok())
-        .and_then(|texto| texto.parse::<u64>().ok())
-        && tamanho > LIMITE_IMPORTACAO_BYTES
+        .and_then(|value| value.to_str().ok())
+        .and_then(|text| text.parse::<u64>().ok())
+        && size > LIMIT_IMPORT_BYTES
     {
-        return Err(arquivo_grande());
+        return Err(file_large());
     }
-    let bytes = match corpo {
+    let bytes = match body {
         Ok(bytes) => bytes,
         Err(rejeicao) => {
-            let resposta = rejeicao.into_response();
-            return Err(if resposta.status() == StatusCode::PAYLOAD_TOO_LARGE {
-                arquivo_grande()
+            let response = rejeicao.into_response();
+            return Err(if response.status() == StatusCode::PAYLOAD_TOO_LARGE {
+                file_large()
             } else {
                 ApiError::invalido("não consegui ler o corpo da requisição")
             });
         }
     };
-    if bytes.len() as u64 > LIMITE_IMPORTACAO_BYTES {
-        return Err(arquivo_grande());
+    if bytes.len() as u64 > LIMIT_IMPORT_BYTES {
+        return Err(file_large());
     }
 
-    // A org de destino tem de existir (o caminho é o destino, não a origem do arquivo).
     e.store.orgs().get(org)?;
 
-    let documento = tokio::task::spawn_blocking(move || backup_document::read_document(&bytes))
+    let document = tokio::task::spawn_blocking(move || backup_document::read_document(&bytes))
         .await
         .map_err(|_| ApiError::interno())?
-        .map_err(arquivo_recusado)?;
+        .map_err(file_refused)?;
 
     let BackupDocument {
         snapshot,
         blobs,
-        com_conversas,
-    } = documento;
-    // Conflito e sobrescrita são conferidos **antes** de gravar, e na mesma thread de trabalho (o
-    // retrato não é clonado só para conferir). Conflito de chave natural vem primeiro: ele recusa a
-    // importação mesmo com `sobrescrever=true`.
-    let estado = e.clone();
-    let resultado = tokio::task::spawn_blocking(move || {
-        let conflitos = estado
+        com_conversas: include_conversations,
+    } = document;
+    let state = e.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let conflict = state
             .store
             .check_import_conflicts(&snapshot, ImportTarget::Existing(org))
-            .map_err(erro_da_conferencia)?;
-        if !conflitos.is_empty() {
-            return Ok(Resultado::Conflito(conflitos));
+            .map_err(check_error)?;
+        if !conflict.is_empty() {
+            return Ok(ImportOutcome::Conflict(conflict));
         }
-        if !sobrescrever {
-            let atualizacoes = estado
+        if !overwrite {
+            let update = state
                 .store
                 .check_import_updates(&snapshot, ImportTarget::Existing(org))
-                .map_err(erro_da_conferencia)?;
-            if !atualizacoes.empty() {
-                return Ok(Resultado::Sobrescreve(atualizacoes));
+                .map_err(check_error)?;
+            if !update.empty() {
+                return Ok(ImportOutcome::WouldOverwrite(update));
             }
         }
-        gravar_no_destino(&estado, org, snapshot, &blobs, sobrescrever).map(|resultado| {
-            match resultado {
-                Ok(relatorio) => Resultado::Importado(relatorio),
-                Err(atualizacoes) => Resultado::Sobrescreve(atualizacoes),
-            }
+        write_in_target(&state, org, snapshot, &blobs, overwrite).map(|result| match result {
+            Ok(report) => ImportOutcome::Imported(report),
+            Err(update) => ImportOutcome::WouldOverwrite(update),
         })
     })
     .await
     .map_err(|_| ApiError::interno())??;
-    let relatorio = match resultado {
-        Resultado::Conflito(conflitos) => return Err(conflito_da_importacao(&conflitos)),
-        Resultado::Sobrescreve(atualizacoes) => {
-            return Err(sobrescreve_a_importacao(&atualizacoes));
+    let report = match result {
+        ImportOutcome::Conflict(conflict) => return Err(conflict_of_import(&conflict)),
+        ImportOutcome::WouldOverwrite(update) => {
+            return Err(overwrites_import(&update));
         }
-        Resultado::Importado(relatorio) => relatorio,
+        ImportOutcome::Imported(report) => report,
     };
 
-    auditoria::registrar(
+    audit::register(
         &e,
         &ident,
         Some(org),
@@ -376,131 +321,118 @@ pub async fn importar(
         org.to_string(),
     )?;
 
-    let (indice, aviso) = reindexar(&e, org).await;
+    let (index, warning) = reindex(&e, org).await;
     Ok(Json(json!({
-        "org": {"id": relatorio.org.to_string(), "criada": relatorio.created_org},
-        "com_conversas": com_conversas,
-        "tabelas": tabelas_do_relatorio(&relatorio),
-        "total": relatorio.total(),
-        "segredos_a_redigitar": relatorio.secrets_to_reenter,
-        "indice": indice,
-        "aviso": aviso,
+        "org": {"id": report.org.to_string(), "criada": report.created_org},
+        "com_conversas": include_conversations,
+        "tabelas": table_of_report(&report),
+        "total": report.total(),
+        "segredos_a_redigitar": report.secrets_to_reenter,
+        "indice": index,
+        "aviso": warning,
     })))
 }
 
-/// O que a thread de trabalho devolveu: conflito ou sobrescrita (nada gravado) ou o relatório.
-enum Resultado {
-    Conflito(Vec<String>),
-    Sobrescreve(ImportUpdates),
-    Importado(ImportReport),
+enum ImportOutcome {
+    Conflict(Vec<String>),
+    WouldOverwrite(ImportUpdates),
+    Imported(ImportReport),
 }
 
-/// `413` — arquivo acima do teto.
-fn arquivo_grande() -> ApiError {
+fn file_large() -> ApiError {
     ApiError::novo(
         StatusCode::PAYLOAD_TOO_LARGE,
         "payload_too_large",
         format!(
             "o arquivo passa do limite de {} MB por pedido; exporte sem as conversas (ou com \
              `com_conversas=false`) ou importe numa instalação com o arquivo menor",
-            LIMITE_IMPORTACAO_BYTES / (1024 * 1024)
+            LIMIT_IMPORT_BYTES / (1024 * 1024)
         ),
     )
 }
 
-/// Traduz o erro do formato do arquivo em `400` com mensagem clara.
-fn arquivo_recusado(erro: backup_document::DocumentError) -> ApiError {
-    match &erro {
+fn file_refused(error: backup_document::DocumentError) -> ApiError {
+    match &error {
         backup_document::DocumentError::Json(_) => ApiError::novo(
             StatusCode::BAD_REQUEST,
             "invalid_backup",
-            format!("o corpo não é um backup do POP Harness ({erro})"),
+            format!("o corpo não é um backup do POP Harness ({error})"),
         ),
         backup_document::DocumentError::Formato(_) => {
-            ApiError::novo(StatusCode::BAD_REQUEST, "invalid_backup", erro.to_string())
+            ApiError::novo(StatusCode::BAD_REQUEST, "invalid_backup", error.to_string())
         }
         backup_document::DocumentError::Versao {
-            read: lida,
-            entendida,
-        } => ApiError::novo(StatusCode::BAD_REQUEST, "invalid_backup", erro.to_string())
-            .com_detalhes(json!({ "version": lida, "supported_version": entendida })),
+            read: read_version,
+            entendida: supported_version,
+        } => ApiError::novo(StatusCode::BAD_REQUEST, "invalid_backup", error.to_string())
+            .com_detalhes(
+                json!({ "version": read_version, "supported_version": supported_version }),
+            ),
     }
 }
 
-/// `409` — a importação bateria em recurso que já existe no destino ou em id de outra org.
-fn conflito_da_importacao(conflitos: &[String]) -> ApiError {
-    let mostrados: Vec<Value> = conflitos
+fn conflict_of_import(conflict: &[String]) -> ApiError {
+    let shown: Vec<Value> = conflict
         .iter()
         .take(5)
         .cloned()
         .map(Value::String)
         .collect();
-    let resto = conflitos.len().saturating_sub(mostrados.len());
-    let mut motivo = format!(
+    let rest = conflict.len().saturating_sub(shown.len());
+    let mut reason = format!(
         "a importação foi recusada antes de gravar: {}",
-        conflitos
+        conflict
             .iter()
             .take(5)
             .cloned()
             .collect::<Vec<_>>()
             .join("; ")
     );
-    if resto > 0 {
-        motivo.push_str(&format!("; e mais {resto}"));
+    if rest > 0 {
+        reason.push_str(&format!("; e mais {rest}"));
     }
-    motivo.push_str(
+    reason.push_str(
         ". Nada foi gravado: renomeie um dos dois lados ou importe numa instância sem esses recursos",
     );
-    ApiError::novo(StatusCode::CONFLICT, "conflict", motivo).com_detalhes(json!({
-        "conflicts": mostrados,
-        "conflicts_more": resto,
+    ApiError::novo(StatusCode::CONFLICT, "conflict", reason).com_detalhes(json!({
+        "conflicts": shown,
+        "conflicts_more": rest,
     }))
 }
 
-/// `409 importacao_sobrescreve` — sem `sobrescrever=true`, a importação não regrava linha existente.
-///
-/// Mensagem curta (o detalhe vai nos campos); `details` traz a tabela → linhas, o total e até cinco
-/// exemplos legíveis. Nada de segredo, caminho de blob ou conteúdo de arquivo aqui: só nome de
-/// tabela e slug/nome/id.
-fn sobrescreve_a_importacao(atualizacoes: &ImportUpdates) -> ApiError {
-    let exemplos: Vec<Value> = atualizacoes
-        .examples
-        .iter()
-        .cloned()
-        .map(Value::String)
-        .collect();
-    let tabelas: Map<String, Value> = atualizacoes
+fn overwrites_import(update: &ImportUpdates) -> ApiError {
+    let example: Vec<Value> = update.examples.iter().cloned().map(Value::String).collect();
+    let tables: Map<String, Value> = update
         .tables
         .iter()
-        .map(|(tabela, linhas)| (tabela.clone(), Value::from(*linhas)))
+        .map(|(table, rows)| (table.clone(), Value::from(*rows)))
         .collect();
     ApiError::novo(
         StatusCode::CONFLICT,
         "importacao_sobrescreve",
         format!(
             "a importação atualizaria {} linha(s) que já existem nesta org; nada foi gravado. Repita com `sobrescrever=true` para autorizar",
-            atualizacoes.total
+            update.total
         ),
     )
     .com_detalhes(json!({
-        "tabelas": tabelas,
-        "linhas": atualizacoes.total,
-        "exemplos": exemplos,
+        "tabelas": tables,
+        "linhas": update.total,
+        "exemplos": example,
     }))
 }
 
-/// Grava os blobs no destino e, depois, importa o retrato (uma transação).
-fn gravar_no_destino(
+fn write_in_target(
     e: &Estado,
     org: OrgId,
-    retrato: OrgSnapshot,
+    snapshot: OrgSnapshot,
     blobs: &BTreeMap<String, Vec<u8>>,
-    sobrescrever: bool,
+    overwrite: bool,
 ) -> Result<Result<ImportReport, ImportUpdates>, ApiError> {
-    let pasta = &e.arquivos.blob_folder;
-    for (sha, conteudo) in blobs {
-        match poph_files::blob::write(pasta, org, conteudo) {
-            Ok(gravado) if gravado.sha256 == *sha => {}
+    let folder = &e.arquivos.blob_folder;
+    for (sha, content) in blobs {
+        match poph_files::blob::write(folder, org, content) {
+            Ok(stored) if stored.sha256 == *sha => {}
             Ok(_) => {
                 return Err(ApiError::novo(
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -508,8 +440,8 @@ fn gravar_no_destino(
                     "o conteúdo de um arquivo do backup foi gravado com outro sha256; nada foi importado",
                 ));
             }
-            Err(erro) => {
-                tracing::warn!(org = %org, motivo = %erro, "falha ao gravar o blob da importação");
+            Err(error) => {
+                tracing::warn!(org = %org, reason = %error, "falha ao gravar o blob da importação");
                 return Err(ApiError::novo(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "internal",
@@ -519,59 +451,50 @@ fn gravar_no_destino(
         }
     }
     e.store
-        .import_protected_snapshot(retrato, ImportTarget::Existing(org), sobrescrever)
-        .map_err(erro_da_importacao)
+        .import_protected_snapshot(snapshot, ImportTarget::Existing(org), overwrite)
+        .map_err(import_error)
 }
 
-/// Erro do banco ao conferir os conflitos (é leitura: só falha de banco).
-fn erro_da_conferencia(erro: StoreError) -> ApiError {
-    match erro {
-        StoreError::Domain(DomainError::NotFound {
-            entity: entidade,
-            id,
-        }) => ApiError::nao_encontrado(entidade, &id),
-        outro => ApiError::from(outro),
+fn check_error(error: StoreError) -> ApiError {
+    match error {
+        StoreError::Domain(DomainError::NotFound { entity, id }) => {
+            ApiError::nao_encontrado(entity, &id)
+        }
+        other => ApiError::from(other),
     }
 }
 
-/// Erro do banco na importação: o que é do arquivo sai como `400`; o resto, como nas outras rotas.
-fn erro_da_importacao(erro: StoreError) -> ApiError {
-    match erro {
+fn import_error(error: StoreError) -> ApiError {
+    match error {
         StoreError::Domain(DomainError::Validation {
             field: "backup",
             reason,
         }) => ApiError::novo(StatusCode::BAD_REQUEST, "invalid_backup", reason)
             .com_detalhes(json!({ "field": "backup" })),
-        outro => ApiError::from(outro),
+        other => ApiError::from(other),
     }
 }
 
-/// Tabela → linhas inseridas/atualizadas, no mesmo formato da CLI.
-fn tabelas_do_relatorio(relatorio: &ImportReport) -> Map<String, Value> {
-    relatorio
+fn table_of_report(report: &ImportReport) -> Map<String, Value> {
+    report
         .tables
         .iter()
-        .map(|(nome, gravado)| {
+        .map(|(name, stored)| {
             (
-                nome.clone(),
-                json!({"inseridas": gravado.inserted, "atualizadas": gravado.updated}),
+                name.clone(),
+                json!({"inseridas": stored.inserted, "atualizadas": stored.updated}),
             )
         })
         .collect()
 }
 
-/// Reindexa a org importada: base de conhecimento e produtos.
-///
-/// Com o modelo instalado, a org fica buscável sem passo manual, e o relatório diz quantos trechos
-/// entraram. Sem o modelo, o material importado continua gravado, o índice **não** é dado como
-/// pronto e o relatório traz o aviso com o comando para reindexar depois.
-async fn reindexar(e: &Estado, org: OrgId) -> (Value, Option<String>) {
+async fn reindex(e: &Estado, org: OrgId) -> (Value, Option<String>) {
     use poph_rag::{Embedder, Index, IndexConfig, ModelConfig, OrtEmbedder};
 
     static SINCRONIZACAO: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-    let _guarda = SINCRONIZACAO.lock().await;
+    let _guard = SINCRONIZACAO.lock().await;
 
-    let pendente = || {
+    let pending = || {
         json!({
             "base_conhecimento": {"agentes": 0, "trechos": 0},
             "produtos": {"trechos": 0},
@@ -581,15 +504,15 @@ async fn reindexar(e: &Estado, org: OrgId) -> (Value, Option<String>) {
         diretorio: e.config.models(),
         ..ModelConfig::default()
     };
-    let modelo = match tokio::task::spawn_blocking(move || OrtEmbedder::open_model(&config, None))
+    let model = match tokio::task::spawn_blocking(move || OrtEmbedder::open_model(&config, None))
         .await
     {
-        Ok(Ok(modelo)) => modelo,
-        Ok(Err(erro)) => {
+        Ok(Ok(model)) => model,
+        Ok(Err(error)) => {
             return (
-                pendente(),
+                pending(),
                 Some(format!(
-                    "modelo de embedding indisponível ({erro}). O material foi importado, mas o \
+                    "modelo de embedding indisponível ({error}). O material foi importado, mas o \
                      índice não ficou pronto: rode `poph kb reindex` e `poph product reindex` \
                      quando o modelo estiver disponível"
                 )),
@@ -597,7 +520,7 @@ async fn reindexar(e: &Estado, org: OrgId) -> (Value, Option<String>) {
         }
         Err(_) => {
             return (
-                pendente(),
+                pending(),
                 Some(
                     "não consegui abrir o modelo de embedding. O material foi importado, mas o \
                      índice não ficou pronto: rode `poph kb reindex` e `poph product reindex`"
@@ -606,68 +529,62 @@ async fn reindexar(e: &Estado, org: OrgId) -> (Value, Option<String>) {
             );
         }
     };
-    let embedder: Arc<dyn Embedder> = Arc::new(modelo);
-    let mut avisos: Vec<String> = Vec::new();
+    let embedder: Arc<dyn Embedder> = Arc::new(model);
+    let mut notice: Vec<String> = Vec::new();
 
-    let mut agentes = 0usize;
-    let mut trechos = 0usize;
+    let mut agents = 0usize;
+    let mut passage = 0usize;
     match Index::open(
         e.store.rag_path(),
         Arc::clone(&embedder),
         IndexConfig::default(),
     ) {
-        Ok((indice, _)) => {
-            let base = poph_agent::KnowledgeBase::new(Arc::clone(&e.store), Arc::new(indice));
+        Ok((index, _)) => {
+            let base = poph_agent::KnowledgeBase::new(Arc::clone(&e.store), Arc::new(index));
             match base.synchronise_org(org).await {
-                Ok(relatorios) => {
-                    agentes = relatorios.len();
-                    trechos = relatorios
-                        .iter()
-                        .map(|(_, relatorio)| relatorio.stored_chunks)
-                        .sum();
+                Ok(reports) => {
+                    agents = reports.len();
+                    passage = reports.iter().map(|(_, report)| report.stored_chunks).sum();
                 }
-                Err(erro) => {
-                    tracing::warn!(org = %org, motivo = %erro, "falha ao reindexar a base da org importada");
-                    avisos.push(
+                Err(error) => {
+                    tracing::warn!(org = %org, reason = %error, "falha ao reindexar a base da org importada");
+                    notice.push(
                         "não consegui reindexar a base de conhecimento; rode `poph kb reindex`"
                             .to_owned(),
                     );
                 }
             }
         }
-        Err(erro) => {
-            tracing::warn!(org = %org, motivo = %erro, "falha ao abrir o índice da base");
-            avisos.push("não consegui abrir o índice da base; rode `poph kb reindex`".to_owned());
+        Err(error) => {
+            tracing::warn!(org = %org, reason = %error, "falha ao abrir o índice da base");
+            notice.push("não consegui abrir o índice da base; rode `poph kb reindex`".to_owned());
         }
     }
 
-    let mut trechos_produtos = 0usize;
+    let mut passage_product = 0usize;
     match Index::open(
         e.store.rag_path(),
         Arc::clone(&embedder),
         IndexConfig::default(),
     ) {
-        Ok((indice, _)) => {
-            let catalogo = poph_agent::ProductCatalog::new(Arc::clone(&e.store), Arc::new(indice));
-            match catalogo.synchronise_org(org).await {
-                Ok(relatorios) => {
-                    trechos_produtos = relatorios
-                        .iter()
-                        .map(|(_, relatorio)| relatorio.stored_chunks)
-                        .sum();
+        Ok((index, _)) => {
+            let catalog = poph_agent::ProductCatalog::new(Arc::clone(&e.store), Arc::new(index));
+            match catalog.synchronise_org(org).await {
+                Ok(reports) => {
+                    passage_product = reports.iter().map(|(_, report)| report.stored_chunks).sum();
                 }
-                Err(erro) => {
-                    tracing::warn!(org = %org, motivo = %erro, "falha ao reindexar os produtos da org importada");
-                    avisos.push(
+                Err(error) => {
+                    tracing::warn!(org = %org, reason = %error, "falha ao reindexar os produtos da org importada");
+                    notice.push(
                         "não consegui reindexar os produtos; rode `poph product reindex`"
                             .to_owned(),
                     );
                 }
             }
         }
-        Err(erro) => {
-            tracing::warn!(org = %org, motivo = %erro, "falha ao abrir o índice de produtos");
-            avisos.push(
+        Err(error) => {
+            tracing::warn!(org = %org, reason = %error, "falha ao abrir o índice de produtos");
+            notice.push(
                 "não consegui abrir o índice de produtos; rode `poph product reindex`".to_owned(),
             );
         }
@@ -675,42 +592,39 @@ async fn reindexar(e: &Estado, org: OrgId) -> (Value, Option<String>) {
 
     (
         json!({
-            "base_conhecimento": {"agentes": agentes, "trechos": trechos},
-            "produtos": {"trechos": trechos_produtos},
+            "base_conhecimento": {"agentes": agents, "trechos": passage},
+            "produtos": {"trechos": passage_product},
         }),
-        if avisos.is_empty() {
+        if notice.is_empty() {
             None
         } else {
-            Some(avisos.join("; "))
+            Some(notice.join("; "))
         },
     )
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
 
     #[test]
-    fn carimbo_e_data_civil_em_utc() {
-        assert_eq!(carimbo(0), "19700101-0000");
-        // 2023-11-14T22:13:20Z
-        assert_eq!(carimbo(1_700_000_000_000), "20231114-2213");
-        // 2024-02-29T12:34:56Z (ano bissexto)
-        assert_eq!(carimbo(1_709_210_096_000), "20240229-1234");
-        assert_eq!(data_civil(0), (1970, 1, 1));
+    fn stamp_uses_utc_civil_date() {
+        assert_eq!(stamp(0), "19700101-0000");
+        assert_eq!(stamp(1_700_000_000_000), "20231114-2213");
+        assert_eq!(stamp(1_709_210_096_000), "20240229-1234");
+        assert_eq!(civil_date(0), (1970, 1, 1));
     }
 
     #[test]
-    fn nome_do_arquivo_usa_slug_e_carimbo() {
+    fn file_name_uses_slug_and_stamp() {
         assert_eq!(
-            nome_do_arquivo("org-origem", 1_700_000_000_000),
+            file_name("org-origem", 1_700_000_000_000),
             "org-origem-backup-20231114-2213.json"
         );
-        // Caractere fora do alfabeto seguro vira `-`; slug vazio vira `org`.
         assert_eq!(
-            nome_do_arquivo("org origem!", 0),
+            file_name("org origem!", 0),
             "org-origem--backup-19700101-0000.json"
         );
-        assert_eq!(nome_do_arquivo("", 0), "org-backup-19700101-0000.json");
+        assert_eq!(file_name("", 0), "org-backup-19700101-0000.json");
     }
 }

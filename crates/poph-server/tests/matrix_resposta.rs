@@ -38,7 +38,7 @@ use poph_evolution::webhook::SECRET_HEADER;
 use poph_evolution::{ATTACHMENT_CAP, ConfigEvolution, EvolutionClient};
 use poph_matrix::{ClientConfig, GhostIds, MatrixClient};
 use poph_server::evolution::CanalEvolution;
-use poph_server::{Estado, PortaAtendimento, PortaDoHarness, ReceptorAs, RespostaDoAtendente};
+use poph_server::{AsReceiver, Estado, PortaAtendimento, PortaDoHarness, RespostaDoAtendente};
 use poph_store::error::StoreError;
 use poph_store::{
     HumanResponse, NewAgent, NewConversation, NewHumanResponse, NewOrg, Origin, OutboxState, Page,
@@ -511,7 +511,7 @@ impl Cenario {
         let state = Estado::novo(Arc::clone(&self.store), HarnessConfig::default())
             .expect("estado do servidor")
             .com_canais_evolution(canais)
-            .com_matrix_as(Arc::new(ReceptorAs::new(
+            .com_matrix_as(Arc::new(AsReceiver::new(
                 PREFIXO,
                 SERVER_NAME,
                 Secret::new(HS_TOKEN.to_owned()),

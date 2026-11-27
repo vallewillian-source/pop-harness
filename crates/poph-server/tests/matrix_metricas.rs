@@ -17,7 +17,7 @@ use poph_matrix::rooms::{ConversationToRoom, RoomError};
 use poph_matrix::users::GhostIds;
 use poph_server::matrix_espelho::{DestinoMatrix, EspelhoMatrix, MidiaPublicada};
 use poph_server::matrix_metricas::MetricasMatrix;
-use poph_server::{EntregaDeEventos, Estado, PortaDoHarness, RespostaDoAtendente};
+use poph_server::{Estado, EventDelivery, PortaDoHarness, RespostaDoAtendente};
 use poph_store::{Direction, NewAgent, NewConversation, NewMessage, NewOrg, Origin, Role, Store};
 use poph_types::{AgentId, ConversationId, HarnessConfig, MatrixConfig, OrgId, Registry};
 use serde_json::{Value, json};
@@ -481,7 +481,7 @@ async fn valor_canario_nunca_aparece_no_log_do_modulo() {
         "content": { "msgtype": "m.text", "body": CANARIO_TEXTO },
     });
     entrega
-        .entregar("txn-canario", vec![event])
+        .deliver("txn-canario", vec![event])
         .await
         .expect("entrega aceita a resposta");
     drop(guarda);
@@ -546,14 +546,14 @@ async fn contadores_da_resposta_do_atendente_viram_metrica() {
 
     // 1) Resposta nova: enfileirada uma vez.
     entrega
-        .entregar("txn-1", vec![text("$c-1:matrix-dev.local", room, humano())])
+        .deliver("txn-1", vec![text("$c-1:matrix-dev.local", room, humano())])
         .await
         .expect("entrega");
     assert_eq!(metricas.respostas_enfileiradas.value(), 1);
 
     // 2) Mesmo evento de novo (reenvio do Synapse): duplicada, nada novo enfileirado.
     entrega
-        .entregar("txn-2", vec![text("$c-1:matrix-dev.local", room, humano())])
+        .deliver("txn-2", vec![text("$c-1:matrix-dev.local", room, humano())])
         .await
         .expect("entrega");
     assert_eq!(metricas.respostas_enfileiradas.value(), 1);
@@ -561,7 +561,7 @@ async fn contadores_da_resposta_do_atendente_viram_metrica() {
 
     // 3) Sala que ninguém conhece.
     entrega
-        .entregar(
+        .deliver(
             "txn-3",
             vec![text(
                 "$c-2:matrix-dev.local",
@@ -575,7 +575,7 @@ async fn contadores_da_resposta_do_atendente_viram_metrica() {
 
     // 4) Mídia do atendente: só o aviso na sala.
     entrega
-        .entregar(
+        .deliver(
             "txn-4",
             vec![text(
                 "$c-3:matrix-dev.local",
@@ -603,7 +603,7 @@ async fn contadores_da_resposta_do_atendente_viram_metrica() {
         .close_audited(org, conversation, versao, "teste".to_owned())
         .expect("encerra a conversa");
     entrega
-        .entregar("txn-5", vec![text("$c-4:matrix-dev.local", room, humano())])
+        .deliver("txn-5", vec![text("$c-4:matrix-dev.local", room, humano())])
         .await
         .expect("entrega");
     assert_eq!(metricas.respostas_conversa_encerrada.value(), 1);

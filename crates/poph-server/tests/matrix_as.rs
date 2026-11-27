@@ -19,7 +19,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
-use poph_server::{EntregaDeEventos, ErroEntrega, Estado, FuturoDaEntrega, ReceptorAs, TETO_CORPO};
+use poph_server::{AsReceiver, CAP_BODY, DeliveryError, DeliveryFuture, Estado, EventDelivery};
 use poph_store::Store;
 use poph_types::config::GlobalTokenConfig;
 use poph_types::{HarnessConfig, MatrixConfig, Sensitive};
@@ -66,10 +66,10 @@ impl Anotadora {
     }
 }
 
-impl EntregaDeEventos for Anotadora {
-    fn entregar(&self, transacao: &str, events: Vec<Value>) -> FuturoDaEntrega<'_> {
+impl EventDelivery for Anotadora {
+    fn deliver(&self, transacao: &str, events: Vec<Value>) -> DeliveryFuture<'_> {
         if self.falhar.load(Ordering::SeqCst) {
-            return Box::pin(async { Err(ErroEntrega::new("banco indisponível")) });
+            return Box::pin(async { Err(DeliveryError::new("banco indisponível")) });
         }
         self.chamadas.lock().expect("trava").push(Call {
             transacao: transacao.to_owned(),
@@ -92,11 +92,11 @@ impl Cenario {
     /// Servidor com o módulo Matrix ligado (receptor injetado).
     async fn ligado(rotulo: &str) -> Self {
         let entrega = Arc::new(Anotadora::default());
-        let receptor = ReceptorAs::new(
+        let receptor = AsReceiver::new(
             PREFIXO,
             SERVER_NAME,
             Sensitive::new(HS_TOKEN.to_owned()),
-            Arc::clone(&entrega) as Arc<dyn EntregaDeEventos>,
+            Arc::clone(&entrega) as Arc<dyn EventDelivery>,
         );
         Self::montar(rotulo, true, Some(receptor), entrega).await
     }
@@ -109,7 +109,7 @@ impl Cenario {
     async fn montar(
         rotulo: &str,
         matrix_ligado: bool,
-        receptor: Option<ReceptorAs>,
+        receptor: Option<AsReceiver>,
         entrega: Arc<Anotadora>,
     ) -> Self {
         let carimbo = SystemTime::now()
@@ -474,7 +474,7 @@ async fn token_canario_nao_aparece_na_resposta() {
 
 /// Transação **válida** (JSON certo com um evento) e maior que o teto: só o tamanho a recusa.
 fn corpo_valido_acima_do_teto() -> String {
-    let enchimento = "g".repeat(TETO_CORPO);
+    let enchimento = "g".repeat(CAP_BODY);
     json!({
         "events": [
             {
@@ -494,7 +494,7 @@ async fn corpo_gigante_responde_200_sem_processar() {
     let c = Cenario::ligado("gigante").await;
     let enorme = corpo_valido_acima_do_teto();
     assert!(
-        enorme.len() > TETO_CORPO,
+        enorme.len() > CAP_BODY,
         "o corpo do teste precisa passar do teto"
     );
     let (status, _) = c.transacao(ROTA, Some(HS_TOKEN), enorme).await;

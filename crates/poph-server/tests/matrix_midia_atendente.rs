@@ -39,7 +39,7 @@ use axum::{Json, Router};
 use poph_evolution::{ATTACHMENT_CAP, ConfigEvolution, EvolutionClient};
 use poph_matrix::{ClientConfig, GhostIds, MatrixClient};
 use poph_server::evolution::CanalEvolution;
-use poph_server::{Estado, PortaDoHarness, ReceptorAs, RespostaDoAtendente};
+use poph_server::{AsReceiver, Estado, PortaDoHarness, RespostaDoAtendente};
 use poph_store::{NewAgent, NewConversation, NewOrg, Origin, OutboxState, Page, Store};
 use poph_types::{ConversationId, HarnessConfig, IntegrationId, OrgId, Secret};
 use reqwest::{Client, StatusCode as StatusHttp};
@@ -512,7 +512,7 @@ impl Cenario {
         let state = Estado::novo(Arc::clone(&self.store), config)
             .expect("estado do servidor")
             .com_canais_evolution(vec![self.channel()])
-            .com_matrix_as(Arc::new(ReceptorAs::new(
+            .com_matrix_as(Arc::new(AsReceiver::new(
                 PREFIXO,
                 SERVER_NAME,
                 Secret::new(HS_TOKEN.to_owned()),

@@ -44,7 +44,7 @@ use poph_store::{SpaceOrigin as OrigemGravada, Store, StoreError};
 use poph_types::{ConversationId, DepartmentId, OrgId};
 use tokio::sync::watch;
 
-use crate::api::matrix_as::ReceptorAs;
+use crate::api::matrix_as::AsReceiver;
 use crate::estado::Estado;
 use crate::matrix_espelho::{DestinoReal, EspelhoMatrix};
 use crate::matrix_estado::{DestinoDoSynapse, EstadoDasConversas, PortaEstadoStore};
@@ -407,7 +407,7 @@ pub fn iniciar_com_ajustes(
     // Arquivo do atendente (MX-44): a mesma pasta de blobs do recebimento e do espelho — quem
     // baixa o arquivo da sala precisa de onde gravá-lo.
     entrega = entrega.com_pasta_de_blobs(state.arquivos.blob_folder.clone());
-    let receptor = ReceptorAs::do_modulo(modulo, Arc::new(entrega));
+    let receptor = AsReceiver::of_module(modulo, Arc::new(entrega));
     state.ligar_matrix_as(Arc::new(receptor));
 
     // ───── os laços no ar ─────

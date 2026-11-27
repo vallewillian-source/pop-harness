@@ -1,9 +1,8 @@
-//! Consultas do catálogo de produtos, escopadas por organização.
-use super::orgs::CaminhoOrg;
-use super::{ConsultaPagina, ListaJson, proximo_cursor};
+use super::orgs::OrgPath;
+use super::{ListJson, PageQuery, next_cursor};
 use crate::{
     auth::Identidade,
-    erro::{ApiError, id_da_url},
+    erro::{ApiError, id_da_url as parse_path_id},
     estado::Estado,
 };
 use axum::{
@@ -18,19 +17,20 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 #[derive(Deserialize)]
-pub struct ConsultaProdutos {
+pub struct ProductsQuery {
     #[serde(flatten)]
-    pagina: ConsultaPagina,
+    #[serde(rename = "pagina")]
+    page: PageQuery,
     all: Option<bool>,
 }
 
 #[derive(Deserialize)]
-pub struct CaminhoProduto {
+pub struct ProductPath {
     org_id: String,
     product_id: String,
 }
 
-fn produto_json(p: &poph_store::Product) -> Value {
+fn product_json(p: &poph_store::Product) -> Value {
     json!({"id":p.id.to_string(), "org_id":p.org_id.to_string(), "category_id":p.category_id.to_string(),
         "name":p.name, "slug":p.slug, "aliases":p.aliases, "description":p.description,
         "price_text":poph_agent::price_text(p), "price_cents":p.price_cents, "unit":p.unit,
@@ -38,44 +38,45 @@ fn produto_json(p: &poph_store::Product) -> Value {
         "status":p.status.as_text(), "version":p.version, "created_at":p.created_at, "updated_at":p.updated_at})
 }
 
-#[utoipa::path(get, path="/admin/v1/orgs/{org_id}/products", tag="products", operation_id="produtos_listar", security(("bearer"=[])), params(("org_id"=String, Path), ("limit"=Option<u32>, Query), ("cursor"=Option<String>, Query), ("all"=Option<bool>, Query)), responses((status=200, description="Produtos", body=ListaJson<Value>)))]
-pub async fn listar(
+#[utoipa::path(get, path="/admin/v1/orgs/{org_id}/products", tag="products", operation_id="produtos_listar", security(("bearer"=[])), params(("org_id"=String, Path), ("limit"=Option<u32>, Query), ("cursor"=Option<String>, Query), ("all"=Option<bool>, Query)), responses((status=200, description="Produtos", body=ListJson<Value>)))]
+pub async fn list(
     State(e): State<Estado>,
     ident: Identidade,
-    Path(c): Path<CaminhoOrg>,
-    query: Result<Query<ConsultaProdutos>, QueryRejection>,
-) -> Result<Json<ListaJson<Value>>, ApiError> {
-    let org = id_da_url::<OrgId>(&c.org_id)?;
+    Path(c): Path<OrgPath>,
+    query: Result<Query<ProductsQuery>, QueryRejection>,
+) -> Result<Json<ListJson<Value>>, ApiError> {
+    let org = parse_path_id::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
     let Query(q) = query.map_err(|_| ApiError::invalido("parâmetros de paginação inválidos"))?;
-    let pagina = q.pagina.pagina()?;
-    let produtos = if q.all.unwrap_or(false) {
-        e.store.products().list(org, pagina)?
+    let page = q.page.page()?;
+    let products = if q.all.unwrap_or(false) {
+        e.store.products().list(org, page)?
     } else {
-        e.store.products().list_active(org, pagina)?
+        e.store.products().list_active(org, page)?
     };
-    let items: Vec<_> = produtos.iter().map(produto_json).collect();
-    let next_cursor = proximo_cursor(&items, pagina.limit, |v| {
+    let items: Vec<_> = products.iter().map(product_json).collect();
+    let next_cursor = next_cursor(&items, page.limit, |v| {
         v["id"].as_str().unwrap_or_default().to_owned()
     });
-    Ok(Json(ListaJson { items, next_cursor }))
+    Ok(Json(ListJson { items, next_cursor }))
 }
 
 #[utoipa::path(get, path="/admin/v1/orgs/{org_id}/products/{product_id}", tag="products", operation_id="produtos_mostrar", security(("bearer"=[])), params(("org_id"=String, Path), ("product_id"=String, Path)), responses((status=200, description="Produto", body=Value), (status=404, description="Não encontrado", body=crate::erro::RespostaErro)))]
-pub async fn mostrar(
+pub async fn show(
     State(e): State<Estado>,
     ident: Identidade,
-    Path(c): Path<CaminhoProduto>,
+    Path(c): Path<ProductPath>,
 ) -> Result<Json<Value>, ApiError> {
-    let org = id_da_url::<OrgId>(&c.org_id)?;
+    let org = parse_path_id::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
-    let id = id_da_url::<ProductId>(&c.product_id)?;
-    Ok(Json(produto_json(&e.store.products().get(org, id)?)))
+    let id = parse_path_id::<ProductId>(&c.product_id)?;
+    Ok(Json(product_json(&e.store.products().get(org, id)?)))
 }
 
 #[derive(Debug, Default, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
-pub struct DadosProduto {
+#[schema(as = DadosProduto)]
+pub struct ProductData {
     category_id: Option<String>,
     name: Option<String>,
     slug: Option<String>,
@@ -91,21 +92,21 @@ pub struct DadosProduto {
     status: Option<String>,
 }
 
-#[utoipa::path(post,path="/admin/v1/orgs/{org_id}/products",tag="products",security(("bearer"=[])),params(("org_id"=String,Path)),request_body=DadosProduto,responses((status=201,description="Produto criado",body=Value)))]
-pub async fn criar(
+#[utoipa::path(operation_id = "criar", post,path="/admin/v1/orgs/{org_id}/products",tag="products",security(("bearer"=[])),params(("org_id"=String,Path)),request_body=ProductData,responses((status=201,description="Produto criado",body=Value)))]
+pub async fn create(
     State(e): State<Estado>,
     ident: Identidade,
-    Path(c): Path<CaminhoOrg>,
-    corpo: Result<Json<DadosProduto>, JsonRejection>,
+    Path(c): Path<OrgPath>,
+    body: Result<Json<ProductData>, JsonRejection>,
 ) -> Result<(axum::http::StatusCode, Json<Value>), ApiError> {
-    let org = id_da_url::<OrgId>(&c.org_id)?;
+    let org = parse_path_id::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
-    let Json(d) = corpo.map_err(|_| ApiError::invalido("corpo JSON de produto inválido"))?;
-    let novo = poph_store::NewProduct {
+    let Json(d) = body.map_err(|_| ApiError::invalido("corpo JSON de produto inválido"))?;
+    let new_product = poph_store::NewProduct {
         category_id: d
             .category_id
             .as_deref()
-            .map(id_da_url::<poph_types::ProductCategoryId>)
+            .map(parse_path_id::<poph_types::ProductCategoryId>)
             .transpose()?,
         name: d
             .name
@@ -124,31 +125,31 @@ pub async fn criar(
     if d.status.is_some() {
         return Err(ApiError::validacao("status", "não permitido na criação"));
     }
-    let p = e.store.products().create(org, novo)?;
-    super::auditoria::registrar(&e, &ident, Some(org), "create", "product", p.id.to_string())?;
-    let mut resposta = produto_json(&p);
-    resposta["index_warning"] = json!(sincronizar_catalogo(&e, org).await);
-    Ok((axum::http::StatusCode::CREATED, Json(resposta)))
+    let p = e.store.products().create(org, new_product)?;
+    super::audit::register(&e, &ident, Some(org), "create", "product", p.id.to_string())?;
+    let mut response = product_json(&p);
+    response["index_warning"] = json!(synchronise_catalog(&e, org).await);
+    Ok((axum::http::StatusCode::CREATED, Json(response)))
 }
 
-#[utoipa::path(patch,path="/admin/v1/orgs/{org_id}/products/{product_id}",tag="products",security(("bearer"=[])),params(("org_id"=String,Path),("product_id"=String,Path),("If-Match"=String,Header)),request_body=DadosProduto,responses((status=200,description="Produto alterado",body=Value),(status=412,description="Conflito",body=crate::erro::RespostaErro)))]
-pub async fn atualizar(
+#[utoipa::path(operation_id = "atualizar", patch,path="/admin/v1/orgs/{org_id}/products/{product_id}",tag="products",security(("bearer"=[])),params(("org_id"=String,Path),("product_id"=String,Path),("If-Match"=String,Header)),request_body=ProductData,responses((status=200,description="Produto alterado",body=Value),(status=412,description="Conflito",body=crate::erro::RespostaErro)))]
+pub async fn update(
     State(e): State<Estado>,
     ident: Identidade,
-    Path(c): Path<CaminhoProduto>,
+    Path(c): Path<ProductPath>,
     headers: axum::http::HeaderMap,
-    corpo: Result<Json<DadosProduto>, JsonRejection>,
+    body: Result<Json<ProductData>, JsonRejection>,
 ) -> Result<Json<Value>, ApiError> {
-    let org = id_da_url::<OrgId>(&c.org_id)?;
+    let org = parse_path_id::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
-    let id = id_da_url::<ProductId>(&c.product_id)?;
-    let versao = super::versao_do_if_match(&headers, "produto")?;
-    let Json(d) = corpo.map_err(|_| ApiError::invalido("corpo JSON de produto inválido"))?;
-    let mudanca = poph_store::ProductChange {
+    let id = parse_path_id::<ProductId>(&c.product_id)?;
+    let version = super::if_match_version(&headers, "produto")?;
+    let Json(d) = body.map_err(|_| ApiError::invalido("corpo JSON de produto inválido"))?;
+    let change = poph_store::ProductChange {
         category_id: d
             .category_id
             .as_deref()
-            .map(id_da_url::<poph_types::ProductCategoryId>)
+            .map(parse_path_id::<poph_types::ProductCategoryId>)
             .transpose()?,
         name: d.name,
         slug: d.slug,
@@ -161,28 +162,29 @@ pub async fn atualizar(
         exclui: d.excludes,
         conditions: d.conditions,
         tags: d.tags,
-        status: d.status.as_deref().map(super::status_pedido).transpose()?,
+        status: d.status.as_deref().map(super::request_status).transpose()?,
     };
-    let p = e.store.products().update(org, id, versao, mudanca)?;
-    super::auditoria::registrar(&e, &ident, Some(org), "update", "product", id.to_string())?;
-    let mut resposta = produto_json(&p);
-    resposta["index_warning"] = json!(sincronizar_catalogo(&e, org).await);
-    Ok(Json(resposta))
+    let p = e.store.products().update(org, id, version, change)?;
+    super::audit::register(&e, &ident, Some(org), "update", "product", id.to_string())?;
+    let mut response = product_json(&p);
+    response["index_warning"] = json!(synchronise_catalog(&e, org).await);
+    Ok(Json(response))
 }
 
-/// Parâmetros de exclusão de produto.
+#[doc = " Parâmetros de exclusão de produto."]
 #[derive(Debug, Clone, Default, Deserialize, utoipa::ToSchema)]
-pub struct ExclusaoProduto {
-    /// Confirma a exclusão de um produto que está em itens de carrinho.
+#[schema(as = ExclusaoProduto)]
+pub struct ExclusionProduct {
+    #[doc = " Confirma a exclusão de um produto que está em itens de carrinho."]
     pub force: Option<bool>,
 }
 
-/// `DELETE /admin/v1/orgs/{org_id}/products/{product_id}`.
-///
-/// Sem vínculo com carrinho, apaga direto (como a categoria sem vínculo). Com itens de carrinho,
-/// sem `force=true` responde 409 com a contagem e nada é apagado. Com `force=true`, apaga: os itens
-/// de carrinho continuam, com o preço gravado, mas sem o produto (aparecem como "produto removido
-/// do catálogo").
+#[doc = " `DELETE /admin/v1/orgs/{org_id}/products/{product_id}`."]
+#[doc = ""]
+#[doc = " Sem vínculo com carrinho, apaga direto (como a categoria sem vínculo). Com itens de carrinho,"]
+#[doc = " sem `force=true` responde 409 com a contagem e nada é apagado. Com `force=true`, apaga: os itens"]
+#[doc = " de carrinho continuam, com o preço gravado, mas sem o produto (aparecem como \"produto removido"]
+#[doc = " do catálogo\")."]
 #[utoipa::path(
     delete,
     path = "/admin/v1/orgs/{org_id}/products/{product_id}",
@@ -200,17 +202,17 @@ pub struct ExclusaoProduto {
         (status = 409, description = "Produto está em itens de carrinho e faltou force", body = crate::erro::RespostaErro)
     )
 )]
-pub async fn excluir(
+pub async fn delete(
     State(e): State<Estado>,
     ident: Identidade,
-    Path(c): Path<CaminhoProduto>,
-    Query(exclusao): Query<ExclusaoProduto>,
+    Path(c): Path<ProductPath>,
+    Query(deletion): Query<ExclusionProduct>,
 ) -> Result<Json<Value>, ApiError> {
-    let org = id_da_url::<OrgId>(&c.org_id)?;
+    let org = parse_path_id::<OrgId>(&c.org_id)?;
     ident.exigir_org(org)?;
-    let id = id_da_url::<ProductId>(&c.product_id)?;
-    let forcado = exclusao.force.unwrap_or(false);
-    if !forcado {
+    let id = parse_path_id::<ProductId>(&c.product_id)?;
+    let forced = deletion.force.unwrap_or(false);
+    if !forced {
         let refs = e.store.products().references(org, id)?;
         if refs.cart_items > 0 {
             return Err(ApiError::conflito(format!(
@@ -226,40 +228,39 @@ pub async fn excluir(
         }
     }
     e.store.products().delete(org, id)?;
-    super::auditoria::registrar(
+    super::audit::register(
         &e,
         &ident,
         Some(org),
-        if forcado { "delete_force" } else { "delete" },
+        if forced { "delete_force" } else { "delete" },
         "product",
         id.to_string(),
     )?;
-    let aviso = sincronizar_catalogo(&e, org).await;
-    Ok(Json(json!({"deleted": true, "index_warning": aviso})))
+    let notice = synchronise_catalog(&e, org).await;
+    Ok(Json(json!({"deleted": true, "index_warning": notice})))
 }
 
-// Como na CLI, a escrita permanece válida se o modelo ou o índice estiverem indisponíveis.
-async fn sincronizar_catalogo(e: &Estado, org: OrgId) -> Option<&'static str> {
+async fn synchronise_catalog(e: &Estado, org: OrgId) -> Option<&'static str> {
     use poph_rag::{Embedder, Index, IndexConfig, ModelConfig, OrtEmbedder};
     use std::sync::Arc;
     static SINCRONIZACAO: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-    let _guarda = SINCRONIZACAO.lock().await;
+    let _guard = SINCRONIZACAO.lock().await;
     let config = ModelConfig {
         diretorio: e.config.models(),
         ..ModelConfig::default()
     };
-    let modelo =
+    let model =
         match tokio::task::spawn_blocking(move || OrtEmbedder::open_model(&config, None)).await {
-            Ok(Ok(modelo)) => modelo,
+            Ok(Ok(model)) => model,
             _ => return Some("índice de produtos não atualizado; execute product reindex"),
         };
-    let embedder: Arc<dyn Embedder> = Arc::new(modelo);
-    let (indice, _) = match Index::open(e.store.rag_path(), embedder, IndexConfig::default()) {
-        Ok(indice) => indice,
+    let embedder: Arc<dyn Embedder> = Arc::new(model);
+    let (index, _) = match Index::open(e.store.rag_path(), embedder, IndexConfig::default()) {
+        Ok(index) => index,
         Err(_) => return Some("índice de produtos não atualizado; execute product reindex"),
     };
-    let catalogo = poph_agent::ProductCatalog::new(Arc::clone(&e.store), Arc::new(indice));
-    if catalogo.synchronise_org(org).await.is_err() {
+    let catalog = poph_agent::ProductCatalog::new(Arc::clone(&e.store), Arc::new(index));
+    if catalog.synchronise_org(org).await.is_err() {
         return Some("índice de produtos não atualizado; execute product reindex");
     }
     None
