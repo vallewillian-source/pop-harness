@@ -1,16 +1,3 @@
-//! Testes do receptor do Application Service do Matrix (MX-16), com servidor e cliente HTTP de
-//! verdade.
-//!
-//! O que se prova aqui, com o Synapse no papel de cliente:
-//! - transação válida → `200` **depois** de a entrega receber os eventos;
-//! - `401` sem token, `403` com token errado (e nada processado nos dois);
-//! - corpo acima do teto e JSON inválido → `200` sem processar (nunca `4xx`, que derrubaria o AS);
-//! - a mesma transação duas vezes → `200` e a entrega chamada uma vez só;
-//! - falha da entrega (banco fora) → `5xx`, e a transação **não** fica marcada (o reenvio processa);
-//! - módulo desligado → `404` nas quatro rotas, nunca a página do Console;
-//! - as variantes sem `/v1` respondem igual à canônica;
-//! - usuário e alias respondem pelo namespace da instância.
-
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -30,130 +17,122 @@ use reqwest::{Client, Method, StatusCode};
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
 
-/// Valor do token global da API administrativa (o servidor guarda só o hash).
 const TOKEN_GLOBAL: &str = "pophg_teste-global-mx16";
 
-/// Valor-canário do `hs_token`: não pode aparecer em resposta nem em log.
 const HS_TOKEN: &str = "CANARIO-HS-TOKEN-mx16-9d2b-TAO-SECRETO";
 
-/// Prefixo e domínio do módulo nos testes.
-const PREFIXO: &str = "ph";
+const PREFIX: &str = "ph";
 const SERVER_NAME: &str = "matrix-dev.local";
 
-fn hash_argon2(valor: &str) -> String {
+fn hash_argon2(value: &str) -> String {
     let sal = SaltString::generate(&mut OsRng);
     Argon2::default()
-        .hash_password(valor.as_bytes(), &sal)
+        .hash_password(value.as_bytes(), &sal)
         .expect("hash argon2")
         .to_string()
 }
 
-/// O que a entrega recebeu (uma linha por chamada).
 #[derive(Debug, Clone)]
 struct Call {
-    transacao: String,
+    transaction: String,
     events: Vec<Value>,
 }
 
-/// Entrega de eventos de teste: anota o que chegou e, quando pedido, finge banco fora do ar.
 #[derive(Default)]
-struct Anotadora {
-    chamadas: Mutex<Vec<Call>>,
-    falhar: AtomicBool,
+struct Recorder {
+    calls: Mutex<Vec<Call>>,
+    fail: AtomicBool,
 }
 
-impl Anotadora {
-    fn chamadas(&self) -> Vec<Call> {
-        self.chamadas.lock().expect("trava").clone()
+impl Recorder {
+    fn calls(&self) -> Vec<Call> {
+        self.calls.lock().expect("trava").clone()
     }
 }
 
-impl EventDelivery for Anotadora {
-    fn deliver(&self, transacao: &str, events: Vec<Value>) -> DeliveryFuture<'_> {
-        if self.falhar.load(Ordering::SeqCst) {
+impl EventDelivery for Recorder {
+    fn deliver(&self, transaction: &str, events: Vec<Value>) -> DeliveryFuture<'_> {
+        if self.fail.load(Ordering::SeqCst) {
             return Box::pin(async { Err(DeliveryError::new("banco indisponível")) });
         }
-        self.chamadas.lock().expect("trava").push(Call {
-            transacao: transacao.to_owned(),
+        self.calls.lock().expect("trava").push(Call {
+            transaction: transaction.to_owned(),
             events,
         });
         Box::pin(async { Ok(()) })
     }
 }
 
-/// Servidor no ar, com banco e pasta próprios. O `Drop` desliga e apaga a pasta.
-struct Cenario {
+struct Scenario {
     base: String,
     client: Client,
-    pasta: PathBuf,
-    entrega: Arc<Anotadora>,
+    folder: PathBuf,
+    delivery: Arc<Recorder>,
     desligar: Option<oneshot::Sender<()>>,
 }
 
-impl Cenario {
-    /// Servidor com o módulo Matrix ligado (receptor injetado).
-    async fn ligado(rotulo: &str) -> Self {
-        let entrega = Arc::new(Anotadora::default());
-        let receptor = AsReceiver::new(
-            PREFIXO,
+impl Scenario {
+    async fn enabled(label: &str) -> Self {
+        let delivery = Arc::new(Recorder::default());
+        let receiver = AsReceiver::new(
+            PREFIX,
             SERVER_NAME,
             Sensitive::new(HS_TOKEN.to_owned()),
-            Arc::clone(&entrega) as Arc<dyn EventDelivery>,
+            Arc::clone(&delivery) as Arc<dyn EventDelivery>,
         );
-        Self::montar(rotulo, true, Some(receptor), entrega).await
+        Self::build(label, true, Some(receiver), delivery).await
     }
 
-    /// Servidor com o módulo desligado (nenhum receptor injetado).
-    async fn desligado(rotulo: &str) -> Self {
-        Self::montar(rotulo, false, None, Arc::new(Anotadora::default())).await
+    async fn disabled(label: &str) -> Self {
+        Self::build(label, false, None, Arc::new(Recorder::default())).await
     }
 
-    async fn montar(
-        rotulo: &str,
-        matrix_ligado: bool,
-        receptor: Option<AsReceiver>,
-        entrega: Arc<Anotadora>,
+    async fn build(
+        label: &str,
+        matrix_enabled: bool,
+        receiver: Option<AsReceiver>,
+        delivery: Arc<Recorder>,
     ) -> Self {
-        let carimbo = SystemTime::now()
+        let stamp = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
-            .map(|duracao| duracao.as_nanos())
+            .map(|elapsed| elapsed.as_nanos())
             .unwrap_or(0);
-        let pasta = std::env::temp_dir().join(format!(
-            "poph-matrix-as-{rotulo}-{}-{carimbo}",
+        let folder = std::env::temp_dir().join(format!(
+            "poph-matrix-as-{label}-{}-{stamp}",
             std::process::id()
         ));
-        let _ = fs::remove_dir_all(&pasta);
-        fs::create_dir_all(pasta.join("dados")).expect("pasta de dados");
+        let _ = fs::remove_dir_all(&folder);
+        fs::create_dir_all(folder.join("dados")).expect("pasta de dados");
 
         let mut config = HarnessConfig::default();
-        config.data.directory = pasta.join("dados");
+        config.data.directory = folder.join("dados");
         config.admin.tokens_globais = vec![GlobalTokenConfig {
             label: "teste".to_owned(),
             hash: hash_argon2(TOKEN_GLOBAL),
         }];
         config.matrix = Some(MatrixConfig {
-            enabled: matrix_ligado,
+            enabled: matrix_enabled,
             homeserver_url: "http://127.0.0.1:18008".to_owned(),
             server_name: SERVER_NAME.to_owned(),
-            prefix: PREFIXO.to_owned(),
+            prefix: PREFIX.to_owned(),
             ..Default::default()
         });
         config.validar().expect("configuração válida");
 
         let store = Arc::new(Store::open(&config).expect("abre o banco"));
         let mut state = ServerState::new(store, config).expect("estado do servidor");
-        if let Some(receptor) = receptor {
-            state = state.with_matrix_as(Arc::new(receptor));
+        if let Some(receiver) = receiver {
+            state = state.with_matrix_as(Arc::new(receiver));
         }
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("porta efêmera");
         let endereco = listener.local_addr().expect("endereço local");
-        let (desligar, sinal) = oneshot::channel();
+        let (desligar, signal) = oneshot::channel();
         tokio::spawn(async move {
             let _ = poph_server::serve_at(listener, state, async {
-                let _ = sinal.await;
+                let _ = signal.await;
             })
             .await;
         });
@@ -162,19 +141,19 @@ impl Cenario {
             .timeout(Duration::from_secs(20))
             .build()
             .expect("cliente HTTP");
-        let cenario = Self {
+        let scenario = Self {
             base: format!("http://{endereco}"),
             client,
-            pasta,
-            entrega,
+            folder,
+            delivery,
             desligar: Some(desligar),
         };
-        cenario.esperar_subir().await;
-        cenario
+        scenario.wait_until_up().await;
+        scenario
     }
 
-    async fn esperar_subir(&self) {
-        let inicio = Instant::now();
+    async fn wait_until_up(&self) {
+        let started_at = Instant::now();
         loop {
             match self
                 .client
@@ -182,67 +161,64 @@ impl Cenario {
                 .send()
                 .await
             {
-                Ok(resposta) if resposta.status().is_success() => return,
-                _ if inicio.elapsed() < Duration::from_secs(10) => {
+                Ok(response) if response.status().is_success() => return,
+                _ if started_at.elapsed() < Duration::from_secs(10) => {
                     tokio::time::sleep(Duration::from_millis(20)).await;
                 }
-                outro => panic!("servidor não subiu: {outro:?}"),
+                other => panic!("servidor não subiu: {other:?}"),
             }
         }
     }
 
-    fn url(&self, caminho: &str) -> String {
-        format!("{}{caminho}", self.base)
+    fn url(&self, path: &str) -> String {
+        format!("{}{path}", self.base)
     }
 
-    /// `PUT`/`GET` com o `Authorization` que o Synapse manda (`Bearer <hs_token>`).
-    async fn pedir(
+    async fn request(
         &self,
-        metodo: Method,
-        caminho: &str,
+        method: Method,
+        path: &str,
         token: Option<&str>,
     ) -> (StatusCode, String) {
-        let mut pedido = self.client.request(metodo, self.url(caminho));
+        let mut request_builder = self.client.request(method, self.url(path));
         if let Some(token) = token {
-            pedido = pedido.bearer_auth(token);
+            request_builder = request_builder.bearer_auth(token);
         }
-        let resposta = pedido.send().await.expect("pedido HTTP");
-        let status = resposta.status();
-        (status, resposta.text().await.unwrap_or_default())
+        let response = request_builder.send().await.expect("pedido HTTP");
+        let status = response.status();
+        (status, response.text().await.unwrap_or_default())
     }
 
-    /// `PUT` de transação com o corpo dado (`Content-Length` normal).
-    async fn transacao(
+    async fn transaction(
         &self,
-        caminho: &str,
+        path: &str,
         token: Option<&str>,
         body: String,
     ) -> (StatusCode, String) {
-        let mut pedido = self
+        let mut request_builder = self
             .client
-            .put(self.url(caminho))
+            .put(self.url(path))
             .header("content-type", "application/json")
             .body(body);
         if let Some(token) = token {
-            pedido = pedido.bearer_auth(token);
+            request_builder = request_builder.bearer_auth(token);
         }
-        let resposta = pedido.send().await.expect("pedido HTTP");
-        let status = resposta.status();
-        (status, resposta.text().await.unwrap_or_default())
+        let response = request_builder.send().await.expect("pedido HTTP");
+        let status = response.status();
+        (status, response.text().await.unwrap_or_default())
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
         if let Some(desligar) = self.desligar.take() {
             let _ = desligar.send(());
         }
-        let _ = fs::remove_dir_all(&self.pasta);
+        let _ = fs::remove_dir_all(&self.folder);
     }
 }
 
-/// Corpo de uma transação do Synapse com um evento de mensagem.
-fn corpo_da_transacao(event: &str) -> String {
+fn transaction_body(event: &str) -> String {
     json!({
         "events": [
             {
@@ -257,107 +233,98 @@ fn corpo_da_transacao(event: &str) -> String {
     .to_string()
 }
 
-const ROTA: &str = "/_matrix/app/v1/transactions/1";
-
-// ───────────────────────────── caminho feliz ─────────────────────────────
+const ROUTE: &str = "/_matrix/app/v1/transactions/1";
 
 #[tokio::test]
-async fn transacao_valida_responde_200_depois_de_entregar_os_eventos() {
-    let c = Cenario::ligado("valida").await;
+async fn valid_transaction_answers_200_after_delivering_events() {
+    let c = Scenario::enabled("valida").await;
     let (status, body) = c
-        .transacao(ROTA, Some(HS_TOKEN), corpo_da_transacao("$a"))
+        .transaction(ROUTE, Some(HS_TOKEN), transaction_body("$a"))
         .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body.trim(), "{}", "o Synapse espera corpo vazio de objeto");
 
-    let chamadas = c.entrega.chamadas();
-    assert_eq!(chamadas.len(), 1, "a entrega tinha de ser chamada uma vez");
-    assert_eq!(chamadas[0].transacao, "1");
-    assert_eq!(chamadas[0].events.len(), 1);
-    assert_eq!(chamadas[0].events[0]["event_id"], json!("$a"));
+    let calls = c.delivery.calls();
+    assert_eq!(calls.len(), 1, "a entrega tinha de ser chamada uma vez");
+    assert_eq!(calls[0].transaction, "1");
+    assert_eq!(calls[0].events.len(), 1);
+    assert_eq!(calls[0].events[0]["event_id"], json!("$a"));
 }
 
 #[tokio::test]
-async fn variantes_sem_v1_atendem_igual_a_canonica() {
-    let c = Cenario::ligado("variantes").await;
-    for (indice, caminho) in ["/_matrix/app/transactions/v1menos", "/transactions/raiz"]
+async fn variants_without_v1_answer_like_the_canonical() {
+    let c = Scenario::enabled("variantes").await;
+    for (index, path) in ["/_matrix/app/transactions/v1menos", "/transactions/raiz"]
         .into_iter()
         .enumerate()
     {
         let (status, _) = c
-            .transacao(
-                caminho,
+            .transaction(
+                path,
                 Some(HS_TOKEN),
-                corpo_da_transacao(&format!("$v{indice}")),
+                transaction_body(&format!("$v{index}")),
             )
             .await;
-        assert_eq!(status, StatusCode::OK, "rota `{caminho}`");
+        assert_eq!(status, StatusCode::OK, "rota `{path}`");
     }
-    assert_eq!(c.entrega.chamadas().len(), 2);
+    assert_eq!(c.delivery.calls().len(), 2);
 }
 
 #[tokio::test]
-async fn rotas_com_prefixo_matrix_atendem_igual_as_sem_prefixo() {
-    let c = Cenario::ligado("prefixo").await;
+async fn routes_with_matrix_prefix_answer_like_those_without() {
+    let c = Scenario::enabled("prefixo").await;
 
-    // O registro do Synapse de desenvolvimento aponta para uma base com `/matrix` e o Synapse
-    // chama `<url>/_matrix/app/v1/…`: sem esta rota a entrega respondia 404 (MX-31, item 3).
     let (status, body) = c
-        .transacao(
+        .transaction(
             "/matrix/_matrix/app/v1/transactions/9",
             Some(HS_TOKEN),
-            corpo_da_transacao("$p1"),
+            transaction_body("$p1"),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "transação pela rota com prefixo");
     assert_eq!(body.trim(), "{}");
-    assert_eq!(c.entrega.chamadas().len(), 1);
-    assert_eq!(c.entrega.chamadas()[0].transacao, "9");
+    assert_eq!(c.delivery.calls().len(), 1);
+    assert_eq!(c.delivery.calls()[0].transaction, "9");
 
-    // A idempotência é a mesma das duas famílias: repetir o mesmo `txnId` pela rota sem prefixo não
-    // entrega de novo.
     let (status, _) = c
-        .transacao(
+        .transaction(
             "/_matrix/app/v1/transactions/9",
             Some(HS_TOKEN),
-            corpo_da_transacao("$p1"),
+            transaction_body("$p1"),
         )
         .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        c.entrega.chamadas().len(),
+        c.delivery.calls().len(),
         1,
         "o `txnId` já processado não é entregue de novo por outro caminho"
     );
 
-    // A variante sem `/v1` também atende com o prefixo.
     let (status, _) = c
-        .transacao(
+        .transaction(
             "/matrix/_matrix/app/transactions/10",
             Some(HS_TOKEN),
-            corpo_da_transacao("$p2"),
+            transaction_body("$p2"),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "rota com prefixo e sem /v1");
-    assert_eq!(c.entrega.chamadas().len(), 2);
+    assert_eq!(c.delivery.calls().len(), 2);
 
-    // Autenticação igual: sem token é 401 nas duas famílias, e o `hs_token` nunca aparece.
-    for caminho in [
+    for path in [
         "/matrix/_matrix/app/v1/transactions/11",
         "/_matrix/app/v1/transactions/11",
     ] {
-        let (status, body) = c.transacao(caminho, None, corpo_da_transacao("$p3")).await;
-        assert_eq!(status, StatusCode::UNAUTHORIZED, "rota `{caminho}`");
+        let (status, body) = c.transaction(path, None, transaction_body("$p3")).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "rota `{path}`");
         assert!(!body.contains(HS_TOKEN), "vazou token: {body}");
     }
 
-    // As consultas também respondem pelo caminho com prefixo.
     let (status, _) = c
-        .pedir(Method::POST, "/matrix/_matrix/app/v1/ping", Some(HS_TOKEN))
+        .request(Method::POST, "/matrix/_matrix/app/v1/ping", Some(HS_TOKEN))
         .await;
     assert_eq!(status, StatusCode::OK, "ping com prefixo");
     let (status, _) = c
-        .pedir(
+        .request(
             Method::GET,
             "/matrix/_matrix/app/v1/users/@ph_wa_5511999999999:matrix-dev.local",
             Some(HS_TOKEN),
@@ -367,17 +334,17 @@ async fn rotas_com_prefixo_matrix_atendem_igual_as_sem_prefixo() {
 }
 
 #[tokio::test]
-async fn ping_usuarios_e_alias_respondem_pelo_namespace() {
-    let c = Cenario::ligado("consultas").await;
+async fn ping_users_and_alias_answer_by_namespace() {
+    let c = Scenario::enabled("consultas").await;
 
     let (status, body) = c
-        .pedir(Method::POST, "/_matrix/app/v1/ping", Some(HS_TOKEN))
+        .request(Method::POST, "/_matrix/app/v1/ping", Some(HS_TOKEN))
         .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body.trim(), "{}");
 
     let (status, _) = c
-        .pedir(
+        .request(
             Method::GET,
             "/_matrix/app/v1/users/@ph_wa_5511999999999:matrix-dev.local",
             Some(HS_TOKEN),
@@ -386,7 +353,7 @@ async fn ping_usuarios_e_alias_respondem_pelo_namespace() {
     assert_eq!(status, StatusCode::OK, "fantasma do prefixo é da instância");
 
     let (status, body) = c
-        .pedir(
+        .request(
             Method::GET,
             "/_matrix/app/v1/users/@wa_5511999999999:matrix-dev.local",
             Some(HS_TOKEN),
@@ -399,7 +366,7 @@ async fn ping_usuarios_e_alias_respondem_pelo_namespace() {
     );
 
     let (status, _) = c
-        .pedir(
+        .request(
             Method::GET,
             "/_matrix/app/v1/rooms/%23ph_c_0123456789abcdef:matrix-dev.local",
             Some(HS_TOKEN),
@@ -408,7 +375,7 @@ async fn ping_usuarios_e_alias_respondem_pelo_namespace() {
     assert_eq!(status, StatusCode::OK, "alias do módulo");
 
     let (status, _) = c
-        .pedir(
+        .request(
             Method::GET,
             "/_matrix/app/v1/rooms/%23dep_vendas:matrix-dev.local",
             Some(HS_TOKEN),
@@ -417,25 +384,22 @@ async fn ping_usuarios_e_alias_respondem_pelo_namespace() {
     assert_eq!(status, StatusCode::NOT_FOUND, "alias #dep_ não é exclusivo");
 }
 
-// ───────────────────────────── autenticação ─────────────────────────────
-
 #[tokio::test]
-async fn sem_token_da_401_e_token_errado_da_403_sem_processar() {
-    let c = Cenario::ligado("auth").await;
+async fn no_token_gives_401_and_wrong_token_gives_403_without_processing() {
+    let c = Scenario::enabled("auth").await;
 
-    let (status, body) = c.transacao(ROTA, None, corpo_da_transacao("$a")).await;
+    let (status, body) = c.transaction(ROUTE, None, transaction_body("$a")).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert!(!body.contains(HS_TOKEN), "vazou token na resposta: {body}");
 
     let (status, body) = c
-        .transacao(ROTA, Some("token-errado"), corpo_da_transacao("$a"))
+        .transaction(ROUTE, Some("token-errado"), transaction_body("$a"))
         .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert!(!body.contains(HS_TOKEN), "vazou token na resposta: {body}");
 
-    // As consultas também exigem o token.
     let (status, _) = c
-        .pedir(
+        .request(
             Method::GET,
             "/_matrix/app/v1/users/@ph_wa_1:matrix-dev.local",
             None,
@@ -443,17 +407,17 @@ async fn sem_token_da_401_e_token_errado_da_403_sem_processar() {
         .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 
-    assert!(c.entrega.chamadas().is_empty(), "nada podia ser processado");
+    assert!(c.delivery.calls().is_empty(), "nada podia ser processado");
 }
 
 #[tokio::test]
-async fn token_canario_nao_aparece_na_resposta() {
-    let c = Cenario::ligado("canario").await;
-    let mut respostas = Vec::new();
-    for (metodo, caminho, token) in [
-        (Method::PUT, ROTA, Some(HS_TOKEN)),
-        (Method::PUT, ROTA, Some("errado")),
-        (Method::PUT, ROTA, None),
+async fn canary_token_does_not_appear_in_response() {
+    let c = Scenario::enabled("canario").await;
+    let mut bodies = Vec::new();
+    for (method, path, token) in [
+        (Method::PUT, ROUTE, Some(HS_TOKEN)),
+        (Method::PUT, ROUTE, Some("errado")),
+        (Method::PUT, ROUTE, None),
         (
             Method::GET,
             "/_matrix/app/v1/users/@ph_wa_1:matrix-dev.local",
@@ -461,21 +425,18 @@ async fn token_canario_nao_aparece_na_resposta() {
         ),
         (Method::POST, "/_matrix/app/v1/ping", Some("errado")),
     ] {
-        let (_, body) = match metodo {
-            Method::PUT => c.transacao(caminho, token, corpo_da_transacao("$a")).await,
-            _ => c.pedir(metodo, caminho, token).await,
+        let (_, body) = match method {
+            Method::PUT => c.transaction(path, token, transaction_body("$a")).await,
+            _ => c.request(method, path, token).await,
         };
-        respostas.push(body);
+        bodies.push(body);
     }
-    for body in respostas {
+    for body in bodies {
         assert!(!body.contains(HS_TOKEN), "o hs_token vazou: {body}");
     }
 }
 
-// ───────────────────────────── corpo e idempotência ─────────────────────────────
-
-/// Transação **válida** (JSON certo com um evento) e maior que o teto: só o tamanho a recusa.
-fn corpo_valido_acima_do_teto() -> String {
+fn valid_body_over_cap() -> String {
     let enchimento = "g".repeat(CAP_BODY);
     json!({
         "events": [
@@ -492,90 +453,87 @@ fn corpo_valido_acima_do_teto() -> String {
 }
 
 #[tokio::test]
-async fn corpo_gigante_responde_200_sem_processar() {
-    let c = Cenario::ligado("gigante").await;
-    let enorme = corpo_valido_acima_do_teto();
+async fn huge_body_answers_200_without_processing() {
+    let c = Scenario::enabled("gigante").await;
+    let enorme = valid_body_over_cap();
     assert!(
         enorme.len() > CAP_BODY,
         "o corpo do teste precisa passar do teto"
     );
-    let (status, _) = c.transacao(ROTA, Some(HS_TOKEN), enorme).await;
+    let (status, _) = c.transaction(ROUTE, Some(HS_TOKEN), enorme).await;
     assert_eq!(
         status,
         StatusCode::OK,
         "corpo grande não pode dar 4xx: o Synapse marcaria o AS como fora do ar"
     );
-    assert!(c.entrega.chamadas().is_empty(), "nada podia ser processado");
+    assert!(c.delivery.calls().is_empty(), "nada podia ser processado");
 }
 
 #[tokio::test]
-async fn corpo_grande_sem_content_length_responde_200_sem_processar() {
-    let c = Cenario::ligado("gigante-stream").await;
-    // Corpo em fluxo (`chunked`): o teto não pode depender do `Content-Length`.
-    // JSON válido (passa do teto só pelo tamanho), em dois pedaços.
-    let body = corpo_valido_acima_do_teto().into_bytes();
-    let meio = body.len() / 2;
-    let pedacos = vec![
-        Ok::<_, std::io::Error>(axum::body::Bytes::from(body[..meio].to_vec())),
-        Ok(axum::body::Bytes::from(body[meio..].to_vec())),
+async fn large_body_without_content_length_answers_200_without_processing() {
+    let c = Scenario::enabled("gigante-stream").await;
+    let body = valid_body_over_cap().into_bytes();
+    let middle = body.len() / 2;
+    let chunks = vec![
+        Ok::<_, std::io::Error>(axum::body::Bytes::from(body[..middle].to_vec())),
+        Ok(axum::body::Bytes::from(body[middle..].to_vec())),
     ];
-    let resposta = c
+    let response = c
         .client
-        .put(c.url(ROTA))
+        .put(c.url(ROUTE))
         .bearer_auth(HS_TOKEN)
-        .body(reqwest::Body::wrap_stream(futures::stream::iter(pedacos)))
+        .body(reqwest::Body::wrap_stream(futures::stream::iter(chunks)))
         .send()
         .await
         .expect("pedido HTTP");
-    assert_eq!(resposta.status(), StatusCode::OK);
-    assert!(c.entrega.chamadas().is_empty(), "nada podia ser processado");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(c.delivery.calls().is_empty(), "nada podia ser processado");
 }
 
 #[tokio::test]
-async fn json_invalido_responde_200_sem_processar() {
-    let c = Cenario::ligado("json").await;
+async fn invalid_json_answers_200_without_processing() {
+    let c = Scenario::enabled("json").await;
     for body in ["isto não é json".to_owned(), "{}".to_owned(), String::new()] {
-        let (status, _) = c.transacao(ROTA, Some(HS_TOKEN), body).await;
+        let (status, _) = c.transaction(ROUTE, Some(HS_TOKEN), body).await;
         assert_eq!(status, StatusCode::OK);
     }
-    assert!(c.entrega.chamadas().is_empty());
+    assert!(c.delivery.calls().is_empty());
 }
 
 #[tokio::test]
-async fn retransmissao_da_mesma_transacao_processa_uma_vez() {
-    let c = Cenario::ligado("repetida").await;
+async fn retransmission_of_same_transaction_processes_once() {
+    let c = Scenario::enabled("repetida").await;
     for _ in 0..3 {
         let (status, _) = c
-            .transacao(ROTA, Some(HS_TOKEN), corpo_da_transacao("$a"))
+            .transaction(ROUTE, Some(HS_TOKEN), transaction_body("$a"))
             .await;
         assert_eq!(status, StatusCode::OK);
     }
-    let chamadas = c.entrega.chamadas();
+    let calls = c.delivery.calls();
     assert_eq!(
-        chamadas.len(),
+        calls.len(),
         1,
         "o Synapse reenviou a mesma transação: tinha de processar uma vez"
     );
 
-    // Transação nova processa normalmente.
     let (status, _) = c
-        .transacao(
+        .transaction(
             "/_matrix/app/v1/transactions/2",
             Some(HS_TOKEN),
-            corpo_da_transacao("$b"),
+            transaction_body("$b"),
         )
         .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(c.entrega.chamadas().len(), 2);
+    assert_eq!(c.delivery.calls().len(), 2);
 }
 
 #[tokio::test]
-async fn falha_de_entrega_da_5xx_e_o_reenvio_processa() {
-    let c = Cenario::ligado("falha").await;
+async fn delivery_failure_gives_5xx_and_resend_processes() {
+    let c = Scenario::enabled("falha").await;
 
-    c.entrega.falhar.store(true, Ordering::SeqCst);
+    c.delivery.fail.store(true, Ordering::SeqCst);
     let (status, body) = c
-        .transacao(ROTA, Some(HS_TOKEN), corpo_da_transacao("$a"))
+        .transaction(ROUTE, Some(HS_TOKEN), transaction_body("$a"))
         .await;
     assert_eq!(
         status,
@@ -588,25 +546,23 @@ async fn falha_de_entrega_da_5xx_e_o_reenvio_processa() {
     );
     assert!(!body.contains(HS_TOKEN));
 
-    c.entrega.falhar.store(false, Ordering::SeqCst);
+    c.delivery.fail.store(false, Ordering::SeqCst);
     let (status, _) = c
-        .transacao(ROTA, Some(HS_TOKEN), corpo_da_transacao("$a"))
+        .transaction(ROUTE, Some(HS_TOKEN), transaction_body("$a"))
         .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        c.entrega.chamadas().len(),
+        c.delivery.calls().len(),
         1,
         "o reenvio da transação que falhou tem de ser processado"
     );
 }
 
-// ───────────────────────────── módulo desligado ─────────────────────────────
-
 #[tokio::test]
-async fn modulo_desligado_da_404_nas_quatro_rotas() {
-    let c = Cenario::desligado("desligado").await;
+async fn disabled_module_gives_404_on_four_routes() {
+    let c = Scenario::disabled("desligado").await;
 
-    let rotas = [
+    let routes = [
         (Method::PUT, "/_matrix/app/v1/transactions/1"),
         (
             Method::GET,
@@ -617,20 +573,19 @@ async fn modulo_desligado_da_404_nas_quatro_rotas() {
             "/_matrix/app/v1/rooms/%23ph_c_1:matrix-dev.local",
         ),
         (Method::POST, "/_matrix/app/v1/ping"),
-        // As variantes também não existem.
         (Method::PUT, "/_matrix/app/transactions/1"),
         (Method::PUT, "/transactions/raiz"),
     ];
-    for (metodo, caminho) in rotas {
-        let (status, body) = match metodo {
+    for (method, path) in routes {
+        let (status, body) = match method {
             Method::PUT => {
-                c.transacao(caminho, Some(HS_TOKEN), corpo_da_transacao("$a"))
+                c.transaction(path, Some(HS_TOKEN), transaction_body("$a"))
                     .await
             }
-            _ => c.pedir(metodo.clone(), caminho, Some(HS_TOKEN)).await,
+            _ => c.request(method.clone(), path, Some(HS_TOKEN)).await,
         };
-        assert_eq!(status, StatusCode::NOT_FOUND, "rota `{caminho}`");
-        if metodo == Method::GET {
+        assert_eq!(status, StatusCode::NOT_FOUND, "rota `{path}`");
+        if method == Method::GET {
             assert!(
                 body.contains("not_found"),
                 "o GET do módulo desligado não pode cair na página do Console: {body}"
@@ -638,12 +593,11 @@ async fn modulo_desligado_da_404_nas_quatro_rotas() {
         }
     }
 
-    // Caminho do Matrix que não é rota nenhuma: 404 do servidor, nunca o `index.html`.
     let (status, body) = c
-        .pedir(Method::GET, "/_matrix/inexistente", Some(HS_TOKEN))
+        .request(Method::GET, "/_matrix/inexistente", Some(HS_TOKEN))
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(!body.contains("<html"), "veio a página do Console: {body}");
 
-    assert!(c.entrega.chamadas().is_empty());
+    assert!(c.delivery.calls().is_empty());
 }

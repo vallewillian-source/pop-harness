@@ -1,19 +1,3 @@
-//! Tipos fora do escopo na sala (MX-45): fim a fim, com o banco e o laço do espelho de verdade.
-//!
-//! O que este arquivo prova, e por quê:
-//!
-//! - **os seis tipos viram aviso na sala**: áudio, vídeo, figurinha, contato, localização e enquete
-//!   gravados como texto de histórico chegam à sala como `m.notice` com o texto do Python, assinados
-//!   pelo fantasma **do agente** (dono da sala), e a mensagem de texto que vem depois segue normal;
-//! - **a entrega não duplica o aviso**: a mesma mensagem passada de novo sai com o mesmo `txnId`,
-//!   e o Synapse falso deduplica por `txnId` como o de verdade;
-//! - **texto comum não vira aviso**: uma mensagem do atendente com a frase de histórico segue como
-//!   texto, e um texto do cliente que só se parece com ela também;
-//! - **a mensagem seguinte passa**: o aviso não trava o cursor do espelho.
-//!
-//! O Synapse é falso e com estado; o banco e o laço são os de verdade. O webhook que grava esses
-//! tipos está em `crates/poph-evolution/tests/webhook.rs`.
-
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
@@ -29,30 +13,27 @@ use poph_server::matrix_mirror::{
 use poph_store::{Direction, NewAgent, NewConversation, NewMessage, NewOrg, Origin, Role, Store};
 use poph_types::{AgentId, ConversationId, MatrixConfig, OrgId, UnsupportedContent};
 
-// ───────────────────────────── cenário ─────────────────────────────
-
-/// Banco e pasta de um teste, apagados no fim.
-struct Cenario {
-    pasta: PathBuf,
+struct Scenario {
+    folder: PathBuf,
     store: Option<Arc<Store>>,
 }
 
-impl Cenario {
-    fn new(rotulo: &str) -> Self {
-        static CONTADOR: AtomicUsize = AtomicUsize::new(0);
-        let n = CONTADOR.fetch_add(1, Ordering::Relaxed);
-        let pasta = std::env::temp_dir().join(format!(
-            "poph-fora-do-escopo-{rotulo}-{}-{n}",
+impl Scenario {
+    fn new(label: &str) -> Self {
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let folder = std::env::temp_dir().join(format!(
+            "poph-fora-do-escopo-{label}-{}-{n}",
             std::process::id()
         ));
-        let _ = fs::remove_dir_all(&pasta);
-        fs::create_dir_all(&pasta).expect("cria a pasta do teste");
-        let relogio = Arc::new(AtomicI64::new(1_000));
-        let store = Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db"))
+        let _ = fs::remove_dir_all(&folder);
+        fs::create_dir_all(&folder).expect("cria a pasta do teste");
+        let clock = Arc::new(AtomicI64::new(1_000));
+        let store = Store::open_at(&folder.join("harness.db"), &folder.join("rag.db"))
             .expect("abre o banco")
-            .with_clock(Arc::new(move || relogio.fetch_add(1, Ordering::SeqCst)));
+            .with_clock(Arc::new(move || clock.fetch_add(1, Ordering::SeqCst)));
         Self {
-            pasta,
+            folder,
             store: Some(Arc::new(store)),
         }
     }
@@ -62,10 +43,10 @@ impl Cenario {
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
         let _ = self.store.take();
-        let _ = fs::remove_dir_all(&self.pasta);
+        let _ = fs::remove_dir_all(&self.folder);
     }
 }
 
@@ -81,7 +62,7 @@ fn config() -> MatrixConfig {
     }
 }
 
-fn criar_org(store: &Store, slug: &str) -> OrgId {
+fn create_org(store: &Store, slug: &str) -> OrgId {
     store
         .orgs()
         .create(NewOrg {
@@ -93,7 +74,7 @@ fn criar_org(store: &Store, slug: &str) -> OrgId {
         .id
 }
 
-fn criar_agente(store: &Store, org: OrgId) -> AgentId {
+fn create_agent(store: &Store, org: OrgId) -> AgentId {
     store
         .agents()
         .create(
@@ -108,7 +89,7 @@ fn criar_agente(store: &Store, org: OrgId) -> AgentId {
         .id
 }
 
-fn criar_conversa(store: &Store, org: OrgId, agent: AgentId, peer: &str) -> ConversationId {
+fn create_conversation(store: &Store, org: OrgId, agent: AgentId, peer: &str) -> ConversationId {
     store
         .conversations()
         .create(
@@ -125,8 +106,7 @@ fn criar_conversa(store: &Store, org: OrgId, agent: AgentId, peer: &str) -> Conv
         .id
 }
 
-/// Mensagem do cliente (entrada, papel `user`), como o recebimento grava o texto de histórico.
-fn msg_cliente(store: &Store, org: OrgId, conversation: ConversationId, text: &str) {
+fn client_message(store: &Store, org: OrgId, conversation: ConversationId, text: &str) {
     store
         .messages()
         .write_with_attachments(
@@ -147,8 +127,7 @@ fn msg_cliente(store: &Store, org: OrgId, conversation: ConversationId, text: &s
         .expect("grava a mensagem");
 }
 
-/// Mensagem do atendente do agente (saída, papel `assistant`).
-fn msg_agente(store: &Store, org: OrgId, conversation: ConversationId, text: &str) {
+fn agent_message(store: &Store, org: OrgId, conversation: ConversationId, text: &str) {
     store
         .messages()
         .write_with_attachments(
@@ -170,12 +149,11 @@ fn msg_agente(store: &Store, org: OrgId, conversation: ConversationId, text: &st
 }
 
 fn cursor(store: &Store, org: OrgId) -> (u64, String) {
-    let cursores = store.matrix().read_cursors(org).expect("lê os cursores");
-    (cursores.messages, cursores.message_ids)
+    let cursors = store.matrix().read_cursors(org).expect("lê os cursores");
+    (cursors.messages, cursors.message_ids)
 }
 
-/// Id da última mensagem: o cursor tem de chegar nela quando não há pendência.
-fn maior_rowid_e_id(store: &Store) -> (u64, String) {
+fn last_rowid_and_id(store: &Store) -> (u64, String) {
     let (rowid, id) = store
         .messages()
         .last_rowid()
@@ -184,11 +162,8 @@ fn maior_rowid_e_id(store: &Store) -> (u64, String) {
     (rowid, id.to_string())
 }
 
-// ───────────────────────────── Synapse falso ─────────────────────────────
-
-/// Um texto que o destino recebeu: quem assina, o tipo de mensagem e o corpo.
 #[derive(Debug, Clone)]
-struct TextoEntregue {
+struct DeliveredText {
     txn: String,
     sender: String,
     msgtype: String,
@@ -196,25 +171,22 @@ struct TextoEntregue {
 }
 
 #[derive(Default)]
-struct Falso {
-    /// Textos aceitos, um por `txnId` (o Synapse deduplica pelo `txnId`).
-    textos: Mutex<Vec<TextoEntregue>>,
-    /// Quantas tentativas de envio cada `txnId` recebeu, aceitas ou não.
+struct Fake {
+    texts: Mutex<Vec<DeliveredText>>,
     tentativas: Mutex<Vec<String>>,
-    /// Quantas próximas chamadas falham de forma transitória (503) antes de aceitar.
-    falhas_transitorias: Mutex<usize>,
+    transient_failures: Mutex<usize>,
 }
 
-impl Falso {
+impl Fake {
     fn new() -> Arc<Self> {
         Arc::new(Self::default())
     }
 
-    fn textos(&self) -> Vec<TextoEntregue> {
-        self.textos.lock().unwrap().clone()
+    fn texts(&self) -> Vec<DeliveredText> {
+        self.texts.lock().unwrap().clone()
     }
 
-    fn tentativas_de(&self, txn: &str) -> usize {
+    fn attempts_for(&self, txn: &str) -> usize {
         self.tentativas
             .lock()
             .unwrap()
@@ -224,7 +196,7 @@ impl Falso {
     }
 }
 
-fn transitoria() -> CallError {
+fn transient_error() -> CallError {
     CallError::Response {
         operation: "send",
         status: 503,
@@ -234,9 +206,9 @@ fn transitoria() -> CallError {
     }
 }
 
-struct Sinal(Arc<Falso>);
+struct Signal(Arc<Fake>);
 
-impl MatrixTarget for Sinal {
+impl MatrixTarget for Signal {
     fn ensure_room(
         &self,
         dados: &ConversationToRoom,
@@ -247,34 +219,34 @@ impl MatrixTarget for Sinal {
 
     async fn ensure_device(
         &self,
-        _dados: &ConversationToRoom,
-        _sala: &str,
-        _aparelho: &Ghost,
+        _data: &ConversationToRoom,
+        _room: &str,
+        _device: &Ghost,
     ) -> Result<(), RoomError> {
         Ok(())
     }
 
     fn send(
         &self,
-        _sala: &str,
+        _room: &str,
         send: &Outbound,
     ) -> impl std::future::Future<Output = Result<(), CallError>> + Send {
-        let falso = &self.0;
+        let fake = &self.0;
         let txn = send.txn_id.clone();
-        falso.tentativas.lock().unwrap().push(txn.clone());
+        fake.tentativas.lock().unwrap().push(txn.clone());
         let resultado = {
-            let mut falhas = falso.falhas_transitorias.lock().unwrap();
-            if *falhas > 0 {
-                *falhas -= 1;
-                Err(transitoria())
+            let mut failures = fake.transient_failures.lock().unwrap();
+            if *failures > 0 {
+                *failures -= 1;
+                Err(transient_error())
             } else {
                 Ok(())
             }
         };
         if resultado.is_ok() {
-            let mut textos = falso.textos.lock().unwrap();
-            if !textos.iter().any(|t| t.txn == txn) {
-                textos.push(TextoEntregue {
+            let mut texts = fake.texts.lock().unwrap();
+            if !texts.iter().any(|t| t.txn == txn) {
+                texts.push(DeliveredText {
                     txn,
                     sender: send.sender.user_id().to_owned(),
                     msgtype: send.msgtype.to_owned(),
@@ -287,135 +259,130 @@ impl MatrixTarget for Sinal {
 
     async fn send_asset(
         &self,
-        _sala: &str,
-        _envio: &AssetSend,
+        _room: &str,
+        _asset: &AssetSend,
     ) -> Result<PublishedAsset, CallError> {
-        // Este destino não publica mídia: nenhuma mensagem do teste tem anexo.
         Err(CallError::Configuration(
             "sem mídia neste destino".to_owned(),
         ))
     }
 
-    async fn send_notice(&self, _sala: &str, _aviso: &RoomNotice) -> Result<(), CallError> {
+    async fn send_notice(&self, _room: &str, _notice: &RoomNotice) -> Result<(), CallError> {
         Ok(())
     }
 }
 
-fn espelho(cenario: &Cenario, falso: Arc<Falso>) -> MatrixMirror<Sinal> {
-    MatrixMirror::new(cenario.store(), Sinal(falso), &config()).expect("monta o espelho")
+fn mirror(scenario: &Scenario, fake: Arc<Fake>) -> MatrixMirror<Signal> {
+    MatrixMirror::new(scenario.store(), Signal(fake), &config()).expect("monta o espelho")
 }
 
-// ───────────────────────────── testes ─────────────────────────────
-
 #[tokio::test]
-async fn os_seis_tipos_viram_aviso_na_sala_e_a_legenda_seguinte_passa() {
-    let cenario = Cenario::new("seis-tipos");
-    let store = cenario.store();
-    let org = criar_org(&store, "a");
-    let agent = criar_agente(&store, org);
-    let conversation = criar_conversa(&store, org, agent, "5511977770001");
+async fn six_types_become_notice_in_room_and_next_caption_passes() {
+    let scenario = Scenario::new("seis-tipos");
+    let store = scenario.store();
+    let org = create_org(&store, "a");
+    let agent = create_agent(&store, org);
+    let conversation = create_conversation(&store, org, agent, "5511977770001");
     store.matrix().enable(org).expect("liga o módulo");
 
     for tipo in UnsupportedContent::ALL_VALUES {
-        msg_cliente(&store, org, conversation, tipo.history_text());
+        client_message(&store, org, conversation, tipo.history_text());
     }
-    msg_cliente(
+    client_message(
         &store,
         org,
         conversation,
         "tudo bem, pode me responder por texto?",
     );
 
-    let falso = Falso::new();
-    let relatorio = espelho(&cenario, Arc::clone(&falso))
+    let fake = Fake::new();
+    let report = mirror(&scenario, Arc::clone(&fake))
         .cycle()
         .await
         .expect("ciclo");
 
-    let textos = falso.textos();
+    let texts = fake.texts();
     assert_eq!(
-        textos.len(),
+        texts.len(),
         7,
-        "seis avisos e a legenda de texto: {textos:?}"
+        "seis avisos e a legenda de texto: {texts:?}"
     );
-    for (entregue, tipo) in textos.iter().zip(UnsupportedContent::ALL_VALUES) {
-        assert_eq!(entregue.msgtype, "m.notice", "{tipo:?}");
-        assert_eq!(entregue.body, tipo.room_notice(), "{tipo:?}");
+    for (delivered, tipo) in texts.iter().zip(UnsupportedContent::ALL_VALUES) {
+        assert_eq!(delivered.msgtype, "m.notice", "{tipo:?}");
+        assert_eq!(delivered.body, tipo.room_notice(), "{tipo:?}");
         assert_eq!(
-            entregue.sender,
+            delivered.sender,
             format!("@ph_ag_{agent}:matrix-dev.local"),
             "o aviso é do fantasma do agente, dono da sala"
         );
     }
-    let ultimo = &textos[6];
+    let last = &texts[6];
     assert_eq!(
-        ultimo.msgtype, "m.text",
+        last.msgtype, "m.text",
         "a mensagem seguinte entra como texto"
     );
-    assert_eq!(ultimo.body, "tudo bem, pode me responder por texto?");
+    assert_eq!(last.body, "tudo bem, pode me responder por texto?");
     assert_eq!(
-        ultimo.sender, "@ph_wa_5511977770001:matrix-dev.local",
+        last.sender, "@ph_wa_5511977770001:matrix-dev.local",
         "a legenda de texto sai pelo fantasma do cliente, como antes"
     );
-    assert_eq!(relatorio.sent, 7);
-    assert_eq!(cursor(&store, org), maior_rowid_e_id(&store));
+    assert_eq!(report.sent, 7);
+    assert_eq!(cursor(&store, org), last_rowid_and_id(&store));
 }
 
 #[tokio::test]
-async fn reprocessar_o_aviso_nao_duplica_na_sala() {
-    let cenario = Cenario::new("reprocessa");
-    let store = cenario.store();
-    let org = criar_org(&store, "b");
-    let agent = criar_agente(&store, org);
-    let conversation = criar_conversa(&store, org, agent, "5511977770002");
+async fn reprocessing_notice_does_not_duplicate_in_room() {
+    let scenario = Scenario::new("reprocessa");
+    let store = scenario.store();
+    let org = create_org(&store, "b");
+    let agent = create_agent(&store, org);
+    let conversation = create_conversation(&store, org, agent, "5511977770002");
     store.matrix().enable(org).expect("liga o módulo");
-    msg_cliente(
+    client_message(
         &store,
         org,
         conversation,
         UnsupportedContent::Audio.history_text(),
     );
 
-    // A primeira tentativa cai de forma transitória: a mensagem fica pendente e volta no ciclo
-    // seguinte, com o mesmo `txnId`.
-    let falso = Falso::new();
-    *falso.falhas_transitorias.lock().unwrap() = 1;
-    let espelho_ = espelho(&cenario, Arc::clone(&falso));
-    espelho_.cycle().await.expect("primeiro ciclo");
-    assert!(falso.textos().is_empty(), "a primeira tentativa falhou");
-    espelho_.cycle().await.expect("segundo ciclo");
+    let fake = Fake::new();
+    *fake.transient_failures.lock().unwrap() = 1;
+    let service = mirror(&scenario, Arc::clone(&fake));
+    service.cycle().await.expect("primeiro ciclo");
+    assert!(fake.texts().is_empty(), "a primeira tentativa falhou");
+    service.cycle().await.expect("segundo ciclo");
 
-    let textos = falso.textos();
-    assert_eq!(textos.len(), 1, "um aviso só na sala: {textos:?}");
-    assert_eq!(textos[0].msgtype, "m.notice");
-    let txn = textos[0].txn.clone();
-    assert_eq!(falso.tentativas_de(&txn), 2, "a mesma entrega foi repetida");
-    assert_eq!(cursor(&store, org), maior_rowid_e_id(&store));
+    let texts = fake.texts();
+    assert_eq!(texts.len(), 1, "um aviso só na sala: {texts:?}");
+    assert_eq!(texts[0].msgtype, "m.notice");
+    let txn = texts[0].txn.clone();
+    assert_eq!(fake.attempts_for(&txn), 2, "a mesma entrega foi repetida");
+    assert_eq!(cursor(&store, org), last_rowid_and_id(&store));
 }
 
 #[tokio::test]
-async fn historico_escrito_pelo_atendente_segue_como_texto() {
-    let cenario = Cenario::new("atendente");
-    let store = cenario.store();
-    let org = criar_org(&store, "c");
-    let agent = criar_agente(&store, org);
-    let conversation = criar_conversa(&store, org, agent, "5511977770003");
+async fn history_written_by_attendant_stays_as_text() {
+    let scenario = Scenario::new("atendente");
+    let store = scenario.store();
+    let org = create_org(&store, "c");
+    let agent = create_agent(&store, org);
+    let conversation = create_conversation(&store, org, agent, "5511977770003");
     store.matrix().enable(org).expect("liga o módulo");
-    msg_agente(
+    agent_message(
         &store,
         org,
         conversation,
         UnsupportedContent::Audio.history_text(),
     );
 
-    let falso = Falso::new();
-    espelho(&cenario, Arc::clone(&falso))
+    let fake = Fake::new();
+    mirror(&scenario, Arc::clone(&fake))
         .cycle()
         .await
         .expect("ciclo");
 
-    let textos = falso.textos();
-    assert_eq!(textos.len(), 1, "{textos:?}");
-    assert_eq!(textos[0].msgtype, "m.text", "só o cliente vira aviso");
-    assert_eq!(textos[0].sender, format!("@ph_ag_{agent}:matrix-dev.local"));
+    let texts = fake.texts();
+    assert_eq!(texts.len(), 1, "{texts:?}");
+    assert_eq!(texts[0].msgtype, "m.text", "só o cliente vira aviso");
+    assert_eq!(texts[0].sender, format!("@ph_ag_{agent}:matrix-dev.local"));
 }

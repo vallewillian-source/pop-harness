@@ -1,9 +1,3 @@
-//! Testes do laço de espelhamento (MX-14).
-//!
-//! Banco de verdade (`Store` numa pasta temporária, relógio controlado) e Synapse **falso** em
-//! memória: o duplo deduplica por `txnId` como o Synapse faz (MX-02), então "repetir após queda"
-//! é medido de forma honesta — a entrega repetida não cria evento a mais.
-
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -26,28 +20,25 @@ use poph_store::{
 use poph_types::{AgentId, ConversationId, IntegrationId, MatrixConfig, MessageId, OrgId};
 use rusqlite::Connection;
 
-// ───────────────────────────── cenário ─────────────────────────────
-
-/// Relógio que anda 1 ms a cada leitura: ordem de criação sempre estrita.
-struct Cenario {
-    pasta: PathBuf,
+struct Scenario {
+    folder: PathBuf,
     store: Option<Arc<Store>>,
 }
 
-impl Cenario {
-    fn new(rotulo: &str) -> Self {
-        static CONTADOR: AtomicUsize = AtomicUsize::new(0);
-        let n = CONTADOR.fetch_add(1, Ordering::Relaxed);
-        let pasta =
-            std::env::temp_dir().join(format!("poph-espelho-{rotulo}-{}-{n}", std::process::id()));
-        let _ = fs::remove_dir_all(&pasta);
-        fs::create_dir_all(&pasta).expect("cria a pasta do teste");
-        let relogio = Arc::new(AtomicI64::new(1_000));
-        let store = Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db"))
+impl Scenario {
+    fn new(label: &str) -> Self {
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let folder =
+            std::env::temp_dir().join(format!("poph-espelho-{label}-{}-{n}", std::process::id()));
+        let _ = fs::remove_dir_all(&folder);
+        fs::create_dir_all(&folder).expect("cria a pasta do teste");
+        let clock = Arc::new(AtomicI64::new(1_000));
+        let store = Store::open_at(&folder.join("harness.db"), &folder.join("rag.db"))
             .expect("abre o banco")
-            .with_clock(Arc::new(move || relogio.fetch_add(1, Ordering::SeqCst)));
+            .with_clock(Arc::new(move || clock.fetch_add(1, Ordering::SeqCst)));
         Self {
-            pasta,
+            folder,
             store: Some(Arc::new(store)),
         }
     }
@@ -56,15 +47,15 @@ impl Cenario {
         Arc::clone(self.store.as_ref().expect("store viva"))
     }
 
-    fn conexao(&self) -> Connection {
+    fn connection(&self) -> Connection {
         Connection::open(self.store().harness_path()).expect("abre o banco para conferir")
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
         let _ = self.store.take();
-        let _ = fs::remove_dir_all(&self.pasta);
+        let _ = fs::remove_dir_all(&self.folder);
     }
 }
 
@@ -80,7 +71,7 @@ fn config() -> MatrixConfig {
     }
 }
 
-fn criar_org(store: &Store, slug: &str) -> OrgId {
+fn create_org(store: &Store, slug: &str) -> OrgId {
     store
         .orgs()
         .create(NewOrg {
@@ -92,7 +83,7 @@ fn criar_org(store: &Store, slug: &str) -> OrgId {
         .id
 }
 
-fn criar_agente(store: &Store, org: OrgId) -> AgentId {
+fn create_agent(store: &Store, org: OrgId) -> AgentId {
     store
         .agents()
         .create(
@@ -107,7 +98,7 @@ fn criar_agente(store: &Store, org: OrgId) -> AgentId {
         .id
 }
 
-fn criar_conversa(store: &Store, org: OrgId, agent: AgentId, peer: &str) -> ConversationId {
+fn create_conversation(store: &Store, org: OrgId, agent: AgentId, peer: &str) -> ConversationId {
     store
         .conversations()
         .create(
@@ -124,9 +115,8 @@ fn criar_conversa(store: &Store, org: OrgId, agent: AgentId, peer: &str) -> Conv
         .id
 }
 
-/// Mensagem do cliente (entrada, papel `user`).
-fn msg_cliente(store: &Store, org: OrgId, conversation: ConversationId, text: &str) -> String {
-    gravar(
+fn client_message(store: &Store, org: OrgId, conversation: ConversationId, text: &str) -> String {
+    write_message(
         store,
         org,
         conversation,
@@ -137,9 +127,8 @@ fn msg_cliente(store: &Store, org: OrgId, conversation: ConversationId, text: &s
     )
 }
 
-/// Resposta do agente (saída, papel `assistant`).
-fn msg_agente(store: &Store, org: OrgId, conversation: ConversationId, text: &str) -> String {
-    gravar(
+fn agent_message(store: &Store, org: OrgId, conversation: ConversationId, text: &str) -> String {
+    write_message(
         store,
         org,
         conversation,
@@ -150,11 +139,11 @@ fn msg_agente(store: &Store, org: OrgId, conversation: ConversationId, text: &st
     )
 }
 
-fn gravar(
+fn write_message(
     store: &Store,
     org: OrgId,
     conversation: ConversationId,
-    direcao: Direction,
+    direction: Direction,
     role: Role,
     origin: Origin,
     text: &str,
@@ -165,7 +154,7 @@ fn gravar(
             org,
             NewMessage {
                 conversation_id: conversation,
-                direction: direcao,
+                direction,
                 role,
                 origin,
                 author_name: None,
@@ -180,92 +169,79 @@ fn gravar(
         .to_string()
 }
 
-/// Id do `txnId` que o espelho usa para uma mensagem (`poph-msg-` + id).
-fn txn_de(id: &str) -> String {
+fn txn_for(id: &str) -> String {
     format!("poph-msg-{id}")
 }
 
-// ───────────────────────────── Synapse falso ─────────────────────────────
-
 #[derive(Clone, Copy)]
-enum Modo {
-    /// Aceita tudo.
+enum Mode {
     Normal,
-    /// Toda chamada falha de forma transitória (Synapse fora do ar).
-    Fora,
-    /// Corpo que contém o texto é recusado com 403 (definitivo); o resto é aceito.
+    Down,
     Venenoso(&'static str),
-    /// A n-ésima chamada de envio falha de forma transitória, uma vez só.
-    FalhaNaChamada(usize),
+    FailureOnCall(usize),
 }
 
-/// Um evento que o Synapse falso criou: (sala, txnId, corpo, quem enviou).
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Criado {
+struct Created {
     room: String,
     txn: String,
     body: String,
     sender: String,
 }
 
-struct Falso {
-    modo: Mutex<Modo>,
-    criados: Mutex<Vec<Criado>>,
-    /// Quantas vezes cada `txnId` foi enviado (inclusive as recusadas e as repetidas).
+struct Fake {
+    mode: Mutex<Mode>,
+    created_events: Mutex<Vec<Created>>,
     tentativas: Mutex<HashMap<String, u32>>,
-    chamadas_sala: AtomicUsize,
-    chamadas_envio: AtomicUsize,
-    /// Quantas vezes o laço pediu para pôr o aparelho na sala (uma por grupo com mensagem dele).
-    chamadas_aparelho: AtomicUsize,
-    /// Quem está dentro de cada sala: `(sala, user_id)`. O envio de um aparelho que não está aqui é
-    /// recusado, como o Synapse faz com quem não é membro.
+    room_calls: AtomicUsize,
+    send_calls: AtomicUsize,
+    device_calls: AtomicUsize,
     members: Mutex<std::collections::HashSet<(String, String)>>,
-    /// Quando `true`, pôr o aparelho na sala falha (Synapse fora do ar nessa etapa).
-    falha_aparelho: Mutex<bool>,
+    device_failure: Mutex<bool>,
 }
 
-impl Falso {
-    fn new(modo: Modo) -> Arc<Self> {
+impl Fake {
+    fn new(mode: Mode) -> Arc<Self> {
         Arc::new(Self {
-            modo: Mutex::new(modo),
-            criados: Mutex::new(Vec::new()),
+            mode: Mutex::new(mode),
+            created_events: Mutex::new(Vec::new()),
             tentativas: Mutex::new(HashMap::new()),
-            chamadas_sala: AtomicUsize::new(0),
-            chamadas_envio: AtomicUsize::new(0),
-            chamadas_aparelho: AtomicUsize::new(0),
+            room_calls: AtomicUsize::new(0),
+            send_calls: AtomicUsize::new(0),
+            device_calls: AtomicUsize::new(0),
             members: Mutex::new(std::collections::HashSet::new()),
-            falha_aparelho: Mutex::new(false),
+            device_failure: Mutex::new(false),
         })
     }
 
-    fn definir_falha_aparelho(&self, falha: bool) {
-        *self.falha_aparelho.lock().unwrap() = falha;
+    fn set_device_failure(&self, failure: bool) {
+        *self.device_failure.lock().unwrap() = failure;
     }
 
-    fn criados_do(&self, sender: &str) -> Vec<Criado> {
-        self.criados()
+    fn created_by(&self, sender: &str) -> Vec<Created> {
+        self.created_events()
             .into_iter()
-            .filter(|criado| criado.sender == sender)
+            .filter(|created_event| created_event.sender == sender)
             .collect()
     }
 
-    fn definir_modo(&self, modo: Modo) {
-        *self.modo.lock().unwrap() = modo;
+    fn set_mode(&self, mode: Mode) {
+        *self.mode.lock().unwrap() = mode;
     }
 
-    fn criados(&self) -> Vec<Criado> {
-        self.criados.lock().unwrap().clone()
+    fn created_events(&self) -> Vec<Created> {
+        self.created_events.lock().unwrap().clone()
     }
 
-    fn txns_da_sala(&self, room: &str) -> Vec<String> {
-        self.criados()
+    fn room_txns(&self, room: &str) -> Vec<String> {
+        self.created_events()
             .into_iter()
-            .filter(|criado| criado.room == room)
-            .map(|criado| criado.txn)
+            .filter(|created_event| created_event.room == room)
+            .map(|created_event| created_event.txn)
             .collect()
     }
 
-    fn tentativas_de(&self, txn: &str) -> u32 {
+    fn attempts_for(&self, txn: &str) -> u32 {
         *self.tentativas.lock().unwrap().get(txn).unwrap_or(&0)
     }
 }
@@ -280,7 +256,7 @@ fn transient() -> CallError {
     }
 }
 
-fn recusado() -> CallError {
+fn refused_error() -> CallError {
     CallError::Response {
         operation: "send",
         status: 403,
@@ -290,37 +266,35 @@ fn recusado() -> CallError {
     }
 }
 
-/// O duplo compartilhado com o teste: o espelho fica com uma cópia do `Arc`, o teste com outra.
-struct Sinal(Arc<Falso>);
+struct Signal(Arc<Fake>);
 
-impl MatrixTarget for Sinal {
+impl MatrixTarget for Signal {
     fn ensure_room(
         &self,
         dados: &ConversationToRoom,
     ) -> impl std::future::Future<Output = Result<String, RoomError>> + Send {
         let room = format!("!{}:matrix-dev.local", dados.conversation);
-        self.0.chamadas_sala.fetch_add(1, Ordering::SeqCst);
+        self.0.room_calls.fetch_add(1, Ordering::SeqCst);
         async move { Ok(room) }
     }
 
     fn ensure_device(
         &self,
-        _dados: &ConversationToRoom,
+        _data: &ConversationToRoom,
         room: &str,
         device: &Ghost,
     ) -> impl std::future::Future<Output = Result<(), RoomError>> + Send {
-        let falso = &self.0;
-        falso.chamadas_aparelho.fetch_add(1, Ordering::SeqCst);
-        let falhar = *falso.falha_aparelho.lock().unwrap();
-        if !falhar {
-            falso
-                .members
+        let fake = &self.0;
+        fake.device_calls.fetch_add(1, Ordering::SeqCst);
+        let fail = *fake.device_failure.lock().unwrap();
+        if !fail {
+            fake.members
                 .lock()
                 .unwrap()
                 .insert((room.to_owned(), device.user_id().to_owned()));
         }
         async move {
-            if falhar {
+            if fail {
                 Err(RoomError::Call(transient()))
             } else {
                 Ok(())
@@ -333,48 +307,49 @@ impl MatrixTarget for Sinal {
         room: &str,
         send: &Outbound,
     ) -> impl std::future::Future<Output = Result<(), CallError>> + Send {
-        let falso = &self.0;
-        let n = falso.chamadas_envio.fetch_add(1, Ordering::SeqCst) + 1;
-        let modo = *falso.modo.lock().unwrap();
+        let fake = &self.0;
+        let n = fake.send_calls.fetch_add(1, Ordering::SeqCst) + 1;
+        let mode = *fake.mode.lock().unwrap();
         let room = room.to_owned();
         let txn = send.txn_id.clone();
         let body = send.body.clone();
         let sender = send.sender.user_id().to_owned();
-        *falso
+        *fake
             .tentativas
             .lock()
             .unwrap()
             .entry(txn.clone())
             .or_insert(0) += 1;
-        // Remetente que não está na sala é recusado, como no Synapse real (MX-42).
-        let fora_da_sala = send.origin == MessageOrigin::Device
-            && !falso
+        let outside_room = send.origin == MessageOrigin::Device
+            && !fake
                 .members
                 .lock()
                 .unwrap()
                 .contains(&(room.clone(), sender.clone()));
-        let resultado = match modo {
-            _ if fora_da_sala => Err(recusado()),
-            Modo::Fora => Err(transient()),
-            Modo::Venenoso(text) if body.contains(text) => Err(recusado()),
-            Modo::FalhaNaChamada(k) if n == k => {
-                // Uma vez só: depois da queda, o Synapse volta a aceitar.
-                *falso.modo.lock().unwrap() = Modo::Normal;
+        let resultado = match mode {
+            _ if outside_room => Err(refused_error()),
+            Mode::Down => Err(transient()),
+            Mode::Venenoso(text) if body.contains(text) => Err(refused_error()),
+            Mode::FailureOnCall(k) if n == k => {
+                *fake.mode.lock().unwrap() = Mode::Normal;
                 Err(transient())
             }
             _ => Ok(()),
         };
-        let mut criados = falso.criados.lock().unwrap();
-        if resultado.is_ok() && !criados.iter().any(|c| c.room == room && c.txn == txn) {
-            // Como o Synapse: o mesmo `txnId` na mesma sala não cria outro evento.
-            criados.push(Criado {
+        let mut created_events = fake.created_events.lock().unwrap();
+        if resultado.is_ok()
+            && !created_events
+                .iter()
+                .any(|c| c.room == room && c.txn == txn)
+        {
+            created_events.push(Created {
                 room,
                 txn,
                 body,
                 sender,
             });
         }
-        drop(criados);
+        drop(created_events);
         async move { resultado }
     }
 
@@ -383,98 +358,105 @@ impl MatrixTarget for Sinal {
         room: &str,
         send: &AssetSend,
     ) -> impl std::future::Future<Output = Result<PublishedAsset, CallError>> + Send {
-        let falso = &self.0;
-        let n = falso.chamadas_envio.fetch_add(1, Ordering::SeqCst) + 1;
-        let modo = *falso.modo.lock().unwrap();
+        let fake = &self.0;
+        let n = fake.send_calls.fetch_add(1, Ordering::SeqCst) + 1;
+        let mode = *fake.mode.lock().unwrap();
         let room = room.to_owned();
         let txn = send.asset.txn_id.clone();
         let body = send.asset.name.clone();
         let sender = send.sender.user_id().to_owned();
-        *falso
+        *fake
             .tentativas
             .lock()
             .unwrap()
             .entry(txn.clone())
             .or_insert(0) += 1;
-        let resultado = match modo {
-            Modo::Fora => Err(transient()),
-            Modo::Venenoso(text) if body.contains(text) => Err(recusado()),
-            Modo::FalhaNaChamada(k) if n == k => {
-                *falso.modo.lock().unwrap() = Modo::Normal;
+        let resultado = match mode {
+            Mode::Down => Err(transient()),
+            Mode::Venenoso(text) if body.contains(text) => Err(refused_error()),
+            Mode::FailureOnCall(k) if n == k => {
+                *fake.mode.lock().unwrap() = Mode::Normal;
                 Err(transient())
             }
             _ => Ok(()),
         };
-        let mut criados = falso.criados.lock().unwrap();
-        let new = !criados.iter().any(|c| c.room == room && c.txn == txn);
+        let mut created_events = fake.created_events.lock().unwrap();
+        let new = !created_events
+            .iter()
+            .any(|c| c.room == room && c.txn == txn);
         if resultado.is_ok() && new {
-            criados.push(Criado {
+            created_events.push(Created {
                 room: room.clone(),
                 txn: txn.clone(),
                 body,
                 sender,
             });
         }
-        drop(criados);
-        // Como o destino real: o `mxc` sai do `txnId` do anexo e o evento é numerado na sala.
-        let publicada = PublishedAsset {
+        drop(created_events);
+        let published = PublishedAsset {
             event: format!("$midia-{txn}:matrix-dev.local"),
             mxc: format!("mxc://matrix-dev.local/{txn}"),
         };
-        async move { resultado.map(|()| publicada) }
+        async move { resultado.map(|()| published) }
     }
 
     fn send_notice(
         &self,
         room: &str,
-        aviso: &RoomNotice,
+        notice: &RoomNotice,
     ) -> impl std::future::Future<Output = Result<(), CallError>> + Send {
-        let falso = &self.0;
+        let fake = &self.0;
         let room = room.to_owned();
-        let txn = aviso.txn_id.clone();
-        let body = poph_matrix::asset::notice_body(aviso.reason);
-        let sender = aviso.sender.user_id().to_owned();
-        let mut criados = falso.criados.lock().unwrap();
-        if !criados.iter().any(|c| c.room == room && c.txn == txn) {
-            criados.push(Criado {
+        let txn = notice.txn_id.clone();
+        let body = poph_matrix::asset::notice_body(notice.reason);
+        let sender = notice.sender.user_id().to_owned();
+        let mut created_events = fake.created_events.lock().unwrap();
+        if !created_events
+            .iter()
+            .any(|c| c.room == room && c.txn == txn)
+        {
+            created_events.push(Created {
                 room,
                 txn,
                 body,
                 sender,
             });
         }
-        drop(criados);
+        drop(created_events);
         async move { Ok(()) }
     }
 }
 
-fn espelho(store: Arc<Store>, destino: Arc<Falso>) -> MatrixMirror<Sinal> {
-    MatrixMirror::new(store, Sinal(destino), &config()).expect("monta o espelho")
+fn mirror(store: Arc<Store>, destination: Arc<Fake>) -> MatrixMirror<Signal> {
+    MatrixMirror::new(store, Signal(destination), &config()).expect("monta o espelho")
 }
 
-fn sala_de(conversation: ConversationId) -> String {
+fn room_for(conversation: ConversationId) -> String {
     format!("!{conversation}:matrix-dev.local")
 }
 
-// ───────────────────────────── testes ─────────────────────────────
-
 #[tokio::test]
-async fn ordem_dentro_da_sala_e_paralelo_entre_salas() {
-    let cenario = Cenario::new("ordem");
-    let store = cenario.store();
-    let org = criar_org(&store, "a");
-    let agent = criar_agente(&store, org);
-    let ana = criar_conversa(&store, org, agent, "+5511111");
-    let bruno = criar_conversa(&store, org, agent, "+5522222");
+async fn order_inside_room_and_parallel_between_rooms() {
+    let scenario = Scenario::new("ordem");
+    let store = scenario.store();
+    let org = create_org(&store, "a");
+    let agent = create_agent(&store, org);
+    let first_conversation = create_conversation(&store, org, agent, "+5511111");
+    let bruno = create_conversation(&store, org, agent, "+5522222");
     store.matrix().enable(org).expect("liga");
 
-    let mut esperado_ana = Vec::new();
-    let mut esperado_bruno = Vec::new();
+    let mut expected_a = Vec::new();
+    let mut expected_b = Vec::new();
     for i in 0..6 {
         if i % 2 == 0 {
-            esperado_ana.push(txn_de(&msg_cliente(&store, org, ana, &format!("ana {i}"))));
+            expected_a.push(txn_for(&client_message(
+                &store,
+                org,
+                first_conversation,
+                &format!("ana {i}"),
+            )));
         } else {
-            esperado_bruno.push(txn_de(&msg_cliente(
+            expected_b.push(txn_for(&client_message(
                 &store,
                 org,
                 bruno,
@@ -483,31 +465,38 @@ async fn ordem_dentro_da_sala_e_paralelo_entre_salas() {
         }
     }
 
-    let destino = Falso::new(Modo::Normal);
-    let relatorio = espelho(Arc::clone(&store), Arc::clone(&destino))
+    let destination = Fake::new(Mode::Normal);
+    let report = mirror(Arc::clone(&store), Arc::clone(&destination))
         .cycle()
         .await
         .expect("ciclo");
 
-    assert_eq!(relatorio.sent, 6);
-    assert_eq!(destino.txns_da_sala(&sala_de(ana)), esperado_ana);
-    assert_eq!(destino.txns_da_sala(&sala_de(bruno)), esperado_bruno);
+    assert_eq!(report.sent, 6);
+    assert_eq!(
+        destination.room_txns(&room_for(first_conversation)),
+        expected_a
+    );
+    assert_eq!(destination.room_txns(&room_for(bruno)), expected_b);
 }
 
 #[tokio::test]
-async fn queda_no_meio_nao_pula_nem_duplica() {
-    let cenario = Cenario::new("queda");
-    let store = cenario.store();
-    let org = criar_org(&store, "a");
-    let agent = criar_agente(&store, org);
-    let ana = criar_conversa(&store, org, agent, "+5511111");
-    let bruno = criar_conversa(&store, org, agent, "+5522222");
+async fn mid_failure_skips_nothing_and_duplicates_nothing() {
+    let scenario = Scenario::new("queda");
+    let store = scenario.store();
+    let org = create_org(&store, "a");
+    let agent = create_agent(&store, org);
+    let first_conversation = create_conversation(&store, org, agent, "+5511111");
+    let bruno = create_conversation(&store, org, agent, "+5522222");
     store.matrix().enable(org).expect("liga");
 
-    let mut todas = Vec::new();
+    let mut all_txns = Vec::new();
     for i in 0..6 {
-        let conversation = if i % 2 == 0 { ana } else { bruno };
-        todas.push(txn_de(&msg_cliente(
+        let conversation = if i % 2 == 0 {
+            first_conversation
+        } else {
+            bruno
+        };
+        all_txns.push(txn_for(&client_message(
             &store,
             org,
             conversation,
@@ -515,90 +504,91 @@ async fn queda_no_meio_nao_pula_nem_duplica() {
         )));
     }
 
-    let destino = Falso::new(Modo::FalhaNaChamada(3));
-    let espelho = espelho(Arc::clone(&store), Arc::clone(&destino));
+    let destination = Fake::new(Mode::FailureOnCall(3));
+    let mirror = mirror(Arc::clone(&store), Arc::clone(&destination));
 
-    let primeiro = espelho.cycle().await.expect("ciclo 1");
-    assert!(primeiro.pending >= 1, "a falha no meio deixa pendência");
-    // O cursor não passou da primeira linha não resolvida.
+    let first = mirror.cycle().await.expect("ciclo 1");
+    assert!(first.pending >= 1, "a falha no meio deixa pendência");
     let cursor = store.matrix().read_cursors(org).expect("cursor").messages;
     assert!(cursor < 6, "cursor não pode andar além da falha: {cursor}");
 
-    espelho.cycle().await.expect("ciclo 2");
-    espelho.cycle().await.expect("ciclo 3");
+    mirror.cycle().await.expect("ciclo 2");
+    mirror.cycle().await.expect("ciclo 3");
 
-    let criados: Vec<String> = destino.criados().into_iter().map(|c| c.txn).collect();
-    assert_eq!(criados.len(), 6, "todas entregues uma vez");
-    for txn in &todas {
-        assert!(criados.contains(txn), "nenhuma linha pulada: {txn}");
+    let created_events: Vec<String> = destination
+        .created_events()
+        .into_iter()
+        .map(|c| c.txn)
+        .collect();
+    assert_eq!(created_events.len(), 6, "todas entregues uma vez");
+    for txn in &all_txns {
+        assert!(created_events.contains(txn), "nenhuma linha pulada: {txn}");
     }
-    let unicos: std::collections::HashSet<_> = criados.iter().collect();
-    assert_eq!(unicos.len(), 6, "nenhum evento duplicado");
-    let repetida = todas
+    let unique: std::collections::HashSet<_> = created_events.iter().collect();
+    assert_eq!(unique.len(), 6, "nenhum evento duplicado");
+    let repeated = all_txns
         .iter()
-        .filter(|txn| destino.tentativas_de(txn) >= 2)
+        .filter(|txn| destination.attempts_for(txn) >= 2)
         .count();
     assert!(
-        repetida >= 1,
+        repeated >= 1,
         "a mensagem da queda foi reenviada com o mesmo txnId"
     );
 }
 
 #[tokio::test]
-async fn mensagem_venenosa_nao_trava_a_fila() {
-    let cenario = Cenario::new("venenosa");
-    let store = cenario.store();
-    let org = criar_org(&store, "a");
-    let agent = criar_agente(&store, org);
-    let conversation = criar_conversa(&store, org, agent, "+5511111");
+async fn poison_message_does_not_block_queue() {
+    let scenario = Scenario::new("venenosa");
+    let store = scenario.store();
+    let org = create_org(&store, "a");
+    let agent = create_agent(&store, org);
+    let conversation = create_conversation(&store, org, agent, "+5511111");
     store.matrix().enable(org).expect("liga");
 
-    let antes = txn_de(&msg_cliente(&store, org, conversation, "primeira"));
-    let veneno = txn_de(&msg_cliente(&store, org, conversation, "VENENO aqui"));
-    let depois = txn_de(&msg_cliente(&store, org, conversation, "terceira"));
-    let ultima = txn_de(&msg_cliente(&store, org, conversation, "quarta"));
+    let before = txn_for(&client_message(&store, org, conversation, "primeira"));
+    let poison = txn_for(&client_message(&store, org, conversation, "VENENO aqui"));
+    let after = txn_for(&client_message(&store, org, conversation, "terceira"));
+    let last = txn_for(&client_message(&store, org, conversation, "quarta"));
 
-    let destino = Falso::new(Modo::Venenoso("VENENO"));
-    let espelho = espelho(Arc::clone(&store), Arc::clone(&destino));
+    let destination = Fake::new(Mode::Venenoso("VENENO"));
+    let mirror = mirror(Arc::clone(&store), Arc::clone(&destination));
 
-    // Até o limite de tentativas, a venenosa fica pendente e a fila espera.
     for _ in 0..(DEFINITIVE_ATTEMPTS - 1) {
-        espelho.cycle().await.expect("ciclo");
+        mirror.cycle().await.expect("ciclo");
     }
     assert!(
-        !destino
-            .txns_da_sala(&sala_de(conversation))
-            .contains(&depois)
+        !destination
+            .room_txns(&room_for(conversation))
+            .contains(&after)
     );
 
-    // Na tentativa limite, ela é isolada e a fila anda.
-    espelho.cycle().await.expect("ciclo limite");
-    espelho.cycle().await.expect("ciclo seguinte");
+    mirror.cycle().await.expect("ciclo limite");
+    mirror.cycle().await.expect("ciclo seguinte");
 
-    let sent = destino.txns_da_sala(&sala_de(conversation));
-    assert!(sent.contains(&antes));
-    assert!(sent.contains(&depois));
-    assert!(sent.contains(&ultima));
-    assert!(!sent.contains(&veneno));
+    let sent = destination.room_txns(&room_for(conversation));
+    assert!(sent.contains(&before));
+    assert!(sent.contains(&after));
+    assert!(sent.contains(&last));
+    assert!(!sent.contains(&poison));
 
-    let falhas = store.matrix().list_failures(org, 10).expect("falhas");
-    assert_eq!(falhas.len(), 1, "a venenosa foi isolada uma vez");
-    assert_eq!(falhas[0].motivo, "M_FORBIDDEN");
-    assert_eq!(falhas[0].attempts, DEFINITIVE_ATTEMPTS);
+    let failures = store.matrix().list_failures(org, 10).expect("falhas");
+    assert_eq!(failures.len(), 1, "a venenosa foi isolada uma vez");
+    assert_eq!(failures[0].motivo, "M_FORBIDDEN");
+    assert_eq!(failures[0].attempts, DEFINITIVE_ATTEMPTS);
 }
 
 #[tokio::test]
-async fn synapse_fora_acumula_sem_avancar_e_depois_drena() {
-    let cenario = Cenario::new("fora");
-    let store = cenario.store();
-    let org = criar_org(&store, "a");
-    let agent = criar_agente(&store, org);
-    let conversation = criar_conversa(&store, org, agent, "+5511111");
+async fn offline_synapse_accumulates_without_advancing_then_drains() {
+    let scenario = Scenario::new("fora");
+    let store = scenario.store();
+    let org = create_org(&store, "a");
+    let agent = create_agent(&store, org);
+    let conversation = create_conversation(&store, org, agent, "+5511111");
     store.matrix().enable(org).expect("liga");
 
-    let mut todas = Vec::new();
+    let mut all_txns = Vec::new();
     for i in 0..5 {
-        todas.push(txn_de(&msg_cliente(
+        all_txns.push(txn_for(&client_message(
             &store,
             org,
             conversation,
@@ -606,88 +596,102 @@ async fn synapse_fora_acumula_sem_avancar_e_depois_drena() {
         )));
     }
 
-    let destino = Falso::new(Modo::Fora);
-    let espelho = espelho(Arc::clone(&store), Arc::clone(&destino));
+    let destination = Fake::new(Mode::Down);
+    let mirror = mirror(Arc::clone(&store), Arc::clone(&destination));
     for _ in 0..3 {
-        let relatorio = espelho.cycle().await.expect("ciclo");
-        assert_eq!(relatorio.sent, 0);
-        assert!(relatorio.pending >= 1);
+        let report = mirror.cycle().await.expect("ciclo");
+        assert_eq!(report.sent, 0);
+        assert!(report.pending >= 1);
     }
     assert_eq!(
         store.matrix().read_cursors(org).expect("cursor").messages,
         0
     );
     assert!(
-        espelho.delay_after(3) > espelho.delay_after(1),
+        mirror.delay_after(3) > mirror.delay_after(1),
         "o atraso cresce"
     );
 
-    destino.definir_modo(Modo::Normal);
-    espelho.cycle().await.expect("ciclo de volta");
-    let criados: Vec<String> = destino.criados().into_iter().map(|c| c.txn).collect();
-    assert_eq!(criados, todas, "tudo entregue, na ordem, uma vez");
+    destination.set_mode(Mode::Normal);
+    mirror.cycle().await.expect("ciclo de volta");
+    let created_events: Vec<String> = destination
+        .created_events()
+        .into_iter()
+        .map(|c| c.txn)
+        .collect();
+    assert_eq!(created_events, all_txns, "tudo entregue, na ordem, uma vez");
 }
 
 #[tokio::test]
-async fn org_desligada_nao_gera_chamada_alguma() {
-    let cenario = Cenario::new("desligada");
-    let store = cenario.store();
-    let ligada = criar_org(&store, "ligada");
-    let desligada = criar_org(&store, "desligada");
-    let agente_l = criar_agente(&store, ligada);
-    let agente_d = criar_agente(&store, desligada);
-    let conv_l = criar_conversa(&store, ligada, agente_l, "+5511111");
-    let conv_d = criar_conversa(&store, desligada, agente_d, "+5522222");
-    store.matrix().enable(ligada).expect("liga");
+async fn disabled_org_makes_no_call() {
+    let scenario = Scenario::new("desligada");
+    let store = scenario.store();
+    let enabled_org = create_org(&store, "ligada");
+    let disabled_org = create_org(&store, "desligada");
+    let agent_enabled = create_agent(&store, enabled_org);
+    let agent_disabled = create_agent(&store, disabled_org);
+    let conv_l = create_conversation(&store, enabled_org, agent_enabled, "+5511111");
+    let conv_d = create_conversation(&store, disabled_org, agent_disabled, "+5522222");
+    store.matrix().enable(enabled_org).expect("liga");
 
-    msg_cliente(&store, ligada, conv_l, "da ligada");
-    msg_cliente(&store, desligada, conv_d, "da desligada");
-    msg_cliente(&store, desligada, conv_d, "de novo na desligada");
+    client_message(&store, enabled_org, conv_l, "da ligada");
+    client_message(&store, disabled_org, conv_d, "da desligada");
+    client_message(&store, disabled_org, conv_d, "de novo na desligada");
 
-    let destino = Falso::new(Modo::Normal);
-    let relatorio = espelho(Arc::clone(&store), Arc::clone(&destino))
+    let destination = Fake::new(Mode::Normal);
+    let report = mirror(Arc::clone(&store), Arc::clone(&destination))
         .cycle()
         .await
         .expect("ciclo");
 
-    assert_eq!(relatorio.sent, 1);
-    assert_eq!(relatorio.from_disabled_org, 2);
-    assert_eq!(destino.chamadas_sala.load(Ordering::SeqCst), 1);
-    assert!(destino.criados().iter().all(|c| c.room == sala_de(conv_l)));
+    assert_eq!(report.sent, 1);
+    assert_eq!(report.from_disabled_org, 2);
+    assert_eq!(destination.room_calls.load(Ordering::SeqCst), 1);
+    assert!(
+        destination
+            .created_events()
+            .iter()
+            .all(|c| c.room == room_for(conv_l))
+    );
 }
 
 #[tokio::test]
-async fn mensagem_anterior_ao_corte_nao_e_espelhada() {
-    let cenario = Cenario::new("corte");
-    let store = cenario.store();
-    let org = criar_org(&store, "a");
-    let agent = criar_agente(&store, org);
-    let conversation = criar_conversa(&store, org, agent, "+5511111");
+async fn message_before_cutoff_is_not_mirrored() {
+    let scenario = Scenario::new("corte");
+    let store = scenario.store();
+    let org = create_org(&store, "a");
+    let agent = create_agent(&store, org);
+    let conversation = create_conversation(&store, org, agent, "+5511111");
 
-    msg_cliente(&store, org, conversation, "antes de ligar");
+    client_message(&store, org, conversation, "antes de ligar");
     store.matrix().enable(org).expect("liga");
-    let depois = txn_de(&msg_cliente(&store, org, conversation, "depois de ligar"));
+    let after = txn_for(&client_message(
+        &store,
+        org,
+        conversation,
+        "depois de ligar",
+    ));
 
-    let destino = Falso::new(Modo::Normal);
-    let relatorio = espelho(Arc::clone(&store), Arc::clone(&destino))
+    let destination = Fake::new(Mode::Normal);
+    let report = mirror(Arc::clone(&store), Arc::clone(&destination))
         .cycle()
         .await
         .expect("ciclo");
 
-    assert_eq!(relatorio.before_cutoff, 1);
-    assert_eq!(destino.txns_da_sala(&sala_de(conversation)), vec![depois]);
+    assert_eq!(report.before_cutoff, 1);
+    assert_eq!(destination.room_txns(&room_for(conversation)), vec![after]);
 }
 
 #[tokio::test]
-async fn resposta_humana_e_ferramenta_nao_viram_evento() {
-    let cenario = Cenario::new("nao-espelha");
-    let store = cenario.store();
-    let org = criar_org(&store, "a");
-    let agent = criar_agente(&store, org);
-    let conversation = criar_conversa(&store, org, agent, "+5511111");
+async fn human_response_and_tool_become_no_event() {
+    let scenario = Scenario::new("nao-espelha");
+    let store = scenario.store();
+    let org = create_org(&store, "a");
+    let agent = create_agent(&store, org);
+    let conversation = create_conversation(&store, org, agent, "+5511111");
     store.matrix().enable(org).expect("liga");
 
-    gravar(
+    write_message(
         &store,
         org,
         conversation,
@@ -696,7 +700,7 @@ async fn resposta_humana_e_ferramenta_nao_viram_evento() {
         Origin::Human,
         "vindo do Element",
     );
-    gravar(
+    write_message(
         &store,
         org,
         conversation,
@@ -705,199 +709,195 @@ async fn resposta_humana_e_ferramenta_nao_viram_evento() {
         Origin::Agente,
         "instrução",
     );
-    msg_cliente(&store, org, conversation, "   ");
-    let normal = txn_de(&msg_agente(&store, org, conversation, "resposta do agente"));
+    client_message(&store, org, conversation, "   ");
+    let normal = txn_for(&agent_message(
+        &store,
+        org,
+        conversation,
+        "resposta do agente",
+    ));
 
-    let destino = Falso::new(Modo::Normal);
-    let relatorio = espelho(Arc::clone(&store), Arc::clone(&destino))
+    let destination = Fake::new(Mode::Normal);
+    let report = mirror(Arc::clone(&store), Arc::clone(&destination))
         .cycle()
         .await
         .expect("ciclo");
 
-    assert_eq!(relatorio.sent, 1);
-    assert_eq!(destino.txns_da_sala(&sala_de(conversation)), vec![normal]);
+    assert_eq!(report.sent, 1);
+    assert_eq!(destination.room_txns(&room_for(conversation)), vec![normal]);
 }
 
 #[tokio::test]
-async fn rowid_reaproveitado_nao_perde_a_mensagem_nova() {
-    let cenario = Cenario::new("rowid");
-    let store = cenario.store();
-    let org = criar_org(&store, "a");
-    let agent = criar_agente(&store, org);
-    let conversation = criar_conversa(&store, org, agent, "+5511111");
+async fn reused_rowid_does_not_lose_new_message() {
+    let scenario = Scenario::new("rowid");
+    let store = scenario.store();
+    let org = create_org(&store, "a");
+    let agent = create_agent(&store, org);
+    let conversation = create_conversation(&store, org, agent, "+5511111");
     store.matrix().enable(org).expect("liga");
 
-    msg_cliente(&store, org, conversation, "um");
-    msg_cliente(&store, org, conversation, "dois");
-    let ultima = msg_cliente(&store, org, conversation, "tres");
+    client_message(&store, org, conversation, "um");
+    client_message(&store, org, conversation, "dois");
+    let last = client_message(&store, org, conversation, "tres");
 
-    let destino = Falso::new(Modo::Normal);
-    let espelho = espelho(Arc::clone(&store), Arc::clone(&destino));
-    espelho.cycle().await.expect("ciclo 1");
-    assert_eq!(destino.criados().len(), 3);
+    let destination = Fake::new(Mode::Normal);
+    let mirror = mirror(Arc::clone(&store), Arc::clone(&destination));
+    mirror.cycle().await.expect("ciclo 1");
+    assert_eq!(destination.created_events().len(), 3);
 
-    // Apaga a linha de maior rowid (já espelhada) e grava outra: o SQLite reaproveita o rowid.
-    let rowid_antigo: i64 = cenario
-        .conexao()
+    let old_rowid: i64 = scenario
+        .connection()
         .query_row(
             "SELECT rowid FROM messages WHERE id = ?1",
-            [ultima.as_str()],
-            |linha| linha.get(0),
+            [last.as_str()],
+            |row| row.get(0),
         )
         .expect("rowid");
-    cenario
-        .conexao()
-        .execute("DELETE FROM messages WHERE id = ?1", [ultima.as_str()])
+    scenario
+        .connection()
+        .execute("DELETE FROM messages WHERE id = ?1", [last.as_str()])
         .expect("apaga");
-    let fresh = msg_cliente(&store, org, conversation, "quatro, com rowid antigo");
-    let rowid_novo: i64 = cenario
-        .conexao()
+    let fresh = client_message(&store, org, conversation, "quatro, com rowid antigo");
+    let new_rowid: i64 = scenario
+        .connection()
         .query_row(
             "SELECT rowid FROM messages WHERE id = ?1",
             [fresh.as_str()],
-            |linha| linha.get(0),
+            |row| row.get(0),
         )
         .expect("rowid novo");
-    assert_eq!(rowid_novo, rowid_antigo, "o rowid foi reaproveitado");
+    assert_eq!(new_rowid, old_rowid, "o rowid foi reaproveitado");
 
-    espelho.cycle().await.expect("ciclo 2");
+    mirror.cycle().await.expect("ciclo 2");
     assert!(
-        destino
-            .txns_da_sala(&sala_de(conversation))
-            .contains(&txn_de(&fresh)),
+        destination
+            .room_txns(&room_for(conversation))
+            .contains(&txn_for(&fresh)),
         "a mensagem com rowid reaproveitado sai"
     );
 }
 
 #[tokio::test]
-async fn cursor_a_frente_do_maior_rowid_volta_ao_ponto_seguro() {
-    let cenario = Cenario::new("recuo");
-    let store = cenario.store();
-    let org = criar_org(&store, "a");
-    let agent = criar_agente(&store, org);
-    let conversation = criar_conversa(&store, org, agent, "+5511111");
+async fn cursor_ahead_of_max_rowid_returns_to_safe_point() {
+    let scenario = Scenario::new("recuo");
+    let store = scenario.store();
+    let org = create_org(&store, "a");
+    let agent = create_agent(&store, org);
+    let conversation = create_conversation(&store, org, agent, "+5511111");
     store.matrix().enable(org).expect("liga");
-    msg_cliente(&store, org, conversation, "um");
-    msg_cliente(&store, org, conversation, "dois");
+    client_message(&store, org, conversation, "um");
+    client_message(&store, org, conversation, "dois");
 
-    // Cursor inventado, à frente de tudo que existe.
     store
         .matrix()
         .advance_messages_with_id(org, 99, "00000000-0000-7000-8000-000000000000")
         .expect("cursor");
 
-    let destino = Falso::new(Modo::Normal);
-    let espelho = espelho(Arc::clone(&store), Arc::clone(&destino));
-    let relatorio = espelho.cycle().await.expect("ciclo");
-    assert_eq!(relatorio.rewinds, 1);
+    let destination = Fake::new(Mode::Normal);
+    let mirror = mirror(Arc::clone(&store), Arc::clone(&destination));
+    let report = mirror.cycle().await.expect("ciclo");
+    assert_eq!(report.rewinds, 1);
     assert!(store.matrix().read_cursors(org).expect("cursor").messages <= 2);
 
-    // Mensagem nova depois do recuo é lida normalmente.
-    let fresh = txn_de(&msg_cliente(&store, org, conversation, "tres"));
-    espelho.cycle().await.expect("ciclo 2");
+    let fresh = txn_for(&client_message(&store, org, conversation, "tres"));
+    mirror.cycle().await.expect("ciclo 2");
     assert!(
-        destino
-            .txns_da_sala(&sala_de(conversation))
+        destination
+            .room_txns(&room_for(conversation))
             .contains(&fresh)
     );
 }
 
 #[tokio::test]
-async fn memoria_do_ciclo_fica_limitada_a_uma_pagina() {
-    let cenario = Cenario::new("memoria");
-    let store = cenario.store();
-    let org = criar_org(&store, "a");
-    let agent = criar_agente(&store, org);
-    let conversation = criar_conversa(&store, org, agent, "+5511111");
+async fn cycle_memory_is_limited_to_one_page() {
+    let scenario = Scenario::new("memoria");
+    let store = scenario.store();
+    let org = create_org(&store, "a");
+    let agent = create_agent(&store, org);
+    let conversation = create_conversation(&store, org, agent, "+5511111");
     store.matrix().enable(org).expect("liga");
 
     let total = PAGE as usize * 3 + 17;
     for i in 0..total {
-        msg_cliente(&store, org, conversation, &format!("m{i}"));
+        client_message(&store, org, conversation, &format!("m{i}"));
     }
 
-    let destino = Falso::new(Modo::Normal);
-    let relatorio = espelho(Arc::clone(&store), Arc::clone(&destino))
+    let destination = Fake::new(Mode::Normal);
+    let report = mirror(Arc::clone(&store), Arc::clone(&destination))
         .cycle()
         .await
         .expect("ciclo");
     assert!(
-        relatorio.largest_page <= PAGE,
+        report.largest_page <= PAGE,
         "nunca mais que uma página em memória"
     );
     assert_eq!(
-        relatorio.sent as usize,
+        report.sent as usize,
         total.min(PAGE as usize * MAX_PAGES_PER_CYCLE as usize)
     );
 }
 
 #[tokio::test]
-async fn atraso_cresce_com_falhas_e_para_no_teto() {
-    let cenario = Cenario::new("atraso");
-    let espelho = espelho(cenario.store(), Falso::new(Modo::Normal));
-    assert_eq!(espelho.delay_after(0), Duration::from_millis(500));
-    assert_eq!(espelho.delay_after(1), Duration::from_millis(1000));
-    assert_eq!(espelho.delay_after(2), Duration::from_millis(2000));
-    assert_eq!(espelho.delay_after(40), MAX_DELAY);
+async fn delay_grows_with_failures_and_stops_at_cap() {
+    let scenario = Scenario::new("atraso");
+    let mirror = mirror(scenario.store(), Fake::new(Mode::Normal));
+    assert_eq!(mirror.delay_after(0), Duration::from_millis(500));
+    assert_eq!(mirror.delay_after(1), Duration::from_millis(1000));
+    assert_eq!(mirror.delay_after(2), Duration::from_millis(2000));
+    assert_eq!(mirror.delay_after(40), MAX_DELAY);
 }
 
 #[tokio::test]
-async fn parada_encerra_o_laco() {
-    let cenario = Cenario::new("parada");
-    let store = cenario.store();
-    let espelho = Arc::new(espelho(Arc::clone(&store), Falso::new(Modo::Normal)));
-    let tarefa = tokio::spawn(Arc::clone(&espelho).run());
+async fn stop_ends_loop() {
+    let scenario = Scenario::new("parada");
+    let store = scenario.store();
+    let mirror = Arc::new(mirror(Arc::clone(&store), Fake::new(Mode::Normal)));
+    let task = tokio::spawn(Arc::clone(&mirror).run());
     tokio::time::sleep(Duration::from_millis(50)).await;
-    espelho.request_stop();
-    let resultado = tokio::time::timeout(Duration::from_secs(5), tarefa).await;
+    mirror.request_stop();
+    let resultado = tokio::time::timeout(Duration::from_secs(5), task).await;
     assert!(resultado.is_ok(), "o laço sai depois do pedido de parada");
 }
 
-/// Cinquenta mil mensagens pendentes com o Synapse fora do ar: o ciclo lê uma página, para na
-/// primeira falha e não carrega a fila inteira. Lento (grava 50 mil linhas): roda com `--ignored`.
 #[tokio::test]
 #[ignore = "grava 50 mil mensagens; rodar com --ignored"]
-async fn memoria_com_50_mil_pendentes() {
-    let cenario = Cenario::new("cinquenta-mil");
-    let store = cenario.store();
-    let org = criar_org(&store, "a");
-    let agent = criar_agente(&store, org);
-    let conversation = criar_conversa(&store, org, agent, "+5511111");
+async fn memory_with_50_thousand_pending() {
+    let scenario = Scenario::new("cinquenta-mil");
+    let store = scenario.store();
+    let org = create_org(&store, "a");
+    let agent = create_agent(&store, org);
+    let conversation = create_conversation(&store, org, agent, "+5511111");
     store.matrix().enable(org).expect("liga");
-    let inicio = std::time::Instant::now();
+    let started_at = std::time::Instant::now();
     for i in 0..50_000 {
-        msg_cliente(&store, org, conversation, &format!("m{i}"));
+        client_message(&store, org, conversation, &format!("m{i}"));
     }
-    eprintln!("gravação de 50 mil: {:?}", inicio.elapsed());
+    eprintln!("gravação de 50 mil: {:?}", started_at.elapsed());
 
-    let destino = Falso::new(Modo::Fora);
-    let inicio = std::time::Instant::now();
-    let relatorio = espelho(Arc::clone(&store), Arc::clone(&destino))
+    let destination = Fake::new(Mode::Down);
+    let started_at = std::time::Instant::now();
+    let report = mirror(Arc::clone(&store), Arc::clone(&destination))
         .cycle()
         .await
         .expect("ciclo");
     eprintln!(
-        "ciclo com 50 mil pendentes: {:?}, {relatorio:?}",
-        inicio.elapsed()
+        "ciclo com 50 mil pendentes: {:?}, {report:?}",
+        started_at.elapsed()
     );
-    assert_eq!(relatorio.sent, 0);
-    assert!(relatorio.largest_page <= PAGE);
-    assert_eq!(relatorio.pages, 1, "para na primeira página com falha");
+    assert_eq!(report.sent, 0);
+    assert!(report.largest_page <= PAGE);
+    assert_eq!(report.pages, 1, "para na primeira página com falha");
     assert_eq!(
         store.matrix().read_cursors(org).expect("cursor").messages,
         0
     );
 }
 
-// ───────────────────────────── MX-42: mensagem do aparelho ─────────────────────────────
+const DEVICE_PEER: &str = "5511999990000";
 
-/// Peer do cliente nos testes do aparelho (o mesmo em toda a conversa).
-const PEER_APARELHO: &str = "5511999990000";
-
-/// Org com o módulo ligado, um agente e a integração do WhatsApp (a instância da Evolution).
-fn org_com_aparelho(store: &Store) -> (OrgId, AgentId, IntegrationId) {
-    let org = criar_org(store, "ap");
-    let agent = criar_agente(store, org);
+fn org_with_device(store: &Store) -> (OrgId, AgentId, IntegrationId) {
+    let org = create_org(store, "ap");
+    let agent = create_agent(store, org);
     let integracao: IntegrationId = store
         .create_integration(org, agent, "whatsapp".to_owned(), "active".to_owned())
         .expect("cria a integração")
@@ -908,8 +908,7 @@ fn org_com_aparelho(store: &Store) -> (OrgId, AgentId, IntegrationId) {
     (org, agent, integracao)
 }
 
-/// Mensagem digitada no celular da loja, pelo caminho da MX-41 (`fromMe` gravado como do aparelho).
-fn receber_aparelho(
+fn receive_device_message(
     store: &Store,
     org: OrgId,
     agent: AgentId,
@@ -917,7 +916,7 @@ fn receber_aparelho(
     id_externo: &str,
     text: &str,
 ) -> (ConversationId, MessageId) {
-    let recebido = store
+    let received = store
         .inbox()
         .receive_from_device(
             org,
@@ -925,17 +924,16 @@ fn receber_aparelho(
                 integration_id: integracao,
                 agent_id: agent,
                 canal: "whatsapp".to_owned(),
-                peer: PEER_APARELHO.to_owned(),
+                peer: DEVICE_PEER.to_owned(),
                 external_id: id_externo.to_owned(),
                 texto: text.to_owned(),
             },
         )
         .expect("recebe a mensagem do aparelho");
-    (recebido.conversation, recebido.mensagem.id)
+    (received.conversation, received.mensagem.id)
 }
 
-/// Id do usuário do aparelho desta integração, como o espelho monta.
-fn fantasma_do_aparelho(integracao: IntegrationId) -> String {
+fn device_ghost(integracao: IntegrationId) -> String {
     GhostIds::new("ph", "matrix-dev.local")
         .expect("ids")
         .device(&integracao.to_string())
@@ -944,19 +942,19 @@ fn fantasma_do_aparelho(integracao: IntegrationId) -> String {
         .to_owned()
 }
 
-fn contar_outbox(cenario: &Cenario) -> i64 {
-    cenario
-        .conexao()
-        .query_row("SELECT COUNT(*) FROM outbox", [], |linha| linha.get(0))
+fn count_outbox(scenario: &Scenario) -> i64 {
+    scenario
+        .connection()
+        .query_row("SELECT COUNT(*) FROM outbox", [], |row| row.get(0))
         .expect("conta a fila de saída")
 }
 
 #[tokio::test]
-async fn mensagem_do_aparelho_entra_na_sala_pelo_usuario_do_aparelho() {
-    let cenario = Cenario::new("aparelho-sala");
-    let store = cenario.store();
-    let (org, agent, integracao) = org_com_aparelho(&store);
-    let (conversation, message) = receber_aparelho(
+async fn device_message_enters_room_through_device_user() {
+    let scenario = Scenario::new("aparelho-sala");
+    let store = scenario.store();
+    let (org, agent, integracao) = org_with_device(&store);
+    let (conversation, message) = receive_device_message(
         &store,
         org,
         agent,
@@ -964,42 +962,40 @@ async fn mensagem_do_aparelho_entra_na_sala_pelo_usuario_do_aparelho() {
         "AP-1",
         "Já enviei, obrigado",
     );
-    // O nome que o WhatsApp deu ao cliente: a mensagem do aparelho não pode trocá-lo.
     store
         .conversations()
         .set_customer_name(org, conversation, "Maria")
         .expect("grava o nome do cliente");
-    // Uma resposta do cliente na mesma conversa, para provar que cada um fala com o próprio usuário.
-    msg_cliente(&store, org, conversation, "oi, tudo bem?");
+    client_message(&store, org, conversation, "oi, tudo bem?");
 
-    let destino = Falso::new(Modo::Normal);
-    let outbox_antes = contar_outbox(&cenario);
-    let relatorio = espelho(Arc::clone(&store), Arc::clone(&destino))
+    let destination = Fake::new(Mode::Normal);
+    let outbox_before = count_outbox(&scenario);
+    let report = mirror(Arc::clone(&store), Arc::clone(&destination))
         .cycle()
         .await
         .expect("ciclo");
 
-    assert_eq!(relatorio.sent, 2, "a do cliente e a do aparelho");
-    let do_aparelho = destino.criados_do(&fantasma_do_aparelho(integracao));
-    assert_eq!(do_aparelho.len(), 1, "o usuário do aparelho fala uma vez");
-    assert_eq!(do_aparelho[0].txn, txn_de(&message.to_string()));
-    assert_eq!(do_aparelho[0].body, "Já enviei, obrigado");
-    assert_eq!(do_aparelho[0].room, sala_de(conversation));
+    assert_eq!(report.sent, 2, "a do cliente e a do aparelho");
+    let of_device = destination.created_by(&device_ghost(integracao));
+    assert_eq!(of_device.len(), 1, "o usuário do aparelho fala uma vez");
+    assert_eq!(of_device[0].txn, txn_for(&message.to_string()));
+    assert_eq!(of_device[0].body, "Já enviei, obrigado");
+    assert_eq!(of_device[0].room, room_for(conversation));
     assert_eq!(
-        destino
-            .criados_do("@ph_wa_5511999990000:matrix-dev.local")
+        destination
+            .created_by("@ph_wa_5511999990000:matrix-dev.local")
             .len(),
         1,
         "a fala do cliente continua saindo pelo usuário do cliente"
     );
     assert_eq!(
-        destino.chamadas_aparelho.load(Ordering::SeqCst),
+        destination.device_calls.load(Ordering::SeqCst),
         1,
         "o aparelho entrou na sala uma vez"
     );
     assert_eq!(
-        contar_outbox(&cenario),
-        outbox_antes,
+        count_outbox(&scenario),
+        outbox_before,
         "o espelho não cria linha na fila de saída: a mensagem já saiu pelo celular"
     );
     let name = store
@@ -1011,13 +1007,14 @@ async fn mensagem_do_aparelho_entra_na_sala_pelo_usuario_do_aparelho() {
 }
 
 #[tokio::test]
-async fn aparelho_entra_uma_vez_por_passagem_e_repeticao_nao_duplica() {
-    let cenario = Cenario::new("aparelho-repeticao");
-    let store = cenario.store();
-    let (org, agent, integracao) = org_com_aparelho(&store);
-    let (conversation, primeira) =
-        receber_aparelho(&store, org, agent, integracao, "AP-1", "primeira");
-    let (_, segunda) = receber_aparelho(&store, org, agent, integracao, "AP-2", "segunda");
+async fn device_enters_once_per_pass_and_repetition_does_not_duplicate() {
+    let scenario = Scenario::new("aparelho-repeticao");
+    let store = scenario.store();
+    let (org, agent, integracao) = org_with_device(&store);
+    let (conversation, first_message) =
+        receive_device_message(&store, org, agent, integracao, "AP-1", "primeira");
+    let (_, second_message) =
+        receive_device_message(&store, org, agent, integracao, "AP-2", "segunda");
     assert_eq!(
         store
             .conversations()
@@ -1028,53 +1025,52 @@ async fn aparelho_entra_uma_vez_por_passagem_e_repeticao_nao_duplica() {
         "as duas mensagens caem na mesma conversa"
     );
 
-    let destino = Falso::new(Modo::Normal);
-    let espelho = espelho(Arc::clone(&store), Arc::clone(&destino));
-    let ciclo = espelho.cycle().await.expect("ciclo 1");
-    assert_eq!(ciclo.sent, 2);
+    let destination = Fake::new(Mode::Normal);
+    let mirror = mirror(Arc::clone(&store), Arc::clone(&destination));
+    let first_cycle = mirror.cycle().await.expect("ciclo 1");
+    assert_eq!(first_cycle.sent, 2);
     assert_eq!(
-        destino.chamadas_aparelho.load(Ordering::SeqCst),
+        destination.device_calls.load(Ordering::SeqCst),
         1,
         "um grupo da sala, um pedido de entrada"
     );
 
-    // Passagem repetida do laço (como depois de uma queda): lê tudo de novo a partir do início.
     store
         .matrix()
         .rewind_cursor_messages(org, 0, "")
         .expect("recua o cursor");
-    espelho.cycle().await.expect("ciclo 2");
+    mirror.cycle().await.expect("ciclo 2");
 
-    let do_aparelho = destino.criados_do(&fantasma_do_aparelho(integracao));
-    assert_eq!(do_aparelho.len(), 2, "cada mensagem aparece uma vez");
-    for id in [primeira, segunda] {
+    let of_device = destination.created_by(&device_ghost(integracao));
+    assert_eq!(of_device.len(), 2, "cada mensagem aparece uma vez");
+    for id in [first_message, second_message] {
         assert!(
-            destino.tentativas_de(&txn_de(&id.to_string())) >= 2,
+            destination.attempts_for(&txn_for(&id.to_string())) >= 2,
             "a mensagem foi reenviada com o mesmo txnId"
         );
     }
 }
 
 #[tokio::test]
-async fn aparelho_fora_da_sala_adia_a_mensagem_sem_perde_la() {
-    let cenario = Cenario::new("aparelho-adia");
-    let store = cenario.store();
-    let (org, agent, integracao) = org_com_aparelho(&store);
-    let (_, message) = receber_aparelho(&store, org, agent, integracao, "AP-1", "oi do celular");
+async fn device_outside_room_defers_message_without_losing_it() {
+    let scenario = Scenario::new("aparelho-adia");
+    let store = scenario.store();
+    let (org, agent, integracao) = org_with_device(&store);
+    let (_, message) =
+        receive_device_message(&store, org, agent, integracao, "AP-1", "oi do celular");
 
-    let destino = Falso::new(Modo::Normal);
-    destino.definir_falha_aparelho(true);
-    let espelho = espelho(Arc::clone(&store), Arc::clone(&destino));
-    let primeiro = espelho.cycle().await.expect("ciclo 1");
-    assert_eq!(primeiro.sent, 0, "sem entrar na sala, nada é enviado");
-    assert!(primeiro.pending >= 1, "a mensagem fica pendente");
-    assert!(destino.criados().is_empty());
+    let destination = Fake::new(Mode::Normal);
+    destination.set_device_failure(true);
+    let mirror = mirror(Arc::clone(&store), Arc::clone(&destination));
+    let first = mirror.cycle().await.expect("ciclo 1");
+    assert_eq!(first.sent, 0, "sem entrar na sala, nada é enviado");
+    assert!(first.pending >= 1, "a mensagem fica pendente");
+    assert!(destination.created_events().is_empty());
 
-    // A mensagem continua gravada no Harness; quando a sala responder, sai uma vez.
-    destino.definir_falha_aparelho(false);
-    let segundo = espelho.cycle().await.expect("ciclo 2");
-    assert_eq!(segundo.sent, 1);
-    let do_aparelho = destino.criados_do(&fantasma_do_aparelho(integracao));
-    assert_eq!(do_aparelho.len(), 1);
-    assert_eq!(do_aparelho[0].txn, txn_de(&message.to_string()));
+    destination.set_device_failure(false);
+    let second = mirror.cycle().await.expect("ciclo 2");
+    assert_eq!(second.sent, 1);
+    let of_device = destination.created_by(&device_ghost(integracao));
+    assert_eq!(of_device.len(), 1);
+    assert_eq!(of_device[0].txn, txn_for(&message.to_string()));
 }
