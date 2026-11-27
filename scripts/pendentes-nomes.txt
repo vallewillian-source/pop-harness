@@ -12,12 +12,6 @@ M12a	14	crates/poph/src/main.rs
 M12a	44	crates/poph/src/modelo.rs
 M12a	129	crates/poph/src/retencao.rs
 M12a	1	crates/poph/src/servidor.rs
-M12b	150	crates/poph/tests/cli.rs
-M12b	336	crates/poph/tests/cli_admin.rs
-M12b	227	crates/poph/tests/cli_agente.rs
-M12b	205	crates/poph/tests/cli_arquivo.rs
-M12b	417	crates/poph/tests/cli_backup.rs
-M12b	151	crates/poph/tests/cli_cluster.rs
 M12b	366	crates/poph/tests/cli_flow.rs
 M12b	215	crates/poph/tests/cli_jev.rs
 M12b	110	crates/poph/tests/cli_kb.rs
