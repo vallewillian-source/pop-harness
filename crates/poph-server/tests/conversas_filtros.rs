@@ -1,15 +1,3 @@
-//! Filtros e ordem da listagem de conversas da API administrativa (RP-02), com banco e servidor
-//! HTTP de verdade. Não há Synapse aqui.
-//!
-//! O que se prova:
-//! - `external_peer` e `status` filtram na lista, sozinhos e juntos, sempre dentro da org; o
-//!   cliente de outra org não aparece;
-//! - sem `sort`, a lista é a de sempre: ordem de id, paginada por cursor, e `limit` fora da faixa
-//!   continua sendo ajustado (não vira erro);
-//! - `sort=recent` ordena pela atividade mais recente, desempata por id, respeita `limit` e devolve
-//!   `next_cursor` `null`;
-//! - `sort=recent` recusa cursor e `limit` fora de 1 a 200 com 400;
-//! - valor inválido em `status`, `external_peer` ou `sort` devolve 400 sem repetir o valor.
 
 use std::fs;
 use std::path::PathBuf;
@@ -30,7 +18,6 @@ use reqwest::{Client, Method};
 use serde_json::Value;
 use tokio::sync::oneshot;
 
-/// Banco, configuração e relógio de um teste; a pasta é apagada no fim.
 struct Cenario {
     pasta: PathBuf,
     store: Arc<Store>,
@@ -76,7 +63,6 @@ impl Cenario {
             .expect("cria a org")
     }
 
-    /// Token de org no formato que a API autentica: `poph_<id>_<segredo>`.
     fn token(&self, org: OrgId, rotulo: &str) -> String {
         let segredo = format!("segredo-{rotulo}");
         let salt = SaltString::generate(&mut OsRng);
@@ -113,7 +99,6 @@ impl Drop for Cenario {
     }
 }
 
-/// Sobe o router numa porta efêmera.
 async fn servir(estado: ServerState) -> (String, oneshot::Sender<()>) {
     let app = poph_server::router(estado);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -165,7 +150,6 @@ async fn pedir(
     }
 }
 
-/// Conversa do canal WhatsApp com o cliente dado, criada direto pelo repositório.
 fn conversa_do_cliente(c: &Cenario, org: &Org, agente: AgentId, peer: &str) -> Conversa {
     c.store
         .conversations()
@@ -182,7 +166,6 @@ fn conversa_do_cliente(c: &Cenario, org: &Org, agente: AgentId, peer: &str) -> C
         .expect("cria a conversa")
 }
 
-/// Itens de uma resposta 200 da lista; falha o teste se a resposta não for 200.
 fn itens_de(resposta: &Resposta) -> Vec<Value> {
     assert_eq!(resposta.status, StatusCode::OK, "{}", resposta.texto);
     resposta.json["items"]
@@ -300,7 +283,6 @@ async fn sort_recent_ordena_pela_atividade_e_devolve_next_cursor_nulo() {
     let c1 = conversa_do_cliente(&c, &org, agente.id, "5511");
     let c2 = conversa_do_cliente(&c, &org, agente.id, "5522");
     let c3 = conversa_do_cliente(&c, &org, agente.id, "5533");
-    // c1 e c3 com a mesma atividade mais recente (empate vai pelo id maior); c2 só pela criação.
     c.store
         .conversations()
         .touch(org.id, c1.id, 9_000_000)
@@ -330,7 +312,6 @@ async fn sort_recent_ordena_pela_atividade_e_devolve_next_cursor_nulo() {
         "sort=recent não usa cursor: next_cursor vem nulo"
     );
 
-    // Página cheia ainda assim não ganha cursor.
     let duas = pedir(
         &base,
         Method::GET,
@@ -345,7 +326,6 @@ async fn sort_recent_ordena_pela_atividade_e_devolve_next_cursor_nulo() {
     );
     assert!(duas.json["next_cursor"].is_null());
 
-    // Cursor vazio é o mesmo que não mandar cursor.
     let cursor_vazio = pedir(
         &base,
         Method::GET,
@@ -504,7 +484,6 @@ async fn sem_sort_a_lista_segue_por_id_com_cursor_e_limit_ajustado() {
     assert_eq!(ids_de(&itens_de(&ultima)), ids[4..5]);
     assert!(ultima.json["next_cursor"].is_null());
 
-    // Como antes: `limit` acima de 200 é ajustado, não recusado.
     let grande = pedir(
         &base,
         Method::GET,
@@ -515,7 +494,6 @@ async fn sem_sort_a_lista_segue_por_id_com_cursor_e_limit_ajustado() {
     .await;
     assert_eq!(itens_de(&grande).len(), 5);
 
-    // Filtro de cliente também pagina pelo cursor de id, sem sort.
     let do_cliente = pedir(
         &base,
         Method::GET,

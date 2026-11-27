@@ -1,14 +1,3 @@
-//! Dados da conversa que o Element usa (RP-01), na API administrativa, com banco e servidor HTTP
-//! de verdade. Não há Synapse aqui: a sala entra pelo repositório do módulo, e o que a API devolve
-//! é o que se confere.
-//!
-//! O que se prova:
-//! - detalhe, lista, fechar e reabrir trazem `client_name` (nome do cliente, `null` quando vazio),
-//!   `agent_name` e `matrix_room_id` (só com a sala `ready` e o módulo ligado na org);
-//! - sala em `creating` e módulo desligado (nunca ligado, ou desligado depois) viram `null`;
-//! - a lista lê os nomes dos agentes e as salas em lote: o número de leituras de uma página não
-//!   cresce com o tamanho dela (teste que morde com uma consulta por linha);
-//! - conversa de outra org continua `404` no detalhe, sem vazar o nome do cliente dela.
 
 use std::fs;
 use std::path::PathBuf;
@@ -27,7 +16,6 @@ use reqwest::{Client, Method};
 use serde_json::Value;
 use tokio::sync::oneshot;
 
-/// Banco, configuração e relógio de um teste; a pasta é apagada no fim.
 struct Cenario {
     pasta: PathBuf,
     store: Arc<Store>,
@@ -73,7 +61,6 @@ impl Cenario {
             .expect("cria a org")
     }
 
-    /// Token de org no formato que a API autentica: `poph_<id>_<segredo>`.
     fn token(&self, org: OrgId, rotulo: &str) -> String {
         let segredo = format!("segredo-{rotulo}");
         let salt = SaltString::generate(&mut OsRng);
@@ -119,7 +106,6 @@ impl Cenario {
             .expect("cria a conversa")
     }
 
-    /// Sala `ready` para a conversa (ou `creating`, quando `pronta` é falso).
     fn sala(&self, org: &Org, conversa: ConversationId, room: &str, pronta: bool) {
         self.store
             .matrix()
@@ -140,7 +126,6 @@ impl Drop for Cenario {
     }
 }
 
-/// Sobe o router numa porta efêmera.
 async fn servir(estado: ServerState) -> (String, oneshot::Sender<()>) {
     let app = poph_server::router(estado);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -192,7 +177,6 @@ async fn pedir(
     }
 }
 
-/// Lista uma página de conversas da org e devolve os itens.
 async fn lista(base: &str, org: OrgId, token: &str, limite: u32) -> Vec<Value> {
     let resposta = pedir(
         base,
@@ -257,9 +241,6 @@ async fn detalhe_fechar_reabrir_e_lista_trazem_nome_agente_e_sala_pronta() {
     assert_eq!(fechada.json["matrix_room_id"], "!ana:matrix-dev.local");
     assert_eq!(fechada.json["agent_name"], "Bia");
 
-    // FX-07: conversa `closed` não reabre mais (PRD L13) — o caminho é a mensagem nova do cliente,
-    // que abre outra conversa e outra Ficha. O que este teste prova (o `reopen` devolve nome e sala)
-    // passa a ser verificado na conversa `transferred`, que continua reabrindo.
     let encerrada = pedir(
         &base,
         Method::POST,
@@ -315,9 +296,6 @@ async fn detalhe_fechar_reabrir_e_lista_trazem_nome_agente_e_sala_pronta() {
 #[tokio::test]
 async fn sala_em_criacao_nome_vazio_e_modulo_desligado_viram_nulo() {
     let c = Cenario::novo("nulos");
-    // Três orgs, cada uma com um caso, para que um desligamento não mascare o outro:
-    // A ligada (sala ainda em criação, sem nome); B nunca ligada (sala pronta, com nome);
-    // C ligada e depois desligada (sala pronta, com nome).
     let a = c.org("a");
     let b = c.org("b");
     let d = c.org("c");
@@ -350,7 +328,6 @@ async fn sala_em_criacao_nome_vazio_e_modulo_desligado_viram_nulo() {
 
     let (base, desligar) = servir(c.estado()).await;
 
-    // A: sala em creating não sai; nome vazio vira null; o agente aparece.
     let caminho = format!("/admin/v1/orgs/{}/conversations/{}", a.id, sem_nome.id);
     let detalhe = pedir(&base, Method::GET, &caminho, &token_a, None).await;
     assert_eq!(detalhe.status, StatusCode::OK, "{}", detalhe.texto);
@@ -369,7 +346,6 @@ async fn sala_em_criacao_nome_vazio_e_modulo_desligado_viram_nulo() {
     assert_eq!(item(&itens, sem_nome.id)["matrix_room_id"], Value::Null);
     assert_eq!(item(&itens, sem_nome.id)["client_name"], Value::Null);
 
-    // B: nunca ligada, sala pronta e nome: a sala não sai.
     let caminho = format!("/admin/v1/orgs/{}/conversations/{}", b.id, nunca_ligada.id);
     let detalhe = pedir(&base, Method::GET, &caminho, &token_b, None).await;
     assert_eq!(detalhe.status, StatusCode::OK, "{}", detalhe.texto);
@@ -382,7 +358,6 @@ async fn sala_em_criacao_nome_vazio_e_modulo_desligado_viram_nulo() {
     let itens = lista(&base, b.id, &token_b, 50).await;
     assert_eq!(item(&itens, nunca_ligada.id)["matrix_room_id"], Value::Null);
 
-    // C: ligada e desligada de novo, sala pronta: a sala não sai, o nome continua.
     let caminho = format!("/admin/v1/orgs/{}/conversations/{}", d.id, desligada.id);
     let detalhe = pedir(&base, Method::GET, &caminho, &token_c, None).await;
     assert_eq!(detalhe.status, StatusCode::OK, "{}", detalhe.texto);
@@ -405,7 +380,6 @@ async fn lista_le_nomes_e_salas_em_lote_sem_consulta_por_linha() {
     let org = c.org("a");
     let token = c.token(org.id, "a");
     c.store.matrix().enable(org.id).expect("liga");
-    // Trinta conversas, cada uma com o seu agente: uma consulta por linha seria trinta leituras.
     for n in 0..30 {
         let agente = c.agente(&org, &format!("ag-{n}"), &format!("Agente {n}"));
         let conversa = c.conversa(&org, agente.id);
@@ -424,7 +398,6 @@ async fn lista_le_nomes_e_salas_em_lote_sem_consulta_por_linha() {
     }
     let (base, desligar) = servir(c.estado()).await;
 
-    // Mede as leituras que cada página gasta; a página pequena e a grande têm de gastar o mesmo.
     let antes = c.store.reads_done();
     let pequena = lista(&base, org.id, &token, 2).await;
     let leituras_pequena = c.store.reads_done() - antes;
@@ -445,7 +418,6 @@ async fn lista_le_nomes_e_salas_em_lote_sem_consulta_por_linha() {
         "a página inteira devia gastar poucas leituras, gastou {leituras_grande}"
     );
 
-    // Os dados chegam corretos em toda a página: nome de agente em cada item, sala só nas prontas.
     for valor in &grande {
         assert!(valor["agent_name"].is_string(), "agent_name em todo item");
         let nome_cliente = valor["client_name"].as_str().expect("client_name");
@@ -482,7 +454,6 @@ async fn conversa_de_outra_org_continua_404_e_nao_vaza_o_nome() {
     c.sala(&b, conversa_b.id, "!secreta:matrix-dev.local", true);
     let (base, desligar) = servir(c.estado()).await;
 
-    // Token da A pedindo a conversa da B pelo caminho da A: não existe ali.
     let pela_a = pedir(
         &base,
         Method::GET,
@@ -497,7 +468,6 @@ async fn conversa_de_outra_org_continua_404_e_nao_vaza_o_nome() {
         "o 404 não pode trazer dado da outra org"
     );
 
-    // Token da A pelo caminho da B: recusado antes de qualquer leitura.
     let pelo_caminho_b = pedir(
         &base,
         Method::GET,
