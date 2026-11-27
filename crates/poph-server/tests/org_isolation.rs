@@ -70,13 +70,13 @@ struct TestServer {
     directory: PathBuf,
     #[allow(dead_code)]
     store: Arc<Store>,
-    desligar: Option<oneshot::Sender<()>>,
+    shutdown: Option<oneshot::Sender<()>>,
 }
 
 impl TestServer {
     async fn new(
         label: &str,
-        estado: impl FnOnce(&Arc<Store>, &HarnessConfig, &PathBuf) -> ServerState,
+        server_state: impl FnOnce(&Arc<Store>, &HarnessConfig, &PathBuf) -> ServerState,
     ) -> Self {
         let stamp = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -99,31 +99,31 @@ impl TestServer {
         config.validar().expect("configuração válida");
 
         let store = Arc::new(Store::open(&config).expect("abre o banco"));
-        let estado = estado(&store, &config, &directory);
+        let server_state = server_state(&store, &config, &directory);
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("porta efêmera");
-        let endereco = listener.local_addr().expect("endereço local");
-        let (desligar, signal) = oneshot::channel::<()>();
+        let address = listener.local_addr().expect("endereço local");
+        let (shutdown, signal) = oneshot::channel::<()>();
         tokio::spawn(async move {
-            let _ = poph_server::serve_at(listener, estado, async {
+            let _ = poph_server::serve_at(listener, server_state, async {
                 let _ = signal.await;
             })
             .await;
         });
-        let servidor = Self {
-            base: format!("http://{endereco}"),
+        let server = Self {
+            base: format!("http://{address}"),
             client: Client::builder()
                 .timeout(Duration::from_secs(30))
                 .build()
                 .expect("cliente HTTP"),
             directory,
             store,
-            desligar: Some(desligar),
+            shutdown: Some(shutdown),
         };
-        servidor.wait_until_ready().await;
-        servidor
+        server.wait_until_ready().await;
+        server
     }
 
     async fn wait_until_ready(&self) {
@@ -162,9 +162,9 @@ impl TestServer {
         request = match body {
             RequestBody::NoneExpected => request,
             RequestBody::Json(value) => request.json(&value),
-            RequestBody::Multipart(texto) => {
-                let (tipo, bytes) = multipart(&texto);
-                request.header("content-type", tipo).body(bytes)
+            RequestBody::Multipart(text) => {
+                let (kind, bytes) = multipart(&text);
+                request.header("content-type", kind).body(bytes)
             }
             RequestBody::File(bytes) => request
                 .header("content-type", "application/octet-stream")
@@ -172,20 +172,16 @@ impl TestServer {
         };
         let response = request.send().await.expect("pedido HTTP");
         let status = response.status();
-        let texto = response.text().await.unwrap_or_default();
-        let json = serde_json::from_str(&texto).unwrap_or(Value::Null);
-        TestResponse {
-            status,
-            texto,
-            json,
-        }
+        let text = response.text().await.unwrap_or_default();
+        let json = serde_json::from_str(&text).unwrap_or(Value::Null);
+        TestResponse { status, text, json }
     }
 
     async fn create(&self, path: &str, token: &str, body: Value, expected: StatusCode) -> Value {
         let r = self
             .call(Method::POST, path, token, RequestBody::Json(body), None)
             .await;
-        assert_eq!(r.status, expected, "criar em {path}: {}", r.texto);
+        assert_eq!(r.status, expected, "criar em {path}: {}", r.text);
         r.json
     }
 
@@ -209,7 +205,7 @@ impl TestServer {
             ),
             format!(
                 "/admin/v1/orgs/{}/agents/{}/integrations/{}",
-                org.id, org.agent, org.integracao
+                org.id, org.agent, org.integration
             ),
             format!("/admin/v1/orgs/{}/agents/{}/test-chat", org.id, org.agent),
             format!(
@@ -241,11 +237,14 @@ impl TestServer {
             format!("/admin/v1/orgs/{}/tokens", org.id),
             format!("/admin/v1/orgs/{}/tokens/{}", org.id, org.token_id),
             format!("/admin/v1/orgs/{}/flows", org.id),
-            format!("/admin/v1/orgs/{}/flows/{}", org.id, org.fluxo),
-            format!("/admin/v1/orgs/{}/flows/{}/revisions", org.id, org.fluxo),
+            format!("/admin/v1/orgs/{}/flows/{}", org.id, org.flow),
+            format!("/admin/v1/orgs/{}/flows/{}/revisions", org.id, org.flow),
             format!("/admin/v1/orgs/{}/fichas", org.id),
-            format!("/admin/v1/orgs/{}/fichas/{}", org.id, org.ficha),
-            format!("/admin/v1/orgs/{}/fichas/{}/events", org.id, org.ficha),
+            format!("/admin/v1/orgs/{}/fichas/{}", org.id, org.service_case),
+            format!(
+                "/admin/v1/orgs/{}/fichas/{}/events",
+                org.id, org.service_case
+            ),
         ];
         paths.sort();
         let mut snapshots = Vec::new();
@@ -259,7 +258,7 @@ impl TestServer {
                     None,
                 )
                 .await;
-            snapshots.push(format!("{path} -> {} {}", r.status, r.texto));
+            snapshots.push(format!("{path} -> {} {}", r.status, r.text));
         }
         snapshots
     }
@@ -275,8 +274,8 @@ impl TestServer {
 
 impl Drop for TestServer {
     fn drop(&mut self) {
-        if let Some(desligar) = self.desligar.take() {
-            let _ = desligar.send(());
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(());
         }
         let _ = fs::remove_dir_all(&self.directory);
     }
@@ -291,14 +290,14 @@ enum RequestBody {
 
 struct TestResponse {
     status: StatusCode,
-    texto: String,
+    text: String,
     json: Value,
 }
 
-fn multipart(texto: &str) -> (String, Vec<u8>) {
+fn multipart(text: &str) -> (String, Vec<u8>) {
     let limit = "hr54-boundary";
     let body = format!(
-        "--{limit}\r\nContent-Disposition: form-data; name=\"text\"\r\n\r\n{texto}\r\n--{limit}--\r\n"
+        "--{limit}\r\nContent-Disposition: form-data; name=\"text\"\r\n\r\n{text}\r\n--{limit}--\r\n"
     );
     (
         format!("multipart/form-data; boundary={limit}"),
@@ -315,14 +314,14 @@ struct Org {
     group: String,
     item: String,
     file: String,
-    integracao: String,
+    integration: String,
     category: String,
     department: String,
     product: String,
     conversation: String,
-    fluxo: String,
+    flow: String,
     version_agent: u64,
-    ficha: String,
+    service_case: String,
     execution: String,
     message: String,
     attachment: String,
@@ -338,7 +337,7 @@ impl Org {
             ("group_id", self.group.clone()),
             ("item_id", self.item.clone()),
             ("file_id", self.file.clone()),
-            ("integration_id", self.integracao.clone()),
+            ("integration_id", self.integration.clone()),
             ("category_id", self.category.clone()),
             ("department_id", self.department.clone()),
             ("product_id", self.product.clone()),
@@ -346,8 +345,8 @@ impl Org {
             ("message_id", self.message.clone()),
             ("attachment_id", self.attachment.clone()),
             ("token_id", self.token_id.clone()),
-            ("flow_id", self.fluxo.clone()),
-            ("ficha_id", self.ficha.clone()),
+            ("flow_id", self.flow.clone()),
+            ("ficha_id", self.service_case.clone()),
             ("run_id", self.execution.clone()),
             ("id", self.site.clone()),
             ("turn_id", self.site_turn.clone()),
@@ -360,16 +359,16 @@ impl Org {
         ids.extend(
             self.params()
                 .into_iter()
-                .filter(|(nome, _)| *nome != "kind")
+                .filter(|(display_name, _)| *display_name != "kind")
                 .map(|(_, value)| value),
         );
         ids
     }
 
-    fn path(&self, modelo: &str, org_id: &str) -> String {
-        let mut path = modelo.replace("{org_id}", org_id).replace("{number}", "1");
-        for (nome, value) in self.params() {
-            path = path.replace(&format!("{{{nome}}}"), &value);
+    fn path(&self, model: &str, org_id: &str) -> String {
+        let mut path = model.replace("{org_id}", org_id).replace("{number}", "1");
+        for (display_name, value) in self.params() {
+            path = path.replace(&format!("{{{display_name}}}"), &value);
         }
         path
     }
@@ -411,7 +410,7 @@ async fn seed_org(s: &TestServer, slug: &str, marker: &'static str) -> Org {
     s.create(
         &format!("{root}/agents/{agent}/instructions"),
         &token,
-        json!({"structured": {"tools": TOOLS.iter().map(|nome| json!({"name": nome, "enabled": true})).collect::<Vec<_>>()}}),
+        json!({"structured": {"tools": TOOLS.iter().map(|display_name| json!({"name": display_name, "enabled": true})).collect::<Vec<_>>()}}),
         StatusCode::CREATED,
     )
     .await;
@@ -486,9 +485,9 @@ async fn seed_org(s: &TestServer, slug: &str, marker: &'static str) -> Org {
             None,
         )
         .await;
-    assert_eq!(file.status, StatusCode::CREATED, "arquivo: {}", file.texto);
+    assert_eq!(file.status, StatusCode::CREATED, "arquivo: {}", file.text);
     let file = file.json["id"].as_str().unwrap().to_owned();
-    let integracao = s
+    let integration = s
         .create(
             &format!("{root}/agents/{agent}/integrations"),
             &token,
@@ -512,7 +511,7 @@ async fn seed_org(s: &TestServer, slug: &str, marker: &'static str) -> Org {
         conversation.status,
         StatusCode::CREATED,
         "conversa: {}",
-        conversation.texto
+        conversation.text
     );
     let conversation_id: ConversationId =
         conversation.json["id"].as_str().unwrap().parse().unwrap();
@@ -554,7 +553,7 @@ async fn seed_org(s: &TestServer, slug: &str, marker: &'static str) -> Org {
         .id
         .to_string();
 
-    let fluxo = s
+    let flow = s
         .create(
             &format!("{root}/flows"),
             &token,
@@ -582,7 +581,7 @@ async fn seed_org(s: &TestServer, slug: &str, marker: &'static str) -> Org {
             Method::PUT,
             &format!("{root}/agents/{agent}/flows"),
             &token,
-            RequestBody::Json(json!({"flow_ids": [fluxo]})),
+            RequestBody::Json(json!({"flow_ids": [flow]})),
             Some(version_before),
         )
         .await;
@@ -590,10 +589,10 @@ async fn seed_org(s: &TestServer, slug: &str, marker: &'static str) -> Org {
         released.status,
         StatusCode::OK,
         "liberar fluxo: {}",
-        released.texto
+        released.text
     );
     let version_agent = released.json["version"].as_u64().unwrap();
-    let ficha = s
+    let service_case = s
         .call(
             Method::GET,
             &format!("{root}/fichas"),
@@ -609,7 +608,7 @@ async fn seed_org(s: &TestServer, slug: &str, marker: &'static str) -> Org {
     let version_case = s
         .call(
             Method::GET,
-            &format!("{root}/fichas/{ficha}"),
+            &format!("{root}/fichas/{service_case}"),
             &token,
             RequestBody::NoneExpected,
             None,
@@ -621,9 +620,9 @@ async fn seed_org(s: &TestServer, slug: &str, marker: &'static str) -> Org {
     let opening = s
         .call(
             Method::POST,
-            &format!("{root}/fichas/{ficha}/flow-runs"),
+            &format!("{root}/fichas/{service_case}/flow-runs"),
             &token,
-            RequestBody::Json(json!({"fluxo_id": fluxo, "chave_idempotencia": "montagem-vitima"})),
+            RequestBody::Json(json!({"fluxo_id": flow, "chave_idempotencia": "montagem-vitima"})),
             Some(version_case),
         )
         .await;
@@ -631,7 +630,7 @@ async fn seed_org(s: &TestServer, slug: &str, marker: &'static str) -> Org {
         opening.status,
         StatusCode::CREATED,
         "abrir fluxo: {}",
-        opening.texto
+        opening.text
     );
     let execution = opening.json["id"].as_str().unwrap().to_owned();
 
@@ -663,14 +662,14 @@ async fn seed_org(s: &TestServer, slug: &str, marker: &'static str) -> Org {
         group,
         item,
         file,
-        integracao,
+        integration,
         category,
         department,
         product,
         conversation,
-        fluxo,
+        flow,
         version_agent,
-        ficha,
+        service_case,
         execution,
         message: message.id.to_string(),
         attachment,
@@ -682,7 +681,7 @@ async fn seed_org(s: &TestServer, slug: &str, marker: &'static str) -> Org {
 
 #[derive(Clone, Copy)]
 enum CaseKind {
-    Vazio,
+    Empty,
     Json(&'static str),
     Multipart,
     File,
@@ -716,15 +715,15 @@ etapa(
 #[derive(Clone)]
 struct IsolationCase {
     method: &'static str,
-    modelo: String,
-    tipo: CaseKind,
+    model: String,
+    kind: CaseKind,
 }
 
-fn isolation_case(method: &'static str, modelo: &str, tipo: CaseKind) -> IsolationCase {
+fn isolation_case(method: &'static str, model: &str, kind: CaseKind) -> IsolationCase {
     IsolationCase {
         method,
-        modelo: modelo.to_owned(),
-        tipo,
+        model: model.to_owned(),
+        kind,
     }
 }
 
@@ -746,69 +745,69 @@ fn cases() -> Vec<IsolationCase> {
     const FI: &str = "/admin/v1/orgs/{org_id}/fichas/{ficha_id}";
     const FR: &str = "/admin/v1/orgs/{org_id}/fichas/{ficha_id}/flow-runs/{run_id}";
     vec![
-        isolation_case("get", "/admin/v1/orgs", Vazio),
+        isolation_case("get", "/admin/v1/orgs", Empty),
         isolation_case("post", "/admin/v1/orgs", Json(r#"{"name":"Invadido"}"#)),
-        isolation_case("get", ORG, Vazio),
+        isolation_case("get", ORG, Empty),
         isolation_case("patch", ORG, Json(r#"{"name":"Invadido"}"#)),
-        isolation_case("delete", ORG, Vazio),
-        isolation_case("get", "/admin/v1/orgs/{org_id}/agents", Vazio),
+        isolation_case("delete", ORG, Empty),
+        isolation_case("get", "/admin/v1/orgs/{org_id}/agents", Empty),
         isolation_case(
             "post",
             "/admin/v1/orgs/{org_id}/agents",
             Json(r#"{"name":"Invadido","slug":"invadido"}"#),
         ),
-        isolation_case("get", AG, Vazio),
+        isolation_case("get", AG, Empty),
         isolation_case("patch", AG, Json(r#"{"description":"Invadido"}"#)),
-        isolation_case("delete", AG, Vazio),
-        isolation_case("get", AGF, Vazio),
+        isolation_case("delete", AG, Empty),
+        isolation_case("get", AGF, Empty),
         isolation_case("put", AGF, Json(r#"{"flow_ids":[]}"#)),
-        isolation_case("get", &format!("{AG}/instructions"), Vazio),
+        isolation_case("get", &format!("{AG}/instructions"), Empty),
         isolation_case(
             "post",
             &format!("{AG}/instructions"),
             Json(r#"{"markdown":"Invadido"}"#),
         ),
-        isolation_case("get", &format!("{AG}/instructions/current"), Vazio),
+        isolation_case("get", &format!("{AG}/instructions/current"), Empty),
         isolation_case(
             "patch",
             &format!("{AG}/instructions/current"),
             Json(r#"{"markdown":"Invadido"}"#),
         ),
-        isolation_case("delete", &format!("{AG}/instructions/current"), Vazio),
-        isolation_case("get", "/admin/v1/orgs/{org_id}/knowledge", Vazio),
+        isolation_case("delete", &format!("{AG}/instructions/current"), Empty),
+        isolation_case("get", "/admin/v1/orgs/{org_id}/knowledge", Empty),
         isolation_case(
             "post",
             "/admin/v1/orgs/{org_id}/knowledge",
             Json(r#"{"name":"Invadido"}"#),
         ),
-        isolation_case("get", KN, Vazio),
+        isolation_case("get", KN, Empty),
         isolation_case("patch", KN, Json(r#"{"name":"Invadido"}"#)),
-        isolation_case("delete", KN, Vazio),
-        isolation_case("get", &format!("{KN}/items"), Vazio),
+        isolation_case("delete", KN, Empty),
+        isolation_case("get", &format!("{KN}/items"), Empty),
         isolation_case(
             "post",
             &format!("{KN}/items"),
             Json(r#"{"title":"Invadido","content":"Invadido"}"#),
         ),
-        isolation_case("get", IT, Vazio),
+        isolation_case("get", IT, Empty),
         isolation_case("patch", IT, Json(r#"{"title":"Invadido"}"#)),
-        isolation_case("delete", IT, Vazio),
-        isolation_case("post", &format!("{AG}/knowledge/{{group_id}}"), Vazio),
-        isolation_case("delete", &format!("{AG}/knowledge/{{group_id}}"), Vazio),
-        isolation_case("post", &format!("{AG}/knowledge/reindex"), Vazio),
-        isolation_case("get", &format!("{AG}/integrations"), Vazio),
+        isolation_case("delete", IT, Empty),
+        isolation_case("post", &format!("{AG}/knowledge/{{group_id}}"), Empty),
+        isolation_case("delete", &format!("{AG}/knowledge/{{group_id}}"), Empty),
+        isolation_case("post", &format!("{AG}/knowledge/reindex"), Empty),
+        isolation_case("get", &format!("{AG}/integrations"), Empty),
         isolation_case(
             "post",
             &format!("{AG}/integrations"),
             Json(r#"{"kind":"sms","status":"active"}"#),
         ),
-        isolation_case("get", IG, Vazio),
+        isolation_case("get", IG, Empty),
         isolation_case("patch", IG, Json(r#"{"status":"inactive"}"#)),
-        isolation_case("delete", IG, Vazio),
-        isolation_case("post", &format!("{WA}/qrcode"), Vazio),
-        isolation_case("get", &format!("{WA}/state"), Vazio),
-        isolation_case("post", &format!("{WA}/disconnect"), Vazio),
-        isolation_case("get", "/admin/v1/orgs/{org_id}/backup", Vazio),
+        isolation_case("delete", IG, Empty),
+        isolation_case("post", &format!("{WA}/qrcode"), Empty),
+        isolation_case("get", &format!("{WA}/state"), Empty),
+        isolation_case("post", &format!("{WA}/disconnect"), Empty),
+        isolation_case("get", "/admin/v1/orgs/{org_id}/backup", Empty),
         isolation_case(
             "post",
             "/admin/v1/orgs/{org_id}/backup/import",
@@ -816,17 +815,17 @@ fn cases() -> Vec<IsolationCase> {
                 r#"{"formato":"poph-backup-org","versao_formato":1,"org":{},"tabelas":{},"blobs":[]}"#,
             ),
         ),
-        isolation_case("get", "/admin/v1/orgs/{org_id}/manifests", Vazio),
-        isolation_case("get", "/admin/v1/orgs/{org_id}/manifests/{kind}", Vazio),
-        isolation_case("get", "/admin/v1/orgs/{org_id}/tokens", Vazio),
+        isolation_case("get", "/admin/v1/orgs/{org_id}/manifests", Empty),
+        isolation_case("get", "/admin/v1/orgs/{org_id}/manifests/{kind}", Empty),
+        isolation_case("get", "/admin/v1/orgs/{org_id}/tokens", Empty),
         isolation_case(
             "post",
             "/admin/v1/orgs/{org_id}/tokens",
             Json(r#"{"label":"Invadido"}"#),
         ),
-        isolation_case("get", "/admin/v1/orgs/{org_id}/tokens/{token_id}", Vazio),
-        isolation_case("delete", "/admin/v1/orgs/{org_id}/tokens/{token_id}", Vazio),
-        isolation_case("get", "/admin/v1/orgs/{org_id}/categories", Vazio),
+        isolation_case("get", "/admin/v1/orgs/{org_id}/tokens/{token_id}", Empty),
+        isolation_case("delete", "/admin/v1/orgs/{org_id}/tokens/{token_id}", Empty),
+        isolation_case("get", "/admin/v1/orgs/{org_id}/categories", Empty),
         isolation_case(
             "post",
             "/admin/v1/orgs/{org_id}/categories",
@@ -835,7 +834,7 @@ fn cases() -> Vec<IsolationCase> {
         isolation_case(
             "get",
             "/admin/v1/orgs/{org_id}/categories/{category_id}",
-            Vazio,
+            Empty,
         ),
         isolation_case(
             "patch",
@@ -845,20 +844,20 @@ fn cases() -> Vec<IsolationCase> {
         isolation_case(
             "delete",
             "/admin/v1/orgs/{org_id}/categories/{category_id}",
-            Vazio,
+            Empty,
         ),
-        isolation_case("get", "/admin/v1/orgs/{org_id}/conversations", Vazio),
-        isolation_case("get", CV, Vazio),
-        isolation_case("get", &format!("{CV}/messages"), Vazio),
-        isolation_case("get", &format!("{CV}/turns"), Vazio),
-        isolation_case("post", &format!("{CV}/reopen"), Vazio),
-        isolation_case("post", &format!("{CV}/close"), Vazio),
+        isolation_case("get", "/admin/v1/orgs/{org_id}/conversations", Empty),
+        isolation_case("get", CV, Empty),
+        isolation_case("get", &format!("{CV}/messages"), Empty),
+        isolation_case("get", &format!("{CV}/turns"), Empty),
+        isolation_case("post", &format!("{CV}/reopen"), Empty),
+        isolation_case("post", &format!("{CV}/close"), Empty),
         isolation_case(
             "post",
             &format!("{CV}/transfer"),
             Json(r#"{"department_id":"018f0000-0000-7000-8000-000000000002","reason":"Invadido"}"#),
         ),
-        isolation_case("get", "/admin/v1/orgs/{org_id}/departments", Vazio),
+        isolation_case("get", "/admin/v1/orgs/{org_id}/departments", Empty),
         isolation_case(
             "post",
             "/admin/v1/orgs/{org_id}/departments",
@@ -867,7 +866,7 @@ fn cases() -> Vec<IsolationCase> {
         isolation_case(
             "get",
             "/admin/v1/orgs/{org_id}/departments/{department_id}",
-            Vazio,
+            Empty,
         ),
         isolation_case(
             "patch",
@@ -877,30 +876,30 @@ fn cases() -> Vec<IsolationCase> {
         isolation_case(
             "delete",
             "/admin/v1/orgs/{org_id}/departments/{department_id}",
-            Vazio,
+            Empty,
         ),
-        isolation_case("get", &format!("{AG}/files"), Vazio),
+        isolation_case("get", &format!("{AG}/files"), Empty),
         isolation_case("post", &format!("{AG}/files"), File),
-        isolation_case("get", &format!("{AG}/files/{{file_id}}"), Vazio),
-        isolation_case("get", &format!("{AG}/files/{{file_id}}/content"), Vazio),
-        isolation_case("delete", &format!("{AG}/files/{{file_id}}"), Vazio),
-        isolation_case("get", TC, Vazio),
-        isolation_case("post", TC, Vazio),
-        isolation_case("get", &format!("{TC}/{{conversation_id}}"), Vazio),
+        isolation_case("get", &format!("{AG}/files/{{file_id}}"), Empty),
+        isolation_case("get", &format!("{AG}/files/{{file_id}}/content"), Empty),
+        isolation_case("delete", &format!("{AG}/files/{{file_id}}"), Empty),
+        isolation_case("get", TC, Empty),
+        isolation_case("post", TC, Empty),
+        isolation_case("get", &format!("{TC}/{{conversation_id}}"), Empty),
         isolation_case(
             "post",
             &format!("{TC}/{{conversation_id}}/messages"),
             Multipart,
         ),
-        isolation_case("post", &format!("{TC}/{{conversation_id}}/reopen"), Vazio),
+        isolation_case("post", &format!("{TC}/{{conversation_id}}/reopen"), Empty),
         isolation_case(
             "get",
             &format!(
                 "{TC}/{{conversation_id}}/messages/{{message_id}}/attachments/{{attachment_id}}/content"
             ),
-            Vazio,
+            Empty,
         ),
-        isolation_case("get", "/admin/v1/orgs/{org_id}/products", Vazio),
+        isolation_case("get", "/admin/v1/orgs/{org_id}/products", Empty),
         isolation_case(
             "post",
             "/admin/v1/orgs/{org_id}/products",
@@ -909,7 +908,7 @@ fn cases() -> Vec<IsolationCase> {
         isolation_case(
             "get",
             "/admin/v1/orgs/{org_id}/products/{product_id}",
-            Vazio,
+            Empty,
         ),
         isolation_case(
             "patch",
@@ -919,17 +918,17 @@ fn cases() -> Vec<IsolationCase> {
         isolation_case(
             "delete",
             "/admin/v1/orgs/{org_id}/products/{product_id}",
-            Vazio,
+            Empty,
         ),
-        isolation_case("get", MX, Vazio),
+        isolation_case("get", MX, Empty),
         isolation_case("put", MX, Json(r#"{"enabled":true}"#)),
-        isolation_case("get", MXESP, Vazio),
+        isolation_case("get", MXESP, Empty),
         isolation_case(
             "put",
             MXESP,
             Json(r#"{"department_id":"00000000-0000-0000-0000-000000000000"}"#),
         ),
-        isolation_case("delete", &format!("{MXESP}/{{department_id}}"), Vazio),
+        isolation_case("delete", &format!("{MXESP}/{{department_id}}"), Empty),
         isolation_case(
             "post",
             "/admin/v1/orgs/{org_id}/flows/validate",
@@ -940,23 +939,23 @@ fn cases() -> Vec<IsolationCase> {
             "/admin/v1/orgs/{org_id}/flows/format",
             Json(r#"{"source":"Invadido"}"#),
         ),
-        isolation_case("get", "/admin/v1/orgs/{org_id}/flows", Vazio),
+        isolation_case("get", "/admin/v1/orgs/{org_id}/flows", Empty),
         isolation_case(
             "post",
             "/admin/v1/orgs/{org_id}/flows",
             Json(r#"{"source":"Invadido"}"#),
         ),
-        isolation_case("get", FL, Vazio),
+        isolation_case("get", FL, Empty),
         isolation_case("patch", FL, Json(r#"{"name":"Invadido"}"#)),
-        isolation_case("delete", FL, Vazio),
+        isolation_case("delete", FL, Empty),
         isolation_case("post", &format!("{FL}/publish"), Json(r#"{}"#)),
-        isolation_case("get", &format!("{FL}/revisions"), Vazio),
-        isolation_case("get", &format!("{FL}/revisions/{{number}}"), Vazio),
-        isolation_case("get", &format!("{FL}/diff"), Vazio),
-        isolation_case("get", &format!("{FL}/preview"), Vazio),
-        isolation_case("get", "/admin/v1/orgs/{org_id}/fichas", Vazio),
-        isolation_case("get", FI, Vazio),
-        isolation_case("get", &format!("{FI}/events"), Vazio),
+        isolation_case("get", &format!("{FL}/revisions"), Empty),
+        isolation_case("get", &format!("{FL}/revisions/{{number}}"), Empty),
+        isolation_case("get", &format!("{FL}/diff"), Empty),
+        isolation_case("get", &format!("{FL}/preview"), Empty),
+        isolation_case("get", "/admin/v1/orgs/{org_id}/fichas", Empty),
+        isolation_case("get", FI, Empty),
+        isolation_case("get", &format!("{FI}/events"), Empty),
         isolation_case(
             "post",
             &format!("{FI}/flow-runs"),
@@ -974,18 +973,18 @@ fn cases() -> Vec<IsolationCase> {
             &format!("{FR}/abandon"),
             Json(r#"{"motivo":"Invadido","chave_idempotencia":"Invadido"}"#),
         ),
-        isolation_case("post", &format!("{FI}/close"), Vazio),
+        isolation_case("post", &format!("{FI}/close"), Empty),
         isolation_case(
             "get",
             "/admin/v1/orgs/{org_id}/analytics/conversations",
-            Vazio,
+            Empty,
         ),
-        isolation_case("get", "/admin/v1/orgs/{org_id}/analytics/sla", Vazio),
-        isolation_case("get", "/admin/v1/orgs/{org_id}/usage/tokens", Vazio),
+        isolation_case("get", "/admin/v1/orgs/{org_id}/analytics/sla", Empty),
+        isolation_case("get", "/admin/v1/orgs/{org_id}/usage/tokens", Empty),
         isolation_case(
             "get",
             "/admin/v1/orgs/{org_id}/analytics/operational-summary",
-            Vazio,
+            Empty,
         ),
         isolation_case(
             "post",
@@ -995,7 +994,7 @@ fn cases() -> Vec<IsolationCase> {
         isolation_case(
             "get",
             "/admin/v1/orgs/{org_id}/site-conversations/{id}/messages",
-            Vazio,
+            Empty,
         ),
         isolation_case(
             "post",
@@ -1005,22 +1004,22 @@ fn cases() -> Vec<IsolationCase> {
         isolation_case(
             "get",
             "/admin/v1/orgs/{org_id}/site-conversations/{id}/turns/{turn_id}",
-            Vazio,
+            Empty,
         ),
         isolation_case(
             "post",
             "/admin/v1/orgs/{org_id}/site-conversations/{id}/turns/{turn_id}/cancel",
-            Vazio,
+            Empty,
         ),
         isolation_case(
             "get",
             "/admin/v1/orgs/{org_id}/site-conversations/{id}/events",
-            Vazio,
+            Empty,
         ),
         isolation_case(
             "get",
             "/admin/v1/orgs/{org_id}/site-conversations/{id}/events/stream",
-            Vazio,
+            Empty,
         ),
     ]
 }
@@ -1042,10 +1041,10 @@ fn published(doc: &Value) -> BTreeMap<(String, String), Op> {
                 .as_array()
                 .cloned()
                 .unwrap_or_default();
-            let has_match = |nome: &str, em: &str| {
+            let has_match = |display_name: &str, at: &str| {
                 parameters
                     .iter()
-                    .any(|p| p["name"] == nome && p["in"] == em)
+                    .any(|p| p["name"] == display_name && p["in"] == at)
             };
             map.insert(
                 (method.to_owned(), path.clone()),
@@ -1085,7 +1084,7 @@ fn coverage_gaps(
     }
     let with_case: BTreeSet<(String, String)> = cases
         .iter()
-        .map(|c| (c.method.to_owned(), c.modelo.clone()))
+        .map(|c| (c.method.to_owned(), c.model.clone()))
         .collect();
     for op in tenant.difference(&with_case) {
         errors.push(format!(
@@ -1107,18 +1106,18 @@ fn http_method(method: &str) -> Method {
 }
 
 fn case_path(isolation_case: &IsolationCase, target: &Org, org_id: &str) -> String {
-    let path = target.path(&isolation_case.modelo, org_id);
-    match isolation_case.tipo {
+    let path = target.path(&isolation_case.model, org_id);
+    match isolation_case.kind {
         CaseKind::File => format!("{path}?filename=invadido.png"),
         _ => path,
     }
 }
 
-fn case_body(tipo: CaseKind) -> RequestBody {
-    match tipo {
-        CaseKind::Vazio => RequestBody::NoneExpected,
-        CaseKind::Json(texto) => {
-            RequestBody::Json(serde_json::from_str(texto).expect("JSON do caso"))
+fn case_body(kind: CaseKind) -> RequestBody {
+    match kind {
+        CaseKind::Empty => RequestBody::NoneExpected,
+        CaseKind::Json(text) => {
+            RequestBody::Json(serde_json::from_str(text).expect("JSON do caso"))
         }
         CaseKind::Multipart => RequestBody::Multipart("Invadido".to_owned()),
         CaseKind::File => RequestBody::File(b"invadido".to_vec()),
@@ -1126,7 +1125,7 @@ fn case_body(tipo: CaseKind) -> RequestBody {
 }
 
 fn leak(r: &TestResponse, target: &Org) -> Option<String> {
-    if r.texto.contains(target.marker) {
+    if r.text.contains(target.marker) {
         return Some(format!(
             "marcador `{}` da outra org aparece na resposta",
             target.marker
@@ -1134,7 +1133,7 @@ fn leak(r: &TestResponse, target: &Org) -> Option<String> {
     }
     if r.status.is_success() {
         for id in target.ids() {
-            if r.texto.contains(&id) {
+            if r.text.contains(&id) {
                 return Some(format!(
                     "id `{id}` da outra org aparece numa resposta {}",
                     r.status
@@ -1150,32 +1149,32 @@ fn route_missing(r: &TestResponse) -> bool {
         || (r.status == StatusCode::NOT_FOUND && r.json["details"]["path"].is_string())
 }
 
-fn expected_control(method: &str, modelo: &str) -> Option<u16> {
+fn expected_control(method: &str, model: &str) -> Option<u16> {
     if method != "get" {
         return None;
     }
-    if modelo.ends_with("/whatsapp/state") {
+    if model.ends_with("/whatsapp/state") {
         return Some(409);
     }
-    if modelo.contains("/manifests/") {
+    if model.contains("/manifests/") {
         return Some(404);
     }
-    if modelo.ends_with("/analytics/sla") {
+    if model.ends_with("/analytics/sla") {
         return Some(422);
     }
-    if modelo.ends_with("/analytics/conversations") {
+    if model.ends_with("/analytics/conversations") {
         return Some(422);
     }
-    if modelo.ends_with("/usage/tokens") {
+    if model.ends_with("/usage/tokens") {
         return Some(422);
     }
-    if modelo.ends_with("/analytics/operational-summary") {
+    if model.ends_with("/analytics/operational-summary") {
         return Some(422);
     }
-    if modelo.ends_with("/site-conversations/{id}/events/stream") {
+    if model.ends_with("/site-conversations/{id}/events/stream") {
         return None;
     }
-    if modelo.ends_with("/site-conversations/{id}/turns/{turn_id}") {
+    if model.ends_with("/site-conversations/{id}/turns/{turn_id}") {
         return None;
     }
     Some(200)
@@ -1196,11 +1195,10 @@ fn with_query(path: String, query: &str) -> String {
     }
 }
 
-fn has_other_org_id(modelo: &str, other_org: &Org) -> bool {
-    other_org
-        .params()
-        .iter()
-        .any(|(nome, _)| *nome != "kind" && modelo.contains(&format!("{{{nome}}}")))
+fn has_other_org_id(model: &str, other_org: &Org) -> bool {
+    other_org.params().iter().any(|(display_name, _)| {
+        *display_name != "kind" && model.contains(&format!("{{{display_name}}}"))
+    })
 }
 
 async fn check_operation(
@@ -1216,7 +1214,7 @@ async fn check_operation(
     let label = format!(
         "{} {}",
         isolation_case.method.to_uppercase(),
-        isolation_case.modelo
+        isolation_case.model
     );
     let if_match = op.if_match.then_some(1u64);
     let variantes: Vec<&str> = if op.force && isolation_case.method == "delete" {
@@ -1225,12 +1223,12 @@ async fn check_operation(
         vec![""]
     };
 
-    if !isolation_case.modelo.contains("{org_id}") {
+    if !isolation_case.model.contains("{org_id}") {
         if isolation_case.method == "get" {
             let r = s
                 .call(
                     method.clone(),
-                    &isolation_case.modelo,
+                    &isolation_case.model,
                     &a.token,
                     RequestBody::NoneExpected,
                     None,
@@ -1257,16 +1255,16 @@ async fn check_operation(
                     "{label}: token de A deveria ver só a própria org, viu {ids:?}"
                 ));
             }
-            if let Some(motivo) = leak(&r, b) {
-                failures.push(format!("{label}: {motivo}"));
+            if let Some(reason) = leak(&r, b) {
+                failures.push(format!("{label}: {reason}"));
             }
         } else {
             let r = s
                 .call(
                     method.clone(),
-                    &isolation_case.modelo,
+                    &isolation_case.model,
                     &a.token,
-                    case_body(isolation_case.tipo),
+                    case_body(isolation_case.kind),
                     None,
                 )
                 .await;
@@ -1274,7 +1272,7 @@ async fn check_operation(
             if r.status != StatusCode::FORBIDDEN {
                 failures.push(format!(
                     "{label} (token de org): esperado 403, veio {} {}",
-                    r.status, r.texto
+                    r.status, r.text
                 ));
             }
         }
@@ -1288,7 +1286,7 @@ async fn check_operation(
                 method.clone(),
                 &path,
                 "",
-                case_body(isolation_case.tipo),
+                case_body(isolation_case.kind),
                 None,
             )
             .await;
@@ -1309,7 +1307,7 @@ async fn check_operation(
                     method.clone(),
                     &path,
                     &atacante.token,
-                    case_body(isolation_case.tipo),
+                    case_body(isolation_case.kind),
                     if_match,
                 )
                 .await;
@@ -1317,21 +1315,21 @@ async fn check_operation(
             if r.status != StatusCode::FORBIDDEN {
                 failures.push(format!(
                     "{label} [{query}] [atacante {}, vítima {}, org da vítima]: esperado 403, veio {} {}",
-                    atacante.marker, other_org.marker, r.status, r.texto
+                    atacante.marker, other_org.marker, r.status, r.text
                 ));
             }
-            if let Some(motivo) = leak(&r, other_org) {
-                failures.push(format!("{label} [{query}] [org da vítima]: {motivo}"));
+            if let Some(reason) = leak(&r, other_org) {
+                failures.push(format!("{label} [{query}] [org da vítima]: {reason}"));
             }
 
-            if has_other_org_id(&isolation_case.modelo, other_org) {
+            if has_other_org_id(&isolation_case.model, other_org) {
                 let path = with_query(case_path(isolation_case, other_org, &atacante.id), query);
                 let r = s
                     .call(
                         method.clone(),
                         &path,
                         &atacante.token,
-                        case_body(isolation_case.tipo),
+                        case_body(isolation_case.kind),
                         if_match,
                     )
                     .await;
@@ -1339,7 +1337,7 @@ async fn check_operation(
                 if !matches!(r.status.as_u16(), 403 | 404 | 409) {
                     failures.push(format!(
                         "{label} [{query}] [org própria, ids de {}]: esperado 403/404/409, veio {} {}",
-                        other_org.marker, r.status, r.texto
+                        other_org.marker, r.status, r.text
                     ));
                 }
                 if route_missing(&r) {
@@ -1347,15 +1345,15 @@ async fn check_operation(
                         "{label} [{query}]: o caminho montado não existe no roteador"
                     ));
                 }
-                if let Some(motivo) = leak(&r, other_org) {
+                if let Some(reason) = leak(&r, other_org) {
                     failures.push(format!(
-                        "{label} [{query}] [org própria, ids da vítima]: {motivo}"
+                        "{label} [{query}] [org própria, ids da vítima]: {reason}"
                     ));
                 }
             }
         }
 
-        if isolation_case.method == "get" && !has_other_org_id(&isolation_case.modelo, other_org) {
+        if isolation_case.method == "get" && !has_other_org_id(&isolation_case.model, other_org) {
             let path = case_path(isolation_case, atacante, &atacante.id);
             let r = s
                 .call(
@@ -1367,16 +1365,16 @@ async fn check_operation(
                 )
                 .await;
             requests += 1;
-            if let Some(motivo) = leak(&r, other_org) {
+            if let Some(reason) = leak(&r, other_org) {
                 failures.push(format!(
-                    "{label} [lista própria de {}]: {motivo}",
+                    "{label} [lista própria de {}]: {reason}",
                     atacante.marker
                 ));
             }
         }
     }
 
-    if let Some(expected) = expected_control(isolation_case.method, &isolation_case.modelo) {
+    if let Some(expected) = expected_control(isolation_case.method, &isolation_case.model) {
         let path = case_path(isolation_case, a, &a.id);
         let r = s
             .call(
@@ -1391,7 +1389,7 @@ async fn check_operation(
         if r.status.as_u16() != expected {
             failures.push(format!(
                 "{label} [controle do dono]: esperado {expected}, veio {} {}",
-                r.status, r.texto
+                r.status, r.text
             ));
         }
         if route_missing(&r) {
@@ -1404,8 +1402,8 @@ async fn check_operation(
 }
 
 fn leak_without_echo(r: &TestResponse, target: &Org, eco: &str) -> Option<String> {
-    let texto = r.texto.replace(eco, "");
-    if texto.contains(target.marker) {
+    let text = r.text.replace(eco, "");
+    if text.contains(target.marker) {
         return Some(format!(
             "marcador `{}` da outra org aparece na resposta",
             target.marker
@@ -1449,10 +1447,10 @@ async fn org_isolation_generated_from_openapi() {
         !audit_before_a.is_empty() && !audit_before_b.is_empty(),
         "fixture sem auditoria: a comparação de auditoria não provaria nada"
     );
-    for (nome, snapshots) in [("A", &before_a), ("B", &before_b)] {
+    for (display_name, snapshots) in [("A", &before_a), ("B", &before_b)] {
         for line in snapshots.iter() {
             if !line.contains(" -> 200 ") {
-                panic!("fixture da org {nome} incompleta, o dono não lê: {line}");
+                panic!("fixture da org {display_name} incompleta, o dono não lê: {line}");
             }
         }
     }
@@ -1463,7 +1461,7 @@ async fn org_isolation_generated_from_openapi() {
         .map(|isolation_case| {
             let op = published_ref[&(
                 isolation_case.method.to_owned(),
-                isolation_case.modelo.clone(),
+                isolation_case.model.clone(),
             )];
             check_operation(s_ref, isolation_case, op, &a, &b)
         })
@@ -1521,7 +1519,7 @@ async fn org_isolation_generated_from_openapi() {
         if !matches!(r.status.as_u16(), 400 | 404 | 409 | 422) {
             failures.push(format!(
                 "cruzamento {method} {path} com {body}: esperado erro de referência (400/404/409/422), veio {} {}",
-                r.status, r.texto
+                r.status, r.text
             ));
         }
         let vazou = if eco.is_empty() {
@@ -1529,8 +1527,8 @@ async fn org_isolation_generated_from_openapi() {
         } else {
             leak_without_echo(&r, &b, &eco)
         };
-        if let Some(motivo) = vazou {
-            failures.push(format!("cruzamento {method} {path}: {motivo}"));
+        if let Some(reason) = vazou {
+            failures.push(format!("cruzamento {method} {path}: {reason}"));
         }
     }
 
@@ -1561,7 +1559,7 @@ async fn org_isolation_generated_from_openapi() {
     if transfer.status != StatusCode::NOT_FOUND {
         failures.push(format!(
             "transferência atravessada (conversa de {}, departamento de {}): esperado 404, veio {} {}",
-            b.marker, a.marker, transfer.status, transfer.texto
+            b.marker, a.marker, transfer.status, transfer.text
         ));
     }
     let conversation_after = s
@@ -1584,25 +1582,27 @@ async fn org_isolation_generated_from_openapi() {
 
     let after_a = s.snapshot(&a).await;
     let after_b = s.snapshot(&b).await;
-    for (before, after, nome) in [(&before_a, &after_a, "A"), (&before_b, &after_b, "B")] {
+    for (before, after, display_name) in [(&before_a, &after_a, "A"), (&before_b, &after_b, "B")] {
         if before.len() != after.len() {
-            failures.push(format!("estado da org {nome}: número de leituras mudou"));
+            failures.push(format!(
+                "estado da org {display_name}: número de leituras mudou"
+            ));
         }
         for (x, y) in before.iter().zip(after.iter()) {
             if x != y {
                 failures.push(format!(
-                    "estado da org {nome} mudou após os ataques:\n  antes: {x}\n  depois: {y}"
+                    "estado da org {display_name} mudou após os ataques:\n  antes: {x}\n  depois: {y}"
                 ));
             }
         }
     }
-    for (before, after, nome) in [
+    for (before, after, display_name) in [
         (&audit_before_a, &s.audit(&a), "A"),
         (&audit_before_b, &s.audit(&b), "B"),
     ] {
         if before != after {
             failures.push(format!(
-                "auditoria da org {nome} mudou após os ataques: {} registro(s) antes, {} depois",
+                "auditoria da org {display_name} mudou após os ataques: {} registro(s) antes, {} depois",
                 before.len(),
                 after.len()
             ));
@@ -1647,8 +1647,8 @@ fn missing_case_fails_coverage() {
         "If-Match declarado na OpenAPI tem de ser lido"
     );
     let cases = vec![
-        isolation_case("get", "/admin/v1/orgs/{org_id}/agents", CaseKind::Vazio),
-        isolation_case("get", "/admin/v1/orgs/{org_id}/fantasma", CaseKind::Vazio),
+        isolation_case("get", "/admin/v1/orgs/{org_id}/agents", CaseKind::Empty),
+        isolation_case("get", "/admin/v1/orgs/{org_id}/fantasma", CaseKind::Empty),
     ];
     let errors = coverage_gaps(&published, &cases);
     assert!(
@@ -1676,9 +1676,9 @@ fn missing_case_fails_coverage() {
     );
 
     let completos = vec![
-        isolation_case("get", "/admin/v1/orgs/{org_id}/agents", CaseKind::Vazio),
-        isolation_case("post", "/admin/v1/orgs/{org_id}/agents", CaseKind::Vazio),
-        isolation_case("get", "/admin/v1/orgs/{org_id}/rota-nova", CaseKind::Vazio),
+        isolation_case("get", "/admin/v1/orgs/{org_id}/agents", CaseKind::Empty),
+        isolation_case("post", "/admin/v1/orgs/{org_id}/agents", CaseKind::Empty),
+        isolation_case("get", "/admin/v1/orgs/{org_id}/rota-nova", CaseKind::Empty),
     ];
     assert!(
         coverage_gaps(&published, &completos).is_empty(),
@@ -1710,11 +1710,11 @@ async fn start_with_turn(
     Arc<ProductCatalog>,
 ) {
     let repassa = Arc::new(DeferredProvider(std::sync::OnceLock::new()));
-    let provedor: Arc<dyn LlmProvider> = Arc::clone(&repassa) as Arc<dyn LlmProvider>;
-    let mut saida: Option<(Arc<KnowledgeBase>, Arc<ProductCatalog>)> = None;
-    let servidor = TestServer::new(label, |store, config, directory| {
+    let provider: Arc<dyn LlmProvider> = Arc::clone(&repassa) as Arc<dyn LlmProvider>;
+    let mut output: Option<(Arc<KnowledgeBase>, Arc<ProductCatalog>)> = None;
+    let server = TestServer::new(label, |store, config, directory| {
         let blobs = directory.join("dados").join("blobs");
-        let estado = ServerState::new(Arc::clone(store), config.clone())
+        let server_state = ServerState::new(Arc::clone(store), config.clone())
             .expect("estado do servidor")
             .with_files(FileConfig::default(blobs.clone()));
         let runtime_config = ConfigHot::new(
@@ -1727,7 +1727,7 @@ async fn start_with_turn(
             Arc::clone(store),
             runtime_config,
             limiter,
-            provedor,
+            provider,
             TurnOptions::default(),
             MetricsTurn::own(),
         )
@@ -1744,37 +1744,36 @@ async fn start_with_turn(
         let base = KnowledgeBase::new(Arc::clone(store), Arc::clone(&index));
         let catalog = ProductCatalog::new(Arc::clone(store), index);
         let search: Arc<dyn KnowledgeSearcher> = Arc::clone(&base) as Arc<dyn KnowledgeSearcher>;
-        let registro =
-            QueryKnowledge::registro(Arc::clone(engine.hot_config()), Arc::clone(&search));
-        let registro = registro.com(SearchProduct::new(
+        let record = QueryKnowledge::registro(Arc::clone(engine.hot_config()), Arc::clone(&search));
+        let record = record.com(SearchProduct::new(
             Arc::clone(engine.hot_config()),
             Arc::clone(&catalog) as Arc<dyn ProductSearcher>,
         ));
-        let registro = poph_agent::cart::register(registro, Arc::clone(store));
-        let registro = poph_agent::library::register(registro, Arc::clone(store));
-        let engine = Arc::new(engine.with_tools(Arc::new(registro)).with_search(search));
+        let record = poph_agent::cart::register(record, Arc::clone(store));
+        let record = poph_agent::library::register(record, Arc::clone(store));
+        let engine = Arc::new(engine.with_tools(Arc::new(record)).with_search(search));
         let processor = Arc::new(TurnProcessor::new(Arc::clone(&engine)));
         let actors = Actors::new(
             processor.clone(),
             ActorOptions::default(),
             MetricsMemory::own(),
         );
-        let fluxo = Fluxo::new(Arc::clone(store), actors, FlowOptions::default());
-        processor.attach_io(fluxo.clone());
-        saida = Some((base, catalog));
-        estado
+        let flow = Fluxo::new(Arc::clone(store), actors, FlowOptions::default());
+        processor.attach_io(flow.clone());
+        output = Some((base, catalog));
+        server_state
             .with_engine(engine)
-            .with_turn(fluxo, Duration::from_millis(20))
+            .with_turn(flow, Duration::from_millis(20))
     })
     .await;
-    let (base, catalog) = saida.expect("base e catálogo montados");
-    (servidor, repassa, base, catalog)
+    let (base, catalog) = output.expect("base e catálogo montados");
+    (server, repassa, base, catalog)
 }
 
-fn tool_call(id: &str, nome: &str, arguments: Value) -> LlmEvent {
+fn tool_call(id: &str, display_name: &str, arguments: Value) -> LlmEvent {
     LlmEvent::Tool(ToolCall {
         id: id.to_owned(),
-        nome: nome.to_owned(),
+        nome: display_name.to_owned(),
         arguments,
     })
 }
@@ -1802,16 +1801,16 @@ fn outbox_count(s: &TestServer, org: poph_types::OrgId) -> u64 {
         OutboxState::Failed,
     ]
     .into_iter()
-    .map(|estado| {
+    .map(|server_state| {
         s.store
             .outbox()
-            .count_by_state(org, estado)
+            .count_by_state(org, server_state)
             .expect("contagem da caixa de saída")
     })
     .sum()
 }
 
-async fn send_message(s: &TestServer, org: &Org, texto: &str) -> TestResponse {
+async fn send_message(s: &TestServer, org: &Org, text: &str) -> TestResponse {
     let path = format!(
         "/admin/v1/orgs/{}/agents/{}/test-chat/{}/messages",
         org.id, org.agent, org.conversation
@@ -1820,17 +1819,17 @@ async fn send_message(s: &TestServer, org: &Org, texto: &str) -> TestResponse {
         Method::POST,
         &path,
         &org.token,
-        RequestBody::Multipart(texto.to_owned()),
+        RequestBody::Multipart(text.to_owned()),
         None,
     )
     .await
 }
 
-fn id<T: std::str::FromStr>(texto: &str) -> T
+fn id<T: std::str::FromStr>(text: &str) -> T
 where
     T::Err: std::fmt::Debug,
 {
-    texto.parse().expect("id válido")
+    text.parse().expect("id válido")
 }
 
 #[tokio::test]
@@ -1905,24 +1904,24 @@ async fn llm_tools_cannot_access_other_org() {
     if r_a.status != StatusCode::OK {
         failures.push(format!(
             "turno de A: esperado 200 (SSE), veio {}: {}",
-            r_a.status, r_a.texto
+            r_a.status, r_a.text
         ));
     }
     let requests = fake.received();
     let res_a = results(&requests, "a");
     println!("resultados das ferramentas no turno de A (atacante):");
-    for (id, texto) in &res_a {
-        println!("  {id}: {}", texto.lines().next().unwrap_or(""));
+    for (id, text) in &res_a {
+        println!("  {id}: {}", text.lines().next().unwrap_or(""));
     }
-    for (id, texto) in &res_a {
-        if texto.contains(MARKER_B) {
+    for (id, text) in &res_a {
+        if text.contains(MARKER_B) {
             failures.push(format!(
                 "ferramenta {id} do turno de A devolveu dado da outra org"
             ));
         }
-        if texto.contains("enfileirado para envio") || texto.contains("adicionado") {
+        if text.contains("enfileirado para envio") || text.contains("adicionado") {
             failures.push(format!(
-                "ferramenta {id} do turno de A agiu com id da outra org: {texto}"
+                "ferramenta {id} do turno de A agiu com id da outra org: {text}"
             ));
         }
     }
@@ -1960,8 +1959,8 @@ async fn llm_tools_cannot_access_other_org() {
     let requests = fake.received();
     let res_b = results(&requests, "b");
     println!("resultados das ferramentas no turno de B (controle):");
-    for (id, texto) in &res_b {
-        println!("  {id}: {}", texto.lines().next().unwrap_or(""));
+    for (id, text) in &res_b {
+        println!("  {id}: {}", text.lines().next().unwrap_or(""));
     }
     let control = [
         (
@@ -1983,10 +1982,10 @@ async fn llm_tools_cannot_access_other_org() {
                 .any(|(_, t)| t.contains(&format!("Produto {MARKER_B}"))),
         ),
     ];
-    for (nome, ok) in control {
+    for (display_name, ok) in control {
         if !ok {
             failures.push(format!(
-                "controle falhou ({nome}): sem ele o teste do atacante não prova nada"
+                "controle falhou ({display_name}): sem ele o teste do atacante não prova nada"
             ));
         }
     }
@@ -2045,19 +2044,19 @@ async fn knowledge_search_excludes_other_org_chunks() {
         ("org de A, agente de B", oa, ab),
         ("org de B, agente de A", ob, aa),
     ];
-    for (nome, org, agent) in scenarios {
+    for (display_name, org, agent) in scenarios {
         let chunks = base
             .search(org, agent, MARKER_B.to_owned(), params)
             .await
             .expect("busca");
         for t in &chunks {
             if t.texto.contains(MARKER_B) || t.title.contains(MARKER_B) {
-                failures.push(format!("{nome}: trecho de B voltou: {}", t.texto));
+                failures.push(format!("{display_name}: trecho de B voltou: {}", t.texto));
             }
         }
-        if nome == "org de A, agente de B" && !chunks.is_empty() {
+        if display_name == "org de A, agente de B" && !chunks.is_empty() {
             failures.push(format!(
-                "{nome}: agente de B não deveria achar nada sob a org de A"
+                "{display_name}: agente de B não deveria achar nada sob a org de A"
             ));
         }
     }
@@ -2112,14 +2111,14 @@ fn leak_detector_checks_ids_only_in_success_responses() {
         group: "44444444-dddd".to_owned(),
         item: "55555555-eeee".to_owned(),
         file: "66666666-ffff".to_owned(),
-        integracao: "77777777-0000".to_owned(),
+        integration: "77777777-0000".to_owned(),
         category: "88888888-1111".to_owned(),
         department: "99999999-2222".to_owned(),
         product: "aaaaaaaa-3333".to_owned(),
         conversation: "bbbbbbbb-4444".to_owned(),
-        fluxo: "eeeeeeee-7777".to_owned(),
+        flow: "eeeeeeee-7777".to_owned(),
         version_agent: 1,
-        ficha: "ffffffff-8888".to_owned(),
+        service_case: "ffffffff-8888".to_owned(),
         execution: "00000000-9999".to_owned(),
         message: "cccccccc-5555".to_owned(),
         attachment: "dddddddd-6666".to_owned(),
@@ -2127,9 +2126,9 @@ fn leak_detector_checks_ids_only_in_success_responses() {
         site_turn: "ffffffff-0000".to_owned(),
         marker: MARKER_B,
     };
-    let response = |status: u16, texto: &str| TestResponse {
+    let response = |status: u16, text: &str| TestResponse {
         status: StatusCode::from_u16(status).unwrap(),
-        texto: texto.to_owned(),
+        text: text.to_owned(),
         json: Value::Null,
     };
     assert!(
@@ -2184,7 +2183,7 @@ async fn snapshot_comparison_detects_write() {
         r.status,
         StatusCode::OK,
         "o dono pode alterar o próprio agente: {}",
-        r.texto
+        r.text
     );
     let after = s.snapshot(&b).await;
     assert_ne!(
