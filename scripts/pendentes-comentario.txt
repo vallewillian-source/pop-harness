@@ -4,12 +4,3 @@ M05	4	crates/poph-jev/Cargo.toml
 M10b	10	crates/poph-agent/Cargo.toml
 M11a-c	3	crates/poph-server/Cargo.toml
 M11a-c	11	crates/poph-server/build.rs
-M12a	7	crates/poph/Cargo.toml
-M12a	2	crates/poph/build.rs
-M12a	9	crates/poph/examples/semear_org.rs
-M12a	30	crates/poph/src/departamento.rs
-M12a	25	crates/poph/src/ficha.rs
-M12a	14	crates/poph/src/jev.rs
-M12a	19	crates/poph/src/logs.rs
-M12a	9	crates/poph/src/modelo.rs
-M12a	21	crates/poph/src/retencao.rs
