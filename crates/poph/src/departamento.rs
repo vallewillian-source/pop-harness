@@ -1,8 +1,3 @@
-//! `poph department`: departamentos de uma org (destino das conversas e das transferências). HR-08.
-//!
-//! Excluir departamento não apaga conversas nem agentes: os campos que apontavam para ele ficam
-//! vazios (o agente perde o departamento padrão e o departamento de transferência).
-
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -17,142 +12,132 @@ use crate::support::{
     validate_limit, validate_text,
 };
 
-/// Subcomandos de `poph department` (todos exigem `--org`).
 #[derive(Debug, Subcommand)]
-pub enum AcaoDepartamento {
-    /// Cria um departamento na org.
+pub enum DepartmentAction {
+    #[command(about = "Cria um departamento na org")]
     Create(CriarDepartamento),
-    /// Lista os departamentos da org (primeira página, por id).
-    List(ListarDepartamentos),
-    /// Mostra um departamento.
-    Show(ReferenciaDepartamento),
-    /// Altera um departamento com `--if-match`.
+    #[command(about = "Lista os departamentos da org (primeira página, por id)")]
+    List(ListDepartments),
+    #[command(about = "Mostra um departamento")]
+    Show(DepartmentReference),
+    #[command(about = "Altera um departamento com `--if-match`")]
     Update(AtualizarDepartamento),
-    /// Exclui o departamento (agentes e conversas que o usavam ficam sem ele).
-    Delete(ReferenciaDepartamento),
+    #[command(about = "Exclui o departamento (agentes e conversas que o usavam ficam sem ele)")]
+    Delete(DepartmentReference),
 }
 
-/// `poph department create`.
 #[derive(Debug, Args)]
 pub struct CriarDepartamento {
-    /// Nome (até 120 caracteres; não pode repetir na org, sem diferenciar maiúsculas).
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Nome (até 120 caracteres; não pode repetir na org, sem diferenciar maiúsculas)"
+    )]
     pub name: String,
 
-    /// Descrição curta.
-    #[arg(long, default_value = "")]
+    #[arg(long, default_value = "", help = "Descrição curta")]
     pub description: String,
 
-    /// Saída em JSON (formato estável).
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON (formato estável)")]
     pub json: bool,
 }
 
-/// `poph department list`.
 #[derive(Debug, Args)]
-pub struct ListarDepartamentos {
-    /// Quantos departamentos trazer (1 a 200).
-    #[arg(long, default_value_t = 50)]
+pub struct ListDepartments {
+    #[arg(
+        long,
+        default_value_t = 50,
+        help = "Quantos departamentos trazer (1 a 200)"
+    )]
     pub limit: u32,
 
-    /// Saída em JSON (formato estável).
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON (formato estável)")]
     pub json: bool,
 }
 
-/// Referência a um departamento pelo id (UUID v7).
 #[derive(Debug, Args)]
-pub struct ReferenciaDepartamento {
-    /// Id (UUID v7) do departamento.
+pub struct DepartmentReference {
+    #[arg(help = "Id (UUID v7) do departamento")]
     pub departamento: String,
 
-    /// Saída em JSON (formato estável).
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON (formato estável)")]
     pub json: bool,
 }
 
-/// `poph department update`.
 #[derive(Debug, Args)]
 pub struct AtualizarDepartamento {
-    /// Id (UUID v7) do departamento.
+    #[arg(help = "Id (UUID v7) do departamento")]
     pub departamento: String,
 
-    /// Versão lida com `show` (`If-Match`). Obrigatória.
-    #[arg(long)]
+    #[arg(long, help = "Versão lida com `show` (`If-Match`). Obrigatória")]
     pub if_match: u64,
 
-    /// Novo nome.
-    #[arg(long)]
+    #[arg(long, help = "Novo nome")]
     pub name: Option<String>,
 
-    /// Nova descrição.
-    #[arg(long)]
+    #[arg(long, help = "Nova descrição")]
     pub description: Option<String>,
 
-    /// Nova situação: `active`, `inactive` ou `archived`.
-    #[arg(long)]
+    #[arg(long, help = "Nova situação: `active`, `inactive` ou `archived`")]
     pub status: Option<String>,
 
-    /// Saída em JSON (formato estável).
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON (formato estável)")]
     pub json: bool,
 }
 
-/// Executa um subcomando de `poph department`.
-pub fn executar(
+pub fn run(
     flag: Option<PathBuf>,
-    ambiente: &config::Environment,
+    environment: &config::Environment,
     offline: bool,
     org: Option<&str>,
-    acao: AcaoDepartamento,
+    acao: DepartmentAction,
 ) -> ExitCode {
-    let (store, org) = match open_with_org(flag, ambiente, offline, org) {
-        Ok(par) => par,
-        Err(erro) => return failure(erro),
+    let (store, org) = match open_with_org(flag, environment, offline, org) {
+        Ok(pair) => pair,
+        Err(error) => return failure(error),
     };
     match acao {
-        AcaoDepartamento::Create(args) => criar(&store, org, args),
-        AcaoDepartamento::List(args) => listar(&store, org, args),
-        AcaoDepartamento::Show(args) => mostrar(&store, org, args),
-        AcaoDepartamento::Update(args) => atualizar(&store, org, args),
-        AcaoDepartamento::Delete(args) => excluir(&store, org, args),
+        DepartmentAction::Create(args) => criar(&store, org, args),
+        DepartmentAction::List(args) => listar(&store, org, args),
+        DepartmentAction::Show(args) => mostrar(&store, org, args),
+        DepartmentAction::Update(args) => atualizar(&store, org, args),
+        DepartmentAction::Delete(args) => excluir(&store, org, args),
     }
 }
 
 fn criar(store: &Store, org: OrgId, args: CriarDepartamento) -> ExitCode {
     let nome = match validate_text("nome", &args.name, 120) {
         Ok(nome) => nome,
-        Err(erro) => return failure(erro),
+        Err(error) => return failure(error),
     };
-    let novo = NewDepartment {
+    let new_department = NewDepartment {
         name: nome,
         description: args.description.trim().to_owned(),
     };
-    match store.departments().create(org, novo) {
+    match store.departments().create(org, new_department) {
         Ok(departamento) => saida(&departamento, args.json, "departamento criado"),
-        Err(erro) => failure(describe(&erro)),
+        Err(error) => failure(describe(&error)),
     }
 }
 
-fn listar(store: &Store, org: OrgId, args: ListarDepartamentos) -> ExitCode {
-    let pagina = match validate_limit(args.limit) {
-        Ok(pagina) => pagina,
-        Err(erro) => return failure(erro),
+fn listar(store: &Store, org: OrgId, args: ListDepartments) -> ExitCode {
+    let page = match validate_limit(args.limit) {
+        Ok(page) => page,
+        Err(error) => return failure(error),
     };
-    match store.departments().list(org, pagina) {
-        Ok(departamentos) => {
+    match store.departments().list(org, page) {
+        Ok(departments) => {
             if args.json {
-                let itens: Vec<Value> = departamentos.iter().map(json_departamento).collect();
+                let items: Vec<Value> = departments.iter().map(json_department).collect();
                 print_json(&json!({
                     "versao_relatorio": 1,
                     "org_id": org.to_string(),
-                    "total": itens.len(),
-                    "departments": itens,
+                    "total": items.len(),
+                    "departments": items,
                 }));
-            } else if departamentos.is_empty() {
+            } else if departments.is_empty() {
                 println!("Nenhum departamento na org.");
             } else {
-                for departamento in &departamentos {
+                for departamento in &departments {
                     println!(
                         "{}  {:<9} {}",
                         departamento.id,
@@ -160,23 +145,23 @@ fn listar(store: &Store, org: OrgId, args: ListarDepartamentos) -> ExitCode {
                         departamento.name
                     );
                 }
-                println!("\n{} departamento(s).", departamentos.len());
+                println!("\n{} departamento(s).", departments.len());
             }
             ExitCode::SUCCESS
         }
-        Err(erro) => failure(describe(&erro)),
+        Err(error) => failure(describe(&error)),
     }
 }
 
-fn mostrar(store: &Store, org: OrgId, args: ReferenciaDepartamento) -> ExitCode {
+fn mostrar(store: &Store, org: OrgId, args: DepartmentReference) -> ExitCode {
     let departamento = match parse_id::<DepartmentId>(&args.departamento).and_then(|id| {
         store
             .departments()
             .get(org, id)
-            .map_err(|erro| mensagem_de_ausencia(erro, &args.departamento))
+            .map_err(|error| absence_message(error, &args.departamento))
     }) {
         Ok(departamento) => departamento,
-        Err(erro) => return failure(erro),
+        Err(error) => return failure(error),
     };
     saida(&departamento, args.json, "")
 }
@@ -184,7 +169,7 @@ fn mostrar(store: &Store, org: OrgId, args: ReferenciaDepartamento) -> ExitCode 
 fn atualizar(store: &Store, org: OrgId, args: AtualizarDepartamento) -> ExitCode {
     let id: DepartmentId = match parse_id(&args.departamento) {
         Ok(id) => id,
-        Err(erro) => return failure(erro),
+        Err(error) => return failure(error),
     };
     let nome = match args
         .name
@@ -193,35 +178,34 @@ fn atualizar(store: &Store, org: OrgId, args: AtualizarDepartamento) -> ExitCode
         .transpose()
     {
         Ok(nome) => nome,
-        Err(erro) => return failure(erro),
+        Err(error) => return failure(error),
     };
     let status = match args.status.as_deref().map(parse_status).transpose() {
         Ok(status) => status,
-        Err(erro) => return failure(erro),
+        Err(error) => return failure(error),
     };
     let descricao = args.description.map(|texto| texto.trim().to_owned());
     if nome.is_none() && descricao.is_none() && status.is_none() {
         return failure("nada a alterar: informe --name, --description ou --status");
     }
-    let mudanca = DepartmentChange {
+    let change = DepartmentChange {
         name: nome,
         description: descricao,
         status,
     };
-    match store.departments().update(org, id, args.if_match, mudanca) {
+    match store.departments().update(org, id, args.if_match, change) {
         Ok(departamento) => saida(&departamento, args.json, "departamento alterado"),
-        Err(erro) => failure(describe(&erro)),
+        Err(error) => failure(describe(&error)),
     }
 }
 
-fn excluir(store: &Store, org: OrgId, args: ReferenciaDepartamento) -> ExitCode {
+fn excluir(store: &Store, org: OrgId, args: DepartmentReference) -> ExitCode {
     let id: DepartmentId = match parse_id(&args.departamento) {
         Ok(id) => id,
-        Err(erro) => return failure(erro),
+        Err(error) => return failure(error),
     };
-    // Confere que existe nesta org antes de apagar, para a mensagem sair certa.
-    if let Err(erro) = store.departments().get(org, id) {
-        return failure(mensagem_de_ausencia(erro, &args.departamento));
+    if let Err(error) = store.departments().get(org, id) {
+        return failure(absence_message(error, &args.departamento));
     }
     match store.departments().delete(org, id) {
         Ok(()) => {
@@ -239,36 +223,35 @@ fn excluir(store: &Store, org: OrgId, args: ReferenciaDepartamento) -> ExitCode 
             }
             ExitCode::SUCCESS
         }
-        Err(erro) => failure(describe(&erro)),
+        Err(error) => failure(describe(&error)),
     }
 }
 
-fn mensagem_de_ausencia(erro: poph_store::StoreError, texto: &str) -> String {
-    if erro.is_not_found() {
+fn absence_message(error: poph_store::StoreError, texto: &str) -> String {
+    if error.is_not_found() {
         format!("não existe departamento `{texto}` nesta org")
     } else {
-        describe(&erro)
+        describe(&error)
     }
 }
 
-/// Saída de um departamento: JSON ou texto.
 fn saida(departamento: &Departamento, json: bool, mensagem: &str) -> ExitCode {
     if json {
         print_json(&json!({
             "versao_relatorio": 1,
             "org_id": departamento.org_id.to_string(),
-            "department": json_departamento(departamento),
+            "department": json_department(departamento),
         }));
     } else {
         if !mensagem.is_empty() {
             println!("{mensagem}\n");
         }
-        print!("{}", texto_departamento(departamento));
+        print!("{}", text_department(departamento));
     }
     ExitCode::SUCCESS
 }
 
-fn json_departamento(departamento: &Departamento) -> Value {
+fn json_department(departamento: &Departamento) -> Value {
     json!({
         "id": departamento.id.to_string(),
         "org_id": departamento.org_id.to_string(),
@@ -281,7 +264,7 @@ fn json_departamento(departamento: &Departamento) -> Value {
     })
 }
 
-fn texto_departamento(departamento: &Departamento) -> String {
+fn text_department(departamento: &Departamento) -> String {
     format!(
         "departamento {}\n  nome: {}\n  descrição: {}\n  situação: {}\n  versão: {}\n",
         departamento.id,

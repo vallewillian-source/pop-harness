@@ -39,7 +39,7 @@ pub fn run(flag: Option<PathBuf>, environment: &config::Environment, args: Serve
             return ExitCode::from(1);
         }
     };
-    if let Err(error) = crate::logs::iniciar(
+    if let Err(error) = crate::logs::start(
         &configuracao.log,
         environment
             .get(crate::logs::VAR_RUST_LOG)

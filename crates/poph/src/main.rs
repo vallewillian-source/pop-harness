@@ -108,7 +108,7 @@ enum Command {
     )]
     Category(categoria::CategoryAction),
     #[command(subcommand, about = "Gerencia os departamentos de uma org (`--org`)")]
-    Department(departamento::AcaoDepartamento),
+    Department(departamento::DepartmentAction),
     #[command(
         subcommand,
         about = "Base de conhecimento: grupos, itens, vínculo com agentes e índice (HR-17)"
@@ -145,7 +145,7 @@ enum Command {
         subcommand,
         about = "Fichas da org (um atendimento por Ficha): listar e mostrar, com as execuções de fluxo"
     )]
-    Ficha(ficha::AcaoFicha),
+    Ficha(ficha::CaseAction),
     #[command(
         subcommand,
         about = "Retenção do histórico: apaga o que venceu (`run`) e mostra a configuração (`show`)"
@@ -220,7 +220,7 @@ fn main() -> ExitCode {
             cli.org.as_deref(),
             acao,
         ),
-        Command::Department(acao) => departamento::executar(
+        Command::Department(acao) => departamento::run(
             cli.config,
             &environment,
             cli.offline,
@@ -229,7 +229,7 @@ fn main() -> ExitCode {
         ),
         Command::Jev(action) => jev::run(cli.config, &environment, action),
         Command::Flow(acao) => flow::run(cli.config, &environment, cli.org.as_deref(), acao),
-        Command::Ficha(acao) => ficha::executar(cli.config, &environment, cli.org.as_deref(), acao),
+        Command::Ficha(acao) => ficha::run(cli.config, &environment, cli.org.as_deref(), acao),
         Command::Retention(action) => {
             retention::run(cli.config, &environment, cli.org.as_deref(), action)
         }
@@ -360,7 +360,7 @@ fn run_doctor(
         .as_ref()
         .map(|config| config.log.clone())
         .unwrap_or_default();
-    if let Err(error) = logs::iniciar(
+    if let Err(error) = logs::start(
         &log,
         environment.get(logs::VAR_RUST_LOG).map(String::as_str),
     ) {

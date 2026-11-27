@@ -323,7 +323,10 @@ folder. A file that already checks out is not downloaded again.
 - Output goes to standard error (stderr), so the `doctor` JSON stays valid on stdout.
 - `poph serve` installs the subscriber at startup: without it the WhatsApp route and the shutdown loop leave no
   trace. The level comes from `RUST_LOG` when it is set, otherwise from `log.nivel`.
-- Turn context: `contexto_turno(org, agente, conversa, turno)` in the `poph` crate. Available from HR-13 onward.
+- Turn context: `turn_context(org, agente, conversa, turno)` in the `poph` crate. Nothing in the binary uses it yet:
+  the turn that opens it arrives in HR-13. The tests of the module already use it.
+- The embedding model runtime writes hundreds of `INFO` lines on every load (HR-26h). By default it stays at `warn`;
+  to see it, set the `ort` target in `RUST_LOG`.
 - Rule: no customer content and no secrets. Sensitive values use `Sensitive`, which prints as `[oculto]`.
 
 ## CLI conventions
@@ -335,6 +338,8 @@ folder. A file that already checks out is not downloaded again.
 - Token generation uses `rand_core` with `getrandom` enabled to obtain randomness from the operating
   system through `OsRng`.
 - `--json` is a stable format with `versao_relatorio: 1` and never carries a secret.
+- `department delete` never deletes conversations or agents: the fields that pointed to the department (the agent's
+  default department and transfer department) become empty.
 
 ## Sections documented elsewhere
 

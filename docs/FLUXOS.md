@@ -146,7 +146,10 @@ Valor fora da faixa é recusado com o nome da chave. O gate G9 vem ligado no pad
 ### 5.2 Commands
 
 - `poph flow validar|publicar|listar|mostrar|diff|formatar|liberar|retirar`. After the first publication, `publicar` requires `--if-match`. Use `liberar` and `retirar` to change an agent's access to a flow. See [RUNBOOKS.md](RUNBOOKS.md) (section 7).
-- `poph ficha listar|mostrar`, with filters `--status`, `--agente`, `--canal` and `--desde`.
+- `poph ficha listar|mostrar`, with filters `--status`, `--agente`, `--canal` and `--desde`. It reads the database
+  directly and uses the same functions as the API, so its JSON is the same. Exit codes: `0` success; `1` business
+  error (case not found or from another org, invalid filter); `2` wrong usage, decided by the parser. With `--json`,
+  `versao_relatorio` is `1` and changes only if the shape changes.
 - `poph doctor` reports whether the engine is running and shows the active limits.
 - `poph --offline backup export|import`: backups include flows, revisions and permissions. With `--com-conversas`, they also include Cases and their history. Imports refuse to overwrite by default ([BACKUP.md](BACKUP.md)).
 
