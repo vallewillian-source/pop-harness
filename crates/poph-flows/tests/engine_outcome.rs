@@ -1,8 +1,8 @@
-use poph_fluxos::ir::{
+use poph_flows::engine::{Campos, Context, abandon, entry_effects, execute_action, start};
+use poph_flows::ir::{
     Acao, Campo, Decisao, Destination, Effect, Etapa, Fim, Fluxo, Gatilho, Ir, Rule,
 };
-use poph_fluxos::motor::{Campos, Context, abandon, entry_effects, execute_action, start};
-use poph_fluxos::regras::{Dados, RuleEvaluator};
+use poph_flows::rules::{Dados, RuleEvaluator};
 use poph_types::{ActionActor, DomainError, ExecutionStatus, FieldKind, RecordEventKind};
 use serde_json::{Value as Json, json};
 
@@ -87,7 +87,7 @@ fn fluxo(steps: Vec<Etapa>, decisions: Vec<Decisao>) -> Ir {
         .map(|etapa| etapa.id.clone())
         .unwrap_or_default();
     Ir {
-        schema_versao: poph_fluxos::ir::SCHEMA_VERSAO,
+        schema_versao: poph_flows::ir::SCHEMA_VERSAO,
         fluxo: Fluxo {
             id: "teste".to_owned(),
             nome: "Teste".to_owned(),
@@ -121,7 +121,7 @@ fn without_fields() -> Campos {
     Campos::new()
 }
 
-fn kinds(resultado: &poph_fluxos::motor::Resultado) -> Vec<RecordEventKind> {
+fn kinds(resultado: &poph_flows::engine::Resultado) -> Vec<RecordEventKind> {
     resultado.events.iter().map(|evento| evento.tipo).collect()
 }
 

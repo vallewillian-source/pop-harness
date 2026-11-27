@@ -1,5 +1,5 @@
-use poph_fluxos::ProducedEffect;
-use poph_fluxos::motor::{Estado as StateEngine, Resultado as ResultEngine};
+use poph_flows::ProducedEffect;
+use poph_flows::engine::{Estado as StateEngine, Resultado as ResultEngine};
 use poph_store::{ExecutionState, FlowTransition, TransitionEffect, TransitionEvent};
 
 pub fn state_for_database(estado: &StateEngine) -> ExecutionState {
@@ -24,7 +24,7 @@ pub fn transition_engine(resultado: &ResultEngine) -> FlowTransition {
     }
 }
 
-fn event_for_database(evento: &poph_fluxos::motor::Evento) -> TransitionEvent {
+fn event_for_database(evento: &poph_flows::engine::Evento) -> TransitionEvent {
     TransitionEvent {
         tipo: evento.tipo,
         ator_tipo: evento.actor,
@@ -34,13 +34,13 @@ fn event_for_database(evento: &poph_fluxos::motor::Evento) -> TransitionEvent {
 
 pub fn effect_of_transition(produced: &ProducedEffect) -> TransitionEffect {
     let payload = match &produced.effect {
-        poph_fluxos::ir::Effect::MessageToCustomer { texto } => {
+        poph_flows::ir::Effect::MessageToCustomer { texto } => {
             serde_json::json!({ "texto": texto })
         }
-        poph_fluxos::ir::Effect::NotifyWhatsApp { para, mensagem } => {
+        poph_flows::ir::Effect::NotifyWhatsApp { para, mensagem } => {
             serde_json::json!({ "para": para, "mensagem": mensagem })
         }
-        poph_fluxos::ir::Effect::Encaminhar { departamento } => {
+        poph_flows::ir::Effect::Encaminhar { departamento } => {
             serde_json::json!({ "departamento": departamento })
         }
     };
@@ -57,14 +57,14 @@ mod tests {
 
     #[test]
     fn payload_of_each_kind_of_effect() {
-        let produced = |effect: poph_fluxos::ir::Effect| ProducedEffect {
+        let produced = |effect: poph_flows::ir::Effect| ProducedEffect {
             chave: "etapa:coleta/0".to_owned(),
             no: "etapa:coleta".to_owned(),
             index: 0,
             effect,
         };
         let message_effect =
-            effect_of_transition(&produced(poph_fluxos::ir::Effect::MessageToCustomer {
+            effect_of_transition(&produced(poph_flows::ir::Effect::MessageToCustomer {
                 texto: "Já vou verificar.".to_owned(),
             }));
         assert_eq!(message_effect.tipo, "mensagem_ao_cliente");
@@ -75,7 +75,7 @@ mod tests {
         );
 
         let notification =
-            effect_of_transition(&produced(poph_fluxos::ir::Effect::NotifyWhatsApp {
+            effect_of_transition(&produced(poph_flows::ir::Effect::NotifyWhatsApp {
                 para: "5511999990000".to_owned(),
                 mensagem: "Cliente pediu visita.".to_owned(),
             }));
@@ -85,7 +85,7 @@ mod tests {
             serde_json::json!({ "para": "5511999990000", "mensagem": "Cliente pediu visita." })
         );
 
-        let forward = effect_of_transition(&produced(poph_fluxos::ir::Effect::Encaminhar {
+        let forward = effect_of_transition(&produced(poph_flows::ir::Effect::Encaminhar {
             departamento: "Comercial".to_owned(),
         }));
         assert_eq!(forward.tipo, "encaminhar");

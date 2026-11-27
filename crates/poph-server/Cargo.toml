@@ -18,7 +18,7 @@ poph-plugins = { path = "../poph-plugins" }
 # Rotas do Application Service do Matrix (MX-16): o receptor e a configuração do módulo.
 poph-matrix = { path = "../poph-matrix" }
 # Módulo de Fluxos e Fichas (FX-26): o cache das revisões e as métricas `poph_fluxos_*`.
-poph-fluxos = { path = "../poph-fluxos" }
+poph-flows = { path = "../poph-flows" }
 poph-rag = { path = "../poph-rag" }
 rand_core = { version = "0.6", features = ["getrandom"] }
 ring = "0.17"

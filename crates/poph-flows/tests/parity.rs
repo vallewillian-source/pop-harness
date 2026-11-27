@@ -1,10 +1,10 @@
 use std::sync::OnceLock;
 
-use poph_fluxos::ir::{
+use poph_flows::engine::{Campos, Context, entry_effects, execute_action, required_actors, start};
+use poph_flows::ir::{
     Acao, Campo, Decisao, Destination, Effect, Etapa, Fim, Fluxo, Gatilho, Ir, Rule,
 };
-use poph_fluxos::motor::{Campos, Context, entry_effects, execute_action, required_actors, start};
-use poph_fluxos::regras::{Dados, RuleEvaluator};
+use poph_flows::rules::{Dados, RuleEvaluator};
 use poph_types::{ActionActor, ExecutionStatus, FieldKind, RecordEventKind};
 use serde_json::{Value as Json, json};
 
@@ -120,7 +120,7 @@ fn goes_for(id: &str) -> Destination {
 
 fn fluxo(beginning: &str, steps: Vec<Etapa>, decisions: Vec<Decisao>) -> Ir {
     Ir {
-        schema_versao: poph_fluxos::ir::SCHEMA_VERSAO,
+        schema_versao: poph_flows::ir::SCHEMA_VERSAO,
         fluxo: Fluxo {
             id: "teste_paridade".to_owned(),
             nome: "Teste da paridade".to_owned(),
@@ -168,7 +168,7 @@ fn dados(value: Json) -> Dados {
         .clone()
 }
 
-fn kinds(resultado: &poph_fluxos::motor::Resultado) -> Vec<RecordEventKind> {
+fn kinds(resultado: &poph_flows::engine::Resultado) -> Vec<RecordEventKind> {
     resultado.events.iter().map(|evento| evento.tipo).collect()
 }
 
@@ -864,7 +864,7 @@ fn two_conditionals_chained_choose_step_final() {
     .expect("a ação é aceita");
 
     assert_eq!(resultado.new_state.no_atual, goes_for("caro"));
-    let resolvidas: Vec<&poph_fluxos::motor::Evento> = resultado
+    let resolvidas: Vec<&poph_flows::engine::Evento> = resultado
         .events
         .iter()
         .filter(|evento| evento.tipo == RecordEventKind::DecisionResolved)

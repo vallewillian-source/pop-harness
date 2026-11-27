@@ -2565,7 +2565,7 @@ dependencies = [
  "poph-agent",
  "poph-core",
  "poph-files",
- "poph-fluxos",
+ "poph-flows",
  "poph-jev",
  "poph-matrix",
  "poph-rag",
@@ -2594,7 +2594,7 @@ dependencies = [
  "moka",
  "poph-core",
  "poph-files",
- "poph-fluxos",
+ "poph-flows",
  "poph-jev",
  "poph-rag",
  "poph-store",
@@ -2660,7 +2660,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "poph-fluxos"
+name = "poph-flows"
 version = "0.1.0"
 dependencies = [
  "blake3",
@@ -2770,7 +2770,7 @@ dependencies = [
  "poph-core",
  "poph-evolution",
  "poph-files",
- "poph-fluxos",
+ "poph-flows",
  "poph-jev",
  "poph-matrix",
  "poph-plugins",

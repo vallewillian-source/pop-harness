@@ -1,7 +1,7 @@
 use std::sync::{Arc, Barrier};
 use std::thread;
 
-use poph_fluxos::{Ir, Limites, LoadFailure, RevisionCache, RevisionKey, compile, entry_weight};
+use poph_flows::{Ir, Limites, LoadFailure, RevisionCache, RevisionKey, compile, entry_weight};
 
 fn limites() -> Limites {
     Limites::default()

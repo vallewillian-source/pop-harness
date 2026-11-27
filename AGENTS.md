@@ -61,7 +61,7 @@ no customer data, machine path or internal document entered the diff.
   the words of the flow language do not change; an internal name that becomes English keeps the published value
   through an explicit attribute. The list of what is frozen is the inventory of the second wave (the names the
   outside sees), which is a separate decision.
-- **Flows are pure in the engine.** `poph-fluxos` decides and `poph-store` writes. A flow transition is written once, in one transaction, through `Store::execucoes()` (`aplicar_transicao`). Effects are queued and delivered by the server loop, never by the engine.
+- **Flows are pure in the engine.** `poph-flows` decides and `poph-store` writes. A flow transition is written once, in one transaction, through `Store::execucoes()` (`aplicar_transicao`). Effects are queued and delivered by the server loop, never by the engine.
 - **Secrets never leak.** Keys come only from the environment (`POPH_CHAVE_CIFRA`, `ANTIGRAVITY_API_KEY`,
   `TYPESAFE_API_KEY`, `EVOLUTION_API_KEY`, `POPH_CLUSTER_SECRET`). They never go into a file, log, report
   or API response. The `Sensitive` type (in `crates/poph-types/src/secret.rs`) prints `[oculto]` in
@@ -95,7 +95,7 @@ Names and dependencies come from `cargo metadata` for this workspace, not from m
 | `poph-rag` | Local embedding (ONNX Runtime, int8), batch queue with a per-org limit, model installation | `poph-types` |
 | `poph-files` | File intake: size limit, type from content, blob by hash, PDF/Office text extracted in an isolated process (`poph-extrator` binary) | `poph-types` |
 | `poph-jev` | Jev client, gate framework, question batching, decision cache | `poph-types` |
-| `poph-fluxos` | Flows and Cases module. Starlark script → structure (IR) compiler, validator, rules, execution engine, prompt block, diff between revisions and formatter. All pure, no database, no network: the tables live in `poph-store`, the turn wires the engine in `poph-agent`, and the API lives in `poph-server`. Language specification: `docs/FLUXOS_LINGUAGEM.md`. **Under construction** | `poph-types` and the Starlark library (`starlark`, `blake3` with `pure`). No internal crate other than `poph-types` |
+| `poph-flows` | Flows and Cases module. Starlark script → structure (IR) compiler, validator, rules, execution engine, prompt block, diff between revisions and formatter. All pure, no database, no network: the tables live in `poph-store`, the turn wires the engine in `poph-agent`, and the API lives in `poph-server`. Language specification: `docs/FLUXOS_LINGUAGEM.md`. **Under construction** | `poph-types` and the Starlark library (`starlark`, `blake3` with `pure`). No internal crate other than `poph-types` |
 | `poph-plugins` | Supervision of external-process plugins: JSON-lines protocol over stdio, handshake, timeout, restart with backoff | `poph-types` |
 | `poph-evolution` | EvolutionAPI (WhatsApp) HTTP client: sending, received media, channel manifest | `poph-types` |
 | `poph-matrix` | Matrix module: Application Service configuration and secrets; Matrix API client (rooms, events, state, profile, virtual-user registration, `m.space.child`, alias resolution, space hierarchy); virtual users and profile (with `eh_fantasma`/`eh_bot` for anti-echo); per-conversation room provisioning (deterministic alias, Element metadata, `creating` → `ready`), with persistence injected through the `PortaSalas` port; per-department spaces (department resolution, space creation via the `#dep_<department>` alias, linking to an existing space with a permission check, `m.space.child`/`m.space.parent`/restricted join, batch invites and space swap on transfer), with persistence injected through the `PortaEspacos` port; format of mirrored messages; classifier of events received from Synapse (agent reply, agent media or noise, with an enumerated reason). The module's tables live in `poph-store` (`matrix_*`) and `poph-server` implements the port. **`poph-agent` does not import this crate** | `poph-types` |
@@ -113,7 +113,7 @@ check it against the table. Two rules the table makes clear:
 
 - `poph-types` depends on no internal crate. Everything starts from it.
 - Capability crates (`poph-store`, `poph-rag`, `poph-files`, `poph-jev`, `poph-plugins`,
-  `poph-evolution`, `poph-matrix`, `poph-core`, `poph-fluxos`) know neither the server nor the CLI.
+  `poph-evolution`, `poph-matrix`, `poph-core`, `poph-flows`) know neither the server nor the CLI.
   `poph-agent` (turn) and `poph-server` (HTTP) put the pieces together.
 - `poph-agent` does **not** import `poph-matrix`: the Matrix module is wired by `poph-server` and reads what
   the turn already recorded. If the turn ever needs the module, that goes back to the maintainer first.
@@ -144,7 +144,7 @@ check it against the table. Two rules the table makes clear:
 | Per-department spaces (what the agent sees organised in Element) | `poph-matrix/src/espacos.rs` (`PortaEspacos` port, implemented by `poph-server` over `store.matrix()`) | `docs/DADOS.md` §11.4 |
 | Matrix module wiring in the server (starts, degrades, per-org on/off, ordered stop) | `poph-server/src/matrix_beginning.rs` (composition root; `SpaceStorePort` over `store.matrix()`) | `docs/ENTRADA_E_SAIDA.md` §8, `docs/API.md` |
 | Overview, base decisions, status | (no code) | `docs/VISAO_GERAL.md`, `docs/DECISOES.md`, `ROADMAP.md` |
-| Flows and Cases (language, compiler, engine, effects, API and CLI) | `crates/poph-fluxos/`; `poph-store` (`fichas`, `fluxos`, `fluxo_*`); `poph-agent` (`turno/flow*.rs`); `poph-server` (`api/fichas.rs`, `api/fluxos.rs`) | `docs/FLUXOS.md` (overview, operation, limits); `docs/FLUXOS_LINGUAGEM.md` (language, IR and diagnostics) |
+| Flows and Cases (language, compiler, engine, effects, API and CLI) | `crates/poph-flows/`; `poph-store` (`fichas`, `fluxos`, `fluxo_*`); `poph-agent` (`turno/flow*.rs`); `poph-server` (`api/fichas.rs`, `api/fluxos.rs`) | `docs/FLUXOS.md` (overview, operation, limits); `docs/FLUXOS_LINGUAGEM.md` (language, IR and diagnostics) |
 | Databases, schema and migrations | `poph-store/` (`migrations.rs`, `migrations/harness/`, `writer.rs`) | `docs/DADOS.md` |
 | Agents and instructions | `poph-agent/src/compositor.rs`, `poph-server/src/api/instrucoes.rs` | `docs/AGENTES.md` |
 

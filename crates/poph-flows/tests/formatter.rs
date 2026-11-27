@@ -1,8 +1,8 @@
-use poph_fluxos::formatter::{WIDTH, format, print};
-use poph_fluxos::ir::{
+use poph_flows::formatter::{WIDTH, format, print};
+use poph_flows::ir::{
     Acao, Campo, Decisao, Def, Destination, Effect, Etapa, Fim, Fluxo, Gatilho, Rule, SCHEMA_VERSAO,
 };
-use poph_fluxos::{Code, Ir, Limites, Severity, compile};
+use poph_flows::{Code, Ir, Limites, Severity, compile};
 use poph_types::ActionActor;
 
 const EXAMPLES: [&str; 3] = [

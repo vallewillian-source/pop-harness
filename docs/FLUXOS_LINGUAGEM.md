@@ -562,7 +562,7 @@ def problema_grave(dados):
 
 ### 6.1 Combinadores: semântica exata
 
-Os combinadores são IR e são avaliados em Rust nativo (`poph_fluxos::avaliar`), sem passar pelo Starlark. Campo é sempre escrito `etapa.campo`; fora desse formato a regra é `regra_invalida` (defeito do autor).
+Os combinadores são IR e são avaliados em Rust nativo (`poph_flows::evaluate`), sem passar pelo Starlark. Campo é sempre escrito `etapa.campo`; fora desse formato a regra é `regra_invalida` (defeito do autor).
 
 | Combinador | Verdadeiro quando | Campo ausente / `null` |
 |---|---|---|
@@ -592,11 +592,11 @@ Detalhes que o autor precisa saber:
 
 ### 6.3 Como a `def` roda (prazo, isolamento e custo)
 
-- O script é carregado **uma vez** (`poph_fluxos::regras::RuleEvaluator::new`) e o módulo congelado serve todas as regras daquela passagem — uma carga por revisão, não uma por nó.
+- O script é carregado **uma vez** (`poph_flows::rules::RuleEvaluator::new`) e o módulo congelado serve todas as regras daquela passagem — uma carga por revisão, não uma por nó.
 - A `def` recebe os dados como **dicionário concreto**: o que o cliente escreveu entra como **valor**, nunca como código. Não existe `eval`, e o dialeto não alcança relógio, rede, arquivo nem aleatório (§3.3).
 - Limites da regra: **10.000 ticks**, **1 MiB** de heap, **128** de pilha e **200 ms** de prazo.
 - **O prazo do Starlark não é preemptivo**: uma alocação única e enorme acontece antes da conferência de heap. Por isso a `def` (e a carga do script) roda numa thread própria, e o chamador espera no máximo o prazo mais uma margem de **25 ms**; estourou, a regra responde `regra_limite` na hora e a thread abandonada termina sozinha. É o que garante o turno do atendimento mesmo com script patológico publicado.
-- Custo medido nesta estação com `cargo test -p poph-fluxos --release --test regras p95 -- --nocapture`: combinadores **p50 0,20 µs / p95 0,21 µs** e `def` com thread e prazo **p50 32 µs / p95 47 µs**; no build de teste (o do CI), combinadores **p50 2,8 µs / p95 2,9 µs** e `def` **p50 115 µs / p95 147 µs**. O custo da `def` é quase todo a thread com prazo; os dois ficam abaixo da meta de **200 µs p95** medida na FX-01 e muito abaixo do teto de 200 ms. No spike da FX-01 (release, módulo já carregado) o combinador media p95 1,7 µs.
+- Custo medido nesta estação com `cargo test -p poph-flows --release --test regras p95 -- --nocapture`: combinadores **p50 0,20 µs / p95 0,21 µs** e `def` com thread e prazo **p50 32 µs / p95 47 µs**; no build de teste (o do CI), combinadores **p50 2,8 µs / p95 2,9 µs** e `def` **p50 115 µs / p95 147 µs**. O custo da `def` é quase todo a thread com prazo; os dois ficam abaixo da meta de **200 µs p95** medida na FX-01 e muito abaixo do teto de 200 ms. No spike da FX-01 (release, módulo já carregado) o combinador media p95 1,7 µs.
 
 ### 6.4 O que o motor faz com o erro
 
@@ -1073,7 +1073,7 @@ Pontos que a implementação precisou decidir e que o mantenedor aceitou; ficam 
 | I12 | `FLX65` | primeiro código livre na faixa de avisos: é **aviso**, não erro, e só nasce sobre a IR | §10.2, §10.4 |
 | I13 | Casamento de departamento | espaços nas pontas e caixa não contam; acento conta | §4.9, §10.4 |
 | I14 | Escopo da revalidação | a `validar(ir)` cobre também `FLX16` (fim divergente), `FLX19` (`funcao` sem `def`, ator fora da etapa), `FLX21` (forma do campo na regra), `FLX25`/`FLX59`/`FLX63` (variável de mensagem) e `FLX51` (etapa sem ação), além dos códigos de grafo, uso e teto: sem isso uma IR de fora passaria com fluxo quebrado e mensagem saindo vazia | §10.4 |
-| I15 | Caminho da avaliação | combinadores em **Rust nativo** (IR, microssegundos, sem alocar valor de script) e **só** `funcao("nome")` no Starlark: é a decisão D2, agora implementada (`poph_fluxos::regras`) | §6 |
+| I15 | Caminho da avaliação | combinadores em **Rust nativo** (IR, microssegundos, sem alocar valor de script) e **só** `funcao("nome")` no Starlark: é a decisão D2, agora implementada (`poph_flows::rules`) | §6 |
 | I16 | Prazo não preemptivo | `def` e carga do script rodam numa **thread própria**, com prazo mais **25 ms** de margem; estourou, `regra_limite` na hora e a thread abandonada termina sozinha. Sem isso `"x" * 1000000000` dentro de uma `def` travaria o turno por segundos | §6.3 |
 | I17 | Profundidade da regra | avaliação para em **32 níveis** de aninhamento com `regra_invalida`, em vez de estourar a pilha nativa — só alcançável com IR gravada à mão | §6.1 |
 | I18 | Número × texto | texto que é número compara como número; valor não numérico dá **falso** (aviso `FLX60` na publicação); literal que não é número é **erro** `regra_invalida` | §6.2 |
@@ -1097,10 +1097,10 @@ repositório; o que foi feito e testado está em [`FLUXOS.md`](FLUXOS.md).
 
 **Implementado e testado:**
 
-- **Compilador (FX-10):** `poph_fluxos::compilar` monta a IR e emite os diagnósticos com linha e coluna. Os três
-  exemplos compilam para a IR dourada em `tests/fluxos/ir/`. `poph_fluxos::carregar` recusa IR que não bata com o
-  texto (`ir_divergente`). Testes: `crates/poph-fluxos/tests/compiler.rs`.
-- **Validador (FX-11):** `poph_fluxos::validar` revalida uma IR que não veio do compilador, apontando o caminho do
+- **Compilador (FX-10):** `poph_flows::compile` monta a IR e emite os diagnósticos com linha e coluna. Os três
+  exemplos compilam para a IR dourada em `tests/fluxos/ir/`. `poph_flows::load` recusa IR que não bata com o
+  texto (`ir_divergente`). Testes: `crates/poph-flows/tests/compiler.rs`.
+- **Validador (FX-11):** `poph_flows::validar` revalida uma IR que não veio do compilador, apontando o caminho do
   nó; `resolver_departamentos` traduz nome em id (`FLX65`). Testes: `tests/validator.rs`.
 - **Regras (FX-12):** combinadores em Rust nativo e `def` no módulo congelado, com prazo. Testes: `tests/rules.rs`
   (um caso por combinador e por desfecho de erro, inclusive `"x" * 1000000000`, recursão e laço).

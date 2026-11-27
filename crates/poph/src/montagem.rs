@@ -18,7 +18,7 @@ use poph_agent::providers::{Providers, ResolvedProvider};
 use poph_agent::turno::{AdjustmentsFlow, DefaultRegistry, TurnEngine, TurnOptions, TurnProcessor};
 use poph_agent::{KnowledgeSearcher, ProductCatalog, ProductSearcher, QueryKnowledge, record_with};
 use poph_core::llm::{LlmLimiter, LlmProvider, OpenAiCompatibleClient, OpenAiCompatibleConfig};
-use poph_fluxos::cache::RevisionCache;
+use poph_flows::cache::RevisionCache;
 use poph_store::Store;
 use poph_types::{BaseMetrics, HarnessConfig, LlmConfig, Registry, Secret};
 

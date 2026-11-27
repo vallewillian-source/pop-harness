@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
-use poph_fluxos::{Ir, Limites, compile};
+use poph_flows::{Ir, Limites, compile};
 use poph_server::Estado;
 use poph_store::{
     Direction, NewAgent, NewCategory, NewConversation, NewDepartment, NewFlow, NewKnowledgeGroup,

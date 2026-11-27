@@ -1,4 +1,4 @@
-//! Ponte entre o motor de fluxos (`poph-fluxos`, puro) e a gravação atômica (`poph-store`, FX-20).
+//! Ponte entre o motor de fluxos (`poph-flows`, puro) e a gravação atômica (`poph-store`, FX-20).
 //!
 //! A tradução mora em `poph-agent` ([`poph_agent::fluxos_transicao`]) desde a FX-23, porque **o
 //! turno também a usa** para abrir a execução: um formato só, sem duplicata entre os dois crates.

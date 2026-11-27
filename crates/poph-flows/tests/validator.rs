@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use poph_fluxos::{
+use poph_flows::{
     Code, Departamento, Diagnostic, Ir, Limites, compile, resolve_departments, validar,
 };
 use serde_json::{Value, json};
@@ -563,7 +563,7 @@ fn maps_mentioned_department_to_org_id() {
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
     assert_eq!(
         resolutions,
-        vec![poph_fluxos::Resolution {
+        vec![poph_flows::Resolution {
             nome: "Logística".to_owned(),
             department_id: Some("dep_logistica".to_owned()),
         }]

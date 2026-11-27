@@ -528,7 +528,7 @@ glue the pieces together.
 | `poph-rag` | local embedding (ONNX Runtime, int8), batch queue and model install |
 | `poph-files` | file intake, content-based type detection, isolated PDF/Office extraction |
 | `poph-jev` | Jev client, gate framework and single question batch |
-| `poph-fluxos` | flow compiler, validator, rules and engine; pure, no database or network |
+| `poph-flows` | flow compiler, validator, rules and engine; pure, no database or network |
 | `poph-plugins`, `poph-plugin-eco` | stdio plugin supervision and a sample plugin |
 | `poph-evolution` | EvolutionAPI (WhatsApp) client |
 | `poph-matrix` | Matrix module: Application Service, rooms, spaces and virtual users |

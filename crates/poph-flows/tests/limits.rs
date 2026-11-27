@@ -1,4 +1,4 @@
-use poph_fluxos::{Code, Limites, RuleLimits, Severity, compile, format_with};
+use poph_flows::{Code, Limites, RuleLimits, Severity, compile, format_with};
 use poph_types::config::FlowsConfig;
 
 const EXAMPLE: &str = include_str!("../../../tests/fluxos/exemplos/agendar_visita.star");

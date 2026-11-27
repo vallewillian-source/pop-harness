@@ -206,12 +206,12 @@ image (glibc 2.39) with `gcc` 13, so the binary runs on Ubuntu 24.04 hosts. The 
 Debian and is used only to copy the pinned toolchain.
 
 On x86_64, CI runs `cargo check --target aarch64-unknown-linux-gnu` only for the crates without C code
-(`poph-types`, `poph-files`, `poph-plugins`, `poph-plugin-eco` and `poph-fluxos`). The others need a C
+(`poph-types`, `poph-files`, `poph-plugins`, `poph-plugin-eco` and `poph-flows`). The others need a C
 compiler for ARM and are only verified in a real ARM64 build.
 
 The exclusion is per C dependency: `poph-core` (model provider over `rustls`, which pulls `aws-lc-sys`) and
 `poph-jev` (same TLS stack) need the cross C compiler, and `poph-server` too, because it depends on
-`poph-store` and on the bundled SQLite of `rusqlite`. `poph-fluxos` stays in the check because `blake3` — a
+`poph-store` and on the bundled SQLite of `rusqlite`. `poph-flows` stays in the check because `blake3` — a
 dependency of `starlark` — is declared with the `pure` feature: without it the crate compiles C and would
 leave the check as well. `poph-plugin-eco` needs only `poph-types` and `serde_json`, so it is pure code too.
 

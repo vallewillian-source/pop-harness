@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use poph_fluxos::{Limites, RevisionKey, compile};
+use poph_flows::{Limites, RevisionKey, compile};
 use poph_server::Estado;
 use poph_store::Store;
 use poph_types::HarnessConfig;

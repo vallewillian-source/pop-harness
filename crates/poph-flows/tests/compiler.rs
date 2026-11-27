@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
-use poph_fluxos::compilador::MAX_FONTE_BYTES;
-use poph_fluxos::{Code, Compiled, Limites, LoadFailure, compile, load};
+use poph_flows::compilador::MAX_FONTE_BYTES;
+use poph_flows::{Code, Compiled, Limites, LoadFailure, compile, load};
 
 const BASE: &str = r#"fluxo(
     id = "teste",
@@ -511,7 +511,7 @@ fn three_examples_compile_to_golden_ir() {
             nome.trim_end_matches(".star")
         );
         let golden = std::fs::read_to_string(&path).unwrap_or_else(|error| {
-            panic!("{path}: {error} — rode `cargo test -p poph-fluxos -- --ignored gera_douradas`")
+            panic!("{path}: {error} — rode `cargo test -p poph-flows -- --ignored gera_douradas`")
         });
         let expected_ir = serde_json::from_str(&golden).expect("a dourada é JSON da IR");
         assert_eq!(ir, expected_ir, "a IR de {nome} não bate com a dourada");
@@ -525,7 +525,7 @@ fn three_examples_compile_to_golden_ir() {
 
 fn expected_json(path: &str) -> String {
     let texto = std::fs::read_to_string(path).expect("dourada legível");
-    let ir: poph_fluxos::Ir = serde_json::from_str(&texto).expect("dourada é IR");
+    let ir: poph_flows::Ir = serde_json::from_str(&texto).expect("dourada é IR");
     ir.to_json()
 }
 
@@ -662,7 +662,7 @@ fn foreign_input_does_not_crash_compiler() {
         let compiled = compiles(fonte);
         let _ = compiled.ir();
         if let Some(ir) = &compiled.ir {
-            let read = poph_fluxos::Ir::from_json(&ir.to_json()).expect("a IR volta do JSON");
+            let read = poph_flows::Ir::from_json(&ir.to_json()).expect("a IR volta do JSON");
             assert_eq!(&read, ir, "ida e volta da IR em {fonte:?}");
         }
     }
@@ -750,7 +750,6 @@ fn ir_ignores_unknown_field_on_read() {
     let ir = compiles(&fonte).ir.expect("IR");
     let mut json: serde_json::Value = serde_json::from_str(&ir.to_json()).expect("JSON");
     json["campo_do_futuro"] = serde_json::json!({"qualquer": "coisa"});
-    let read =
-        poph_fluxos::Ir::from_json(&json.to_string()).expect("campo desconhecido é ignorado");
+    let read = poph_flows::Ir::from_json(&json.to_string()).expect("campo desconhecido é ignorado");
     assert_eq!(read, ir);
 }

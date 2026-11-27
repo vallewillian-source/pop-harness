@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use poph_fluxos::Limites;
-use poph_fluxos::cache::{RevisionCache, RevisionKey};
-use poph_fluxos::ir::Ir;
-use poph_fluxos::motor::{self, Context as ContextEngine, Estado as StateEngine};
-use poph_fluxos::prompt::render_block;
-use poph_fluxos::regras::{Dados, RuleEvaluator, RuleLimits};
+use poph_flows::Limites;
+use poph_flows::cache::{RevisionCache, RevisionKey};
+use poph_flows::engine::{self, Context as ContextEngine, Estado as StateEngine};
+use poph_flows::ir::Ir;
+use poph_flows::prompt::render_block;
+use poph_flows::rules::{Dados, RuleEvaluator, RuleLimits};
 use poph_jev::{G9_NONE, IdGate, JevFlow, JevResult};
 use poph_store::{
     Execution, ExecutionStart, Ficha, FlowRevision, Fluxo, JevDecision, Status, Store, StoreError,
@@ -238,7 +238,7 @@ fn state_of_execution(
         }
     };
     let no_atual = if ir.stages.iter().any(|etapa| etapa.id == execution.no_atual) {
-        poph_fluxos::ir::Destination::Etapa {
+        poph_flows::ir::Destination::Etapa {
             id: execution.no_atual.clone(),
         }
     } else if ir
@@ -246,11 +246,11 @@ fn state_of_execution(
         .iter()
         .any(|decisao| decisao.id == execution.no_atual)
     {
-        poph_fluxos::ir::Destination::Decisao {
+        poph_flows::ir::Destination::Decisao {
             id: execution.no_atual.clone(),
         }
     } else if let Some(fim) = ir.ends.iter().find(|fim| fim.id == execution.no_atual) {
-        poph_fluxos::ir::Destination::Fim {
+        poph_flows::ir::Destination::Fim {
             id: fim.id.clone(),
             resultado: fim.resultado.clone(),
             ends_service: fim.ends_service,
@@ -441,7 +441,7 @@ pub(crate) fn start(
             "a revisão publicada do fluxo `{slug}` não carrega"
         )));
     };
-    let estado = match motor::start(&ir) {
+    let estado = match engine::start(&ir) {
         Ok(estado) => estado,
         Err(error) => {
             return Ok(Beginning::Rejected(format!(
@@ -458,7 +458,7 @@ pub(crate) fn start(
         context = context.with_client(peer);
     }
     let effects: Vec<TransitionEffect> =
-        match motor::entry_effects(&ir, estado.no_atual.id(), &estado.dados, &context) {
+        match engine::entry_effects(&ir, estado.no_atual.id(), &estado.dados, &context) {
             Ok(effects) => effects.iter().map(effect_of_transition).collect(),
             Err(error) => {
                 return Ok(Beginning::Rejected(format!(
@@ -734,7 +734,7 @@ pub(crate) fn decide(
 mod tests {
     use std::sync::Arc;
 
-    use poph_fluxos::{Limites, compile};
+    use poph_flows::{Limites, compile};
     use poph_store::{NewAgent, NewConversation, NewFlow, NewOrg, RevisionPublication, Store};
     use poph_types::{AgentId, EventActor, FlowsConfig, OrgId};
 

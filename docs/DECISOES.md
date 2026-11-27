@@ -206,7 +206,7 @@ on. Delivery is at least once: a crash between sending and recording can repeat 
 documented. Details: `FLUXOS.md` §4.
 
 ### D-29 — Status of decisions L1 to L13 (PRD §3.2) (23/11/2026)
-All thirteen are implemented: L1 (Starlark), L2 (pure `poph-fluxos` crate, depending only on `poph-types` and the
+All thirteen are implemented: L1 (Starlark), L2 (pure `poph-flows` crate, depending only on `poph-types` and the
 script library), L3 (built-in engine, Case always on, `[fluxos] ativo`), L4 (the one-Case invariant lives in the store),
 L5 (one attendance = one conversation = one Case), L6 (one active execution per Case), L7 (concluding a flow does not
 close the Case), L8 (permission by explicit list), L9 (immutable revisions), L10 (the code starts the flow, decided by the

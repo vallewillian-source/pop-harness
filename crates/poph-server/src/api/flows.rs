@@ -3,7 +3,7 @@ use axum::{
     extract::{Path, Query, State, rejection::JsonRejection},
     http::{HeaderMap, StatusCode},
 };
-use poph_fluxos::Diagnostic;
+use poph_flows::Diagnostic;
 use poph_store::{FlowChange, FlowFilter};
 use poph_types::{FlowId, OrgId};
 use serde::Deserialize;

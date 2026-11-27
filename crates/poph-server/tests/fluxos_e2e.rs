@@ -9,7 +9,7 @@ use poph_agent::turno::{
     FuturePause, NoopObserver, Pause, TurnEngine, TurnInput, TurnOptions, TurnSummary,
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, ToolCall, Usage};
-use poph_fluxos::{Limites, compile};
+use poph_flows::{Limites, compile};
 use poph_jev::{FakeJev, JevEngine};
 use poph_store::{
     ConversationStatus, Direction, NewAgent, NewConversation, NewFlow, NewMessage, NewOrg,

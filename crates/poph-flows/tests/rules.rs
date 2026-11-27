@@ -1,8 +1,8 @@
 use std::time::{Duration, Instant};
 
-use poph_fluxos::compilador::Limites;
-use poph_fluxos::ir::Rule;
-use poph_fluxos::regras::{
+use poph_flows::compilador::Limites;
+use poph_flows::ir::Rule;
+use poph_flows::rules::{
     DEADLINE_TOLERANCE, Dados, MAX_NESTING, RULE_DEADLINE, RuleError, RuleEvaluator, RuleLimits,
     evaluate, snapshot_from_json,
 };

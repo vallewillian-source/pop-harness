@@ -472,7 +472,7 @@ not lost, the turn does not get stuck as "in progress", the conversation goes ba
 
 When the engine is on (`[fluxos] ativo = true`), a turn runs the flow step before the text model is called:
 
-1. **Active execution on the Case.** The block of the current step (`poph_fluxos::render_block`) goes into the
+1. **Active execution on the Case.** The block of the current step (`poph_flows::render_block`) goes into the
    volatile part of the prompt. The Jev is not asked: a Case has at most one active execution.
 2. **No active execution and flows granted to the agent.** The state sent to the Jev carries the list (name and
    trigger) and gate G9 chooses one. A confident choice is validated by the code (flow of the org, active, granted to

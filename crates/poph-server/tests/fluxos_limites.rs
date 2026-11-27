@@ -7,7 +7,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use poph_fluxos::{Code, Limites, LoadFailure, RevisionKey, Severity, compile};
+use poph_flows::{Code, Limites, LoadFailure, RevisionKey, Severity, compile};
 use poph_server::Estado;
 use poph_store::Store;
 use poph_types::HarnessConfig;

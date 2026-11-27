@@ -8,7 +8,7 @@ use poph_types::{
 };
 
 use crate::ir::{Campo, Decisao, Destination, Effect, Etapa, Ir};
-use crate::regras::{Dados, RuleEvaluator, canonical_text, preenchido};
+use crate::rules::{Dados, RuleEvaluator, canonical_text, preenchido};
 
 pub type Campos = Map<String, Json>;
 

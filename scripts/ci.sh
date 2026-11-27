@@ -37,7 +37,7 @@ run "clippy" cargo clippy --workspace --all-targets --locked -- -D warnings
 run "build" cargo build --workspace --locked
 run "tests" cargo test --workspace --locked
 run "ram (model measurement, poph-rag alone)" cargo test --locked -p poph-rag --test ram -- --ignored --nocapture
-run "aarch64 (check, crates without C)" cargo check --locked --target aarch64-unknown-linux-gnu -p poph-types -p poph-files -p poph-plugins -p poph-fluxos
+run "aarch64 (check, crates without C)" cargo check --locked --target aarch64-unknown-linux-gnu -p poph-types -p poph-files -p poph-plugins -p poph-flows
 run "aarch64 (check, example plugin)" cargo check --locked --target aarch64-unknown-linux-gnu -p poph-plugin-eco
 run "deny (licenses, bans, sources, advisories)" cargo deny check
 run "audit (vulnerabilities)" cargo audit

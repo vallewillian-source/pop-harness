@@ -34,8 +34,8 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::routing::post;
 use poph_agent::Backoff;
 use poph_evolution::{ATTACHMENT_CAP, ConfigEvolution, EvolutionClient};
-use poph_fluxos::ProducedEffect;
-use poph_fluxos::ir::Effect;
+use poph_flows::ProducedEffect;
+use poph_flows::ir::Effect;
 use poph_server::evolution::CanalEvolution;
 use poph_server::fluxos_efeitos::{
     EfeitosFluxo, MOTIVO_TENTATIVAS_ESGOTADAS, OpcoesEfeitosFluxo, RelatoEfeitos,

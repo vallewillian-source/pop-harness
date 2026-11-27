@@ -76,7 +76,7 @@ Se já existe execução ativa, o turno não pergunta nada ao Jev: o bloco da et
 
 **Ações humanas na API.** O atendente abre um fluxo liberado ao agente da Ficha, sem passar pelo Jev (`POST .../flow-runs`), age (`.../actions`), abandona e fecha a Ficha. Todas exigem `If-Match` e `chave_idempotencia`; repetir a chave devolve o resultado da primeira chamada, sem duplicar evento (`fichas_acoes.rs`).
 
-**Cache de revisões.** As revisões compiladas ficam em memória, com teto (`cache_revisoes_mb`, padrão 16 MB), e a menos usada que não esteja em uso sai primeiro. Carga concorrente da mesma revisão compila uma vez só. Falha de carga não derruba o processo: a execução vai para falha (`poph-fluxos/tests/cache.rs`).
+**Cache de revisões.** As revisões compiladas ficam em memória, com teto (`cache_revisoes_mb`, padrão 16 MB), e a menos usada que não esteja em uso sai primeiro. Carga concorrente da mesma revisão compila uma vez só. Falha de carga não derruba o processo: a execução vai para falha (`poph-flows/tests/cache.rs`).
 
 ## 4. Efeitos
 
@@ -164,10 +164,10 @@ O passo a passo para descobrir o motivo está em [RUNBOOKS.md](RUNBOOKS.md), na 
 |---|---|
 | Ficha em todo caminho de criação e fechamento | `poph-store/tests/cases_invariant.rs`, `cases_migration.rs` |
 | Esquema (tabelas, gatilhos, uma execução ativa) | `poph-store/tests/flows_migration.rs`, `flows_repo.rs` |
-| Linguagem (compilador, validador, regras, limites) | `poph-fluxos/tests/compiler.rs`, `validator.rs`, `rules.rs`, `limits.rs` |
-| Motor (início, ações, decisões, fim, efeitos) | `poph-fluxos/tests/engine.rs`, `engine_outcome.rs`, `poph-store/tests/flow_executions.rs` |
+| Linguagem (compilador, validador, regras, limites) | `poph-flows/tests/compiler.rs`, `validator.rs`, `rules.rs`, `limits.rs` |
+| Motor (início, ações, decisões, fim, efeitos) | `poph-flows/tests/engine.rs`, `engine_outcome.rs`, `poph-store/tests/flow_executions.rs` |
 | Gate G9 e turno | `poph-jev/tests/g9_fluxo.rs`, `poph-agent/tests/flow_turn.rs`, `flow_tools.rs` |
-| Paridade com o POP Atende | `poph-fluxos/tests/parity.rs` e [FLUXOS_PARIDADE.md](FLUXOS_PARIDADE.md) |
+| Paridade com o POP Atende | `poph-flows/tests/parity.rs` e [FLUXOS_PARIDADE.md](FLUXOS_PARIDADE.md) |
 | API, permissão, Fichas e ações humanas | `poph-server/tests/agente_fluxos.rs`, `fichas_leitura.rs`, `fichas_acoes.rs`, `isolamento_orgs.rs` |
 | CLI | `poph/tests/cli_flow.rs` |
 | Backup | testes de backup em `poph-store` (19), `poph-server/tests/backup_http.rs` (9) e `poph/tests/cli_backup.rs` (6) |
@@ -178,15 +178,26 @@ O passo a passo para descobrir o motivo está em [RUNBOOKS.md](RUNBOOKS.md), na 
 
 ## 8. Crate layout
 
-`poph-fluxos` is pure: no I/O, no database, no network. It depends on `poph-types` and the script
+`poph-flows` is pure: no I/O, no database, no network. It depends on `poph-types` and the script
 library (Starlark) only, and imports no other workspace crate.
+
+Dependencies, with the reason each one is there:
+
+- `starlark` 0.14.3 is the script language (FX-01).
+- `blake3` comes from the workspace with its `pure` feature. That keeps this crate in the
+  station's aarch64 `cargo check`.
+- `sha2` 0.11 builds the cache key (FX-19). It is the same SHA-256 as `fonte_sha256` in
+  `fluxo_revisoes`. That version is already built by `poph-files`, `poph-rag` and `poph-store`,
+  so no new package enters the build.
+- `serde` comes from the workspace. The IR is stored in `fluxo_revisoes.definicao_json` and
+  compared byte by byte, and serde gives it a stable form.
 
 | Module | Responsibility |
 |---|---|
 | `compilador` | script → IR, with shape diagnostics. |
-| `validador` | semantic diagnostics over the IR and department resolution. |
-| `regras` | combinators and advanced functions (`def`), with tick, heap and deadline caps. |
-| `motor` | one run of an execution: start, record fields, run an action, advance, resolve decisions, reach the end, abandon and produce effects. |
+| `validator` | semantic diagnostics over the IR and department resolution. |
+| `rules` | combinators and advanced functions (`def`), with tick, heap and deadline caps. |
+| `engine` | one run of an execution: start, record fields, run an action, advance, resolve decisions, reach the end, abandon and produce effects. |
 | `prompt` | the step block of the prompt and its rendering. |
 | `diff` | difference between revisions in plain language. |
 | `formatter` | canonical form of the script (script ⇄ structure). |
@@ -262,7 +273,7 @@ marks the dependency as used, because the Rust `unused_dependencies` lint breaks
   the agent still sees the start of the step. The cut depends only on the text.
 - Booleans show as the canonical `sim` / `nao`.
 
-### 8.3 Rule evaluator (`regras`)
+### 8.3 Rule evaluator (`rules`)
 
 - A rule is evaluated over a snapshot of the execution data, `{"step": {"field": value}}`, sorted
   (`BTreeMap`), so evaluation is deterministic. The data enters as a value and never as code.
@@ -373,7 +384,7 @@ marks the dependency as used, because the Rust `unused_dependencies` lint breaks
 - For new or removed nodes, impact depends on reachability. Existing nodes use the impact of their
   own change. The module is pure; counts of attendances attached to a revision are added by the API.
 
-### 8.7 Semantic validator (`validador`)
+### 8.7 Semantic validator (`validator`)
 
 - `validar` checks an already compiled IR. Diagnostics use a node path because an external IR has no
   source line or column. The compiler performs the position-based checks over source text.
@@ -384,7 +395,7 @@ marks the dependency as used, because the Rust `unused_dependencies` lint breaks
   and a resolution with `departamento_id = None`; publication stores the resolution and the runtime
   effect fails closed at execution time.
 
-### 8.8 Flow engine (`motor`)
+### 8.8 Flow engine (`engine`)
 
 - The engine is **pure**: it takes the compiled IR and the execution state that came from the
   database and returns the new state with the events the atomic write will store. There is no
@@ -492,8 +503,8 @@ Comando (o teto do cache vem de `POPH_RAM_TETO_MB` e cada valor roda num process
 alocador não devolve ao sistema o que uma fase liberou):
 
 ```text
-POPH_RAM_TETO_MB=4  cargo test --release -p poph-fluxos --test ram -- --ignored --nocapture
-POPH_RAM_TETO_MB=16 cargo test --release -p poph-fluxos --test ram -- --ignored --nocapture
+POPH_RAM_TETO_MB=4  cargo test --release -p poph-flows --test ram -- --ignored --nocapture
+POPH_RAM_TETO_MB=16 cargo test --release -p poph-flows --test ram -- --ignored --nocapture
 ```
 
 Revisões de 8 etapas com instruções de 200 caracteres: peso estimado pelo cache

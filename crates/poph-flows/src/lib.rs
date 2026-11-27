@@ -4,13 +4,13 @@ pub mod cache;
 pub mod compilador;
 pub mod diagnostics;
 pub mod diff;
+pub mod engine;
 pub mod formatter;
 pub mod ir;
 pub mod language;
-pub mod motor;
 pub mod prompt;
-pub mod regras;
-pub mod validador;
+pub mod rules;
+pub mod validator;
 
 pub use cache::{
     DEFAULT_CAP_MB, ENTRY_FIXED_COST, MAX_BATCH_WAIT, Metrics, RevisionCache, RevisionKey,
@@ -19,12 +19,12 @@ pub use cache::{
 pub use compilador::{Compiled, Limites, LoadFailure, compile, load};
 pub use diagnostics::{Code, Diagnostic, Severity};
 pub use diff::{Change, ChangeType, Impact, diff};
-pub use formatter::{FormatFailure, WIDTH, format, format_with, print};
-pub use ir::Ir;
-pub use motor::{
+pub use engine::{
     Campos, Context, Estado, Evento, MAX_SALTOS_DECISAO, ProducedEffect, Receipt, Resultado,
     abandon, entry_effects, execute_action, missing_fields, required_actors, start, step_data,
 };
+pub use formatter::{FormatFailure, WIDTH, format, format_with, print};
+pub use ir::Ir;
 pub use prompt::{BLOCK_CAP, render_block, stage_block};
-pub use regras::{Dados, RuleError, RuleEvaluator, RuleLimits, evaluate, snapshot_from_json};
-pub use validador::{Departamento, MAX_NOS, Resolution, resolve_departments, validar};
+pub use rules::{Dados, RuleError, RuleEvaluator, RuleLimits, evaluate, snapshot_from_json};
+pub use validator::{Departamento, MAX_NOS, Resolution, resolve_departments, validar};

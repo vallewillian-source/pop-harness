@@ -8,7 +8,7 @@
 //!
 //! - `poph_fluxos_cache_*`, `poph_fluxos_expulsoes_total`, `poph_fluxos_revisoes_*` e
 //!   `poph_fluxos_cache_bytes`: o cache de revisões (FX-19), lido a cada `/metrics`. Como o
-//!   [`poph_fluxos::Metricas`] é cumulativo, cada leitura soma só a diferença desde a anterior.
+//!   [`poph_flows::Metricas`] é cumulativo, cada leitura soma só a diferença desde a anterior.
 //! - `poph_fluxos_execucoes_*` e `poph_fluxos_erros_regra_total`: contados no `poph-store`, onde
 //!   `fluxo_execucoes` é escrito — abertura, transição, fechamento da Ficha e exclusão do fluxo
 //!   (FX-40). O servidor publica estes cinco handles no store da instância
@@ -19,7 +19,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use poph_fluxos::Metrics as MetricasCache;
+use poph_flows::Metrics as MetricasCache;
 use poph_types::{Counter, DomainResult, Gauge, Registry};
 
 /// Os números do módulo de fluxos. Todos os campos são handles baratos de clonar.

@@ -13,7 +13,7 @@ members = [
     "crates/poph-plugins",
     "crates/poph-evolution",
     "crates/poph-jev",
-    "crates/poph-fluxos",
+    "crates/poph-flows",
     "crates/poph-matrix",
     "crates/poph-plugin-eco",
     "crates/poph",

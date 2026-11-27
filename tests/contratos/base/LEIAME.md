@@ -52,7 +52,7 @@ POPH_CONTRACT_SNAPSHOT_DIR=/tmp/contratos \
 | `api/*.json` | JSON of every read route, with the status code | real server on an ephemeral port over a fixed test database, authenticated with a global token; one file per route |
 | `metrics/types.txt` | Names and types of the `poph_*` series | `# TYPE` lines of `/metrics`, sorted and deduplicated; values are not part of the contract |
 | `flows/*.star` | The three example flow scripts | copied from `tests/fluxos/exemplos/` |
-| `flows/*.ir.json` | The IR compiled from each example | `poph_fluxos::compilar` with the default limits; the capture fails if a script produces any diagnostic |
+| `flows/*.ir.json` | The IR compiled from each example | `poph_flows::compilar` with the default limits; the capture fails if a script produces any diagnostic |
 | `config/default.toml` | Keys and default values of `poph.toml` | `HarnessConfig::default()` serialized to TOML |
 | `config/doctor-empty.json` | `poph doctor --json` on a directory without databases | fixed environment |
 | `config/doctor-migrated.json` | `poph doctor --json` after `poph migrate` | same |

@@ -1,0 +1,19 @@
+[package]
+name = "poph-flows"
+description = "Módulo de Fluxos e Fichas do POP Harness: compilador de script Starlark para estrutura (IR), validador, regras, motor puro, bloco de prompt, diff e formatador (FX-10: compilador pronto; o resto é esqueleto)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+poph-types = { path = "../poph-types" }
+starlark.workspace = true
+blake3.workspace = true
+sha2 = "0.11"
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

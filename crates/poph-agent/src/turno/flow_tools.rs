@@ -2,8 +2,8 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use poph_fluxos::ir::{Destination, Ir};
-use poph_fluxos::motor::{self, Context as ContextEngine, Estado as StateEngine, execute_action};
+use poph_flows::engine::{self, Context as ContextEngine, Estado as StateEngine, execute_action};
+use poph_flows::ir::{Destination, Ir};
 use poph_store::{Execution, Ficha, Store, StoreError, TransitionExtras};
 use poph_types::{ActionActor, FlowsConfig, RecordStatus};
 use serde_json::{Map, Value};
@@ -301,7 +301,7 @@ impl FlowTurn {
             Some(load) => load,
             None => return Err(could_not_read_the_flow()),
         };
-        let resultado = motor::abandon(&load.estado, &motivo, ActionActor::Agent, Some(&chave))
+        let resultado = engine::abandon(&load.estado, &motivo, ActionActor::Agent, Some(&chave))
             .map_err(|error| format!("erro: {error}"))?;
         self.store
             .executions()
@@ -448,7 +448,7 @@ fn note_of_effect() -> String {
 fn response_of_action(
     ir: &Ir,
     previous: &StateEngine,
-    resultado: &motor::Resultado,
+    resultado: &engine::Resultado,
     repeated: bool,
 ) -> String {
     let mut saida = String::new();
@@ -503,12 +503,12 @@ fn describe(ir: &Ir, estado: &StateEngine) -> String {
             {
                 saida.push_str(&format!("\nOrientação da etapa: {instruction}"));
             }
-            let missing = motor::missing_fields(etapa, &estado.dados);
+            let missing = engine::missing_fields(etapa, &estado.dados);
             saida.push_str(&format!(
                 "\nCampos obrigatórios que faltam: {}.",
                 list(&missing)
             ));
-            let mut waiting = motor::required_actors(etapa);
+            let mut waiting = engine::required_actors(etapa);
             waiting.retain(|actor| !estado.actors_who_acted.contains(actor));
             if !waiting.is_empty() {
                 saida.push_str(&format!(
@@ -556,7 +556,7 @@ fn list_of_actors(actors: &[ActionActor]) -> String {
         .join(", ")
 }
 
-fn list_of_actions(etapa: &poph_fluxos::ir::Etapa) -> String {
+fn list_of_actions(etapa: &poph_flows::ir::Etapa) -> String {
     if etapa.actions.is_empty() {
         return "nenhuma (a etapa não tem saída)".to_owned();
     }

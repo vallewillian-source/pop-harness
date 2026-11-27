@@ -675,9 +675,9 @@ LEGACY_FLOW_CONSTANTS = {
 
 
 def flow_language_names():
-    source = (ROOT / "crates" / "poph-fluxos" / "src" / "language.rs")
+    source = (ROOT / "crates" / "poph-flows" / "src" / "language.rs")
     if not source.is_file():
-        source = ROOT / "crates" / "poph-fluxos" / "src" / "linguagem.rs"
+        source = ROOT / "crates" / "poph-flows" / "src" / "linguagem.rs"
     source = source.read_text(encoding="utf-8")
     names = []
     for constant in (

@@ -11,7 +11,7 @@ use poph_agent::turno::{
 use poph_core::llm::{
     FakeProvider, FinishReason, LlmEvent, Message, Request, Script, ToolCall, Usage,
 };
-use poph_fluxos::{Limites, compile};
+use poph_flows::{Limites, compile};
 use poph_jev::{FakeJev, G9_NONE, JevEngine};
 use poph_store::{
     AgentChange, ConversationStatus, Direction, NewAgent, NewConversation, NewFlow, NewMessage,

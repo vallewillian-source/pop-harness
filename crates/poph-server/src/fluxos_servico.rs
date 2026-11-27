@@ -12,14 +12,14 @@
 use std::fmt;
 use std::sync::Arc;
 
-use poph_fluxos::{
+use poph_flows::{
     Compiled, Departamento, Ir, Limites, RevisionKey, compile, diff, format_with,
     resolve_departments, stage_block, validar,
 };
 
 // Tipos que a CLI precisa para mostrar o resultado. Reexportados para o `poph` não depender de
-// `poph-fluxos` diretamente.
-pub use poph_fluxos::{Change, Diagnostic, Resolution, RevisionCache};
+// `poph-flows` diretamente.
+pub use poph_flows::{Change, Diagnostic, Resolution, RevisionCache};
 use poph_store::{
     FlowRevision, Fluxo, NewAuditEntry, NewFlow, Page, RevisionPublication, Store, StoreError,
 };

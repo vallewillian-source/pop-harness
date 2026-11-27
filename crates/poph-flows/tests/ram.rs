@@ -1,4 +1,4 @@
-use poph_fluxos::{Ir, Limites, RevisionCache, RevisionKey, compile, entry_weight};
+use poph_flows::{Ir, Limites, RevisionCache, RevisionKey, compile, entry_weight};
 
 const CAP_DEFAULT_MB: usize = 16;
 

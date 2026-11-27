@@ -29,7 +29,7 @@
 //! # Formato do `payload_json`
 //!
 //! É o formato que o adaptador do turno (FX-22/FX-23) grava a partir de
-//! [`poph_fluxos::EfeitoProduzido`] — e quem grava usa [`efeito_da_transicao`] (de `poph-agent`,
+//! [`poph_flows::EfeitoProduzido`] — e quem grava usa [`efeito_da_transicao`] (de `poph-agent`,
 //! desde a FX-23) para não existirem dois formatos:
 //!
 //! ```json

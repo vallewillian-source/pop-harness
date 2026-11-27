@@ -427,7 +427,7 @@ impl TurnEngine {
         self
     }
 
-    pub fn with_flow_cache(mut self, cache: Arc<poph_fluxos::cache::RevisionCache>) -> Self {
+    pub fn with_flow_cache(mut self, cache: Arc<poph_flows::cache::RevisionCache>) -> Self {
         let Some(settings) = self.fluxos.take() else {
             return self;
         };

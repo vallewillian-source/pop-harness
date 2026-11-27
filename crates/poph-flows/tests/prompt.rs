@@ -1,7 +1,7 @@
-use poph_fluxos::ir::{Acao, Campo, Destination, Etapa, Fim, Fluxo, Gatilho, Ir};
-use poph_fluxos::motor::{Campos, Context, Estado, execute_action, start};
-use poph_fluxos::prompt::{BLOCK_CAP, render_block, stage_block};
-use poph_fluxos::regras::RuleEvaluator;
+use poph_flows::engine::{Campos, Context, Estado, execute_action, start};
+use poph_flows::ir::{Acao, Campo, Destination, Etapa, Fim, Fluxo, Gatilho, Ir};
+use poph_flows::prompt::{BLOCK_CAP, render_block, stage_block};
+use poph_flows::rules::RuleEvaluator;
 use poph_types::{ActionActor, DomainError, ExecutionStatus, FieldKind};
 use serde_json::{Map, Value as Json, json};
 use std::sync::OnceLock;

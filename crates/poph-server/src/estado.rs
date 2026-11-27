@@ -9,7 +9,7 @@ use argon2::password_hash::PasswordHash;
 use poph_agent::entry_output::Fluxo;
 use poph_agent::turno::TurnEngine;
 use poph_files::FileConfig;
-use poph_fluxos::{Compiled, Ir, Limites, LoadFailure, RevisionCache, RevisionKey, compile};
+use poph_flows::{Compiled, Ir, Limites, LoadFailure, RevisionCache, RevisionKey, compile};
 use poph_store::Store;
 use poph_types::{BaseMetrics, ConversationId, HarnessConfig, OrgId, Registry};
 

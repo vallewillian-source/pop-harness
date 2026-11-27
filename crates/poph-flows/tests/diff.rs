@@ -1,7 +1,7 @@
-use poph_fluxos::ir::{
+use poph_flows::ir::{
     Acao, Campo, Decisao, Def, Destination, Effect, Etapa, Fim, Fluxo, Gatilho, Ir, Rule,
 };
-use poph_fluxos::{Change, ChangeType, Impact, diff};
+use poph_flows::{Change, ChangeType, Impact, diff};
 use poph_types::{ActionActor, FieldKind};
 
 fn base() -> Ir {

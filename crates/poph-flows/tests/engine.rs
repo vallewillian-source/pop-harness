@@ -1,8 +1,8 @@
-use poph_fluxos::ir::{Acao, Campo, Destination, Etapa, Fim, Fluxo, Gatilho, Ir};
-use poph_fluxos::motor::{
+use poph_flows::engine::{
     Campos, Context, Estado, execute_action, missing_fields, required_actors, start,
 };
-use poph_fluxos::regras::RuleEvaluator;
+use poph_flows::ir::{Acao, Campo, Destination, Etapa, Fim, Fluxo, Gatilho, Ir};
+use poph_flows::rules::RuleEvaluator;
 use poph_types::{ActionActor, DomainError, ExecutionStatus, FieldKind, RecordEventKind};
 use serde_json::{Value as Json, json};
 use std::sync::OnceLock;
@@ -69,7 +69,7 @@ fn fluxo(steps: Vec<Etapa>) -> Ir {
         .map(|etapa| etapa.id.clone())
         .unwrap_or_default();
     Ir {
-        schema_versao: poph_fluxos::ir::SCHEMA_VERSAO,
+        schema_versao: poph_flows::ir::SCHEMA_VERSAO,
         fluxo: Fluxo {
             id: "teste".to_owned(),
             nome: "Teste".to_owned(),
@@ -157,7 +157,7 @@ fn errors_fields(error: &DomainError) -> Vec<String> {
     }
 }
 
-fn kinds(resultado: &poph_fluxos::motor::Resultado) -> Vec<RecordEventKind> {
+fn kinds(resultado: &poph_flows::engine::Resultado) -> Vec<RecordEventKind> {
     resultado.events.iter().map(|evento| evento.tipo).collect()
 }
 
@@ -1158,7 +1158,7 @@ fn missing_fields_lists_only_required_in_script_order() {
         ],
         Vec::new(),
     );
-    let mut dados = poph_fluxos::Dados::new();
+    let mut dados = poph_flows::Dados::new();
     dados.insert(
         "coleta".to_owned(),
         json!({ "endereco": "Rua G", "bairro": "Centro" }),
@@ -1340,9 +1340,9 @@ fn already_closed_execution_refuses_action() {
 #[test]
 fn execution_stopped_at_decision_settles_before_running_action() {
     let mut ir = flow_simple();
-    ir.decisions = vec![poph_fluxos::ir::Decisao {
+    ir.decisions = vec![poph_flows::ir::Decisao {
         id: "escolher_rota".to_owned(),
-        se: poph_fluxos::ir::Rule::Vazio {
+        se: poph_flows::ir::Rule::Vazio {
             campo: "coleta.endereco".to_owned(),
         },
         then_branch: Destination::Etapa {

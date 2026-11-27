@@ -20,8 +20,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use poph_fluxos::motor::{self, Campos, Context, Estado as EstadoMotor};
-use poph_fluxos::{Limites, RuleEvaluator, compile};
+use poph_flows::engine::{self, Campos, Context, Estado as EstadoMotor};
+use poph_flows::{Limites, RuleEvaluator, compile};
 use poph_server::Estado;
 use poph_server::fluxos_transicao::transicao_do_motor;
 use poph_store::metrics::ExecutionMetrics;
@@ -313,7 +313,7 @@ impl Cenario {
         if let Some(saltos) = saltos {
             contexto = contexto.with_jump_limit(saltos);
         }
-        let resultado = motor::execute_action(
+        let resultado = engine::execute_action(
             ir,
             &estado,
             acao,
@@ -374,8 +374,8 @@ fn estado_do_banco(execucao: &poph_store::Execution) -> EstadoMotor {
     EstadoMotor {
         fluxo_id: execucao.fluxo_id.to_string(),
         status: execucao.status,
-        no_atual: poph_fluxos::ir::Destination::Etapa { id: ir.clone() },
-        dados: poph_fluxos::Dados::new(),
+        no_atual: poph_flows::ir::Destination::Etapa { id: ir.clone() },
+        dados: poph_flows::Dados::new(),
         actors_who_acted: Vec::new(),
         resultado: execucao.result.clone(),
         motivo: execucao.motivo_fim.clone(),
@@ -450,7 +450,7 @@ fn conclusao_conta_concluida_e_repetir_a_chave_nao_soma() {
             cenario.org,
             gravada.execution.id,
             gravada.execution.version,
-            &transicao_do_motor(&motor::Resultado {
+            &transicao_do_motor(&engine::Resultado {
                 new_state: estado_do_banco(&gravada.execution),
                 events: Vec::new(),
                 effects: Vec::new(),
@@ -475,7 +475,7 @@ fn abandono_pelo_agente_conta_abandonada() {
     let execucao = cenario.abrir(ficha, fluxo, revisao, "abandono-1");
 
     let estado = estado_do_banco(&execucao);
-    let resultado = motor::abandon(
+    let resultado = engine::abandon(
         &estado,
         "cliente desistiu",
         ActionActor::Agent,

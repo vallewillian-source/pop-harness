@@ -9,7 +9,7 @@ use poph_agent::turno::{
     FuturePause, NoopObserver, Pause, TurnEngine, TurnInput, TurnOptions, TurnSummary,
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
-use poph_fluxos::{Limites, compile};
+use poph_flows::{Limites, compile};
 use poph_jev::{FakeJev, G9_NONE, IdGate, JevEngine, JevError};
 use poph_store::{
     AgentChange, Direction, NewAgent, NewConversation, NewFlow, NewMessage, NewOrg,
@@ -754,11 +754,11 @@ async fn execution_active_not_question_judge() {
         .expect("há revisão publicada");
     let compiled = compile(SCRIPT, &Limites::default());
     let ir = compiled.ir().expect("compila");
-    let estado = poph_fluxos::motor::start(ir).expect("estado inicial");
-    let evaluator = poph_fluxos::RuleEvaluator::without_functions();
-    let context = poph_fluxos::motor::Context::new(&evaluator);
+    let estado = poph_flows::engine::start(ir).expect("estado inicial");
+    let evaluator = poph_flows::RuleEvaluator::without_functions();
+    let context = poph_flows::engine::Context::new(&evaluator);
     let effects =
-        poph_fluxos::motor::entry_effects(ir, estado.no_atual.id(), &estado.dados, &context)
+        poph_flows::engine::entry_effects(ir, estado.no_atual.id(), &estado.dados, &context)
             .expect("efeitos de entrada")
             .iter()
             .map(poph_agent::flows_transition::effect_of_transition)
