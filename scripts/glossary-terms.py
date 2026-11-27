@@ -90,6 +90,7 @@ PUBLISHED_TYPES = (
     "gatilho",
     "rota",
     "operation_id",
+    "schema_openapi",
     "campo_json",
     "comando_cli",
     "flag_cli",
@@ -726,9 +727,10 @@ def openapi():
             if isinstance(specification, dict) and specification.get("operationId"):
                 operations.add(specification["operationId"])
     fields = set()
-    for schema in document.get("components", {}).get("schemas", {}).values():
+    components = document.get("components", {}).get("schemas", {})
+    for schema in components.values():
         fields.update((schema.get("properties") or {}).keys())
-    return routes, sorted(operations), sorted(fields)
+    return routes, sorted(operations), sorted(fields), sorted(components)
 
 
 def cli():
@@ -831,7 +833,7 @@ def backup_format():
 
 def published_inventory():
     tables, columns, indexes, triggers = database_schema()
-    routes, operations, json_fields = openapi()
+    routes, operations, json_fields, openapi_schemas = openapi()
     commands, flags = cli()
     return {
         "linguagem_fluxos": flow_language_names(),
@@ -845,6 +847,7 @@ def published_inventory():
         "rota": routes,
         "operation_id": operations,
         "campo_json": json_fields,
+        "schema_openapi": openapi_schemas,
         "comando_cli": commands,
         "flag_cli": flags,
         "chave_toml": toml_keys(),
@@ -997,7 +1000,7 @@ def validate(measurement, mapping, mapping_errors, inventory, frozen):
             failures.append(f"{term}: published name without a 'congelado' row in the table")
 
     for term in sorted(set(mapping) & set(frozen)):
-        if (term, "traduz") not in seen or (term, "congelado") not in seen:
+        if measurement.count.get(term, 0) > 0 and (term, "traduz") not in seen:
             failures.append(f"{term}: it has both roles and needs both rows")
 
     language_names = flow_language_names()

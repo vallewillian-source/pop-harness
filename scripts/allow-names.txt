@@ -9,6 +9,7 @@ term	data	word spelled the same in Portuguese and English
 term	final	word spelled the same in Portuguese and English
 term	whatsapp	product name, spelled the same in both languages
 term	resolve	English word used as a method name and a Portuguese verb form
+term	media	English word; also a generated inflected form of the Portuguese verb `medir`
 term	os	word spelled the same in Portuguese and English
 term	as	word spelled the same in Portuguese and English
 term	no	word spelled the same in Portuguese and English
@@ -40,6 +41,7 @@ name	admin	published rota: admin
 name	admin_tokens	published tabela: admin_tokens
 name	age_buckets	published campo json: age_buckets
 name	age_ms	published campo json: age_ms
+name	AgeBucket	published schema openapi: AgeBucket
 name	agent	published comando cli: agent
 name	agent_id	published coluna: agent_id
 name	agent_instructions	published tabela: agent_instructions
@@ -49,8 +51,10 @@ name	agent_product_categories	published tabela: agent_product_categories
 name	agent_type	published coluna: agent_type
 name	agente	published flag cli: agente
 name	agente_fluxos	published tabela: agente_fluxos
+name	AgentJson	published schema openapi: AgentJson
 name	agents	published tabela: agents
 name	agents_active_count	published campo json: agents_active_count
+name	AgentUsageJson	published schema openapi: AgentUsageJson
 name	alias	published coluna: alias
 name	aliases	published campo json: aliases
 name	aliases_json	published coluna: aliases_json
@@ -62,6 +66,7 @@ name	anexos	published protocolo plugin: anexos
 name	ANTIGRAVITY_API_KEY	published variavel ambiente: ANTIGRAVITY_API_KEY
 name	any	flow language word, frozen by P6
 name	apikey	published protocolo plugin: apikey
+name	ArquivoJson	published schema openapi: ArquivoJson
 name	arquivos_conteudo	published operation id: arquivos_conteudo
 name	arquivos_criar	published operation id: arquivos_criar
 name	arquivos_excluir	published operation id: arquivos_excluir
@@ -72,11 +77,15 @@ name	ator_ref	published coluna: ator_ref
 name	ator_tipo	published coluna: ator_tipo
 name	atores_que_agiram_json	published coluna: atores_que_agiram_json
 name	atraso_falha_modelo_ms	published chave toml: atraso_falha_modelo_ms
+name	AtrasoJson	published schema openapi: AtrasoJson
 name	attachments	published tabela: attachments
 name	attachments_json	published coluna: attachments_json
 name	attempts	published coluna: attempts
 name	atualizar	published operation id: atualizar
 name	atualizar_item	published operation id: atualizar_item
+name	AtualizarCategoria	published schema openapi: AtualizarCategoria
+name	AtualizarDepartamento	published schema openapi: AtualizarDepartamento
+name	AtualizarOrg	published schema openapi: AtualizarOrg
 name	audit_log	published tabela: audit_log
 name	author_name	published coluna: author_name
 name	avg_messages_per_conversation	published campo json: avg_messages_per_conversation
@@ -101,6 +110,7 @@ name	capacidades	published protocolo plugin: capacidades
 name	cart_id	published coluna: cart_id
 name	cart_items	published tabela: cart_items
 name	carts	published tabela: carts
+name	CategoriaJson	published schema openapi: CategoriaJson
 name	categorias_atualizar	published operation id: categorias_atualizar
 name	categorias_criar	published operation id: categorias_criar
 name	categorias_excluir	published operation id: categorias_excluir
@@ -110,6 +120,7 @@ name	categories	published rota: categories
 name	category	published coluna: category
 name	category_id	published coluna: category_id
 name	channel	published coluna: channel
+name	ChannelJson	published schema openapi: ChannelJson
 name	chat	published rota: chat
 name	chave	published coluna: chave
 name	chave_env	published chave toml: chave_env
@@ -145,22 +156,45 @@ name	conversas_transferir	published operation id: conversas_transferir
 name	conversation_analytics	published operation id: conversation_analytics
 name	conversation_id	published coluna: conversation_id
 name	conversation_to_ficha_rate	published campo json: conversation_to_ficha_rate
+name	ConversationReportJson	published schema openapi: ConversationReportJson
 name	conversations	published tabela: conversations
 name	conversations_cursor_at	published coluna: conversations_cursor_at
 name	conversations_cursor_id	published coluna: conversations_cursor_id
+name	CorpoTransferencia	published schema openapi: CorpoTransferencia
 name	cost_micros	published coluna: cost_micros
 name	count	published campo json: count
 name	create	published operation id: create
+name	CreateBody	published schema openapi: CreateBody
 name	created_at	published coluna: created_at
 name	criar	published operation id: criar
 name	criar_item	published operation id: criar_item
+name	CriarCategoria	published schema openapi: CriarCategoria
+name	CriarDepartamento	published schema openapi: CriarDepartamento
+name	CriarOrg	published schema openapi: CriarOrg
+name	CriarToken	published schema openapi: CriarToken
 name	current	published rota: current
 name	current_step_key	published campo json: current_step_key
 name	cursor	published flag cli: cursor
+name	Dados	published schema openapi: Dados
 name	dados	published chave toml: dados
 name	dados_json	published coluna: dados_json
+name	DadosAbandono	published schema openapi: DadosAbandono
+name	DadosAcao	published schema openapi: DadosAcao
+name	DadosAgente	published schema openapi: DadosAgente
+name	DadosCriacao	published schema openapi: DadosCriacao
+name	DadosFluxosAgente	published schema openapi: DadosFluxosAgente
+name	DadosInicio	published schema openapi: DadosInicio
+name	DadosItem	published schema openapi: DadosItem
+name	DadosMensagemTeste	published schema openapi: DadosMensagemTeste
+name	DadosPareamento	published schema openapi: DadosPareamento
+name	DadosPatch	published schema openapi: DadosPatch
+name	DadosProduto	published schema openapi: DadosProduto
+name	DadosPublicacao	published schema openapi: DadosPublicacao
+name	DadosScript	published schema openapi: DadosScript
 name	databases	published campo json: databases
 name	date	published campo json: date
+name	DayJson	published schema openapi: DayJson
+name	DayUsageJson	published schema openapi: DayUsageJson
 name	de	published flag cli: de
 name	decisao	flow language word, frozen by P6
 name	default_department_id	published coluna: default_department_id
@@ -168,6 +202,7 @@ name	definicao_json	published coluna: definicao_json
 name	delete	published comando cli: delete
 name	deleted_at	published coluna: deleted_at
 name	departamento	published flag cli: departamento
+name	DepartamentoJson	published schema openapi: DepartamentoJson
 name	departamentos_atualizar	published operation id: departamentos_atualizar
 name	departamentos_criar	published operation id: departamentos_criar
 name	departamentos_excluir	published operation id: departamentos_excluir
@@ -211,7 +246,11 @@ name	error	published coluna: error
 name	error_code	published coluna: error_code
 name	escrever	published flag cli: escrever
 name	espaco	published comando cli: espaco
+name	EspacoDesligadoJson	published schema openapi: EspacoDesligadoJson
+name	EspacoJson	published schema openapi: EspacoJson
+name	EspacosJson	published schema openapi: EspacosJson
 name	estado	published coluna: estado
+name	EstadoMatrixJson	published schema openapi: EstadoMatrixJson
 name	etapa	flow language word, frozen by P6
 name	eval	published comando cli: eval
 name	event_id	published coluna: event_id
@@ -307,6 +346,7 @@ name	h	published flag cli: h
 name	handoff	published campo json: handoff
 name	handoff_department	published campo json: handoff_department
 name	harness	published campo json: harness
+name	HealthJson	published schema openapi: HealthJson
 name	healthz	published rota: healthz
 name	help	published flag cli: help
 name	history	published operation id: history
@@ -327,6 +367,7 @@ name	input_tokens	published coluna: input_tokens
 name	install	published comando cli: install
 name	instance_id	published campo json: instance_id
 name	instancia	published campo json: instancia
+name	InstanciaStatusJson	published schema openapi: InstanciaStatusJson
 name	instructions	published rota: instructions
 name	int	flow language word, frozen by P6
 name	integracao	published protocolo plugin: integracao
@@ -394,10 +435,18 @@ name	len	flow language word, frozen by P6
 name	liberado_em	published coluna: liberado_em
 name	liberar	published comando cli: liberar
 name	ligar	published comando cli: ligar
+name	LigarDesligar	published schema openapi: LigarDesligar
+name	LigarEspaco	published schema openapi: LigarEspaco
 name	limit	published flag cli: limit
 name	limites	published chave toml: limites
 name	link	published comando cli: link
 name	list	flow language word, frozen by P6
+name	ListaJson_ArquivoJson	published schema openapi: ListaJson_ArquivoJson
+name	ListaJson_CategoriaJson	published schema openapi: ListaJson_CategoriaJson
+name	ListaJson_DepartamentoJson	published schema openapi: ListaJson_DepartamentoJson
+name	ListaJson_OrgJson	published schema openapi: ListaJson_OrgJson
+name	ListaJson_TokenJson	published schema openapi: ListaJson_TokenJson
+name	ListaJson_Value	published schema openapi: ListaJson_Value
 name	listar	published operation id: listar
 name	listar_itens	published operation id: listar_itens
 name	listar_manifests	published operation id: listar_manifests
@@ -449,10 +498,12 @@ name	mensagem_automatica	published chave toml: mensagem_automatica
 name	mensagens_listar	published operation id: mensagens_listar
 name	message	published campo json: message
 name	message_id	published coluna: message_id
+name	MessageBody	published schema openapi: MessageBody
 name	messages	published tabela: messages
 name	messages_cursor	published coluna: messages_cursor
 name	messages_cursor_id	published coluna: messages_cursor_id
 name	metadados	published protocolo plugin: metadados
+name	MetricasJson	published schema openapi: MetricasJson
 name	metrics	published rota: metrics
 name	migrate	published comando cli: migrate
 name	mime	published coluna: mime
@@ -474,6 +525,7 @@ name	nivel	published chave toml: nivel
 name	no_atual	published coluna: no_atual
 name	no_id	published coluna: no_id
 name	node_id	published campo json: node_id
+name	NodeCountJson	published schema openapi: NodeCountJson
 name	nome	published coluna: nome
 name	None	flow language word, frozen by P6
 name	notificar_whatsapp	flow language word, frozen by P6
@@ -490,10 +542,12 @@ name	openapi	published comando cli: openapi
 name	operacao_healthz	published operation id: operacao_healthz
 name	operacao_metrics	published operation id: operacao_metrics
 name	operational	published rota: operational
+name	OperationalSummaryJson	published schema openapi: OperationalSummaryJson
 name	ordem	published coluna: ordem
 name	org	published comando cli: org
 name	org_id	published coluna: org_id
 name	org_origem	published backup: org_origem
+name	OrgJson	published schema openapi: OrgJson
 name	orgs	published tabela: orgs
 name	orgs_atualizar	published operation id: orgs_atualizar
 name	orgs_criar	published operation id: orgs_criar
@@ -651,6 +705,7 @@ name	removed	published campo json: removed
 name	reopen	published rota: reopen
 name	reply_to	published protocolo plugin: reply_to
 name	resolucoes_json	published coluna: resolucoes_json
+name	RespostaErro	published schema openapi: RespostaErro
 name	resultado	published coluna: resultado
 name	retencao	published chave toml: retencao
 name	retentativas	published chave toml: retentativas
@@ -693,6 +748,7 @@ name	situacao	published campo json: situacao
 name	size_bytes	published coluna: size_bytes
 name	sla	published rota: sla
 name	sla_analytics	published operation id: sla_analytics
+name	SlaReportJson	published schema openapi: SlaReportJson
 name	slug	published coluna: slug
 name	sobrescrever	published flag cli: sobrescrever
 name	somente	published flag cli: somente
@@ -703,6 +759,7 @@ name	space	published campo json: space
 name	space_room_id	published coluna: space_room_id
 name	spaces	published rota: spaces
 name	stale_items	published campo json: stale_items
+name	StaleItem	published schema openapi: StaleItem
 name	started_at	published coluna: started_at
 name	state	published coluna: state
 name	status	published coluna: status
@@ -713,6 +770,7 @@ name	structured_json	published coluna: structured_json
 name	submit	published operation id: submit
 name	substituir	published operation id: substituir
 name	summary	published coluna: summary
+name	SummaryJson	published schema openapi: SummaryJson
 name	tabelas	published backup: tabelas
 name	tag	published flag cli: tag
 name	tags	published campo json: tags
@@ -739,12 +797,15 @@ name	tipos_aceitos	published protocolo plugin: tipos_aceitos
 name	title	published coluna: title
 name	token	published campo json: token
 name	token_hash	published coluna: token_hash
+name	TokenCriadoJson	published schema openapi: TokenCriadoJson
+name	TokenJson	published schema openapi: TokenJson
 name	tokens	published rota: tokens
 name	tokens_criar	published operation id: tokens_criar
 name	tokens_globais	published chave toml: tokens_globais
 name	tokens_listar	published operation id: tokens_listar
 name	tokens_mostrar	published operation id: tokens_mostrar
 name	tokens_revogar	published operation id: tokens_revogar
+name	TokenUsageJson	published schema openapi: TokenUsageJson
 name	tool	published flag cli: tool
 name	tools_json	published coluna: tools_json
 name	top	published flag cli: top
@@ -827,6 +888,7 @@ name	vazio	flow language word, frozen by P6
 name	verificar	published flag cli: verificar
 name	versao	published protocolo plugin: versao
 name	versao_formato	published backup: versao_formato
+name	VersaoBancos	published schema openapi: VersaoBancos
 name	version	published coluna: version
 name	vincular	published operation id: vincular
 name	whatsapp	published rota: whatsapp

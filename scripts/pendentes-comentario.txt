@@ -1,27 +1,9 @@
 # Arquivos com comentário fora da allowlist, um por linha: módulo, quantidade de comentários e caminho,
 # separados por TAB. Gerado por `bash scripts/check-comments.sh --atualizar-pendentes`; não editar à mão.
 M05	4	crates/poph-jev/Cargo.toml
-M06b	8	crates/poph-fluxos/Cargo.toml
 M10b	10	crates/poph-agent/Cargo.toml
 M11a-c	3	crates/poph-server/Cargo.toml
 M11a-c	11	crates/poph-server/build.rs
-M11a-c	25	crates/poph-server/src/auth.rs
-M11a-c	38	crates/poph-server/src/cifra.rs
-M11a-c	90	crates/poph-server/src/cluster.rs
-M11a-c	26	crates/poph-server/src/console.rs
-M11a-c	125	crates/poph-server/src/encaminhamento.rs
-M11a-c	34	crates/poph-server/src/entrada_turno.rs
-M11a-c	35	crates/poph-server/src/erro.rs
-M11a-c	114	crates/poph-server/src/estado.rs
-M11a-c	68	crates/poph-server/src/evolution.rs
-M11a-c	14	crates/poph-server/src/fichas_servico.rs
-M11a-c	104	crates/poph-server/src/fluxos_efeitos.rs
-M11a-c	54	crates/poph-server/src/fluxos_metricas.rs
-M11a-c	69	crates/poph-server/src/fluxos_servico.rs
-M11a-c	5	crates/poph-server/src/fluxos_transicao.rs
-M11a-c	22	crates/poph-server/src/lib.rs
-M11a-c	71	crates/poph-server/src/manifestos.rs
-M11a-c	57	crates/poph-server/src/saida_whatsapp.rs
 M11d	34	crates/poph-server/tests/agente_fluxos.rs
 M11d	123	crates/poph-server/tests/api.rs
 M11d	71	crates/poph-server/tests/backup_http.rs

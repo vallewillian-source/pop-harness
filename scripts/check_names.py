@@ -78,6 +78,7 @@ MANUAL_ENTRIES = (
     ("term", "final", "word spelled the same in Portuguese and English"),
     ("term", "whatsapp", "product name, spelled the same in both languages"),
     ("term", "resolve", "English word used as a method name and a Portuguese verb form"),
+    ("term", "media", "English word; also a generated inflected form of the Portuguese verb `medir`"),
     ("term", "os", "word spelled the same in Portuguese and English"),
     ("term", "as", "word spelled the same in Portuguese and English"),
     ("term", "no", "word spelled the same in Portuguese and English"),
