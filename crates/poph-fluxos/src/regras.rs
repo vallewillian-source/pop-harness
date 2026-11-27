@@ -87,7 +87,7 @@ impl RuleEvaluator {
             max_ticks: load.max_ticks,
             max_heap_bytes: load.max_heap_bytes,
             max_callstack: load.max_callstack,
-            deadline: load.prazo_de_carga,
+            deadline: load.load_deadline,
         };
         let module = load_with_deadline(fonte, starlark)?;
         Ok(Self {

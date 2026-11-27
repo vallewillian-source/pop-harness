@@ -16,7 +16,7 @@ pub use cache::{
     DEFAULT_CAP_MB, ENTRY_FIXED_COST, MAX_BATCH_WAIT, Metrics, RevisionCache, RevisionKey,
     WEIGHT_FACTOR, entry_weight, sha256_of_source,
 };
-pub use compilador::{Compilado, FalhaCarregamento, Limites, carregar, compilar};
+pub use compilador::{Compiled, Limites, LoadFailure, compile, load};
 pub use diagnostics::{Code, Diagnostic, Severity};
 pub use diff::{Impacto, Mudanca, TipoMudanca, diferenca};
 pub use formatador::{FalhaDeFormato, LARGURA, formatar, formatar_com, imprimir};

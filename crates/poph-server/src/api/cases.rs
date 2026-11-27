@@ -730,7 +730,7 @@ fn revision_ir(e: &Estado, revision: &FlowRevision) -> Result<Arc<Ir>, ApiError>
             &key,
             &stored,
             &revision.fonte,
-            &Limites::da_config(&e.config.flows),
+            &Limites::from_config(&e.config.flows),
         )
         .map_err(|error| {
             tracing::error!(error = ?error, "revisão de fluxo publicada não carrega");
@@ -748,7 +748,7 @@ fn revision_evaluator(
     }
     RuleEvaluator::new_with(
         &revision.fonte,
-        &Limites::da_config(&e.config.flows),
+        &Limites::from_config(&e.config.flows),
         RuleLimits::default(),
     )
     .map_err(|error| {

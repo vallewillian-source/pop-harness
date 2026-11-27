@@ -45,7 +45,7 @@ impl AdjustmentsFlow {
     pub fn of_config(config: &FlowsConfig) -> Self {
         Self {
             ativo: config.enabled,
-            limites: Limites::da_config(config),
+            limites: Limites::from_config(config),
             jumps: usize::try_from(config.max_decision_hops)
                 .unwrap_or(1)
                 .max(1),
@@ -216,7 +216,7 @@ fn load_ir(
         Ok(ir) => Some(ir),
         Err(failure) => {
             tracing::error!(
-                failure = failure.codigo(),
+                failure = failure.code(),
                 revision = %revision.id,
                 "a revisão publicada não confere com o texto guardado"
             );
@@ -734,7 +734,7 @@ pub(crate) fn decide(
 mod tests {
     use std::sync::Arc;
 
-    use poph_fluxos::{Limites, compilar};
+    use poph_fluxos::{Limites, compile};
     use poph_store::{NewAgent, NewConversation, NewFlow, NewOrg, RevisionPublication, Store};
     use poph_types::{AgentId, EventActor, FlowsConfig, OrgId};
 
@@ -832,7 +832,7 @@ etapa(
                     },
                 )
                 .expect("cria o fluxo");
-            let compiled = compilar(SCRIPT, &Limites::default());
+            let compiled = compile(SCRIPT, &Limites::default());
             let ir = compiled.ir().expect("o script do teste compila");
             store
                 .revisions()

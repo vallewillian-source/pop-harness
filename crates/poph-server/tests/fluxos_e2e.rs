@@ -9,7 +9,7 @@ use poph_agent::turno::{
     FuturePause, NoopObserver, Pause, TurnEngine, TurnInput, TurnOptions, TurnSummary,
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, ToolCall, Usage};
-use poph_fluxos::{Limites, compilar};
+use poph_fluxos::{Limites, compile};
 use poph_jev::{FakeJev, JevEngine};
 use poph_store::{
     ConversationStatus, Direction, NewAgent, NewConversation, NewFlow, NewMessage, NewOrg,
@@ -132,7 +132,7 @@ impl Cenario {
                 },
             )
             .expect("cria o fluxo");
-        let compilado = compilar(script, &Limites::default());
+        let compilado = compile(script, &Limites::default());
         let ir = compilado.ir().expect("o script do teste compila");
         self.store
             .revisions()
@@ -655,7 +655,7 @@ async fn revisao_antiga_acao_humana_e_dois_fluxos_na_mesma_ficha() {
     .await;
     let anterior = c.execucao(conversa);
     let nova_fonte = visita_humana.replace("Visita agendada", "Resultado da versão nova");
-    let compilado = compilar(&nova_fonte, &Limites::default());
+    let compilado = compile(&nova_fonte, &Limites::default());
     let ir = compilado.ir().unwrap();
     let versao = c.store.flows().get(c.org, fluxo).unwrap().version;
     let nova = c

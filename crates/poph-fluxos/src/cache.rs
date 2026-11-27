@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
 
-use crate::compilador::{FalhaCarregamento, Limites, carregar as load_revision};
+use crate::compilador::{Limites, LoadFailure, load as load_revision};
 use crate::ir::Ir;
 
 pub const DEFAULT_CAP_MB: usize = 16;
@@ -79,7 +79,7 @@ pub struct Metrics {
 }
 
 struct InFlight {
-    resultado: Mutex<Option<Result<Arc<Ir>, FalhaCarregamento>>>,
+    resultado: Mutex<Option<Result<Arc<Ir>, LoadFailure>>>,
     signal: Condvar,
 }
 
@@ -91,14 +91,14 @@ impl InFlight {
         }
     }
 
-    fn publicar(&self, resultado: Result<Arc<Ir>, FalhaCarregamento>) {
+    fn publicar(&self, resultado: Result<Arc<Ir>, LoadFailure>) {
         let mut guard = self.lock();
         *guard = Some(resultado);
         drop(guard);
         self.signal.notify_all();
     }
 
-    fn wait_result(&self) -> Option<Result<Arc<Ir>, FalhaCarregamento>> {
+    fn wait_result(&self) -> Option<Result<Arc<Ir>, LoadFailure>> {
         let start = Instant::now();
         let mut guard = self.lock();
         loop {
@@ -113,7 +113,7 @@ impl InFlight {
         }
     }
 
-    fn lock(&self) -> MutexGuard<'_, Option<Result<Arc<Ir>, FalhaCarregamento>>> {
+    fn lock(&self) -> MutexGuard<'_, Option<Result<Arc<Ir>, LoadFailure>>> {
         self.resultado
             .lock()
             .unwrap_or_else(|envenenado| envenenado.into_inner())
@@ -292,7 +292,7 @@ impl RevisionCache {
         stored_ir: &Ir,
         fonte: &str,
         limites: &Limites,
-    ) -> Result<Arc<Ir>, FalhaCarregamento> {
+    ) -> Result<Arc<Ir>, LoadFailure> {
         let wait = {
             let mut inner = self.lock();
             if let Some(ir) = inner.touch(chave) {
@@ -334,7 +334,7 @@ impl RevisionCache {
         stored_ir: &Ir,
         fonte: &str,
         limites: &Limites,
-    ) -> Result<Arc<Ir>, FalhaCarregamento> {
+    ) -> Result<Arc<Ir>, LoadFailure> {
         {
             let mut inner = self.lock();
             inner.counters.loads += 1;
@@ -342,7 +342,7 @@ impl RevisionCache {
         load_revision(stored_ir, fonte, limites).map(Arc::new)
     }
 
-    fn concluir(&self, chave: &RevisionKey, resultado: &Result<Arc<Ir>, FalhaCarregamento>) {
+    fn concluir(&self, chave: &RevisionKey, resultado: &Result<Arc<Ir>, LoadFailure>) {
         let in_flight = {
             let mut inner = self.lock();
             if let Ok(ir) = resultado {

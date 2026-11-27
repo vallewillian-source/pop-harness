@@ -1,9 +1,9 @@
 //! Os tetos de compilação e de avaliação de regra vêm da configuração `[fluxos]` (FX-26b).
 //!
 //! Cada chave com efeito no compilador ou na avaliação tem um teste que muda o valor e prova que
-//! o limite de fato muda (`Limites::da_config`, `LimitesRegra::da_config`, `compilar`).
+//! o limite de fato muda (`Limites::from_config`, `RuleLimits::from_config`, `compile`).
 
-use poph_fluxos::{Code, Limites, RuleLimits, Severity, compilar, formatar_com};
+use poph_fluxos::{Code, Limites, RuleLimits, Severity, compile, formatar_com};
 use poph_types::config::FlowsConfig;
 
 /// Um dos exemplos do repositório: script válido que o compilador aceita com o padrão.
@@ -18,15 +18,15 @@ fn script_de_tamanho(tamanho: usize) -> String {
 
 /// Número de nós (etapas + decisões + fins) da IR de um script aceito.
 fn nos_do_exemplo() -> usize {
-    let ir = compilar(EXEMPLO, &Limites::default())
+    let ir = compile(EXEMPLO, &Limites::default())
         .ir
         .expect("o exemplo compila com o padrão");
     ir.stages.len() + ir.decisions.len() + ir.ends.len()
 }
 
 fn erros_com_codigo(fonte: &str, limites: &Limites, codigo: Code) -> bool {
-    compilar(fonte, limites)
-        .diagnosticos
+    compile(fonte, limites)
+        .diagnostics
         .iter()
         .any(|d| d.code == codigo && d.severity == Severity::Error)
 }
@@ -56,7 +56,7 @@ fn da_config_mapeia_cada_campo_do_compilador() {
         max_nodes: 17,
         ..FlowsConfig::default()
     };
-    let limites = Limites::da_config(&cfg);
+    let limites = Limites::from_config(&cfg);
     assert_eq!(limites.max_fonte_bytes, 40_960);
     assert_eq!(limites.max_nos, 17);
     // Campos sem chave em `[fluxos]` continuam nos valores da carga do módulo.
@@ -64,7 +64,7 @@ fn da_config_mapeia_cada_campo_do_compilador() {
     assert_eq!(limites.max_ticks, padrao.max_ticks);
     assert_eq!(limites.max_heap_bytes, padrao.max_heap_bytes);
     assert_eq!(limites.max_callstack, padrao.max_callstack);
-    assert_eq!(limites.prazo_de_carga, padrao.prazo_de_carga);
+    assert_eq!(limites.load_deadline, padrao.load_deadline);
 }
 
 #[test]
@@ -90,9 +90,9 @@ fn script_de_40_kib_passa_quando_a_configuracao_sobe_o_teto_para_64_kib() {
         max_source_bytes: 65_536,
         ..FlowsConfig::default()
     };
-    let limites = Limites::da_config(&cfg);
+    let limites = Limites::from_config(&cfg);
     assert!(
-        compilar(&fonte, &limites).ir.is_some(),
+        compile(&fonte, &limites).ir.is_some(),
         "40 KiB com o teto de 64 KiB tem de compilar"
     );
 }
@@ -101,7 +101,7 @@ fn script_de_40_kib_passa_quando_a_configuracao_sobe_o_teto_para_64_kib() {
 fn script_de_40_kib_e_recusado_com_o_padrao() {
     // Padrão de `fluxos.max_fonte_bytes` = 32 KiB (decisão D1): quem quer mais sobe a configuração.
     let fonte = script_de_tamanho(40 * 1024);
-    let limites = Limites::da_config(&FlowsConfig::default());
+    let limites = Limites::from_config(&FlowsConfig::default());
     assert!(erros_com_codigo(&fonte, &limites, Code::SourceTooLarge));
 }
 
@@ -112,18 +112,18 @@ fn script_de_40_kib_e_recusado_com_teto_de_32_kib() {
         max_source_bytes: 32_768,
         ..FlowsConfig::default()
     };
-    let limites = Limites::da_config(&cfg);
+    let limites = Limites::from_config(&cfg);
     assert!(
         erros_com_codigo(&fonte, &limites, Code::SourceTooLarge),
         "40 KiB com teto de 32 KiB tem de cair em FLX02"
     );
-    assert!(compilar(&fonte, &limites).ir.is_none());
+    assert!(compile(&fonte, &limites).ir.is_none());
 }
 
 #[test]
 fn teto_de_nos_da_configuracao_recusa_o_que_passa_dele() {
     let nos = nos_do_exemplo();
-    let aperto = Limites::da_config(&FlowsConfig {
+    let aperto = Limites::from_config(&FlowsConfig {
         max_nodes: u32::try_from(nos - 1).unwrap(),
         ..FlowsConfig::default()
     });
@@ -131,12 +131,12 @@ fn teto_de_nos_da_configuracao_recusa_o_que_passa_dele() {
         erros_com_codigo(EXEMPLO, &aperto, Code::NodeLimit),
         "um nó a mais que o teto tem de cair em FLX27"
     );
-    let no_limite = Limites::da_config(&FlowsConfig {
+    let no_limite = Limites::from_config(&FlowsConfig {
         max_nodes: u32::try_from(nos).unwrap(),
         ..FlowsConfig::default()
     });
     assert!(
-        compilar(EXEMPLO, &no_limite).ir.is_some(),
+        compile(EXEMPLO, &no_limite).ir.is_some(),
         "no limite exato o fluxo compila"
     );
 }
@@ -148,10 +148,10 @@ fn formatar_com_usa_o_mesmo_teto_do_compilador() {
         max_source_bytes: 32_768,
         ..FlowsConfig::default()
     };
-    assert!(formatar_com(&fonte, &Limites::da_config(&cfg)).is_err());
+    assert!(formatar_com(&fonte, &Limites::from_config(&cfg)).is_err());
     let subido = FlowsConfig {
         max_source_bytes: 65_536,
         ..FlowsConfig::default()
     };
-    assert!(formatar_com(&fonte, &Limites::da_config(&subido)).is_ok());
+    assert!(formatar_com(&fonte, &Limites::from_config(&subido)).is_ok());
 }

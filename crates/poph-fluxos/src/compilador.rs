@@ -1,22 +1,6 @@
-//! O compilador de script de fluxo para a estrutura compilada (IR): FX-10.
-//!
-//! A porta de entrada do módulo é [`compilar`]: recebe o texto do `.star` e devolve a IR
-//! (`schema_versao = 1`, [`crate::ir`]) mais a lista de diagnósticos de forma com linha e coluna.
-//! [`carregar`] é o outro lado: recebe a IR **gravada** numa revisão e o texto, recompila e confere
-//! que é a mesma coisa — se não for, falha fechado com `ir_divergente` em vez de adivinhar qual das
-//! duas versões vale.
-//!
-//! O caminho é: tamanho da fonte → parse no dialeto (§3) → leitura da árvore, que monta a IR e os
-//! diagnósticos ([`forma`]) → carga do módulo no Starlark com limites (só para provar que ele
-//! carrega e que os limites estão ligados). O compilador é **puro**: sem banco, sem rede, sem
-//! relógio, sem arquivo. Duas compilações do mesmo texto produzem a mesma IR, byte a byte.
-//!
-//! Nada do script é executado durante a leitura da árvore. É por isso que `"x" * 1000000000` é
-//! recusado em microssegundos, e não depois de alocar 2 GB.
-
 use std::time::Duration;
 
-pub(crate) mod forma;
+pub(crate) mod form;
 
 use poph_types::config::FlowsConfig;
 
@@ -24,59 +8,37 @@ use crate::diagnostics::{Code, Diagnostic};
 use crate::ir::Ir;
 use crate::language::{StarlarkLimits, load_module, parse_ast};
 
-/// Teto padrão de tamanho da fonte: 32 KB (32.768 bytes), `FLUXOS_LINGUAGEM.md` §3.4 e decisão D1.
-/// É o padrão de `fluxos.max_fonte_bytes`; o PRD §9 ainda traz 65536 (pendência P14).
 pub const MAX_FONTE_BYTES: usize = 32 * 1024;
-/// Teto de ticks da carga.
 pub const MAX_TICKS: u64 = 5_000_000;
-/// Heap da carga: 64 MB.
 pub const MAX_HEAP_BYTES: usize = 64 * 1024 * 1024;
-/// Profundidade de chamada na carga.
 pub const MAX_CALLSTACK: usize = 128;
-/// Prazo de parede da carga de um script.
-pub const PRAZO_DE_CARGA: Duration = Duration::from_secs(1);
+pub const LOAD_DEADLINE: Duration = Duration::from_secs(1);
 
-/// Limites de uma compilação.
-///
-/// São fixos nesta versão (`FLUXOS_LINGUAGEM.md` §3.4) e existem como parâmetro para o teste poder
-/// apertá-los e provar que estão ligados de verdade.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Limites {
-    /// Tamanho máximo da fonte, em bytes; acima disso o script é recusado antes do parse.
     pub max_fonte_bytes: usize,
-    /// Etapas + decisões + fins por fluxo; acima disso a publicação é recusada (`FLX27`).
     pub max_nos: usize,
-    /// Ticks da carga (conta cada passo da avaliação do módulo).
     pub max_ticks: u64,
-    /// Heap máximo da carga, em bytes.
     pub max_heap_bytes: usize,
-    /// Profundidade máxima de chamada da carga.
     pub max_callstack: usize,
-    /// Prazo de parede da carga.
-    pub prazo_de_carga: Duration,
+    pub load_deadline: Duration,
 }
 
 impl Default for Limites {
     fn default() -> Self {
         Self {
             max_fonte_bytes: MAX_FONTE_BYTES,
-            max_nos: forma::MAX_NOS,
+            max_nos: form::MAX_NOS,
             max_ticks: MAX_TICKS,
             max_heap_bytes: MAX_HEAP_BYTES,
             max_callstack: MAX_CALLSTACK,
-            prazo_de_carga: PRAZO_DE_CARGA,
+            load_deadline: LOAD_DEADLINE,
         }
     }
 }
 
 impl Limites {
-    /// Os limites de compilação que a configuração `[fluxos]` do processo define (FX-26b).
-    ///
-    /// É o único ponto que converte a configuração em limites do compilador: quem compila ou
-    /// carrega revisão no servidor passa por aqui. Campos sem chave em `[fluxos]` (ticks e heap da
-    /// carga do módulo, callstack, prazo) ficam nos valores de [`Limites::default`]. Os limites de
-    /// avaliação de regra vêm de [`crate::regras::LimitesRegra::da_config`].
-    pub fn da_config(fluxos: &FlowsConfig) -> Self {
+    pub fn from_config(fluxos: &FlowsConfig) -> Self {
         Self {
             max_fonte_bytes: usize::try_from(fluxos.max_source_bytes).unwrap_or(usize::MAX),
             max_nos: usize::try_from(fluxos.max_nodes).unwrap_or(usize::MAX),
@@ -89,81 +51,58 @@ impl Limites {
             max_ticks: self.max_ticks,
             max_heap_bytes: self.max_heap_bytes,
             max_callstack: self.max_callstack,
-            deadline: self.prazo_de_carga,
+            deadline: self.load_deadline,
         }
     }
 }
 
-/// Resultado de compilar um script.
-///
-/// A IR só existe quando **não há erro**: aviso não impede publicar, erro impede. Quem publica
-/// confere [`Compilado::tem_erro`] antes de gravar.
 #[derive(Debug, Clone)]
-pub struct Compilado {
-    /// A estrutura compilada; `None` quando há pelo menos um erro.
+pub struct Compiled {
     pub ir: Option<Ir>,
-    /// Diagnósticos de forma, na ordem em que foram encontrados (erros e avisos juntos).
-    pub diagnosticos: Vec<Diagnostic>,
+    pub diagnostics: Vec<Diagnostic>,
 }
 
-impl Compilado {
-    /// Se algum diagnóstico bloqueia a publicação.
-    pub fn tem_erro(&self) -> bool {
-        self.diagnosticos.iter().any(Diagnostic::is_error)
+impl Compiled {
+    pub fn has_error(&self) -> bool {
+        self.diagnostics.iter().any(Diagnostic::is_error)
     }
 
-    /// Só os erros.
-    pub fn erros(&self) -> impl Iterator<Item = &Diagnostic> {
-        self.diagnosticos.iter().filter(|d| d.is_error())
+    pub fn errors(&self) -> impl Iterator<Item = &Diagnostic> {
+        self.diagnostics.iter().filter(|d| d.is_error())
     }
 
-    /// Só os avisos.
-    pub fn avisos(&self) -> impl Iterator<Item = &Diagnostic> {
-        self.diagnosticos.iter().filter(|d| !d.is_error())
+    pub fn warnings(&self) -> impl Iterator<Item = &Diagnostic> {
+        self.diagnostics.iter().filter(|d| !d.is_error())
     }
 
-    /// A IR, ou os diagnósticos que impediram de gerá-la.
     pub fn ir(&self) -> Result<&Ir, &[Diagnostic]> {
         match &self.ir {
             Some(ir) => Ok(ir),
-            None => Err(&self.diagnosticos),
+            None => Err(&self.diagnostics),
         }
     }
 }
 
-/// O que falhou ao carregar a IR gravada de uma revisão.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FalhaCarregamento {
-    /// O texto não compila: os diagnósticos explicam o que corrigir.
-    Forma(Vec<Diagnostic>),
-    /// O texto compila, mas o resultado não é a IR gravada (`FLXR06`): o fluxo falha fechado.
-    Divergente {
-        /// Id do fluxo da IR gravada.
-        fluxo: String,
-        /// O que divergiu, em linguagem comum.
-        motivo: String,
-    },
+pub enum LoadFailure {
+    Form(Vec<Diagnostic>),
+    Divergent { fluxo: String, motivo: String },
 }
 
-impl FalhaCarregamento {
-    /// Código estável da falha, para log e API.
-    pub fn codigo(&self) -> &'static str {
+impl LoadFailure {
+    pub fn code(&self) -> &'static str {
         match self {
-            Self::Forma(_) => "fluxo_invalido",
-            Self::Divergente { .. } => "ir_divergente",
+            Self::Form(_) => "fluxo_invalido",
+            Self::Divergent { .. } => "ir_divergente",
         }
     }
 }
 
-/// Compila o texto de um fluxo.
-///
-/// Devolve sempre um resultado: problema no script é diagnóstico, não erro de função. Duas
-/// compilações do mesmo texto dão a mesma IR (`Ir::para_json` é estável).
-pub fn compilar(fonte: &str, limites: &Limites) -> Compilado {
-    let mut diagnosticos = Vec::new();
+pub fn compile(fonte: &str, limites: &Limites) -> Compiled {
+    let mut diagnostics = Vec::new();
 
     if fonte.len() > limites.max_fonte_bytes {
-        diagnosticos.push(Diagnostic::error(
+        diagnostics.push(Diagnostic::error(
             Code::SourceTooLarge,
             format!(
                 "O script tem {} bytes e o limite é {} bytes ({} KB). Tire textos longos das instruções ou divida o fluxo em dois.",
@@ -174,35 +113,33 @@ pub fn compilar(fonte: &str, limites: &Limites) -> Compilado {
             1,
             1,
         ));
-        return Compilado {
+        return Compiled {
             ir: None,
-            diagnosticos,
+            diagnostics,
         };
     }
 
-    let modulo = match parse_ast(fonte, "fluxo.star") {
-        Ok(modulo) => modulo,
-        Err(erro) => {
-            diagnosticos.push(diagnostico_do_parse(&erro));
-            return Compilado {
+    let module = match parse_ast(fonte, "fluxo.star") {
+        Ok(module) => module,
+        Err(error) => {
+            diagnostics.push(parse_diagnostic(&error));
+            return Compiled {
                 ir: None,
-                diagnosticos,
+                diagnostics,
             };
         }
     };
 
-    let (ir, mut de_forma) = forma::compile(fonte, &modulo);
-    diagnosticos.append(&mut de_forma);
+    let (ir, mut form_diagnostics) = form::compile(fonte, &module);
+    diagnostics.append(&mut form_diagnostics);
 
-    // Teto de nós da configuração (`fluxos.max_nos`). O teto de forma (60) já foi conferido pela
-    // leitura da árvore; aqui vale o limite do processo, que pode ser menor.
     let ir = match ir {
         Some(ir) if ir.stages.len() + ir.decisions.len() + ir.ends.len() > limites.max_nos => {
-            let nos = ir.stages.len() + ir.decisions.len() + ir.ends.len();
-            diagnosticos.push(Diagnostic::error(
+            let nodes = ir.stages.len() + ir.decisions.len() + ir.ends.len();
+            diagnostics.push(Diagnostic::error(
                 Code::NodeLimit,
                 format!(
-                    "O fluxo tem {nos} nós e o limite é {}. Junte etapas parecidas ou divida o fluxo.",
+                    "O fluxo tem {nodes} nós e o limite é {}. Junte etapas parecidas ou divida o fluxo.",
                     limites.max_nos
                 ),
                 1,
@@ -210,106 +147,96 @@ pub fn compilar(fonte: &str, limites: &Limites) -> Compilado {
             ));
             None
         }
-        outro => outro,
+        other => other,
     };
 
-    // Última barreira: com a forma válida, o módulo tem de carregar de verdade (é o que o motor
-    // faz na execução). Aqui os limites estão ligados; sem erro de forma, o único erro possível é
-    // limite estourado, que vira `FLX04`.
     if ir.is_some()
-        && let Err(erro) = load_module(fonte, "fluxo.star", &limites.starlark())
+        && let Err(error) = load_module(fonte, "fluxo.star", &limites.starlark())
     {
-        diagnosticos.push(diagnostico_da_carga(&erro));
-        return Compilado {
+        diagnostics.push(load_diagnostic(&error));
+        return Compiled {
             ir: None,
-            diagnosticos,
+            diagnostics,
         };
     }
 
-    Compilado { ir, diagnosticos }
+    Compiled { ir, diagnostics }
 }
 
-/// Carrega a IR gravada de uma revisão: recompila o texto e confere que dá a mesma estrutura.
-///
-/// É o que o motor chama antes de executar (com cache na FX-19). Divergência **não** derruba o
-/// processo: vira [`FalhaCarregamento::Divergente`] e a execução falha fechada (`FLXR06`).
-pub fn carregar(ir_gravada: &Ir, fonte: &str, limites: &Limites) -> Result<Ir, FalhaCarregamento> {
-    let compilado = compilar(fonte, limites);
-    let Some(recompilada) = compilado.ir else {
-        return Err(FalhaCarregamento::Forma(compilado.diagnosticos));
+pub fn load(stored_ir: &Ir, fonte: &str, limites: &Limites) -> Result<Ir, LoadFailure> {
+    let compiled = compile(fonte, limites);
+    let Some(recompiled) = compiled.ir else {
+        return Err(LoadFailure::Form(compiled.diagnostics));
     };
-    if recompilada == *ir_gravada {
-        return Ok(recompilada);
+    if recompiled == *stored_ir {
+        return Ok(recompiled);
     }
-    Err(FalhaCarregamento::Divergente {
-        fluxo: ir_gravada.fluxo.id.clone(),
-        motivo: diferencas(ir_gravada, &recompilada),
+    Err(LoadFailure::Divergent {
+        fluxo: stored_ir.fluxo.id.clone(),
+        motivo: differences(stored_ir, &recompiled),
     })
 }
 
-/// Diz, em linguagem comum, o que divergiu entre a IR gravada e a recompilada.
-fn diferencas(gravada: &Ir, recompilada: &Ir) -> String {
-    let mut partes: Vec<&str> = Vec::new();
-    if gravada.schema_versao != recompilada.schema_versao {
-        partes.push("a versão do esquema");
+fn differences(stored: &Ir, recompiled: &Ir) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    if stored.schema_versao != recompiled.schema_versao {
+        parts.push("a versão do esquema");
     }
-    if gravada.fluxo != recompilada.fluxo {
-        partes.push("o cabeçalho do fluxo");
+    if stored.fluxo != recompiled.fluxo {
+        parts.push("o cabeçalho do fluxo");
     }
-    if gravada.gatilho != recompilada.gatilho {
-        partes.push("o gatilho");
+    if stored.gatilho != recompiled.gatilho {
+        parts.push("o gatilho");
     }
-    if gravada.start != recompilada.start {
-        partes.push("a etapa de início");
+    if stored.start != recompiled.start {
+        parts.push("a etapa de início");
     }
-    if gravada.stages != recompilada.stages {
-        partes.push("as etapas");
+    if stored.stages != recompiled.stages {
+        parts.push("as etapas");
     }
-    if gravada.decisions != recompilada.decisions {
-        partes.push("as decisões");
+    if stored.decisions != recompiled.decisions {
+        parts.push("as decisões");
     }
-    if gravada.ends != recompilada.ends {
-        partes.push("os fins");
+    if stored.ends != recompiled.ends {
+        parts.push("os fins");
     }
-    if gravada.defs != recompilada.defs {
-        partes.push("as funções de regra");
+    if stored.defs != recompiled.defs {
+        parts.push("as funções de regra");
     }
-    if partes.is_empty() {
-        // Não deveria acontecer (a comparação acima já teria dado igual): a mensagem é honesta.
+    if parts.is_empty() {
         return "a estrutura gravada difere da recompilação do texto".to_owned();
     }
     format!(
         "a estrutura gravada difere da recompilação do texto em {}",
-        partes.join(", ")
+        parts.join(", ")
     )
 }
 
-/// Traduz o erro do parser em um dos códigos da lista fechada.
-fn diagnostico_do_parse(erro: &starlark::Error) -> Diagnostic {
-    let (linha, coluna) = posicao_do_erro(erro);
-    let texto = erro.to_string();
-    let minusculo = texto.to_lowercase();
-    let (codigo, mensagem) = if minusculo.contains("not allowed in this dialect")
-        || minusculo.contains("reserved keyword")
-        || minusculo.contains("cannot be used outside")
-        || minusculo.contains("must only occur at the top")
-        || minusculo.contains("not supported")
+fn parse_diagnostic(error: &starlark::Error) -> Diagnostic {
+    let (line, column) = error_position(error);
+    let texto = error.to_string();
+    let lowercase = texto.to_lowercase();
+    let (code, mensagem) = if lowercase.contains("not allowed in this dialect")
+        || lowercase.contains("reserved keyword")
+        || lowercase.contains("cannot be used outside")
+        || lowercase.contains("must only occur at the top")
+        || lowercase.contains("not supported")
     {
-        let qual = if minusculo.contains("load") {
+        let what = if lowercase.contains("load") {
             "`load`"
-        } else if minusculo.contains("lambda") {
+        } else if lowercase.contains("lambda") {
             "`lambda`"
-        } else if minusculo.contains("f-string") || minusculo.contains("f_string") {
+        } else if lowercase.contains("f-string") || lowercase.contains("f_string") {
             "f-string"
-        } else if minusculo.contains("for") {
+        } else if lowercase.contains("for") {
             "`for`"
-        } else if minusculo.contains("if") {
+        } else if lowercase.contains("if") {
             "`if`"
-        } else if minusculo.contains("while") {
+        } else if lowercase.contains("while") {
             "`while`"
-        } else if minusculo.contains("class") {
+        } else if lowercase.contains("class") {
             "`class`"
-        } else if minusculo.contains("try") {
+        } else if lowercase.contains("try") {
             "`try`"
         } else {
             "esta construção"
@@ -317,63 +244,62 @@ fn diagnostico_do_parse(erro: &starlark::Error) -> Diagnostic {
         (
             Code::Dialect,
             format!(
-                "{qual} não faz parte da linguagem de fluxos. Um fluxo descreve etapas, campos, ações e regras; cálculo livre só dentro de `def {}(dados)`.",
+                "{what} não faz parte da linguagem de fluxos. Um fluxo descreve etapas, campos, ações e regras; cálculo livre só dentro de `def {}(dados)`.",
                 "minha_regra"
             ),
         )
     } else {
-        // A primeira linha do erro do parser já diz o que ele esperava; o resto é o desenho do
-        // trecho, que não cabe numa mensagem de API.
-        let resumo = texto.lines().next().unwrap_or(&texto).trim().to_owned();
-        (Code::Syntax, format!("Erro de sintaxe no script: {resumo}"))
+        let summary = texto.lines().next().unwrap_or(&texto).trim().to_owned();
+        (
+            Code::Syntax,
+            format!("Erro de sintaxe no script: {summary}"),
+        )
     };
-    Diagnostic::error(codigo, mensagem, linha, coluna)
+    Diagnostic::error(code, mensagem, line, column)
 }
 
-/// Traduz o erro da carga em um dos códigos da lista fechada.
-fn diagnostico_da_carga(erro: &starlark::Error) -> Diagnostic {
-    let (linha, coluna) = posicao_do_erro(erro);
-    let texto = erro.to_string();
-    let minusculo = texto.to_lowercase();
-    if minusculo.contains("tick")
-        || minusculo.contains("heap")
-        || minusculo.contains("callstack")
-        || minusculo.contains("cancelled")
-        || minusculo.contains("stack overflow")
-        || minusculo.contains("recursion")
+fn load_diagnostic(error: &starlark::Error) -> Diagnostic {
+    let (line, column) = error_position(error);
+    let texto = error.to_string();
+    let lowercase = texto.to_lowercase();
+    if lowercase.contains("tick")
+        || lowercase.contains("heap")
+        || lowercase.contains("callstack")
+        || lowercase.contains("cancelled")
+        || lowercase.contains("stack overflow")
+        || lowercase.contains("recursion")
     {
         return Diagnostic::error(
             Code::LoadLimit,
             "O script executou demais ao ser carregado (ticks, memória, profundidade ou prazo de 1 s). No topo do arquivo deve haver só declarações; confira se alguma `def` tem laço longo.",
-            linha,
-            coluna,
+            line,
+            column,
         );
     }
-    if minusculo.contains("not found") {
+    if lowercase.contains("not found") {
         return Diagnostic::error(
             Code::UnknownName,
             format!("O script usa um nome que não existe na linguagem de fluxos: {texto}"),
-            linha,
-            coluna,
+            line,
+            column,
         );
     }
-    let resumo = texto.lines().next().unwrap_or(&texto).trim().to_owned();
+    let summary = texto.lines().next().unwrap_or(&texto).trim().to_owned();
     Diagnostic::error(
         Code::Syntax,
-        format!("O script não carregou: {resumo}"),
-        linha,
-        coluna,
+        format!("O script não carregou: {summary}"),
+        line,
+        column,
     )
 }
 
-/// Linha e coluna (1-based) de um erro do Starlark; `1:1` quando ele não traz posição.
-fn posicao_do_erro(erro: &starlark::Error) -> (u32, u32) {
-    match erro.span() {
+fn error_position(error: &starlark::Error) -> (u32, u32) {
+    match error.span() {
         Some(span) => {
-            let resolvido = span.resolve_span();
+            let resolved = span.resolve_span();
             (
-                resolvido.begin.line as u32 + 1,
-                resolvido.begin.column as u32 + 1,
+                resolved.begin.line as u32 + 1,
+                resolved.begin.column as u32 + 1,
             )
         }
         None => (1, 1),

@@ -303,10 +303,10 @@ fn publicar(sessao: &Sessao, org: Option<&str>, args: PublicarArgs) -> Result<Ex
     let ops = sessao.operacoes();
     // Compila antes para saber o slug: é o `id` do script. Um script com erro não grava nada.
     let compilado = ops.compilar(&fonte);
-    if compilado.tem_erro() {
-        imprimir_diagnosticos(&compilado.diagnosticos);
+    if compilado.has_error() {
+        imprimir_diagnosticos(&compilado.diagnostics);
         let erros = compilado
-            .diagnosticos
+            .diagnostics
             .iter()
             .filter(|d| d.is_error())
             .count();

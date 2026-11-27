@@ -61,7 +61,7 @@ use std::fmt;
 use poph_types::ActionActor;
 use starlark::syntax::ast::{Argument, AstLiteral, AstNoPayload, AstStmt, CallArgsP, Expr, Stmt};
 
-use crate::compilador::{Limites, compilar};
+use crate::compilador::{Limites, compile};
 use crate::diagnostics::Diagnostic;
 use crate::ir::{Acao, Campo, Decisao, Destination, Effect, Etapa, Gatilho, Ir, Rule};
 use crate::language::parse_ast;
@@ -128,16 +128,16 @@ pub fn formatar(fonte: &str) -> Result<String, FalhaDeFormato> {
 }
 
 /// Como [`formatar`], com os limites do processo (`fluxos.max_fonte_bytes`, `fluxos.max_nos`), que
-/// quem chama do servidor lê com [`Limites::da_config`] (FX-26b).
+/// quem chama do servidor lê com [`Limites::from_config`] (FX-26b).
 ///
 /// # Erros
 ///
 /// O mesmo de [`formatar`].
 pub fn formatar_com(fonte: &str, limites: &Limites) -> Result<String, FalhaDeFormato> {
-    let compilado = compilar(fonte, limites);
+    let compilado = compile(fonte, limites);
     let Some(ir) = compilado.ir else {
         return Err(FalhaDeFormato {
-            diagnosticos: compilado.diagnosticos,
+            diagnosticos: compilado.diagnostics,
         });
     };
     Ok(montar(&ir, &comentarios(fonte)))

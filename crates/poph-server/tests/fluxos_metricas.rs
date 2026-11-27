@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use poph_fluxos::{Limites, RevisionKey, compilar};
+use poph_fluxos::{Limites, RevisionKey, compile};
 use poph_server::Estado;
 use poph_store::Store;
 use poph_types::HarnessConfig;
@@ -96,7 +96,7 @@ async fn metricas_http(estado: Estado) -> String {
 /// Carrega a revisão pelo cache, como o motor faz: a IR vem da compilação do script.
 fn carregar(estado: &Estado, fluxo: &str, numero: u32) {
     let limites = Limites::default();
-    let compilado = compilar(FLUXO, &limites);
+    let compilado = compile(FLUXO, &limites);
     let ir = compilado
         .ir()
         .unwrap_or_else(|diagnosticos| panic!("exemplo não compila: {diagnosticos:?}"))

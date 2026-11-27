@@ -1,7 +1,7 @@
 //! Testes HTTP das ações humanas do atendente sobre a Ficha (FX-30, PRD §7.3 e concorrência).
 //!
 //! Servidor de verdade (porta efêmera) sobre banco temporário, com cliente HTTP de verdade. O fluxo
-//! é um script compilado de verdade (`poph_fluxos::compilar`) e publicado pelo repositório (a
+//! é um script compilado de verdade (`poph_fluxos::compile`) e publicado pelo repositório (a
 //! publicação pela API é a FX-27). O agente é simulado pelo próprio motor e pela operação atômica
 //! (o turno do agente ainda não existe), para provar a corrida atendente × agente. Nomes e
 //! telefones são fictícios.
@@ -29,7 +29,7 @@ use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
 use poph_fluxos::ir::Destination;
 use poph_fluxos::motor::{Contexto, Estado as EstadoMotor, executar_acao};
-use poph_fluxos::{Ir, Limites, RuleEvaluator, compilar};
+use poph_fluxos::{Ir, Limites, RuleEvaluator, compile};
 use poph_server::Estado;
 use poph_server::fluxos_transicao::transicao_do_motor;
 use poph_store::{
@@ -273,7 +273,7 @@ impl Cenario {
                 },
             )
             .expect("cria o fluxo");
-        let compilado = compilar(SCRIPT, &Limites::default());
+        let compilado = compile(SCRIPT, &Limites::default());
         let ir = match compilado.ir() {
             Ok(ir) => ir,
             Err(erros) => panic!("script de teste inválido: {erros:?}"),

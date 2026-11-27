@@ -4,7 +4,7 @@
 use std::time::{Duration, Instant};
 
 use poph_fluxos::compilador::MAX_FONTE_BYTES;
-use poph_fluxos::{Code, Compilado, FalhaCarregamento, Limites, carregar, compilar};
+use poph_fluxos::{Code, Compiled, Limites, LoadFailure, compile, load};
 
 /// Fluxo mínimo e **sem nenhum diagnóstico**: é a base das mutações de cada caso.
 const BASE: &str = r#"fluxo(
@@ -30,8 +30,8 @@ fn limites() -> Limites {
     Limites::default()
 }
 
-fn compila(fonte: &str) -> Compilado {
-    compilar(fonte, &limites())
+fn compila(fonte: &str) -> Compiled {
+    compile(fonte, &limites())
 }
 
 fn exemplo(nome: &str) -> String {
@@ -385,13 +385,13 @@ fn def_com_nome_de_declaracao_e_recusada_com_posicao() {
         let fonte = format!("{BASE}\ndef {nome}(dados):\n    return True\n");
         let compilado = compila(&fonte);
         let diagnostico = compilado
-            .diagnosticos
+            .diagnostics
             .iter()
             .find(|d| d.code == Code::InvalidDef)
             .unwrap_or_else(|| {
                 panic!(
                     "`def {nome}(dados)` devia dar FLX24; diagnósticos: {:?}",
-                    compilado.diagnosticos
+                    compilado.diagnostics
                 )
             });
         assert_eq!(
@@ -412,9 +412,9 @@ fn def_com_nome_de_declaracao_e_recusada_com_posicao() {
 fn o_fluxo_base_nao_tem_nenhum_diagnostico() {
     let compilado = compila(BASE);
     assert!(
-        compilado.diagnosticos.is_empty(),
+        compilado.diagnostics.is_empty(),
         "o fluxo base tem de passar limpo: {:?}",
-        compilado.diagnosticos
+        compilado.diagnostics
     );
     assert!(compilado.ir.is_some(), "o fluxo base tem de gerar IR");
 }
@@ -440,15 +440,11 @@ fn cada_codigo_da_lista_fechada_tem_um_caso() {
 fn cada_diagnostico_aponta_a_linha_e_a_coluna_do_trecho() {
     let mut falhas: Vec<String> = Vec::new();
     for caso in casos() {
-        let compilado = compilar(&caso.fonte, &caso.limites);
-        let Some(diagnostico) = compilado
-            .diagnosticos
-            .iter()
-            .find(|d| d.code == caso.codigo)
-        else {
+        let compilado = compile(&caso.fonte, &caso.limites);
+        let Some(diagnostico) = compilado.diagnostics.iter().find(|d| d.code == caso.codigo) else {
             falhas.push(format!(
                 "{} não apareceu (diagnósticos: {:?})",
-                caso.codigo, compilado.diagnosticos
+                caso.codigo, compilado.diagnostics
             ));
             continue;
         };
@@ -473,7 +469,7 @@ fn o_fluxo_base_nao_dispara_nenhum_dos_40_codigos() {
     let compilado = compila(BASE);
     for codigo in Code::from_compiler() {
         assert!(
-            !compilado.diagnosticos.iter().any(|d| d.code == codigo),
+            !compilado.diagnostics.iter().any(|d| d.code == codigo),
             "{codigo} não devia aparecer num fluxo correto"
         );
     }
@@ -482,7 +478,7 @@ fn o_fluxo_base_nao_dispara_nenhum_dos_40_codigos() {
 #[test]
 fn o_erro_bloqueia_a_ir_e_o_aviso_nao() {
     for caso in casos() {
-        let compilado = compilar(&caso.fonte, &caso.limites);
+        let compilado = compile(&caso.fonte, &caso.limites);
         let erro = !matches!(
             caso.codigo,
             Code::StageWithoutAction
@@ -501,7 +497,7 @@ fn o_erro_bloqueia_a_ir_e_o_aviso_nao() {
                 | Code::LongText
         );
         assert_eq!(
-            compilado.tem_erro(),
+            compilado.has_error(),
             erro,
             "{} deveria {}bloquear a publicação",
             caso.codigo,
@@ -522,12 +518,8 @@ fn o_erro_bloqueia_a_ir_e_o_aviso_nao() {
 #[ignore]
 fn inventario() {
     for caso in casos() {
-        let compilado = compilar(&caso.fonte, &caso.limites);
-        match compilado
-            .diagnosticos
-            .iter()
-            .find(|d| d.code == caso.codigo)
-        {
+        let compilado = compile(&caso.fonte, &caso.limites);
+        match compilado.diagnostics.iter().find(|d| d.code == caso.codigo) {
             Some(d) => {
                 let linha = caso
                     .fonte
@@ -543,7 +535,7 @@ fn inventario() {
                 "{} => AUSENTE (tem {:?})",
                 caso.codigo,
                 compilado
-                    .diagnosticos
+                    .diagnostics
                     .iter()
                     .map(|d| d.code)
                     .collect::<Vec<_>>()
@@ -564,9 +556,9 @@ fn os_tres_exemplos_compilam_para_a_ir_dourada() {
         let fonte = exemplo(nome);
         let compilado = compila(&fonte);
         assert!(
-            compilado.diagnosticos.is_empty(),
+            compilado.diagnostics.is_empty(),
             "{nome} tem diagnóstico: {:?}",
-            compilado.diagnosticos
+            compilado.diagnostics
         );
         let ir = compilado.ir.expect("o exemplo tem de gerar IR");
         let caminho = format!(
@@ -609,9 +601,9 @@ fn gera_douradas() {
         let fonte = exemplo(nome);
         let compilado = compila(&fonte);
         assert!(
-            compilado.diagnosticos.is_empty(),
+            compilado.diagnostics.is_empty(),
             "{nome} tem diagnóstico: {:?}",
-            compilado.diagnosticos
+            compilado.diagnostics
         );
         let ir = compilado.ir.expect("o exemplo tem de gerar IR");
         let caminho = format!(
@@ -706,7 +698,7 @@ fn script_patologico_termina_com_erro_e_sem_travar() {
         let compilado = compila(&fonte);
         let gasto = inicio.elapsed();
         assert!(
-            compilado.tem_erro(),
+            compilado.has_error(),
             "o caso `{nome}` tinha de terminar com erro, e passou"
         );
         assert!(
@@ -745,7 +737,7 @@ fn entrada_estranha_nao_derruba_o_compilador() {
     // Fonte vazia não declara fluxo.
     assert!(
         compila("")
-            .diagnosticos
+            .diagnostics
             .iter()
             .any(|d| d.code == Code::MissingFlow)
     );
@@ -755,8 +747,8 @@ fn entrada_estranha_nao_derruba_o_compilador() {
 fn fonte_grande_e_recusada_antes_de_compilar() {
     let fonte = format!("{BASE}\n{}", "#".repeat(MAX_FONTE_BYTES));
     let compilado = compila(&fonte);
-    assert!(compilado.tem_erro());
-    assert_eq!(compilado.diagnosticos[0].code, Code::SourceTooLarge);
+    assert!(compilado.has_error());
+    assert_eq!(compilado.diagnostics[0].code, Code::SourceTooLarge);
     assert!(compilado.ir.is_none());
 }
 
@@ -764,17 +756,17 @@ fn fonte_grande_e_recusada_antes_de_compilar() {
 fn os_limites_de_carga_estao_ligados_de_verdade() {
     // Prazo zero: a carga é cancelada e vira FLX04 (é o caminho de emergência, medido no FX-01).
     let apertado = Limites {
-        prazo_de_carga: Duration::ZERO,
+        load_deadline: Duration::ZERO,
         ..Limites::default()
     };
-    let compilado = compilar(BASE, &apertado);
+    let compilado = compile(BASE, &apertado);
     assert!(
         compilado
-            .diagnosticos
+            .diagnostics
             .iter()
             .any(|d| d.code == Code::LoadLimit),
         "prazo zero tinha de estourar o limite de carga: {:?}",
-        compilado.diagnosticos
+        compilado.diagnostics
     );
     // E o normal passa no mesmo script.
     assert!(compila(BASE).ir.is_some());
@@ -786,7 +778,7 @@ fn os_limites_de_carga_estao_ligados_de_verdade() {
 fn carregar_aceita_a_ir_que_veio_do_proprio_texto() {
     let fonte = exemplo("agendar_visita.star");
     let ir = compila(&fonte).ir.expect("IR");
-    let carregada = carregar(&ir, &fonte, &limites()).expect("a IR do texto tem de carregar");
+    let carregada = load(&ir, &fonte, &limites()).expect("a IR do texto tem de carregar");
     assert_eq!(carregada, ir);
 }
 
@@ -796,8 +788,8 @@ fn carregar_recusa_ir_adulterada_com_ir_divergente() {
     let mut ir = compila(&fonte).ir.expect("IR");
     // Adultera a mensagem de uma etapa: a IR gravada deixa de ser o que o texto diz.
     ir.stages[1].actions[0].label = "Visita combinada (adulterado)".to_owned();
-    match carregar(&ir, &fonte, &limites()) {
-        Err(FalhaCarregamento::Divergente { fluxo, motivo }) => {
+    match load(&ir, &fonte, &limites()) {
+        Err(LoadFailure::Divergent { fluxo, motivo }) => {
             assert_eq!(fluxo, "agendar_visita");
             assert!(
                 motivo.contains("as etapas"),
@@ -813,16 +805,13 @@ fn carregar_recusa_texto_que_nao_compila() {
     let fonte = exemplo("agendar_visita.star");
     let ir = compila(&fonte).ir.expect("IR");
     let quebrado = fonte.replace("inicio = \"coleta\",", "");
-    match carregar(&ir, &quebrado, &limites()) {
-        Err(FalhaCarregamento::Forma(diagnosticos)) => {
+    match load(&ir, &quebrado, &limites()) {
+        Err(LoadFailure::Form(diagnosticos)) => {
             assert!(
                 diagnosticos.iter().any(|d| d.code == Code::MissingArgument),
                 "esperava FLX11: {diagnosticos:?}"
             );
-            assert_eq!(
-                FalhaCarregamento::Forma(diagnosticos).codigo(),
-                "fluxo_invalido"
-            );
+            assert_eq!(LoadFailure::Form(diagnosticos).code(), "fluxo_invalido");
         }
         outro => panic!("devia falhar por forma, e voltou {outro:?}"),
     }

@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
-use poph_fluxos::{Ir, Limites, compilar};
+use poph_fluxos::{Ir, Limites, compile};
 use poph_server::Estado;
 use poph_store::{
     Direction, NewAgent, NewCategory, NewConversation, NewDepartment, NewFlow, NewKnowledgeGroup,
@@ -399,7 +399,7 @@ impl Scenario {
             )
             .expect("file");
 
-        let compiled = compilar(FLOW_SCRIPT, &Limites::default());
+        let compiled = compile(FLOW_SCRIPT, &Limites::default());
         let ir: Ir = compiled.ir().expect("valid flow script").clone();
         let flow = store
             .flows()
@@ -426,7 +426,7 @@ impl Scenario {
                     RevisionPublication {
                         expected,
                         fonte: script.clone(),
-                        definicao_json: compilar(&script, &Limites::default())
+                        definicao_json: compile(&script, &Limites::default())
                             .ir()
                             .expect("valid flow script")
                             .to_json(),
@@ -850,11 +850,11 @@ async fn capture_contracts() {
             env!("CARGO_MANIFEST_DIR")
         ))
         .expect("flow example");
-        let compiled = compilar(&text, &Limites::default());
+        let compiled = compile(&text, &Limites::default());
         assert!(
-            compiled.diagnosticos.is_empty(),
+            compiled.diagnostics.is_empty(),
             "{example}: {:?}",
-            compiled.diagnosticos
+            compiled.diagnostics
         );
         let ir = compiled.ir().expect("ir");
         let value: Value = serde_json::from_str(&ir.to_json()).expect("ir json");

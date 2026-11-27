@@ -31,7 +31,7 @@ use crate::diagnostics::{Code, Diagnostic};
 use crate::ir::{Destination, Effect, Etapa, Ir, Rule};
 
 /// Teto de nós (etapas + decisões + fins), `FLUXOS_LINGUAGEM.md` §3.4 — o mesmo do compilador.
-pub const MAX_NOS: usize = crate::compilador::forma::MAX_NOS;
+pub const MAX_NOS: usize = crate::compilador::form::MAX_NOS;
 
 /// Um departamento da organização, como o validador precisa dele: id e nome.
 ///
@@ -423,7 +423,7 @@ impl<'a> Validador<'a> {
     /// Confere as variáveis `{...}` das mensagens: formato (`FLX25`), existência do campo
     /// (`FLX59`) e variável do próprio passo em `ao_entrar` (`FLX63`).
     ///
-    /// A varredura do texto é a mesma do compilador ([`crate::compilador::forma::variables`]), para
+    /// A varredura do texto é a mesma do compilador ([`crate::compilador::form::variables`]), para
     /// as duas direções não divergirem.
     fn confere_variaveis(&mut self, etapa: &'a Etapa, base: &str) {
         for (j, efeito) in etapa.on_enter.iter().enumerate() {
@@ -454,7 +454,7 @@ impl<'a> Validador<'a> {
         };
         let caminho = sub(caminho, campo);
         let ir = self.ir;
-        for variavel in crate::compilador::forma::variables(texto) {
+        for variavel in crate::compilador::form::variables(texto) {
             let Some((prefixo, nome)) = variavel.split_once('.') else {
                 self.erro_no(
                     Code::InvalidVariable,

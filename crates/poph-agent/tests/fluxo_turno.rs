@@ -9,7 +9,7 @@ use poph_agent::turno::{
     FuturePause, NoopObserver, Pause, TurnEngine, TurnInput, TurnOptions, TurnSummary,
 };
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, Script, Usage};
-use poph_fluxos::{Limites, compilar};
+use poph_fluxos::{Limites, compile};
 use poph_jev::{FakeJev, G9_NONE, IdGate, JevEngine, JevError};
 use poph_store::{
     AgentChange, Direction, NewAgent, NewConversation, NewFlow, NewMessage, NewOrg,
@@ -137,7 +137,7 @@ impl Scenario {
     }
 
     fn publicar(&self, fluxo: poph_types::FlowId) {
-        let compiled = compilar(SCRIPT, &Limites::default());
+        let compiled = compile(SCRIPT, &Limites::default());
         let ir = compiled.ir().expect("o script do teste compila");
         let current = self.store.flows().get(self.org, fluxo).expect("lê o fluxo");
         self.store
@@ -685,7 +685,7 @@ async fn fluxo_de_outra_org_nunca_inicia() {
         .flows()
         .get(outra_org, fluxo_vizinho.id)
         .expect("lê o fluxo da vizinha");
-    let compiled = compilar(SCRIPT, &Limites::default());
+    let compiled = compile(SCRIPT, &Limites::default());
     let ir = compiled.ir().expect("compila");
     scenario
         .store
@@ -752,7 +752,7 @@ async fn execucao_ativa_nao_pergunta_o_jev() {
         .current(scenario.org, fluxo.id)
         .expect("lê a revisão")
         .expect("há revisão publicada");
-    let compiled = compilar(SCRIPT, &Limites::default());
+    let compiled = compile(SCRIPT, &Limites::default());
     let ir = compiled.ir().expect("compila");
     let estado = poph_fluxos::motor::iniciar(ir).expect("estado inicial");
     let evaluator = poph_fluxos::RuleEvaluator::without_functions();

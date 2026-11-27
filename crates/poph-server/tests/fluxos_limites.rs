@@ -7,7 +7,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use poph_fluxos::{Code, FalhaCarregamento, Limites, RevisionKey, Severity, compilar};
+use poph_fluxos::{Code, Limites, LoadFailure, RevisionKey, Severity, compile};
 use poph_server::Estado;
 use poph_store::Store;
 use poph_types::HarnessConfig;
@@ -50,7 +50,7 @@ fn servidor_aceita_40_kib_quando_a_configuracao_sobe_o_teto_para_64_kib() {
     assert!(
         compilado.ir.is_some(),
         "com fluxos.max_fonte_bytes = 65536 o script de 40 KiB compila: {:?}",
-        compilado.diagnosticos
+        compilado.diagnostics
     );
 }
 
@@ -62,7 +62,7 @@ fn servidor_recusa_40_kib_com_o_padrao_de_32_kib() {
     assert!(compilado.ir.is_none());
     assert!(
         compilado
-            .diagnosticos
+            .diagnostics
             .iter()
             .any(|d| d.code == Code::SourceTooLarge),
         "padrão de 32 KiB: tem de sair FLX02"
@@ -77,11 +77,11 @@ fn servidor_recusa_40_kib_quando_a_configuracao_diz_32_kib() {
     assert!(compilado.ir.is_none(), "script acima do teto não tem IR");
     assert!(
         compilado
-            .diagnosticos
+            .diagnostics
             .iter()
             .any(|d| d.code == Code::SourceTooLarge && d.severity == Severity::Error),
         "tem de sair FLX02: {:?}",
-        compilado.diagnosticos
+        compilado.diagnostics
     );
 }
 
@@ -91,7 +91,7 @@ fn servidor_compila_o_exemplo_normal_com_o_teto_de_32_kib() {
     let (estado, pasta) = estado("exemplo32", com_teto_de_fonte(32_768));
     let compilado = estado.compilar_fluxo(FLUXO);
     let _ = fs::remove_dir_all(&pasta);
-    assert!(compilado.ir.is_some(), "{:?}", compilado.diagnosticos);
+    assert!(compilado.ir.is_some(), "{:?}", compilado.diagnostics);
 }
 
 #[test]
@@ -102,7 +102,7 @@ fn cache_carrega_40_kib_com_o_teto_padrao_e_recusa_com_32_kib() {
         max_fonte_bytes: 65_536,
         ..Limites::default()
     };
-    let ir = compilar(&fonte, &publicacao)
+    let ir = compile(&fonte, &publicacao)
         .ir
         .expect("publicada com 64 KiB o script compila");
     let chave = RevisionKey::new("agendar_visita", 1, &fonte);
@@ -116,7 +116,7 @@ fn cache_carrega_40_kib_com_o_teto_padrao_e_recusa_com_32_kib() {
     let recusada = apertado.carregar_revisao_de_fluxo(&chave, &ir, &fonte);
     let _ = fs::remove_dir_all(&pasta_apertado);
     match recusada {
-        Err(FalhaCarregamento::Forma(diagnosticos)) => assert!(
+        Err(LoadFailure::Form(diagnosticos)) => assert!(
             diagnosticos.iter().any(|d| d.code == Code::SourceTooLarge),
             "a carga recusada tem de citar FLX02: {diagnosticos:?}"
         ),
@@ -132,7 +132,7 @@ fn cache_carrega_40_kib_com_o_teto_padrao_e_recusa_com_32_kib() {
 #[test]
 fn teto_de_nos_da_configuracao_vale_no_servidor() {
     let nos = {
-        let ir = compilar(FLUXO, &Limites::default()).ir.expect("compila");
+        let ir = compile(FLUXO, &Limites::default()).ir.expect("compila");
         ir.stages.len() + ir.decisions.len() + ir.ends.len()
     };
     let (apertado, pasta) = estado("nos", |config| {
@@ -142,7 +142,7 @@ fn teto_de_nos_da_configuracao_vale_no_servidor() {
     let _ = fs::remove_dir_all(&pasta);
     assert!(
         compilado
-            .diagnosticos
+            .diagnostics
             .iter()
             .any(|d| d.code == Code::NodeLimit),
         "um nó acima do teto da configuração tem de cair em FLX27"

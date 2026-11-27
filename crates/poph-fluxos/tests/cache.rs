@@ -12,9 +12,7 @@
 use std::sync::{Arc, Barrier};
 use std::thread;
 
-use poph_fluxos::{
-    FalhaCarregamento, Ir, Limites, RevisionCache, RevisionKey, compilar, entry_weight,
-};
+use poph_fluxos::{Ir, Limites, LoadFailure, RevisionCache, RevisionKey, compile, entry_weight};
 
 // ------------------------------------------------------------------ auxiliares
 
@@ -44,7 +42,7 @@ fn script(fluxo: &str, etapas: usize, enchimento: usize) -> String {
 
 /// Compila o script do teste e devolve a IR gravada, como a publicação a guardaria.
 fn ir_do_script(fonte: &str) -> Ir {
-    let compilado = compilar(fonte, &limites());
+    let compilado = compile(fonte, &limites());
     compilado
         .ir()
         .unwrap_or_else(|diagnosticos| panic!("script do teste não compila: {diagnosticos:?}"))
@@ -378,11 +376,8 @@ fn falha_de_carga_e_tipada_e_o_cache_continua_usavel() {
     let falha = cache
         .load(&chave_adulterada, &ir, &adulterada, &limites())
         .expect_err("a IR gravada não corresponde ao texto adulterado");
-    assert!(
-        matches!(falha, FalhaCarregamento::Divergente { .. }),
-        "{falha:?}"
-    );
-    assert_eq!(falha.codigo(), "ir_divergente");
+    assert!(matches!(falha, LoadFailure::Divergent { .. }), "{falha:?}");
+    assert_eq!(falha.code(), "ir_divergente");
     assert!(
         !cache.contem(&chave_adulterada),
         "o que diverge não entra no cache"
@@ -394,8 +389,8 @@ fn falha_de_carga_e_tipada_e_o_cache_continua_usavel() {
     let falha = cache
         .load(&chave_quebrada, &ir, quebrada, &limites())
         .expect_err("texto quebrado não carrega");
-    assert!(matches!(falha, FalhaCarregamento::Forma(_)), "{falha:?}");
-    assert_eq!(falha.codigo(), "fluxo_invalido");
+    assert!(matches!(falha, LoadFailure::Form(_)), "{falha:?}");
+    assert_eq!(falha.code(), "fluxo_invalido");
     assert!(!cache.contem(&chave_quebrada));
 
     // 3. O cache continua utilizável depois das duas falhas.

@@ -9,9 +9,7 @@ use argon2::password_hash::PasswordHash;
 use poph_agent::entry_output::Fluxo;
 use poph_agent::turno::TurnEngine;
 use poph_files::FileConfig;
-use poph_fluxos::{
-    Compilado, FalhaCarregamento, Ir, Limites, RevisionCache, RevisionKey, compilar,
-};
+use poph_fluxos::{Compiled, Ir, Limites, LoadFailure, RevisionCache, RevisionKey, compile};
 use poph_store::Store;
 use poph_types::{BaseMetrics, ConversationId, HarnessConfig, OrgId, Registry};
 
@@ -187,8 +185,8 @@ impl Estado {
 
     /// Compila o script de um fluxo com os tetos da configuração `[fluxos]` (FX-26b): tamanho do
     /// script e nós por fluxo. É a porta de compilação do servidor; não usa o padrão do compilador.
-    pub fn compilar_fluxo(&self, fonte: &str) -> Compilado {
-        compilar(fonte, &Limites::da_config(&self.config.flows))
+    pub fn compilar_fluxo(&self, fonte: &str) -> Compiled {
+        compile(fonte, &Limites::from_config(&self.config.flows))
     }
 
     /// Carrega uma revisão de fluxo pelo cache do processo (FX-19), com os tetos da configuração
@@ -198,12 +196,12 @@ impl Estado {
         chave: &RevisionKey,
         ir_gravada: &Ir,
         fonte: &str,
-    ) -> Result<Arc<Ir>, FalhaCarregamento> {
+    ) -> Result<Arc<Ir>, LoadFailure> {
         self.cache_fluxos.load(
             chave,
             ir_gravada,
             fonte,
-            &Limites::da_config(&self.config.flows),
+            &Limites::from_config(&self.config.flows),
         )
     }
 

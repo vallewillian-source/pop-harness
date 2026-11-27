@@ -8,7 +8,7 @@
 use std::collections::BTreeSet;
 
 use poph_fluxos::{
-    Code, Departamento, Diagnostic, Ir, Limites, compilar, resolver_departamentos, validar,
+    Code, Departamento, Diagnostic, Ir, Limites, compile, resolver_departamentos, validar,
 };
 use serde_json::{Value, json};
 
@@ -520,16 +520,16 @@ fn o_validador_concorda_com_os_avisos_do_compilador() {
             .concat(),
         ),
     ] {
-        let compilado = compilar(&fonte, &Limites::default());
+        let compilado = compile(&fonte, &Limites::default());
         assert!(
             compilado.ir.is_some(),
             "{codigo}: o script de teste tem de gerar IR; diagnósticos: {:?}",
-            compilado.diagnosticos
+            compilado.diagnostics
         );
         assert!(
-            codigos(&compilado.diagnosticos).contains(&codigo),
+            codigos(&compilado.diagnostics).contains(&codigo),
             "{codigo}: o compilador não emitiu (tem {:?})",
-            codigos(&compilado.diagnosticos)
+            codigos(&compilado.diagnostics)
         );
         let da_ir = validar(compilado.ir.as_ref().expect("IR"));
         assert!(

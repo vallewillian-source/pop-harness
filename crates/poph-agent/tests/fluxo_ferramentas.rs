@@ -11,7 +11,7 @@ use poph_agent::turno::{
 use poph_core::llm::{
     FakeProvider, FinishReason, LlmEvent, Message, Request, Script, ToolCall, Usage,
 };
-use poph_fluxos::{Limites, compilar};
+use poph_fluxos::{Limites, compile};
 use poph_jev::{FakeJev, G9_NONE, JevEngine};
 use poph_store::{
     AgentChange, ConversationStatus, Direction, NewAgent, NewConversation, NewFlow, NewMessage,
@@ -189,7 +189,7 @@ impl Scenario {
                 },
             )
             .expect("cria o fluxo");
-        let compiled = compilar(script, &Limites::default());
+        let compiled = compile(script, &Limites::default());
         let ir = compiled.ir().expect("o script do teste compila");
         self.store
             .revisions()

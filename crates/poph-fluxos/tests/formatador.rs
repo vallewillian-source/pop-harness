@@ -8,7 +8,7 @@ use poph_fluxos::formatador::{LARGURA, formatar, imprimir};
 use poph_fluxos::ir::{
     Acao, Campo, Decisao, Def, Destination, Effect, Etapa, Fim, Fluxo, Gatilho, Rule, SCHEMA_VERSAO,
 };
-use poph_fluxos::{Code, Ir, Limites, Severity, compilar};
+use poph_fluxos::{Code, Ir, Limites, Severity, compile};
 use poph_types::ActionActor;
 
 /// Os três exemplos do repositório.
@@ -27,9 +27,9 @@ fn exemplo(nome: &str) -> String {
 }
 
 fn compila(fonte: &str) -> Ir {
-    let compilado = compilar(fonte, &Limites::default());
+    let compilado = compile(fonte, &Limites::default());
     let erros: Vec<String> = compilado
-        .diagnosticos
+        .diagnostics
         .iter()
         .filter(|d| d.is_error())
         .map(|d| {
@@ -378,9 +378,9 @@ fn a_amostragem_aleatoria_volta_a_mesma_ir() {
     for caso in 0..60 {
         let ir = gerador.ir();
         let impresso = imprimir(&ir);
-        let compilado = compilar(&impresso, &Limites::default());
+        let compilado = compile(&impresso, &Limites::default());
         let erros: Vec<String> = compilado
-            .diagnosticos
+            .diagnostics
             .iter()
             .filter(|d| d.is_error())
             .map(|d| format!("{:?} {}", d.code, d.mensagem))

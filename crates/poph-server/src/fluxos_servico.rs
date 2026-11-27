@@ -13,7 +13,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use poph_fluxos::{
-    Compilado, Departamento, Ir, Limites, RevisionKey, compilar, diferenca, formatar_com,
+    Compiled, Departamento, Ir, Limites, RevisionKey, compile, diferenca, formatar_com,
     resolver_departamentos, stage_block, validar,
 };
 
@@ -191,14 +191,14 @@ impl<'a> Operacoes<'a> {
         Self {
             store,
             cache,
-            limites: Limites::da_config(&config.flows),
+            limites: Limites::from_config(&config.flows),
             max_fluxos_por_org: u64::from(config.flows.max_flows_per_org),
         }
     }
 
     /// Compila o script com os tetos da configuração (tamanho e nós).
-    pub fn compilar(&self, fonte: &str) -> Compilado {
-        compilar(fonte, &self.limites)
+    pub fn compilar(&self, fonte: &str) -> Compiled {
+        compile(fonte, &self.limites)
     }
 
     /// Lê todos os departamentos da org, para resolver `encaminhar("...")`.
@@ -231,7 +231,7 @@ impl<'a> Operacoes<'a> {
     /// Compila e valida um script sem gravar nada. Com `org`, também resolve os departamentos citados.
     pub fn validar(&self, org: Option<OrgId>, fonte: &str) -> Result<Validacao, StoreError> {
         let compilado = self.compilar(fonte);
-        let mut diagnosticos = compilado.diagnosticos;
+        let mut diagnosticos = compilado.diagnostics;
         let mut resolucoes = Vec::new();
         if let (Some(ir), Some(org)) = (&compilado.ir, org) {
             let (encontradas, avisos) = resolver_departamentos(ir, &self.departamentos(org)?);
@@ -261,8 +261,8 @@ impl<'a> Operacoes<'a> {
         ator: &Ator,
     ) -> Result<CriacaoFeita, FalhaFluxo> {
         let compilado = self.compilar(fonte);
-        if compilado.tem_erro() {
-            return Err(FalhaFluxo::ScriptInvalido(compilado.diagnosticos));
+        if compilado.has_error() {
+            return Err(FalhaFluxo::ScriptInvalido(compilado.diagnostics));
         }
         let Some(ir) = compilado.ir else {
             tracing::error!("o compilador devolveu script sem erro e sem IR");
@@ -326,8 +326,8 @@ impl<'a> Operacoes<'a> {
             return Err(FalhaFluxo::ScriptVazio);
         }
         let compilado = self.compilar(fonte);
-        if compilado.tem_erro() {
-            return Err(FalhaFluxo::ScriptInvalido(compilado.diagnosticos));
+        if compilado.has_error() {
+            return Err(FalhaFluxo::ScriptInvalido(compilado.diagnostics));
         }
         let Some(ir) = compilado.ir else {
             // `tem_erro` falso sempre traz IR; se não trouxe, o compilador mudou de contrato.
@@ -364,7 +364,7 @@ impl<'a> Operacoes<'a> {
         )?;
         let versao_do_fluxo = self.store.flows().get(org, fluxo.id)?.version;
         let mut avisos: Vec<Diagnostic> = compilado
-            .diagnosticos
+            .diagnostics
             .into_iter()
             .filter(|d| !d.is_error())
             .collect();
@@ -401,11 +401,11 @@ impl<'a> Operacoes<'a> {
             .load(&chave, &gravada, &revisao.fonte, &self.limites)
             .map_err(|falha| {
                 tracing::error!(
-                    falha = %falha.codigo(),
+                    falha = %falha.code(),
                     revisao = %revisao.id,
                     "a revisão publicada não confere com o texto guardado"
                 );
-                FalhaFluxo::IrDivergente(falha.codigo())
+                FalhaFluxo::IrDivergente(falha.code())
             })
     }
 

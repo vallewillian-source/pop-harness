@@ -316,13 +316,49 @@ marks the dependency as used, because the Rust `unused_dependencies` lint breaks
 - `snapshot_from_json`: unreadable text or JSON that is not an object is a rule error (FLXR05 in the
   engine). Nothing is evaluated on half the data.
 
-### 8.4 Script compilation (`compilador/forma`)
+### 8.4 Script compilation (`compilador/form`)
 
 - The script is read as a syntax tree and is never executed: there is no interpreter call and no allocation guided by script data. The only Starlark evaluation is loading the module (`language::load_module`), which runs after the shape is valid and the limits are set.
 - Two passes, on purpose. **Collection** turns each declaration into a raw structure that keeps the position of each piece, and checks the local shape (unknown argument, wrong type, invalid id, combinator arity). **Closure** runs with every declaration known: it resolves destinations (`inicio`, `vai_para`, `entao`, `senao`), checks each rule against its step and field, detects decision cycles and emits the reach and use warnings. A decision may point to a step declared later, and a `def` may be used before it is defined; only the closure pass can know that.
 - The IR is produced only when there is no error. Warnings do not block it.
 - `FLX62` (step with an actor and no action for that actor) is reported only when every action in the step is restricted to an actor. An action without `ator` is run by any actor, so the warning would be false.
 - The body of a `def` loses its trailing blank lines. The text of a `def` runs up to the next declaration and would otherwise carry the spacing after it. The IR must not depend on the file's formatting, so the canonical formatter can print the `def` again without that spacing.
+
+### 8.5 Script compiler (`compilador`)
+
+- `compile` is the entry point: it takes the `.star` text and returns the `Compiled` result
+  (`schema_versao = 1`, `ir`) plus the shape diagnostics with line and column. `load` is the other
+  side: it takes the IR stored in a revision and the text, recompiles and checks that both are the
+  same — when they are not, it fails closed with `ir_divergente` instead of guessing which of the
+  two versions is right (FLXR06).
+- The path is: source size → parse in the dialect (§3) → tree read, which builds the IR and the
+  shape diagnostics (`form`) → module load in Starlark with limits, only to prove that the script
+  loads and that the limits are really enforced. The compiler is **pure**: no database, no network,
+  no clock, no file. Two compilations of the same text produce the same IR, byte by byte. The tree
+  read executes nothing from the script; the module load, which runs after it, evaluates the
+  top-level declarations and is where the load limits apply.
+- The limits of one compilation are fixed in this version (`FLUXOS_LINGUAGEM.md` §3.4) and exist
+  as a parameter so a test can tighten them and prove they are enforced. `Limites::from_config` is
+  the only point that turns the process `[fluxos]` configuration into compiler limits; fields
+  without a key in `[fluxos]` (module load ticks and heap, callstack, deadline) stay at the default.
+  Rule evaluation limits come from `RuleLimits::from_config`.
+- Default source cap: 32 KB (`FLUXOS_LINGUAGEM.md` §3.4 and decision D1), the default of
+  `fluxos.max_fonte_bytes`; it is checked before the parse, so an oversized script is refused
+  without being read.
+- The IR exists only when there is **no error**: a warning does not block publishing, an error
+  does. Diagnostics come in the order in which they were found (errors and warnings together).
+  The node cap of the configuration (`fluxos.max_nos`) is checked after the shape cap already
+  enforced by the tree read; the process cap may be lower.
+- `LoadFailure::code` returns the stable code used in log and API: `fluxo_invalido` when the text
+  does not compile, `ir_divergente` when it compiles to something else.
+- Parse errors: only the first line of the parser message goes into the API message, because the
+  rest is the source snippet. Lines and columns are 1-based. Constructions outside the dialect
+  (`load`, `lambda`, f-string, `for`, `if`, `while`, `class`, `try`) get their own code and a
+  message naming the construction; any other parse error is a syntax diagnostic.
+- Load errors: a message about ticks, heap, callstack, cancellation, stack overflow or recursion
+  counts as a load limit (`FLX04`); a name that does not exist has its own code; anything else is
+  a syntax diagnostic. The load limit only triggers on a script whose shape is already valid, so
+  the only possible error there is a limit.
 
 ## Medidas
 

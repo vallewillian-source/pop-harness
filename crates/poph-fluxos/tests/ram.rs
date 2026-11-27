@@ -20,7 +20,7 @@
 //! entrada ([`peso_da_ir`]), o que o cache diz ter guardado (entradas, expulsões, bytes) e o custo
 //! real por revisão guardada.
 
-use poph_fluxos::{Ir, Limites, RevisionCache, RevisionKey, compilar, entry_weight};
+use poph_fluxos::{Ir, Limites, RevisionCache, RevisionKey, compile, entry_weight};
 
 /// Teto padrão de `fluxos.cache_revisoes_mb` (PRD §9).
 const TETO_PADRAO_MB: usize = 16;
@@ -61,7 +61,7 @@ fn script(fluxo: &str, etapas: usize, enchimento: usize) -> String {
 }
 
 fn ir_do_script(fonte: &str) -> Ir {
-    compilar(fonte, &Limites::default())
+    compile(fonte, &Limites::default())
         .ir()
         .cloned()
         .unwrap_or_else(|diagnosticos| panic!("script do teste não compila: {diagnosticos:?}"))
