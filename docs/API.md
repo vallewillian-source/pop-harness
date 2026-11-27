@@ -399,8 +399,8 @@ Quem move a sala do Matrix é o laço de estado: no ciclo seguinte, a conversa q
 recebe um aviso e um `m.space.child` no espaço do departamento novo (o mesmo caminho do agente que
 transfere dentro do turno — provas em `crates/poph-server/tests/matrix_estado.rs`).
 
-Provas: `conversas_transferencia.rs` (`transferir_marca_a_conversa_e_audita_o_motivo`,
-`transferir_recusa_conversa_encerrada_da_outra_org_e_corpo_invalido`) e, no repositório,
+Provas: `conversas_transferencia.rs` (`transfer_marks_conversation_and_audits_reason`,
+`transfer_refuses_closed_conversation_from_other_org_and_invalid_body`) e, no repositório,
 `transferencia_administrativa_*` em `crates/poph-store/tests/transfer.rs`.
 
 ## Reabrir conversa (FX-07, PRD L13)
@@ -472,7 +472,8 @@ Regras:
 - Sem `sort`: ordem de id crescente, com `limit` e `cursor` como antes. `limit` fora de 1 a 200 é
   ajustado, não recusado.
 - Com `sort=recent`: **não usa cursor**. `limit` (padrão 50, de 1 a 200) é o único controle, e
-  `next_cursor` sai sempre `null`. Mandar `cursor` com um valor ou `limit` fora da faixa devolve `400`.
+  `next_cursor` sai sempre `null`. Mandar `cursor` com um valor ou `limit` fora da faixa devolve `400`;
+  `cursor` vazio é o mesmo que não mandar.
 - Os erros `400` trazem uma mensagem curta e não repetem o valor que foi recebido.
 - O `client_identifier` da sala do Matrix é o `external_peer` sem espaço nas pontas, ou o id da
   conversa quando o `external_peer` está vazio. Para achar o histórico de um cliente a partir da sala,
