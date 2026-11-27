@@ -80,7 +80,7 @@ impl Fixture {
 
     async fn start(&self, provider: Arc<dyn LlmProvider>) -> Server {
         let memory = MetricsMemory::own();
-        let motor = TurnEngine::new(
+        let engine = TurnEngine::new(
             self.store.clone(),
             ConfigHot::new(
                 self.store.clone(),
@@ -97,10 +97,10 @@ impl Fixture {
                 .then(|| Secret::new("Bearer chave-ficticia-do-servico".to_owned()))
         })
         .expect("HTTP tools");
-        let motor = motor.with_http_tools(http_tools);
+        let engine = engine.with_http_tools(http_tools);
         let state = ServerState::new(self.store.clone(), self.config.clone())
             .expect("state")
-            .with_engine(Arc::new(motor));
+            .with_engine(Arc::new(engine));
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
         let url = format!("http://{}", listener.local_addr().expect("address"));
         let task = tokio::spawn(poph_server::serve_at(

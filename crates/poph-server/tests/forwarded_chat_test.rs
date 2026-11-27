@@ -1,17 +1,3 @@
-//! SSE de org remota chegando na dona pelo encaminhamento (HR-50b-2).
-//!
-//! Duas instâncias **reais** em portas efêmeras e bancos temporários, com o mapa igual dos dois
-//! lados (só o `instance_id` muda) e a org + o agente vivendo em `b`. O turno de `b` roda sobre um
-//! **provedor falso** que entrega um pedaço de texto e depois fica pendurado por 30 s.
-//!
-//! O que se prova:
-//! - conversa e mensagem de org de `b` enviadas por `a` são atendidas por `b`;
-//! - o SSE atravessa o encaminhamento **sem buffer**: o primeiro evento e o primeiro texto chegam
-//!   em milissegundos, muito antes dos 30 s que o turno levaria para terminar;
-//! - cliente que desconecta no meio do stream derruba o turno na dona (o pedido encaminhado é
-//!   cancelado): o turno termina como falha com cancelamento, sem resposta parcial na fila;
-//! - nada do turno fica no banco de `a` (quem atendeu foi `b`).
-
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
@@ -39,36 +25,35 @@ use serde_json::Value;
 use tokio::sync::oneshot;
 
 const TOKEN_GLOBAL: &str = "pophg_teste-global-hr50b2";
-const SEGREDO: &str = "SENTINELA-SEGREDO-SSE-hr50b2";
-const POPH_LOTE: u32 = 50;
+const SECRET: &str = "SENTINELA-SEGREDO-SSE-hr50b2";
+const POPH_BATCH: u32 = 50;
 
-fn hash_argon2(valor: &str) -> String {
-    let sal = SaltString::generate(&mut OsRng);
+fn hash_argon2(value: &str) -> String {
+    let salt = SaltString::generate(&mut OsRng);
     Argon2::default()
-        .hash_password(valor.as_bytes(), &sal)
+        .hash_password(value.as_bytes(), &salt)
         .expect("hash argon2")
         .to_string()
 }
 
-fn pasta(rotulo: &str) -> PathBuf {
-    static CONTADOR: AtomicUsize = AtomicUsize::new(0);
-    let n = CONTADOR.fetch_add(1, Ordering::Relaxed);
-    let carimbo = SystemTime::now()
+fn folder(label: &str) -> PathBuf {
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let stamp = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let pasta = std::env::temp_dir().join(format!(
-        "poph-sse-encaminhado-{rotulo}-{}-{carimbo}-{n}",
+    let folder = std::env::temp_dir().join(format!(
+        "poph-sse-encaminhado-{label}-{}-{stamp}-{n}",
         std::process::id()
     ));
-    let _ = fs::remove_dir_all(&pasta);
-    fs::create_dir_all(pasta.join("dados")).expect("pasta de dados");
-    pasta
+    let _ = fs::remove_dir_all(&folder);
+    fs::create_dir_all(folder.join("dados")).expect("pasta de dados");
+    folder
 }
 
 struct Instancia {
     base: String,
-    /// Banco da instância (o teste lê o de `b` direto do `Arc` devolvido por `iniciar`).
     #[allow(dead_code)]
     store: Arc<Store>,
     desligar: Option<oneshot::Sender<()>>,
@@ -82,9 +67,9 @@ impl Drop for Instancia {
     }
 }
 
-fn configuracao(pasta: &std::path::Path) -> HarnessConfig {
+fn configuracao(folder: &std::path::Path) -> HarnessConfig {
     let mut config = HarnessConfig::default();
-    config.data.directory = pasta.join("dados");
+    config.data.directory = folder.join("dados");
     config.admin.tokens_globais = vec![GlobalTokenConfig {
         label: "teste".to_owned(),
         hash: hash_argon2(TOKEN_GLOBAL),
@@ -93,19 +78,18 @@ fn configuracao(pasta: &std::path::Path) -> HarnessConfig {
     config
 }
 
-/// Sobe uma instância; `motor` só existe em `b` (a dona da org).
-async fn iniciar(
+async fn start_instance(
     instance_id: &str,
     url_a: &str,
     url_b: &str,
     org: &str,
-    com_turno: bool,
+    with_turn: bool,
     listener: tokio::net::TcpListener,
-    pasta: PathBuf,
+    folder: PathBuf,
 ) -> (Instancia, Arc<Store>) {
-    let config = configuracao(&pasta);
+    let config = configuracao(&folder);
     let store = Arc::new(Store::open(&config).expect("abre o banco"));
-    let mapa = ClusterConfig {
+    let map = ClusterConfig {
         instance_id: instance_id.to_owned(),
         default_instance: Some("b".to_owned()),
         instances: vec![
@@ -123,21 +107,19 @@ async fn iniciar(
     let mut estado = ServerState::new(Arc::clone(&store), config)
         .expect("estado do servidor")
         .with_cluster(LiveCluster {
-            path: pasta.join("cluster.toml"),
-            config: mapa,
-            secret: Some(Secret::new(SEGREDO.to_owned())),
+            path: folder.join("cluster.toml"),
+            config: map,
+            secret: Some(Secret::new(SECRET.to_owned())),
         });
 
-    if com_turno {
-        // O turno de `b`: entrega "começou" e fica pendurado 30 s (tempo de sobra para provar que
-        // o SSE atravessa sem esperar o fim).
+    if with_turn {
         let fake = Arc::new(FakeProvider::with_scripts(vec![Script::Pending {
             events: vec![LlmEvent::Texto("começou ".into())],
             after: Duration::from_secs(30),
             error: LlmError::TimedOut { seconds: 30 },
         }]));
         let provedor: Arc<dyn LlmProvider> = fake.clone();
-        let motor = Arc::new(TurnEngine::new(
+        let engine = Arc::new(TurnEngine::new(
             Arc::clone(&store),
             ConfigHot::new(
                 Arc::clone(&store),
@@ -149,24 +131,24 @@ async fn iniciar(
             TurnOptions::default(),
             MetricsTurn::own(),
         ));
-        let processador = Arc::new(TurnProcessor::new(Arc::clone(&motor)));
-        let atores = Actors::new(
-            processador.clone(),
+        let processor = Arc::new(TurnProcessor::new(Arc::clone(&engine)));
+        let actors = Actors::new(
+            processor.clone(),
             ActorOptions::default(),
             MetricsMemory::own(),
         );
-        let fluxo = Fluxo::new(Arc::clone(&store), atores, FlowOptions::default());
-        processador.attach_io(fluxo.clone());
+        let fluxo = Fluxo::new(Arc::clone(&store), actors, FlowOptions::default());
+        processor.attach_io(fluxo.clone());
         estado = estado
-            .with_engine(motor)
+            .with_engine(engine)
             .with_turn(fluxo, Duration::from_millis(20));
     }
 
     let endereco = listener.local_addr().expect("endereço local");
-    let (desligar, sinal) = oneshot::channel();
+    let (desligar, signal) = oneshot::channel();
     tokio::spawn(async move {
         let _ = poph_server::serve_at(listener, estado, async {
-            let _ = sinal.await;
+            let _ = signal.await;
         })
         .await;
     });
@@ -175,16 +157,16 @@ async fn iniciar(
         store: Arc::clone(&store),
         desligar: Some(desligar),
     };
-    let cliente = Client::builder()
+    let client = Client::builder()
         .timeout(Duration::from_secs(20))
         .build()
         .expect("cliente HTTP");
     for _ in 0..500 {
-        if let Ok(resposta) = cliente
+        if let Ok(response) = client
             .get(format!("{}/healthz", instancia.base))
             .send()
             .await
-            && resposta.status().is_success()
+            && response.status().is_success()
         {
             return (instancia, store);
         }
@@ -194,19 +176,18 @@ async fn iniciar(
 }
 
 fn multipart(texto: &str) -> (String, Vec<u8>) {
-    let limite = "hr50b2-boundary";
-    let mut corpo = Vec::new();
-    corpo.extend_from_slice(
-        format!("--{limite}\r\nContent-Disposition: form-data; name=\"text\"\r\n\r\n{texto}\r\n")
+    let limit = "hr50b2-boundary";
+    let mut body = Vec::new();
+    body.extend_from_slice(
+        format!("--{limit}\r\nContent-Disposition: form-data; name=\"text\"\r\n\r\n{texto}\r\n")
             .as_bytes(),
     );
-    corpo.extend_from_slice(format!("--{limite}--\r\n").as_bytes());
-    (format!("multipart/form-data; boundary={limite}"), corpo)
+    body.extend_from_slice(format!("--{limit}--\r\n").as_bytes());
+    (format!("multipart/form-data; boundary={limit}"), body)
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn sse_de_org_remota_flui_pelo_encaminhamento_e_desconexao_cancela_na_dona() {
-    // Duas portas efêmeras: os endereços precisam existir antes de os mapas serem montados.
+async fn sse_from_remote_org_flows_through_forwarding_and_disconnect_cancels_on_owner() {
     let listener_a = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("porta de a");
@@ -216,9 +197,8 @@ async fn sse_de_org_remota_flui_pelo_encaminhamento_e_desconexao_cancela_na_dona
         .expect("porta de b");
     let url_b = format!("http://{}", listener_b.local_addr().expect("endereço de b"));
 
-    // A org e o agente vivem em `b`, que também tem o turno.
-    let pasta_b = pasta("preparo-b");
-    let config_b = configuracao(&pasta_b);
+    let folder_b = folder("preparo-b");
+    let config_b = configuracao(&folder_b);
     let store_b = Arc::new(Store::open(&config_b).expect("banco de b"));
     let org: OrgId = store_b
         .orgs()
@@ -244,114 +224,113 @@ async fn sse_de_org_remota_flui_pelo_encaminhamento_e_desconexao_cancela_na_dona
         .id;
     drop(store_b);
 
-    let org_texto = org.to_string();
-    let pasta_a = pasta("a");
-    let (a, store_a) = iniciar("a", &url_a, &url_b, &org_texto, false, listener_a, pasta_a).await;
-    let (_b, store_b) = iniciar("b", &url_a, &url_b, &org_texto, true, listener_b, pasta_b).await;
+    let org_text = org.to_string();
+    let folder_a = folder("a");
+    let (a, store_a) =
+        start_instance("a", &url_a, &url_b, &org_text, false, listener_a, folder_a).await;
+    let (_b, store_b) =
+        start_instance("b", &url_a, &url_b, &org_text, true, listener_b, folder_b).await;
 
-    let cliente = Client::builder()
+    let client = Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
         .expect("cliente HTTP");
-    let raiz = format!("/admin/v1/orgs/{org}/agents/{agente}/test-chat");
+    let root = format!("/admin/v1/orgs/{org}/agents/{agente}/test-chat");
 
-    // Conversa criada por `a` e gravada em `b` (o POST também é encaminhado).
-    let criada = cliente
-        .post(format!("{}{raiz}", a.base))
+    let created = client
+        .post(format!("{}{root}", a.base))
         .bearer_auth(TOKEN_GLOBAL)
         .send()
         .await
         .expect("cria conversa");
-    assert_eq!(criada.status(), StatusCode::CREATED);
-    let corpo: Value = criada.json().await.expect("json da conversa");
-    let conversa = corpo["id"].as_str().expect("id da conversa").to_owned();
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let body: Value = created.json().await.expect("json da conversa");
+    let conversa = body["id"].as_str().expect("id da conversa").to_owned();
     assert!(
         store_a.orgs().get(org).is_err(),
         "a org não pode existir no banco de `a`"
     );
 
-    // Mensagem enviada por `a`: o SSE tem de chegar sem esperar o turno terminar.
     let (tipo, bytes) = multipart("me responde");
-    let inicio = Instant::now();
-    let resposta = cliente
-        .post(format!("{}{raiz}/{conversa}/messages", a.base))
+    let started = Instant::now();
+    let response = client
+        .post(format!("{}{root}/{conversa}/messages", a.base))
         .bearer_auth(TOKEN_GLOBAL)
         .header("content-type", tipo)
         .body(bytes)
         .send()
         .await
         .expect("envia a mensagem");
-    assert_eq!(resposta.status(), StatusCode::OK);
+    assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
-        resposta
+        response
             .headers()
             .get("content-type")
-            .and_then(|valor| valor.to_str().ok())
+            .and_then(|value| value.to_str().ok())
             .unwrap_or_default(),
         "text/event-stream",
         "a resposta encaminhada tem de continuar sendo SSE"
     );
 
     use futures::StreamExt;
-    let mut fluxo = resposta.bytes_stream();
-    let mut recebido = String::new();
-    let mut primeiro_evento = None;
-    let mut primeiro_texto = None;
-    while primeiro_texto.is_none() {
-        let pedaco = tokio::time::timeout(Duration::from_secs(10), fluxo.next())
+    let mut fluxo = response.bytes_stream();
+    let mut received = String::new();
+    let mut first_event = None;
+    let mut first_text = None;
+    while first_text.is_none() {
+        let piece = tokio::time::timeout(Duration::from_secs(10), fluxo.next())
             .await
             .expect("o stream precisa abrir (sem buffer)")
             .expect("o SSE precisa emitir")
             .expect("bytes do SSE");
-        recebido.push_str(&String::from_utf8_lossy(&pedaco));
-        if primeiro_evento.is_none() && recebido.contains("event:") {
-            primeiro_evento = Some(inicio.elapsed());
+        received.push_str(&String::from_utf8_lossy(&piece));
+        if first_event.is_none() && received.contains("event:") {
+            first_event = Some(started.elapsed());
         }
-        if recebido.contains("começou") {
-            primeiro_texto = Some(inicio.elapsed());
+        if received.contains("começou") {
+            first_text = Some(started.elapsed());
         }
         assert!(
-            inicio.elapsed() < Duration::from_secs(10),
-            "SSE não atravessou: {recebido}"
+            started.elapsed() < Duration::from_secs(10),
+            "SSE não atravessou: {received}"
         );
     }
-    let primeiro_evento = primeiro_evento.expect("primeiro evento");
-    let primeiro_texto = primeiro_texto.expect("primeiro texto");
+    let first_event = first_event.expect("primeiro evento");
+    let first_text = first_text.expect("primeiro texto");
     eprintln!(
         "encaminhado: primeiro evento em {} ms, primeiro texto em {} ms (o turno fica pendurado 30 s)",
-        primeiro_evento.as_millis(),
-        primeiro_texto.as_millis()
+        first_event.as_millis(),
+        first_text.as_millis()
     );
     assert!(
-        primeiro_evento < Duration::from_secs(5),
-        "o primeiro evento tem de chegar sem buffer (chegou em {primeiro_evento:?})"
+        first_event < Duration::from_secs(5),
+        "o primeiro evento tem de chegar sem buffer (chegou em {first_event:?})"
     );
     assert!(
-        primeiro_texto < Duration::from_secs(10),
-        "o texto do modelo tem de fluir antes do fim do turno ({primeiro_texto:?})"
+        first_text < Duration::from_secs(10),
+        "o texto do modelo tem de fluir antes do fim do turno ({first_text:?})"
     );
     assert!(
-        !recebido.contains("evento: fim") && !recebido.contains("event: fim"),
-        "o turno está pendurado; o fim não pode ter chegado: {recebido}"
+        !received.contains("evento: fim") && !received.contains("event: fim"),
+        "o turno está pendurado; o fim não pode ter chegado: {received}"
     );
 
-    // Cliente desconecta no meio: a dona tem de cancelar o turno, sem fila presa.
     drop(fluxo);
     let id: ConversationId = conversa.parse().expect("id da conversa");
-    let inicio_da_espera = Instant::now();
+    let wait_started = Instant::now();
     let estado = loop {
-        let turnos = store_b
+        let turns = store_b
             .turns()
             .list(org, id, Page::with_limit(50))
             .expect("turnos de b");
-        if let Some(turno) = turnos.last()
+        if let Some(turno) = turns.last()
             && turno.state != TurnState::Running
         {
             break (turno.state.as_text().to_owned(), turno.error.clone());
         }
         assert!(
-            inicio_da_espera.elapsed() < Duration::from_secs(15),
-            "a dona não cancelou o turno depois da desconexão: {turnos:?}"
+            wait_started.elapsed() < Duration::from_secs(15),
+            "a dona não cancelou o turno depois da desconexão: {turns:?}"
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
     };
@@ -365,18 +344,18 @@ async fn sse_de_org_remota_flui_pelo_encaminhamento_e_desconexao_cancela_na_dona
             .contains("cancel"),
         "o turno precisa registrar o cancelamento: {estado:?}"
     );
-    let saidas = store_b
+    let outputs = store_b
         .messages()
         .list(org, id, Page::with_limit(200))
         .expect("mensagens de b")
         .iter()
         .filter(|mensagem| mensagem.direction == Direction::Outbound)
         .count();
-    assert_eq!(saidas, 0, "nada de resposta parcial na conversa");
+    assert_eq!(outputs, 0, "nada de resposta parcial na conversa");
     assert_eq!(
         store_b
             .outbox()
-            .list_pending(org, POPH_LOTE)
+            .list_pending(org, POPH_BATCH)
             .expect("fila de b")
             .len(),
         0,
