@@ -1,14 +1,3 @@
-//! Testes de ponta a ponta de `poph backup` (HR-53): processo de verdade, banco e blobs de verdade.
-//!
-//! Cenário: uma org com agente, instruções, categoria, departamento, produto, item de base de
-//! conhecimento, arquivo na biblioteca, integração com segredo cifrado e uma conversa com
-//! mensagem, anexo, turno e item de saída. Exporta num arquivo único, importa numa instância
-//! limpa e compara o estado (linha a linha). Também prova idempotência, ausência do segredo no
-//! arquivo, isolamento da org vizinha e recusa de arquivo corrompido.
-//!
-//! A reindexação automática depende do modelo de embedding: sem ele instalado, o teste confere o
-//! aviso e não a busca (como os testes de `poph kb`).
-
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -22,65 +11,59 @@ use poph_store::{
 use poph_types::{AgentId, OrgId};
 use serde_json::Value;
 
-/// Segredo de integração que **não** pode sair no arquivo (nem em claro, nem cifrado).
-const SENTINELA_SEGREDO: &str = "SENTINELA-SEGREDO-hr53";
-/// Chave de cifra do cenário (só para o segredo ser decifrável nos nomes dos campos).
-const CHAVE_CIFRA: &str = "chave-de-teste-hr53";
-/// Segredo de LLM/Jev que também não pode vazar.
-const SENTINELA_LLM: &str = "SENTINELA-LLM-hr53";
+const SECRET_SENTINEL: &str = "SENTINELA-SEGREDO-hr53";
+const CIPHER_KEY: &str = "chave-de-teste-hr53";
+const LLM_SENTINEL: &str = "SENTINELA-LLM-hr53";
 
-/// PNG mínimo: a assinatura é o que a detecção por conteúdo usa.
 const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89";
 
-fn pasta_modelos_repo() -> PathBuf {
+fn models_repo_dir() -> PathBuf {
     PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../data/modelos"))
 }
 
-fn modelo_instalado() -> bool {
-    let modelos = pasta_modelos_repo();
-    modelos.join("model_int8.onnx").is_file() && modelos.join("tokenizer.json").is_file()
+fn model_installed() -> bool {
+    let models = models_repo_dir();
+    models.join("model_int8.onnx").is_file() && models.join("tokenizer.json").is_file()
 }
 
-struct Cenario {
-    pasta: PathBuf,
+struct Scenario {
+    dir: PathBuf,
     slug: String,
 }
 
-impl Cenario {
-    /// Cenário sem o modelo de embedding: os comandos rodam, e o índice fica pendente com aviso.
-    fn novo(rotulo: &str) -> Self {
-        Self::com_modelo(rotulo, false)
+impl Scenario {
+    fn new(label: &str) -> Self {
+        Self::with_model(label, false)
     }
 
-    /// Cenário com o modelo de embedding, quando ele está instalado (busca e reindexação reais).
-    fn com_modelo(rotulo: &str, com_modelo: bool) -> Self {
-        let pasta =
-            std::env::temp_dir().join(format!("poph-cli-backup-{rotulo}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&pasta);
-        fs::create_dir_all(pasta.join("dados")).expect("cria a pasta de dados");
-        if com_modelo && modelo_instalado() {
+    fn with_model(label: &str, with_model: bool) -> Self {
+        let dir =
+            std::env::temp_dir().join(format!("poph-cli-backup-{label}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("dados")).expect("cria a pasta de dados");
+        if with_model && model_installed() {
             #[cfg(unix)]
-            std::os::unix::fs::symlink(pasta_modelos_repo(), pasta.join("dados").join("modelos"))
+            std::os::unix::fs::symlink(models_repo_dir(), dir.join("dados").join("modelos"))
                 .expect("liga a pasta de modelos");
         }
         Self {
-            pasta,
-            slug: format!("org-{rotulo}"),
+            dir,
+            slug: format!("org-{label}"),
         }
     }
 
-    fn dados(&self) -> PathBuf {
-        self.pasta.join("dados")
+    fn data_dir(&self) -> PathBuf {
+        self.dir.join("dados")
     }
 
     fn poph(&self, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_poph"))
             .args(args)
-            .current_dir(&self.pasta)
+            .current_dir(&self.dir)
             .env_clear()
-            .env("POPH_DADOS_DIRETORIO", self.dados())
-            .env("POPH_CHAVE_CIFRA", CHAVE_CIFRA)
-            .env("ANTIGRAVITY_API_KEY", SENTINELA_LLM)
+            .env("POPH_DADOS_DIRETORIO", self.data_dir())
+            .env("POPH_CHAVE_CIFRA", CIPHER_KEY)
+            .env("ANTIGRAVITY_API_KEY", LLM_SENTINEL)
             .output()
             .expect("executa o poph")
     }
@@ -94,12 +77,12 @@ impl Cenario {
             String::from_utf8_lossy(&saida.stderr)
         );
         let texto = String::from_utf8_lossy(&saida.stdout);
-        serde_json::from_str(&texto).unwrap_or_else(|erro| {
-            panic!("saída não é JSON ({erro}): {texto}");
+        serde_json::from_str(&texto).unwrap_or_else(|error| {
+            panic!("saída não é JSON ({error}): {texto}");
         })
     }
 
-    fn falha(&self, args: &[&str]) -> String {
+    fn failure(&self, args: &[&str]) -> String {
         let saida = self.poph(args);
         assert!(
             !saida.status.success(),
@@ -109,16 +92,16 @@ impl Cenario {
         String::from_utf8_lossy(&saida.stderr).into_owned()
     }
 
-    fn abrir_store(&self) -> Store {
+    fn open_store(&self) -> Store {
         Store::open_at(
-            &self.dados().join("harness.db"),
-            &self.dados().join("rag.db"),
+            &self.data_dir().join("harness.db"),
+            &self.data_dir().join("rag.db"),
         )
         .expect("abre o banco")
     }
 
-    fn org_por_slug(&self, slug: &str) -> OrgId {
-        self.abrir_store()
+    fn org_by_slug(&self, slug: &str) -> OrgId {
+        self.open_store()
             .orgs()
             .by_slug(slug)
             .expect("org do cenário")
@@ -126,33 +109,32 @@ impl Cenario {
     }
 }
 
-/// Semeia a org de origem com um recurso de cada tipo, uma integração com segredo e uma conversa.
-fn semear_origem(cenario: &Cenario) {
-    cenario.ok_json(&[
+fn seed_origin(scenario: &Scenario) {
+    scenario.ok_json(&[
         "--offline",
         "org",
         "create",
         "--name",
         "Org Origem",
         "--slug",
-        &cenario.slug,
+        &scenario.slug,
         "--json",
     ]);
-    cenario.ok_json(&[
+    scenario.ok_json(&[
         "--offline",
         "org",
         "update",
-        &cenario.slug,
+        &scenario.slug,
         "--if-match",
         "1",
         "--config-json",
         "{\"retencao\":{\"dias\":7}}",
         "--json",
     ]);
-    cenario.ok_json(&[
+    scenario.ok_json(&[
         "--offline",
         "--org",
-        &cenario.slug,
+        &scenario.slug,
         "agent",
         "create",
         "--name",
@@ -161,10 +143,10 @@ fn semear_origem(cenario: &Cenario) {
         "bia",
         "--json",
     ]);
-    cenario.ok_json(&[
+    scenario.ok_json(&[
         "--offline",
         "--org",
-        &cenario.slug,
+        &scenario.slug,
         "department",
         "create",
         "--name",
@@ -173,20 +155,20 @@ fn semear_origem(cenario: &Cenario) {
         "primeiro contato",
         "--json",
     ]);
-    cenario.ok_json(&[
+    scenario.ok_json(&[
         "--offline",
         "--org",
-        &cenario.slug,
+        &scenario.slug,
         "category",
         "create",
         "--name",
         "Pragas",
         "--json",
     ]);
-    cenario.ok_json(&[
+    scenario.ok_json(&[
         "--offline",
         "--org",
-        &cenario.slug,
+        &scenario.slug,
         "product",
         "create",
         "--name",
@@ -201,10 +183,10 @@ fn semear_origem(cenario: &Cenario) {
         "baratas",
         "--json",
     ]);
-    let grupo = cenario.ok_json(&[
+    let group = scenario.ok_json(&[
         "--offline",
         "--org",
-        &cenario.slug,
+        &scenario.slug,
         "kb",
         "group",
         "create",
@@ -212,43 +194,43 @@ fn semear_origem(cenario: &Cenario) {
         "Atendimento",
         "--json",
     ]);
-    let grupo_id = grupo["group"]["id"].as_str().expect("id do grupo");
-    cenario.ok_json(&[
+    let group_id = group["group"]["id"].as_str().expect("id do grupo");
+    scenario.ok_json(&[
         "--offline",
         "--org",
-        &cenario.slug,
+        &scenario.slug,
         "kb",
         "item",
         "create",
         "--group",
-        grupo_id,
+        group_id,
         "--title",
         "Prazo de entrega",
         "--content",
         "O prazo é de 5 dias úteis.",
         "--json",
     ]);
-    cenario.ok_json(&[
+    scenario.ok_json(&[
         "--offline",
         "--org",
-        &cenario.slug,
+        &scenario.slug,
         "kb",
         "link",
-        grupo_id,
+        group_id,
         "--agent",
         "bia",
         "--json",
     ]);
 
-    let arquivo = cenario.pasta.join("logo.png");
-    fs::write(&arquivo, PNG).expect("grava o PNG");
-    cenario.ok_json(&[
+    let file = scenario.dir.join("logo.png");
+    fs::write(&file, PNG).expect("grava o PNG");
+    scenario.ok_json(&[
         "--offline",
         "--org",
-        &cenario.slug,
+        &scenario.slug,
         "file",
         "upload",
-        arquivo.to_str().expect("caminho"),
+        file.to_str().expect("caminho"),
         "--agent",
         "bia",
         "--name",
@@ -257,16 +239,16 @@ fn semear_origem(cenario: &Cenario) {
         "logo",
         "--json",
     ]);
-    let prompt = cenario.pasta.join("prompt.md");
+    let prompt = scenario.dir.join("prompt.md");
     fs::write(
         &prompt,
         "# Identidade\n\nVocê é a Bia, da Dedetizadora Exemplo.\n",
     )
     .expect("grava o prompt");
-    cenario.ok_json(&[
+    scenario.ok_json(&[
         "--offline",
         "--org",
-        &cenario.slug,
+        &scenario.slug,
         "instructions",
         "create",
         "bia",
@@ -275,18 +257,17 @@ fn semear_origem(cenario: &Cenario) {
         "--json",
     ]);
 
-    // O resto é semeado direto pelo repositório: integração com segredo cifrado e histórico.
-    let store = cenario.abrir_store();
-    let org = store.orgs().by_slug(&cenario.slug).unwrap().id;
-    let agente = store.agents().by_slug(org, "bia").unwrap().id;
-    let chave = poph_server::CipherKey::derive(CHAVE_CIFRA).expect("deriva a chave");
-    let mut segredos = std::collections::BTreeMap::new();
-    segredos.insert("token".to_owned(), SENTINELA_SEGREDO.to_owned());
-    let blob = chave.cifrar(&segredos).expect("cifra o segredo");
+    let store = scenario.open_store();
+    let org = store.orgs().by_slug(&scenario.slug).unwrap().id;
+    let agent = store.agents().by_slug(org, "bia").unwrap().id;
+    let key = poph_server::CipherKey::derive(CIPHER_KEY).expect("deriva a chave");
+    let mut secrets = std::collections::BTreeMap::new();
+    secrets.insert("token".to_owned(), SECRET_SENTINEL.to_owned());
+    let blob = key.cifrar(&secrets).expect("cifra o segredo");
     store
         .create_integration_with_config(
             org,
-            agente,
+            agent,
             "whatsapp".to_owned(),
             "active".to_owned(),
             serde_json::json!({"instancia": "bia"}),
@@ -294,12 +275,12 @@ fn semear_origem(cenario: &Cenario) {
         )
         .expect("cria a integração");
 
-    let conversa = store
+    let conversation = store
         .conversations()
         .create(
             org,
             NewConversation {
-                agent_id: agente,
+                agent_id: agent,
                 integration_id: None,
                 canal: "test".to_owned(),
                 peer_externo: None,
@@ -307,11 +288,11 @@ fn semear_origem(cenario: &Cenario) {
             },
         )
         .expect("cria a conversa");
-    let conteudo_anexo = [PNG, b"-anexo-do-cliente"].concat();
-    let anexo = poph_files::blob::write(
-        &FileConfig::default(cenario.dados().join("blobs")).blob_folder,
+    let attachment_content = [PNG, b"-anexo-do-cliente"].concat();
+    let attachment = poph_files::blob::write(
+        &FileConfig::default(scenario.data_dir().join("blobs")).blob_folder,
         org,
-        &conteudo_anexo,
+        &attachment_content,
     )
     .expect("grava o blob do anexo");
     store
@@ -319,7 +300,7 @@ fn semear_origem(cenario: &Cenario) {
         .write_with_attachments(
             org,
             NewMessage {
-                conversation_id: conversa.id,
+                conversation_id: conversation.id,
                 direction: Direction::Inbound,
                 role: Role::User,
                 texto: "Qual o prazo? Segue o comprovante.".to_owned(),
@@ -332,23 +313,23 @@ fn semear_origem(cenario: &Cenario) {
             &[NewChannelAttachment {
                 name: "comprovante.png".to_owned(),
                 mime: "image/png".to_owned(),
-                size_bytes: conteudo_anexo.len() as u64,
-                sha256: anexo.sha256.clone(),
-                blob_path: format!("{org}/{}", anexo.sha256),
+                size_bytes: attachment_content.len() as u64,
+                sha256: attachment.sha256.clone(),
+                blob_path: format!("{org}/{}", attachment.sha256),
                 extracted_text: None,
                 extraction_status: "skipped",
             }],
         )
         .expect("grava a mensagem com anexo");
-    let turno = store
+    let turn = store
         .turns()
-        .start(org, conversa.id, Some(agente))
+        .start(org, conversation.id, Some(agent))
         .expect("abre o turno");
     store
         .turns()
         .finalise(
             org,
-            turno.id,
+            turn.id,
             TurnFinalization::completed("{\"total_ms\":12}"),
         )
         .expect("fecha o turno");
@@ -357,13 +338,13 @@ fn semear_origem(cenario: &Cenario) {
         .write(
             org,
             NewMessage {
-                conversation_id: conversa.id,
+                conversation_id: conversation.id,
                 direction: Direction::Outbound,
                 role: Role::Assistant,
                 texto: "O prazo é de 5 dias úteis.".to_owned(),
                 attachments_json: "[]".to_owned(),
                 external_id: None,
-                turn_id: Some(turno.id),
+                turn_id: Some(turn.id),
                 origin: poph_store::Origin::Agente,
                 author_name: None,
             },
@@ -374,8 +355,8 @@ fn semear_origem(cenario: &Cenario) {
         .enqueue(
             org,
             NewOutboxItem {
-                conversation_id: conversa.id,
-                turn_id: turno.id,
+                conversation_id: conversation.id,
+                turn_id: turn.id,
                 seq: 1,
                 tipo: "text".to_owned(),
                 content_json: "{\"text\":\"O prazo é de 5 dias úteis.\"}".to_owned(),
@@ -384,53 +365,54 @@ fn semear_origem(cenario: &Cenario) {
         .expect("enfileira a saída");
 }
 
-/// Compara dois retratos linha a linha; as integrações ignoram a marca de segredo.
-fn comparar_retratos(origem: &OrgSnapshot, destino: &OrgSnapshot) {
-    assert_eq!(origem.org, destino.org, "linha da org");
+fn compare_snapshots(origin: &OrgSnapshot, destination: &OrgSnapshot) {
+    assert_eq!(origin.org, destination.org, "linha da org");
     assert_eq!(
-        origem.tables.keys().collect::<Vec<_>>(),
-        destino.tables.keys().collect::<Vec<_>>(),
+        origin.tables.keys().collect::<Vec<_>>(),
+        destination.tables.keys().collect::<Vec<_>>(),
         "tabelas do retrato"
     );
-    for (tabela, linhas) in &origem.tables {
-        let esperadas: Vec<Value> = linhas
+    for (table, rows) in &origin.tables {
+        let expected: Vec<Value> = rows.iter().map(|row| normalize(table, row)).collect();
+        let obtained: Vec<Value> = destination.tables[table]
             .iter()
-            .map(|linha| normalizar(tabela, linha))
+            .map(|row| normalize(table, row))
             .collect();
-        let obtidas: Vec<Value> = destino.tables[tabela]
-            .iter()
-            .map(|linha| normalizar(tabela, linha))
-            .collect();
-        assert_eq!(esperadas, obtidas, "conteúdo da tabela `{tabela}`");
+        assert_eq!(expected, obtained, "conteúdo da tabela `{table}`");
     }
 }
 
-fn normalizar(tabela: &str, linha: &Value) -> Value {
-    if tabela != "integrations" {
-        return linha.clone();
+fn normalize(table: &str, row: &Value) -> Value {
+    if table != "integrations" {
+        return row.clone();
     }
-    let mut linha = linha.clone();
-    if let Some(objeto) = linha.as_object_mut() {
-        for campo in ["tem_segredo", "segredos_campos"] {
-            objeto.remove(campo);
+    let mut row = row.clone();
+    if let Some(object) = row.as_object_mut() {
+        for field in ["tem_segredo", "segredos_campos"] {
+            object.remove(field);
         }
     }
-    linha
+    row
 }
 
-fn ler_retrato(cenario: &Cenario, org: OrgId) -> OrgSnapshot {
-    cenario
-        .abrir_store()
+fn read_snapshot(scenario: &Scenario, org: OrgId) -> OrgSnapshot {
+    scenario
+        .open_store()
         .org_snapshot(org, true)
         .expect("retrato")
 }
 
-fn comparar_blobs(origem: &Cenario, destino: &Cenario, org_origem: OrgId, org_destino: OrgId) {
-    let retrato = ler_retrato(origem, org_origem);
+fn compare_blobs(
+    origin: &Scenario,
+    destination: &Scenario,
+    origin_org: OrgId,
+    destination_org: OrgId,
+) {
+    let snapshot = read_snapshot(origin, origin_org);
     let mut hashes = Vec::new();
-    for tabela in ["file_library", "attachments"] {
-        for linha in retrato.tables.get(tabela).into_iter().flatten() {
-            if let Some(sha) = linha.get("sha256").and_then(Value::as_str) {
+    for table in ["file_library", "attachments"] {
+        for row in snapshot.tables.get(table).into_iter().flatten() {
+            if let Some(sha) = row.get("sha256").and_then(Value::as_str) {
                 hashes.push(sha.to_owned());
             }
         }
@@ -438,125 +420,118 @@ fn comparar_blobs(origem: &Cenario, destino: &Cenario, org_origem: OrgId, org_de
     assert!(!hashes.is_empty(), "o cenário devia ter blobs");
     for sha in hashes {
         let original = fs::read(
-            origem
-                .dados()
+            origin
+                .data_dir()
                 .join("blobs")
-                .join(org_origem.to_string())
+                .join(origin_org.to_string())
                 .join(&sha),
         )
         .expect("lê o blob original");
-        let copia = fs::read(
-            destino
-                .dados()
+        let copy = fs::read(
+            destination
+                .data_dir()
                 .join("blobs")
-                .join(org_destino.to_string())
+                .join(destination_org.to_string())
                 .join(&sha),
         )
         .expect("lê o blob importado");
-        assert_eq!(original, copia, "conteúdo do blob {sha}");
+        assert_eq!(original, copy, "conteúdo do blob {sha}");
         assert_eq!(
-            poph_files::blob::sha256_hex(&copia),
+            poph_files::blob::sha256_hex(&copy),
             sha,
             "sha256 do blob importado"
         );
     }
 }
 
-fn agente_por_slug(store: &Store, org: OrgId, slug: &str) -> AgentId {
+fn agent_by_slug(store: &Store, org: OrgId, slug: &str) -> AgentId {
     store.agents().by_slug(org, slug).expect("agente").id
 }
 
 #[test]
-fn exportar_e_importar_reconstroi_a_org_num_arquivo_so() {
-    let origem = Cenario::novo("origem");
-    semear_origem(&origem);
-    let org_origem = origem.org_por_slug(&origem.slug);
-    let arquivo = origem.pasta.join("backup.json");
+fn export_and_import_rebuild_org_in_a_single_file() {
+    let origin = Scenario::new("origem");
+    seed_origin(&origin);
+    let origin_org = origin.org_by_slug(&origin.slug);
+    let file = origin.dir.join("backup.json");
 
-    let relatorio = origem.ok_json(&[
+    let report = origin.ok_json(&[
         "--offline",
         "backup",
         "export",
-        &origem.slug,
+        &origin.slug,
         "--out",
-        arquivo.to_str().expect("caminho"),
+        file.to_str().expect("caminho"),
         "--com-conversas",
         "--json",
     ]);
-    assert_eq!(relatorio["versao_relatorio"], 1);
-    assert_eq!(relatorio["com_conversas"], true);
-    assert!(
-        relatorio["blobs"].as_u64().unwrap() >= 2,
-        "biblioteca + anexo"
-    );
+    assert_eq!(report["versao_relatorio"], 1);
+    assert_eq!(report["com_conversas"], true);
+    assert!(report["blobs"].as_u64().unwrap() >= 2, "biblioteca + anexo");
 
-    // O arquivo: um só, com formato declarado, sem segredo e sem caminho de blob.
-    let texto = fs::read_to_string(&arquivo).expect("lê o backup");
+    let texto = fs::read_to_string(&file).expect("lê o backup");
     assert!(
-        !texto.contains(SENTINELA_SEGREDO),
+        !texto.contains(SECRET_SENTINEL),
         "segredo em claro no arquivo"
     );
-    assert!(!texto.contains(SENTINELA_LLM), "segredo do LLM no arquivo");
+    assert!(!texto.contains(LLM_SENTINEL), "segredo do LLM no arquivo");
     assert!(!texto.contains("blob_path"), "caminho de blob no arquivo");
     assert!(!texto.contains("secrets_enc"), "segredo cifrado no arquivo");
-    let documento: Value = serde_json::from_str(&texto).expect("JSON do backup");
-    assert_eq!(documento["formato"], "poph-backup-org");
-    assert_eq!(documento["versao_formato"], 2);
-    assert_eq!(documento["org_origem"]["slug"], origem.slug);
-    let integracao = &documento["tabelas"]["integrations"][0];
+    let document: Value = serde_json::from_str(&texto).expect("JSON do backup");
+    assert_eq!(document["formato"], "poph-backup-org");
+    assert_eq!(document["versao_formato"], 2);
+    assert_eq!(document["org_origem"]["slug"], origin.slug);
+    let integration = &document["tabelas"]["integrations"][0];
     assert_eq!(
-        integracao["tem_segredo"], true,
+        integration["tem_segredo"], true,
         "a marca de que havia segredo"
     );
     assert_eq!(
-        integracao["segredos_campos"],
+        integration["segredos_campos"],
         serde_json::json!(["token"]),
         "o nome do campo, sem o valor"
     );
 
-    // Instância limpa, com o modelo de embedding: importa, reindexa e compara o estado.
-    let destino = Cenario::com_modelo("destino", true);
-    let importacao = destino.ok_json(&[
+    let destination = Scenario::with_model("destino", true);
+    let import_report = destination.ok_json(&[
         "--offline",
         "backup",
         "import",
-        arquivo.to_str().expect("caminho"),
+        file.to_str().expect("caminho"),
         "--json",
     ]);
-    assert_eq!(importacao["org"]["criada"], true);
-    assert_eq!(importacao["segredos_a_redigitar"], 1);
-    assert_eq!(importacao["org"]["id"], org_origem.to_string());
-    comparar_retratos(
-        &ler_retrato(&origem, org_origem),
-        &ler_retrato(&destino, org_origem),
+    assert_eq!(import_report["org"]["criada"], true);
+    assert_eq!(import_report["segredos_a_redigitar"], 1);
+    assert_eq!(import_report["org"]["id"], origin_org.to_string());
+    compare_snapshots(
+        &read_snapshot(&origin, origin_org),
+        &read_snapshot(&destination, origin_org),
     );
-    comparar_blobs(&origem, &destino, org_origem, org_origem);
+    compare_blobs(&origin, &destination, origin_org, origin_org);
 
-    // O segredo não veio: a integração existe, sem segredo, com a configuração do operador.
     {
-        let store = destino.abrir_store();
-        let agente = agente_por_slug(&store, org_origem, "bia");
-        let integracoes = store
-            .list_integrations(org_origem, agente, poph_store::Page::default())
+        let store = destination.open_store();
+        let agent = agent_by_slug(&store, origin_org, "bia");
+        let integrations = store
+            .list_integrations(origin_org, agent, poph_store::Page::default())
             .expect("lista integrações");
-        assert_eq!(integracoes.len(), 1);
+        assert_eq!(integrations.len(), 1);
         assert!(
-            !integracoes[0].has_secret,
+            !integrations[0].has_secret,
             "o segredo não pode ser importado"
         );
-        assert_eq!(integracoes[0].configuracao["instancia"], "bia");
+        assert_eq!(integrations[0].configuracao["instancia"], "bia");
     }
 
-    // Reindexação: com modelo, a base já responde sem passo manual; sem modelo, vem o aviso.
-    if modelo_instalado() {
+    if model_installed() {
         assert!(
-            importacao["aviso"].is_null(),
-            "com o modelo instalado não deveria haver aviso: {importacao}"
+            import_report["aviso"].is_null(),
+            "com o modelo instalado não deveria haver aviso: {import_report}"
         );
-        let busca = destino.ok_json(&[
+        let search = destination.ok_json(&[
             "--offline",
             "--org",
-            &origem.slug,
+            &origin.slug,
             "kb",
             "search",
             "prazo de entrega",
@@ -565,85 +540,82 @@ fn exportar_e_importar_reconstroi_a_org_num_arquivo_so() {
             "--json",
         ]);
         assert!(
-            busca["chunks"]
+            search["chunks"]
                 .as_array()
-                .is_some_and(|lista| !lista.is_empty()),
-            "a base importada devia ser buscável: {busca}"
+                .is_some_and(|list| !list.is_empty()),
+            "a base importada devia ser buscável: {search}"
         );
     } else {
         assert!(
-            importacao["aviso"].is_string(),
-            "sem modelo, o import termina com aviso: {importacao}"
+            import_report["aviso"].is_string(),
+            "sem modelo, o import termina com aviso: {import_report}"
         );
     }
 
-    // Sobrescrita é recusada por padrão (HR-48e-3): importar de novo sem `--sobrescrever` para
-    // antes de gravar, dizendo quantas linhas e em quais tabelas.
-    let recusa = destino.falha(&[
+    let refusal = destination.failure(&[
         "--offline",
         "backup",
         "import",
-        arquivo.to_str().expect("caminho"),
+        file.to_str().expect("caminho"),
         "--json",
     ]);
-    assert!(recusa.contains("--sobrescrever"), "{recusa}");
-    assert!(recusa.contains("a importação atualizaria"), "{recusa}");
-    assert!(recusa.contains("agents "), "{recusa}");
+    assert!(refusal.contains("--sobrescrever"), "{refusal}");
+    assert!(refusal.contains("a importação atualizaria"), "{refusal}");
+    assert!(refusal.contains("agents "), "{refusal}");
     assert!(
-        recusa.contains(&format!(
+        refusal.contains(&format!(
             "{} linha(s)",
-            importacao["total"].as_u64().expect("total") + 1
+            import_report["total"].as_u64().expect("total") + 1
         )),
-        "a conta inclui a linha da org: {recusa}"
+        "a conta inclui a linha da org: {refusal}"
     );
-    let estado_depois_da_recusa = ler_retrato(&destino, org_origem);
-    comparar_retratos(&ler_retrato(&origem, org_origem), &estado_depois_da_recusa);
+    let state_after_refusal = read_snapshot(&destination, origin_org);
+    compare_snapshots(&read_snapshot(&origin, origin_org), &state_after_refusal);
 
-    // Com --sobrescrever: importar de novo não duplica nada e atualiza as mesmas linhas.
-    let segunda = destino.ok_json(&[
+    let second = destination.ok_json(&[
         "--offline",
         "backup",
         "import",
-        arquivo.to_str().expect("caminho"),
+        file.to_str().expect("caminho"),
         "--sobrescrever",
         "--json",
     ]);
-    assert_eq!(segunda["org"]["criada"], false);
-    assert_eq!(segunda["total"], importacao["total"]);
-    for (tabela, gravado) in segunda["tabelas"].as_object().expect("tabelas") {
+    assert_eq!(second["org"]["criada"], false);
+    assert_eq!(second["total"], import_report["total"]);
+    for (table, saved) in second["tabelas"].as_object().expect("tabelas") {
         assert_eq!(
-            gravado["inseridas"], 0,
-            "`{tabela}` duplicou na segunda importação"
+            saved["inseridas"], 0,
+            "`{table}` duplicou na segunda importação"
         );
     }
-    comparar_retratos(
-        &ler_retrato(&origem, org_origem),
-        &ler_retrato(&destino, org_origem),
+    compare_snapshots(
+        &read_snapshot(&origin, origin_org),
+        &read_snapshot(&destination, origin_org),
     );
-    let agentes = destino
-        .abrir_store()
+    let agents = destination
+        .open_store()
         .agents()
-        .list(org_origem, poph_store::Page::default());
-    assert_eq!(agentes.expect("lista").len(), 1);
+        .list(origin_org, poph_store::Page::default());
+    assert_eq!(agents.expect("lista").len(), 1);
 }
 
 #[test]
-fn importar_numa_org_existente_nao_mexe_na_org_vizinha() {
-    let origem = Cenario::novo("origem-org");
-    semear_origem(&origem);
-    let arquivo = origem.pasta.join("backup.json");
-    origem.ok_json(&[
+fn importing_into_existing_org_does_not_touch_neighbor_org() {
+    let origin = Scenario::new("origem-org");
+    seed_origin(&origin);
+    let file = origin.dir.join("backup.json");
+    origin.ok_json(&[
         "--offline",
         "backup",
         "export",
-        &origem.slug,
+        &origin.slug,
         "--out",
-        arquivo.to_str().expect("caminho"),
+        file.to_str().expect("caminho"),
         "--json",
     ]);
 
-    let destino = Cenario::novo("destino-org");
-    destino.ok_json(&[
+    let destination = Scenario::new("destino-org");
+    destination.ok_json(&[
         "--offline",
         "org",
         "create",
@@ -653,7 +625,7 @@ fn importar_numa_org_existente_nao_mexe_na_org_vizinha() {
         "vizinha",
         "--json",
     ]);
-    destino.ok_json(&[
+    destination.ok_json(&[
         "--offline",
         "--org",
         "vizinha",
@@ -665,103 +637,97 @@ fn importar_numa_org_existente_nao_mexe_na_org_vizinha() {
         "vizinho",
         "--json",
     ]);
-    let vizinha = destino.org_por_slug("vizinha");
-    let antes = ler_retrato(&destino, vizinha);
+    let neighbor = destination.org_by_slug("vizinha");
+    let before = read_snapshot(&destination, neighbor);
 
-    let importacao = destino.ok_json(&[
+    let import_report = destination.ok_json(&[
         "--offline",
         "backup",
         "import",
-        arquivo.to_str().expect("caminho"),
+        file.to_str().expect("caminho"),
         "--org",
         "vizinha",
         "--json",
     ]);
-    assert_eq!(importacao["org"]["id"], vizinha.to_string());
-    assert_eq!(importacao["org"]["criada"], false);
+    assert_eq!(import_report["org"]["id"], neighbor.to_string());
+    assert_eq!(import_report["org"]["criada"], false);
 
-    // A org de origem do arquivo não nasce nesta instância.
-    let erro = destino.falha(&["--offline", "org", "show", &origem.slug, "--json"]);
-    assert!(erro.contains("não existe org"), "{erro}");
+    let error = destination.failure(&["--offline", "org", "show", &origin.slug, "--json"]);
+    assert!(error.contains("não existe org"), "{error}");
 
-    // A vizinha ganhou os recursos importados, com os ids do arquivo, sem perder os próprios.
-    let depois = ler_retrato(&destino, vizinha);
+    let after = read_snapshot(&destination, neighbor);
     assert_eq!(
-        depois.tables["agents"].len(),
-        antes.tables["agents"].len() + 1,
+        after.tables["agents"].len(),
+        before.tables["agents"].len() + 1,
         "um agente importado além do próprio"
     );
-    let store = destino.abrir_store();
-    assert!(store.agents().by_slug(vizinha, "vizinho").is_ok());
-    assert!(store.agents().by_slug(vizinha, "bia").is_ok());
+    let store = destination.open_store();
+    assert!(store.agents().by_slug(neighbor, "vizinho").is_ok());
+    assert!(store.agents().by_slug(neighbor, "bia").is_ok());
     assert_eq!(
         store
             .products()
-            .list(vizinha, poph_store::Page::default())
+            .list(neighbor, poph_store::Page::default())
             .expect("produtos")
             .len(),
         1
     );
-    // O que era da vizinha continua idêntico (agente próprio intacto).
-    let proprio = antes.tables["agents"]
+    let own = before.tables["agents"]
         .iter()
-        .find(|linha| linha["slug"] == "vizinho")
+        .find(|row| row["slug"] == "vizinho")
         .expect("agente próprio")
         .clone();
-    let mesmo = depois.tables["agents"]
+    let same = after.tables["agents"]
         .iter()
-        .find(|linha| linha["slug"] == "vizinho")
+        .find(|row| row["slug"] == "vizinho")
         .expect("agente próprio depois");
-    assert_eq!(&proprio, mesmo);
+    assert_eq!(&own, same);
 }
 
 #[test]
-fn arquivo_corrompido_ou_de_outra_versao_e_recusado_sem_gravar() {
-    let origem = Cenario::novo("corrompido");
-    semear_origem(&origem);
-    let arquivo = origem.pasta.join("backup.json");
-    origem.ok_json(&[
+fn corrupted_or_wrong_version_file_is_refused_without_writing() {
+    let origin = Scenario::new("corrompido");
+    seed_origin(&origin);
+    let file = origin.dir.join("backup.json");
+    origin.ok_json(&[
         "--offline",
         "backup",
         "export",
-        &origem.slug,
+        &origin.slug,
         "--out",
-        arquivo.to_str().expect("caminho"),
+        file.to_str().expect("caminho"),
         "--json",
     ]);
-    let texto = fs::read_to_string(&arquivo).expect("lê");
+    let texto = fs::read_to_string(&file).expect("lê");
 
-    let destino = Cenario::novo("corrompido-destino");
-    // Truncado: não é JSON.
-    let truncado = destino.pasta.join("truncado.json");
-    fs::write(&truncado, &texto[..texto.len() / 2]).expect("grava o truncado");
-    let erro = destino.falha(&[
+    let destination = Scenario::new("corrompido-destino");
+    let truncated = destination.dir.join("truncado.json");
+    fs::write(&truncated, &texto[..texto.len() / 2]).expect("grava o truncado");
+    let error = destination.failure(&[
         "--offline",
         "backup",
         "import",
-        truncado.to_str().expect("caminho"),
+        truncated.to_str().expect("caminho"),
         "--json",
     ]);
-    assert!(erro.contains("JSON inválido"), "{erro}");
+    assert!(error.contains("JSON inválido"), "{error}");
 
-    // Versão de formato desconhecida.
-    let mut documento: Value = serde_json::from_str(&texto).expect("JSON");
-    documento["versao_formato"] = serde_json::json!(99);
-    let futuro = destino.pasta.join("futuro.json");
-    fs::write(&futuro, documento.to_string()).expect("grava");
-    let erro = destino.falha(&[
+    let mut document: Value = serde_json::from_str(&texto).expect("JSON");
+    document["versao_formato"] = serde_json::json!(99);
+    let future = destination.dir.join("futuro.json");
+    fs::write(&future, document.to_string()).expect("grava");
+    let error = destination.failure(&[
         "--offline",
         "backup",
         "import",
-        futuro.to_str().expect("caminho"),
+        future.to_str().expect("caminho"),
         "--json",
     ]);
-    assert!(erro.contains("versão de formato"), "{erro}");
+    assert!(error.contains("versão de formato"), "{error}");
 
-    // Nada foi gravado: a instância continua sem org nenhuma.
     assert!(
-        destino
-            .abrir_store()
+        destination
+            .open_store()
             .orgs()
             .list(poph_store::Page::default())
             .expect("orgs")
@@ -770,98 +736,96 @@ fn arquivo_corrompido_ou_de_outra_versao_e_recusado_sem_gravar() {
 }
 
 #[test]
-fn exportar_recusa_sobrescrever_sem_o_flag() {
-    let origem = Cenario::novo("sobrescrever");
-    semear_origem(&origem);
-    let arquivo = origem.pasta.join("backup.json");
-    fs::write(&arquivo, b"nao-apague-por-engano").expect("grava o arquivo existente");
-    let erro = origem.falha(&[
+fn export_refuses_overwrite_without_flag() {
+    let origin = Scenario::new("sobrescrever");
+    seed_origin(&origin);
+    let file = origin.dir.join("backup.json");
+    fs::write(&file, b"nao-apague-por-engano").expect("grava o arquivo existente");
+    let error = origin.failure(&[
         "--offline",
         "backup",
         "export",
-        &origem.slug,
+        &origin.slug,
         "--out",
-        arquivo.to_str().expect("caminho"),
+        file.to_str().expect("caminho"),
         "--json",
     ]);
-    assert!(erro.contains("--sobrescrever"), "{erro}");
+    assert!(error.contains("--sobrescrever"), "{error}");
     assert_eq!(
-        fs::read_to_string(&arquivo).expect("lê"),
+        fs::read_to_string(&file).expect("lê"),
         "nao-apague-por-engano"
     );
-    // Com o flag, sobrescreve.
-    origem.ok_json(&[
+    origin.ok_json(&[
         "--offline",
         "backup",
         "export",
-        &origem.slug,
+        &origin.slug,
         "--out",
-        arquivo.to_str().expect("caminho"),
+        file.to_str().expect("caminho"),
         "--sobrescrever",
         "--json",
     ]);
     assert!(
-        fs::read_to_string(&arquivo)
+        fs::read_to_string(&file)
             .expect("lê")
             .contains("poph-backup-org")
     );
 }
 
 #[test]
-fn exportar_recusa_blob_ausente_no_disco() {
-    let origem = Cenario::novo("sem-blob");
-    semear_origem(&origem);
-    let org = origem.org_por_slug(&origem.slug);
-    let retrato = origem
-        .abrir_store()
+fn export_refuses_blob_missing_on_disk() {
+    let origin = Scenario::new("sem-blob");
+    seed_origin(&origin);
+    let org = origin.org_by_slug(&origin.slug);
+    let snapshot = origin
+        .open_store()
         .org_snapshot(org, false)
         .expect("retrato");
-    let sha = retrato.tables["file_library"][0]["sha256"]
+    let sha = snapshot.tables["file_library"][0]["sha256"]
         .as_str()
         .expect("sha do arquivo da biblioteca")
         .to_owned();
     fs::remove_file(
-        origem
-            .dados()
+        origin
+            .data_dir()
             .join("blobs")
             .join(org.to_string())
             .join(&sha),
     )
     .expect("apaga o blob");
 
-    let arquivo = origem.pasta.join("nao-deve-existir.json");
-    let erro = origem.falha(&[
+    let file = origin.dir.join("nao-deve-existir.json");
+    let error = origin.failure(&[
         "--offline",
         "backup",
         "export",
-        &origem.slug,
+        &origin.slug,
         "--out",
-        arquivo.to_str().expect("caminho"),
+        file.to_str().expect("caminho"),
         "--json",
     ]);
-    assert!(erro.contains("Logo da empresa"), "{erro}");
-    assert!(erro.contains(&sha), "{erro}");
-    assert!(!arquivo.exists(), "não pode deixar arquivo pela metade");
+    assert!(error.contains("Logo da empresa"), "{error}");
+    assert!(error.contains(&sha), "{error}");
+    assert!(!file.exists(), "não pode deixar arquivo pela metade");
 }
 
-/// O caminho de blob é recalculado para a org de destino (a pasta muda com a org).
 #[test]
-fn blob_importado_fica_na_pasta_da_org_de_destino() {
-    let origem = Cenario::novo("pasta");
-    semear_origem(&origem);
-    let org_origem = origem.org_por_slug(&origem.slug);
-    let arquivo = origem.pasta.join("backup.json");
-    origem.ok_json(&[
+fn imported_blob_lands_in_destination_org_folder() {
+    let origin = Scenario::new("pasta");
+    seed_origin(&origin);
+    let origin_org = origin.org_by_slug(&origin.slug);
+    let file = origin.dir.join("backup.json");
+    origin.ok_json(&[
         "--offline",
         "backup",
         "export",
-        &origem.slug,
+        &origin.slug,
         "--out",
-        arquivo.to_str().expect("caminho"),
+        file.to_str().expect("caminho"),
         "--json",
     ]);
-    let destino = Cenario::novo("pasta-destino");
-    destino.ok_json(&[
+    let destination = Scenario::new("pasta-destino");
+    destination.ok_json(&[
         "--offline",
         "org",
         "create",
@@ -871,31 +835,38 @@ fn blob_importado_fica_na_pasta_da_org_de_destino() {
         "alvo",
         "--json",
     ]);
-    let alvo = destino.org_por_slug("alvo");
-    destino.ok_json(&[
+    let target = destination.org_by_slug("alvo");
+    destination.ok_json(&[
         "--offline",
         "backup",
         "import",
-        arquivo.to_str().expect("caminho"),
+        file.to_str().expect("caminho"),
         "--org",
         "alvo",
         "--json",
     ]);
-    let retrato = ler_retrato(&destino, alvo);
-    for tabela in ["file_library", "attachments"] {
-        for linha in retrato.tables.get(tabela).into_iter().flatten() {
-            let sha = linha["sha256"].as_str().expect("sha");
+    let snapshot = read_snapshot(&destination, target);
+    for table in ["file_library", "attachments"] {
+        for row in snapshot.tables.get(table).into_iter().flatten() {
+            let sha = row["sha256"].as_str().expect("sha");
             assert!(
-                destino
-                    .dados()
+                destination
+                    .data_dir()
                     .join("blobs")
-                    .join(alvo.to_string())
+                    .join(target.to_string())
                     .join(sha)
                     .is_file(),
                 "o blob {sha} devia estar na pasta da org de destino"
             );
         }
     }
-    // E a pasta da org de origem não existe nesta instância.
-    assert!(!Path::new(&destino.dados().join("blobs").join(org_origem.to_string())).exists());
+    assert!(
+        !Path::new(
+            &destination
+                .data_dir()
+                .join("blobs")
+                .join(origin_org.to_string())
+        )
+        .exists()
+    );
 }

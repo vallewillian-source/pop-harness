@@ -1,10 +1,3 @@
-//! Testes de ponta a ponta de `poph file` (HR-24): processo de verdade e banco de verdade.
-//!
-//! O upload de imagem não depende do `poph-extrator`; os documentos (PDF/Office) dependem, e são
-//! cobertos pelos testes do crate `poph-files`. Aqui o foco é o contrato da CLI: recusa legível com
-//! código 1 (arquivo grande, extensão enganosa), blob deduplicado por hash, `list`/`show`/`delete`,
-//! `--json` estável e isolamento por agente.
-
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -12,32 +5,31 @@ use std::process::{Command, Output};
 use poph_store::{NewAgent, NewOrg, Store};
 use serde_json::Value;
 
-/// PNG mínimo: a assinatura é o que a detecção por conteúdo usa.
 const PNG: &[u8] = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89";
 
-struct Cenario {
-    pasta: PathBuf,
+struct Scenario {
+    dir: PathBuf,
     slug: String,
-    agente: String,
+    agent: String,
 }
 
-impl Cenario {
-    fn novo(rotulo: &str) -> Self {
-        let pasta =
-            std::env::temp_dir().join(format!("poph-cli-arquivo-{rotulo}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&pasta);
-        fs::create_dir_all(pasta.join("dados")).expect("cria a pasta de dados");
-        let slug = format!("org-{rotulo}");
+impl Scenario {
+    fn new(label: &str) -> Self {
+        let dir =
+            std::env::temp_dir().join(format!("poph-cli-arquivo-{label}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("dados")).expect("cria a pasta de dados");
+        let slug = format!("org-{label}");
         {
             let store = Store::open_at(
-                &pasta.join("dados").join("harness.db"),
-                &pasta.join("dados").join("rag.db"),
+                &dir.join("dados").join("harness.db"),
+                &dir.join("dados").join("rag.db"),
             )
             .expect("abre o banco");
             let org = store
                 .orgs()
                 .create(NewOrg {
-                    name: format!("Org {rotulo}"),
+                    name: format!("Org {label}"),
                     slug: slug.clone(),
                     config_json: "{}".to_owned(),
                 })
@@ -56,105 +48,102 @@ impl Cenario {
                 .expect("cria o agente");
         }
         Self {
-            pasta,
+            dir,
             slug,
-            agente: "bia".to_owned(),
+            agent: "bia".to_owned(),
         }
     }
 
     fn poph(&self, args: &[&str]) -> Output {
-        let mut comando = Command::new(env!("CARGO_BIN_EXE_poph"));
-        comando
+        let mut command = Command::new(env!("CARGO_BIN_EXE_poph"));
+        command
             .args(args)
-            .current_dir(&self.pasta)
+            .current_dir(&self.dir)
             .env_clear()
-            .env("POPH_DADOS_DIRETORIO", self.pasta.join("dados"));
-        comando.output().expect("executa o poph")
+            .env("POPH_DADOS_DIRETORIO", self.dir.join("dados"));
+        command.output().expect("executa o poph")
     }
 
-    /// Roda com `--org` e `--offline` e devolve a saída padrão.
     fn ok(&self, args: &[&str]) -> String {
-        let mut todos: Vec<&str> = vec!["--offline", "--org", &self.slug];
-        todos.extend_from_slice(args);
-        let saida = self.poph(&todos);
+        let mut all: Vec<&str> = vec!["--offline", "--org", &self.slug];
+        all.extend_from_slice(args);
+        let output = self.poph(&all);
         assert!(
-            saida.status.success(),
+            output.status.success(),
             "`poph {}` falhou: {}",
-            todos.join(" "),
-            String::from_utf8_lossy(&saida.stderr)
+            all.join(" "),
+            String::from_utf8_lossy(&output.stderr)
         );
-        String::from_utf8_lossy(&saida.stdout).into_owned()
+        String::from_utf8_lossy(&output.stdout).into_owned()
     }
 
     fn ok_json(&self, args: &[&str]) -> Value {
-        let texto = self.ok(args);
-        serde_json::from_str(&texto)
-            .unwrap_or_else(|erro| panic!("saída não é JSON ({erro}): {texto}"))
+        let text = self.ok(args);
+        serde_json::from_str(&text)
+            .unwrap_or_else(|error| panic!("saída não é JSON ({error}): {text}"))
     }
 
-    /// Roda esperando falha: devolve (código de saída, erro padrão).
-    fn falhou(&self, args: &[&str]) -> (i32, String) {
-        let mut todos: Vec<&str> = vec!["--offline", "--org", &self.slug];
-        todos.extend_from_slice(args);
-        let saida = self.poph(&todos);
+    fn failed(&self, args: &[&str]) -> (i32, String) {
+        let mut all: Vec<&str> = vec!["--offline", "--org", &self.slug];
+        all.extend_from_slice(args);
+        let output = self.poph(&all);
         (
-            saida.status.code().unwrap_or(-1),
-            String::from_utf8_lossy(&saida.stderr).into_owned(),
+            output.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
         )
     }
 
-    fn escrever(&self, nome: &str, bytes: &[u8]) -> PathBuf {
-        let caminho = self.pasta.join(nome);
-        fs::write(&caminho, bytes).expect("grava o arquivo de teste");
-        caminho
+    fn write(&self, name: &str, bytes: &[u8]) -> PathBuf {
+        let path = self.dir.join(name);
+        fs::write(&path, bytes).expect("grava o arquivo de teste");
+        path
     }
 
-    /// Quantos blobs existem na pasta da org.
     fn blobs(&self) -> Vec<String> {
-        let pasta = self.pasta.join("dados").join("blobs");
-        let Ok(orgs) = fs::read_dir(&pasta) else {
+        let dir = self.dir.join("dados").join("blobs");
+        let Ok(orgs) = fs::read_dir(&dir) else {
             return Vec::new();
         };
-        let mut nomes = Vec::new();
+        let mut names = Vec::new();
         for org in orgs.flatten() {
-            if let Ok(arquivos) = fs::read_dir(org.path()) {
-                for arquivo in arquivos.flatten() {
-                    nomes.push(arquivo.file_name().to_string_lossy().into_owned());
+            if let Ok(files) = fs::read_dir(org.path()) {
+                for file in files.flatten() {
+                    names.push(file.file_name().to_string_lossy().into_owned());
                 }
             }
         }
-        nomes
+        names
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.pasta);
+        let _ = fs::remove_dir_all(&self.dir);
     }
 }
 
-fn upload_json(cenario: &Cenario, caminho: &Path, extra: &[&str]) -> Value {
-    let caminho = caminho.to_string_lossy().into_owned();
+fn upload_json(scenario: &Scenario, path: &Path, extra: &[&str]) -> Value {
+    let path = path.to_string_lossy().into_owned();
     let mut args: Vec<&str> = vec![
         "file",
         "upload",
-        &caminho,
+        &path,
         "--agent",
-        &cenario.agente,
+        &scenario.agent,
         "--json",
     ];
     args.extend_from_slice(extra);
-    cenario.ok_json(&args)
+    scenario.ok_json(&args)
 }
 
 #[test]
-fn envia_lista_mostra_e_exclui_arquivo() {
-    let cenario = Cenario::novo("crud");
-    let caminho = cenario.escrever("logo.png", PNG);
+fn uploads_lists_shows_and_deletes_file() {
+    let scenario = Scenario::new("crud");
+    let path = scenario.write("logo.png", PNG);
 
-    let criado = upload_json(
-        &cenario,
-        &caminho,
+    let created = upload_json(
+        &scenario,
+        &path,
         &[
             "--name",
             "Logo da empresa",
@@ -162,151 +151,141 @@ fn envia_lista_mostra_e_exclui_arquivo() {
             "logotipo para o cliente",
         ],
     );
-    let arquivo = &criado["arquivo"];
-    let id = arquivo["id"].as_str().expect("id no JSON").to_owned();
-    assert_eq!(arquivo["nome"], "Logo da empresa");
-    assert_eq!(arquivo["descricao"], "logotipo para o cliente");
-    assert_eq!(arquivo["mime"], "image/png");
+    let file = &created["arquivo"];
+    let id = file["id"].as_str().expect("id no JSON").to_owned();
+    assert_eq!(file["nome"], "Logo da empresa");
+    assert_eq!(file["descricao"], "logotipo para o cliente");
+    assert_eq!(file["mime"], "image/png");
     assert!(
-        arquivo["agent_id"].as_str().is_some(),
+        file["agent_id"].as_str().is_some(),
         "o dono do arquivo vem no JSON"
     );
-    assert!(!arquivo["blob_path"].as_str().unwrap().starts_with('/'));
+    assert!(!file["blob_path"].as_str().unwrap().starts_with('/'));
 
-    // Lista: aparece com o nome cadastrado.
-    let lista = cenario.ok_json(&["file", "list", "--agent", &cenario.agente, "--json"]);
-    assert_eq!(lista["total"], 1);
-    assert_eq!(lista["arquivos"][0]["id"], id.as_str());
+    let list = scenario.ok_json(&["file", "list", "--agent", &scenario.agent, "--json"]);
+    assert_eq!(list["total"], 1);
+    assert_eq!(list["arquivos"][0]["id"], id.as_str());
 
-    // Mostra.
-    let mostrado = cenario.ok_json(&["file", "show", &id, "--agent", &cenario.agente, "--json"]);
-    assert_eq!(mostrado["arquivo"]["id"], id.as_str());
+    let shown = scenario.ok_json(&["file", "show", &id, "--agent", &scenario.agent, "--json"]);
+    assert_eq!(shown["arquivo"]["id"], id.as_str());
 
-    // Exclui e a lista volta vazia.
-    let excluido = cenario.ok_json(&["file", "delete", &id, "--agent", &cenario.agente, "--json"]);
-    assert_eq!(excluido["excluido"]["id"], id.as_str());
-    let lista = cenario.ok_json(&["file", "list", "--agent", &cenario.agente, "--json"]);
-    assert_eq!(lista["total"], 0);
+    let deleted = scenario.ok_json(&["file", "delete", &id, "--agent", &scenario.agent, "--json"]);
+    assert_eq!(deleted["excluido"]["id"], id.as_str());
+    let list = scenario.ok_json(&["file", "list", "--agent", &scenario.agent, "--json"]);
+    assert_eq!(list["total"], 0);
 
-    // O blob fica no disco (quem apaga órfão é a retenção).
-    assert_eq!(cenario.blobs().len(), 1);
+    assert_eq!(scenario.blobs().len(), 1);
 }
 
 #[test]
-fn mesmo_conteudo_duas_vezes_gera_um_blob_so() {
-    let cenario = Cenario::novo("dedupe");
-    let caminho = cenario.escrever("logo.png", PNG);
-    let primeiro = upload_json(&cenario, &caminho, &[]);
-    let segundo = upload_json(&cenario, &caminho, &[]);
+fn same_content_twice_yields_a_single_blob() {
+    let scenario = Scenario::new("dedupe");
+    let path = scenario.write("logo.png", PNG);
+    let first = upload_json(&scenario, &path, &[]);
+    let second = upload_json(&scenario, &path, &[]);
     assert_eq!(
-        primeiro["arquivo"]["sha256"], segundo["arquivo"]["sha256"],
+        first["arquivo"]["sha256"], second["arquivo"]["sha256"],
         "mesmo conteúdo, mesmo hash"
     );
-    assert_ne!(primeiro["arquivo"]["id"], segundo["arquivo"]["id"]);
-    assert_eq!(cenario.blobs().len(), 1, "um blob só por hash");
+    assert_ne!(first["arquivo"]["id"], second["arquivo"]["id"]);
+    assert_eq!(scenario.blobs().len(), 1, "um blob só por hash");
 }
 
 #[test]
-fn arquivo_acima_de_16_mb_e_recusado() {
-    let cenario = Cenario::novo("grande");
-    // 17 MB de zeros: recusado pelo tamanho, antes de qualquer leitura de documento.
-    let caminho = cenario.escrever("grande.pdf", &vec![0u8; 17 * 1024 * 1024]);
-    let (codigo, erro) = cenario.falhou(&[
+fn file_above_16_mb_is_refused() {
+    let scenario = Scenario::new("grande");
+    let path = scenario.write("grande.pdf", &vec![0u8; 17 * 1024 * 1024]);
+    let (exit_code, error) = scenario.failed(&[
         "file",
         "upload",
-        &caminho.to_string_lossy(),
+        &path.to_string_lossy(),
         "--agent",
-        &cenario.agente,
+        &scenario.agent,
     ]);
-    assert_eq!(codigo, 1, "{erro}");
+    assert_eq!(exit_code, 1, "{error}");
     assert!(
-        erro.contains("16"),
-        "mensagem precisa dizer o limite: {erro}"
+        error.contains("16"),
+        "mensagem precisa dizer o limite: {error}"
     );
-    // Nada foi gravado.
-    let lista = cenario.ok_json(&["file", "list", "--agent", &cenario.agente, "--json"]);
-    assert_eq!(lista["total"], 0);
-    assert!(cenario.blobs().is_empty());
+    let list = scenario.ok_json(&["file", "list", "--agent", &scenario.agent, "--json"]);
+    assert_eq!(list["total"], 0);
+    assert!(scenario.blobs().is_empty());
 }
 
 #[test]
-fn extensao_enganosa_e_recusada() {
-    let cenario = Cenario::novo("enganosa");
-    // Conteúdo de imagem com nome de PDF: o tipo real não é o declarado.
-    let caminho = cenario.escrever("contrato.pdf", PNG);
-    let (codigo, erro) = cenario.falhou(&[
+fn misleading_extension_is_refused() {
+    let scenario = Scenario::new("enganosa");
+    let path = scenario.write("contrato.pdf", PNG);
+    let (exit_code, error) = scenario.failed(&[
         "file",
         "upload",
-        &caminho.to_string_lossy(),
+        &path.to_string_lossy(),
         "--agent",
-        &cenario.agente,
+        &scenario.agent,
     ]);
-    assert_eq!(codigo, 1, "{erro}");
+    assert_eq!(exit_code, 1, "{error}");
     assert!(
-        erro.to_lowercase().contains("pdf") && erro.to_lowercase().contains("png"),
-        "{erro}"
+        error.to_lowercase().contains("pdf") && error.to_lowercase().contains("png"),
+        "{error}"
     );
-    let lista = cenario.ok_json(&["file", "list", "--agent", &cenario.agente, "--json"]);
-    assert_eq!(lista["total"], 0);
+    let list = scenario.ok_json(&["file", "list", "--agent", &scenario.agent, "--json"]);
+    assert_eq!(list["total"], 0);
 }
 
 #[test]
-fn arquivo_inexistente_e_agente_errado_falham_com_codigo_1() {
-    let cenario = Cenario::novo("erros");
-    let (codigo, erro) = cenario.falhou(&[
+fn missing_file_and_wrong_agent_fail_with_code_one() {
+    let scenario = Scenario::new("erros");
+    let (exit_code, error) = scenario.failed(&[
         "file",
         "upload",
         "/caminho/que/nao/existe.png",
         "--agent",
-        &cenario.agente,
+        &scenario.agent,
     ]);
-    assert_eq!(codigo, 1);
-    assert!(erro.contains("não consegui abrir"), "{erro}");
+    assert_eq!(exit_code, 1);
+    assert!(error.contains("não consegui abrir"), "{error}");
 
-    let caminho = cenario.escrever("logo.png", PNG);
-    let (codigo, erro) = cenario.falhou(&[
+    let path = scenario.write("logo.png", PNG);
+    let (exit_code, error) = scenario.failed(&[
         "file",
         "upload",
-        &caminho.to_string_lossy(),
+        &path.to_string_lossy(),
         "--agent",
         "agente-que-nao-existe",
     ]);
-    assert_eq!(codigo, 1, "{erro}");
+    assert_eq!(exit_code, 1, "{error}");
 
-    // Id inválido (não é UUID v7).
-    let (codigo, erro) =
-        cenario.falhou(&["file", "show", "nao-e-uuid", "--agent", &cenario.agente]);
-    assert_eq!(codigo, 1, "{erro}");
+    let (exit_code, error) =
+        scenario.failed(&["file", "show", "nao-e-uuid", "--agent", &scenario.agent]);
+    assert_eq!(exit_code, 1, "{error}");
 }
 
 #[test]
-fn sem_offline_o_comando_recusa() {
-    // Sem `--offline` o comando falha com código 1 e explica o motivo.
-    let cenario = Cenario::novo("offline");
-    let saida = cenario.poph(&[
+fn without_offline_the_command_refuses() {
+    let scenario = Scenario::new("offline");
+    let output = scenario.poph(&[
         "--org",
-        &cenario.slug,
+        &scenario.slug,
         "file",
         "list",
         "--agent",
-        &cenario.agente,
+        &scenario.agent,
     ]);
-    assert_eq!(saida.status.code(), Some(1));
-    let erro = String::from_utf8_lossy(&saida.stderr);
-    assert!(erro.contains("--offline"), "{erro}");
+    assert_eq!(output.status.code(), Some(1));
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("--offline"), "{error}");
 }
 
 #[test]
-fn biblioteca_e_por_agente() {
-    let cenario = Cenario::novo("isolamento");
-    // Segundo agente na mesma org.
+fn library_is_per_agent() {
+    let scenario = Scenario::new("isolamento");
     {
         let store = Store::open_at(
-            &cenario.pasta.join("dados").join("harness.db"),
-            &cenario.pasta.join("dados").join("rag.db"),
+            &scenario.dir.join("dados").join("harness.db"),
+            &scenario.dir.join("dados").join("rag.db"),
         )
         .expect("abre o banco");
-        let org = store.orgs().by_slug(&cenario.slug).expect("org criada").id;
+        let org = store.orgs().by_slug(&scenario.slug).expect("org criada").id;
         store
             .agents()
             .create(
@@ -319,18 +298,16 @@ fn biblioteca_e_por_agente() {
             )
             .expect("cria o segundo agente");
     }
-    let caminho = cenario.escrever("logo.png", PNG);
-    let criado = upload_json(&cenario, &caminho, &[]);
-    let id = criado["arquivo"]["id"].as_str().expect("id").to_owned();
+    let path = scenario.write("logo.png", PNG);
+    let created = upload_json(&scenario, &path, &[]);
+    let id = created["arquivo"]["id"].as_str().expect("id").to_owned();
 
-    // A biblioteca do outro agente não tem este arquivo.
-    let lista = cenario.ok_json(&["file", "list", "--agent", "caio", "--json"]);
-    assert_eq!(lista["total"], 0);
-    let (codigo, _erro) = cenario.falhou(&["file", "show", &id, "--agent", "caio"]);
-    assert_eq!(codigo, 1);
-    let (codigo, _erro) = cenario.falhou(&["file", "delete", &id, "--agent", "caio"]);
-    assert_eq!(codigo, 1);
-    // E o do dono continua lá.
-    let lista = cenario.ok_json(&["file", "list", "--agent", &cenario.agente, "--json"]);
-    assert_eq!(lista["total"], 1);
+    let list = scenario.ok_json(&["file", "list", "--agent", "caio", "--json"]);
+    assert_eq!(list["total"], 0);
+    let (exit_code, _error) = scenario.failed(&["file", "show", &id, "--agent", "caio"]);
+    assert_eq!(exit_code, 1);
+    let (exit_code, _error) = scenario.failed(&["file", "delete", &id, "--agent", "caio"]);
+    assert_eq!(exit_code, 1);
+    let list = scenario.ok_json(&["file", "list", "--agent", &scenario.agent, "--json"]);
+    assert_eq!(list["total"], 1);
 }

@@ -1,9 +1,3 @@
-//! Testes de ponta a ponta de `poph agent` e `poph instructions`: processo de verdade, banco de
-//! verdade em pasta temporária, ambiente controlado.
-//!
-//! A org é semeada pelo armazenamento (o `poph org` é a HR-08 e ainda não existe). Os segredos
-//! usados aqui são sentinelas: os testes conferem que eles não aparecem na saída.
-
 use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Output};
@@ -13,32 +7,31 @@ use poph_store::{NewDepartment, NewOrg, Store};
 use poph_types::StructuredInstructions;
 use serde_json::Value;
 
-const SENTINELA_CIFRA: &str = "SENTINELA-CIFRA-hr09";
-const SENTINELA_LLM: &str = "SENTINELA-LLM-hr09";
+const CIPHER_SENTINEL: &str = "SENTINELA-CIFRA-hr09";
+const LLM_SENTINEL: &str = "SENTINELA-LLM-hr09";
 
-/// Pasta temporária com um banco já migrado e uma org pronta para a CLI.
-struct Cenario {
-    pasta: PathBuf,
+struct Scenario {
+    dir: PathBuf,
     slug: String,
-    departamento: String,
+    department: String,
 }
 
-impl Cenario {
-    fn novo(rotulo: &str) -> Self {
-        let pasta =
-            std::env::temp_dir().join(format!("poph-cli-agente-{rotulo}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&pasta);
-        fs::create_dir_all(&pasta).expect("cria a pasta do teste");
-        let dados = pasta.join("dados");
-        fs::create_dir_all(&dados).expect("cria a pasta de dados");
-        let slug = format!("org-{rotulo}");
-        let departamento = {
-            let store = Store::open_at(&dados.join("harness.db"), &dados.join("rag.db"))
+impl Scenario {
+    fn new(label: &str) -> Self {
+        let dir =
+            std::env::temp_dir().join(format!("poph-cli-agente-{label}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("cria a pasta do teste");
+        let data_dir = dir.join("dados");
+        fs::create_dir_all(&data_dir).expect("cria a pasta de dados");
+        let slug = format!("org-{label}");
+        let department = {
+            let store = Store::open_at(&data_dir.join("harness.db"), &data_dir.join("rag.db"))
                 .expect("abre o banco");
             let org = store
                 .orgs()
                 .create(NewOrg {
-                    name: format!("Org {rotulo}"),
+                    name: format!("Org {label}"),
                     slug: slug.clone(),
                     config_json: String::new(),
                 })
@@ -54,23 +47,21 @@ impl Cenario {
                 )
                 .expect("cria o departamento")
         };
-        // O `Store` acima é fechado aqui (o escritor dedicado encerra) antes da CLI abrir o banco.
         Self {
-            pasta,
+            dir,
             slug,
-            departamento: departamento.id.to_string(),
+            department: department.id.to_string(),
         }
     }
 
-    fn dados(&self) -> PathBuf {
-        self.pasta.join("dados")
+    fn data_dir(&self) -> PathBuf {
+        self.dir.join("dados")
     }
 
-    /// Cria uma segunda org na mesma pasta e devolve o slug.
-    fn criar_org(&self, slug: &str) -> String {
+    fn create_org(&self, slug: &str) -> String {
         let store = Store::open_at(
-            &self.dados().join("harness.db"),
-            &self.dados().join("rag.db"),
+            &self.data_dir().join("harness.db"),
+            &self.data_dir().join("rag.db"),
         )
         .expect("abre o banco");
         store
@@ -84,11 +75,10 @@ impl Cenario {
         slug.to_owned()
     }
 
-    /// Cria uma categoria de produto na org informada e devolve o id.
-    fn criar_categoria(&self, org_slug: &str, nome: &str) -> String {
+    fn create_category(&self, org_slug: &str, name: &str) -> String {
         let store = Store::open_at(
-            &self.dados().join("harness.db"),
-            &self.dados().join("rag.db"),
+            &self.data_dir().join("harness.db"),
+            &self.data_dir().join("rag.db"),
         )
         .expect("abre o banco");
         let org = store.orgs().by_slug(org_slug).expect("org da categoria");
@@ -97,7 +87,7 @@ impl Cenario {
             .create(
                 org.id,
                 poph_store::NewCategory {
-                    name: nome.to_owned(),
+                    name: name.to_owned(),
                     description: String::new(),
                 },
             )
@@ -106,46 +96,45 @@ impl Cenario {
             .to_string()
     }
 
-    fn arquivo(&self, nome: &str, conteudo: &str) -> PathBuf {
-        let caminho = self.pasta.join(nome);
-        fs::write(&caminho, conteudo).expect("grava o arquivo do teste");
-        caminho
+    fn file(&self, name: &str, content: &str) -> PathBuf {
+        let path = self.dir.join(name);
+        fs::write(&path, content).expect("grava o arquivo do teste");
+        path
     }
 
     fn poph(&self, args: &[&str]) -> Output {
-        let mut comando = Command::new(env!("CARGO_BIN_EXE_poph"));
-        comando
+        let mut command = Command::new(env!("CARGO_BIN_EXE_poph"));
+        command
             .args(args)
-            .current_dir(&self.pasta)
+            .current_dir(&self.dir)
             .env_clear()
-            .env("POPH_DADOS_DIRETORIO", self.dados())
-            .env("POPH_CHAVE_CIFRA", SENTINELA_CIFRA)
-            .env("ANTIGRAVITY_API_KEY", SENTINELA_LLM);
-        comando.output().expect("executa o poph")
+            .env("POPH_DADOS_DIRETORIO", self.data_dir())
+            .env("POPH_CHAVE_CIFRA", CIPHER_SENTINEL)
+            .env("ANTIGRAVITY_API_KEY", LLM_SENTINEL);
+        command.output().expect("executa o poph")
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.pasta);
+        let _ = fs::remove_dir_all(&self.dir);
     }
 }
 
-fn texto(saida: &[u8]) -> String {
-    String::from_utf8_lossy(saida).into_owned()
+fn text(output: &[u8]) -> String {
+    String::from_utf8_lossy(output).into_owned()
 }
 
-fn sem_segredo(saida: &str) {
-    for sentinela in [SENTINELA_CIFRA, SENTINELA_LLM] {
+fn without_secret(output: &str) {
+    for sentinel in [CIPHER_SENTINEL, LLM_SENTINEL] {
         assert!(
-            !saida.contains(sentinela),
-            "segredo vazou na saída: {saida}"
+            !output.contains(sentinel),
+            "segredo vazou na saída: {output}"
         );
     }
 }
 
-/// JSON de instruções com nomes de ferramenta da V1.
-const INSTRUCOES: &str = r#"{
+const INSTRUCTIONS: &str = r#"{
   "identity": {"name": "Bia", "role": "atendente", "company": "Clínica Sorriso Vivo", "company_description": "Clínica odontológica em Niterói."},
   "principles": [{"rule": "Nunca informar preços sem confirmar no sistema.", "fallback_action": "say_dont_know"}],
   "scope": {"does": "Agenda consultas e informa horários disponíveis.", "does_not": "Não dá orientação clínica.", "handoff": {"department_id": "", "reasons": ["pedido de humano"]}},
@@ -155,11 +144,11 @@ const INSTRUCOES: &str = r#"{
 }"#;
 
 #[test]
-fn cli_cria_agente_com_instrucoes_e_lista_mostrando_o_texto_composto() {
-    let cenario = Cenario::novo("cria");
-    let org = cenario.slug.clone();
+fn cli_creates_agent_with_instructions_and_lists_showing_the_composed_text() {
+    let scenario = Scenario::new("cria");
+    let org = scenario.slug.clone();
 
-    let criado = cenario.poph(&[
+    let created = scenario.poph(&[
         "--org",
         &org,
         "agent",
@@ -167,50 +156,50 @@ fn cli_cria_agente_com_instrucoes_e_lista_mostrando_o_texto_composto() {
         "--name",
         "Bia Atendente",
         "--department",
-        &cenario.departamento,
+        &scenario.department,
         "--json",
     ]);
     assert!(
-        criado.status.success(),
+        created.status.success(),
         "create falhou: {}",
-        texto(&criado.stderr)
+        text(&created.stderr)
     );
-    sem_segredo(&texto(&criado.stdout));
-    let json: Value = serde_json::from_slice(&criado.stdout).expect("JSON do create");
+    without_secret(&text(&created.stdout));
+    let json: Value = serde_json::from_slice(&created.stdout).expect("JSON do create");
     assert_eq!(json["agent"]["slug"], "bia-atendente");
     assert_eq!(json["agent"]["abre_turno"], true);
     assert_eq!(
         json["agent"]["default_department_id"],
-        cenario.departamento.as_str()
+        scenario.department.as_str()
     );
     assert_eq!(json["agent"]["version"], 1);
 
-    let arquivo = cenario.arquivo("instrucoes.json", INSTRUCOES);
-    let gravado = cenario.poph(&[
+    let file = scenario.file("instrucoes.json", INSTRUCTIONS);
+    let saved = scenario.poph(&[
         "--org",
         &org,
         "instructions",
         "create",
         "bia-atendente",
         "--file",
-        arquivo.to_str().expect("caminho utf-8"),
+        file.to_str().expect("caminho utf-8"),
         "--json",
     ]);
     assert!(
-        gravado.status.success(),
+        saved.status.success(),
         "instructions create falhou: {}",
-        texto(&gravado.stderr)
+        text(&saved.stderr)
     );
-    let json: Value = serde_json::from_slice(&gravado.stdout).expect("JSON do instructions");
+    let json: Value = serde_json::from_slice(&saved.stdout).expect("JSON do instructions");
     let markdown = json["instructions"]["markdown"]
         .as_str()
         .expect("markdown no JSON")
         .to_owned();
-    let esperado = compose_instructions(
-        &StructuredInstructions::from_tolerant_json(INSTRUCOES).expect("JSON de instruções"),
+    let expected = compose_instructions(
+        &StructuredInstructions::from_tolerant_json(INSTRUCTIONS).expect("JSON de instruções"),
     );
     assert_eq!(
-        markdown, esperado,
+        markdown, expected,
         "a CLI precisa gravar o texto do compositor"
     );
     assert!(markdown.contains("# Bia, atendente da Clínica Sorriso Vivo"));
@@ -220,36 +209,35 @@ fn cli_cria_agente_com_instrucoes_e_lista_mostrando_o_texto_composto() {
         "ferramenta desabilitada não entra"
     );
 
-    // `show` mostra o texto composto; `list` mostra o agente.
-    let mostrado = cenario.poph(&["--org", &org, "agent", "show", "bia-atendente"]);
-    assert!(mostrado.status.success());
-    let saida = texto(&mostrado.stdout);
+    let shown = scenario.poph(&["--org", &org, "agent", "show", "bia-atendente"]);
+    assert!(shown.status.success());
+    let output = text(&shown.stdout);
     assert!(
-        saida.contains(&markdown),
+        output.contains(&markdown),
         "show não trouxe o texto composto"
     );
-    sem_segredo(&saida);
+    without_secret(&output);
 
-    let lista = cenario.poph(&["--org", &org, "agent", "list"]);
-    assert!(lista.status.success());
-    assert!(texto(&lista.stdout).contains("bia-atendente"));
+    let list = scenario.poph(&["--org", &org, "agent", "list"]);
+    assert!(list.status.success());
+    assert!(text(&list.stdout).contains("bia-atendente"));
 
-    let lista_json = cenario.poph(&["--org", &org, "agent", "list", "--json"]);
-    let json: Value = serde_json::from_slice(&lista_json.stdout).expect("JSON do list");
+    let list_json = scenario.poph(&["--org", &org, "agent", "list", "--json"]);
+    let json: Value = serde_json::from_slice(&list_json.stdout).expect("JSON do list");
     assert_eq!(json["total"], 1);
     assert_eq!(json["agentes"][0]["slug"], "bia-atendente");
 
-    let instrucoes = cenario.poph(&["--org", &org, "instructions", "list", "--json"]);
+    let instructions = scenario.poph(&["--org", &org, "instructions", "list", "--json"]);
     let json: Value =
-        serde_json::from_slice(&instrucoes.stdout).expect("JSON do instructions list");
+        serde_json::from_slice(&instructions.stdout).expect("JSON do instructions list");
     assert_eq!(json["total"], 1);
 }
 
 #[test]
-fn if_match_velho_e_recusado_e_versao_sobe_a_cada_escrita() {
-    let cenario = Cenario::novo("if-match");
-    let org = cenario.slug.clone();
-    cenario.poph(&[
+fn stale_if_match_is_refused_and_version_rises_on_every_write() {
+    let scenario = Scenario::new("if-match");
+    let org = scenario.slug.clone();
+    scenario.poph(&[
         "--org",
         &org,
         "agent",
@@ -257,21 +245,21 @@ fn if_match_velho_e_recusado_e_versao_sobe_a_cada_escrita() {
         "--name",
         "Agente If Match",
     ]);
-    let arquivo = cenario.arquivo("instrucoes.json", INSTRUCOES);
+    let file = scenario.file("instrucoes.json", INSTRUCTIONS);
 
-    let primeira = cenario.poph(&[
+    let first = scenario.poph(&[
         "--org",
         &org,
         "instructions",
         "create",
         "agente-if-match",
         "--file",
-        arquivo.to_str().unwrap(),
+        file.to_str().unwrap(),
         "--json",
     ]);
-    assert!(primeira.status.success(), "{}", texto(&primeira.stderr));
+    assert!(first.status.success(), "{}", text(&first.stderr));
 
-    let segunda = cenario.poph(&[
+    let second = scenario.poph(&[
         "--org",
         &org,
         "instructions",
@@ -280,14 +268,14 @@ fn if_match_velho_e_recusado_e_versao_sobe_a_cada_escrita() {
         "--if-match",
         "1",
         "--file",
-        arquivo.to_str().unwrap(),
+        file.to_str().unwrap(),
         "--json",
     ]);
-    assert!(segunda.status.success(), "{}", texto(&segunda.stderr));
-    let json: Value = serde_json::from_slice(&segunda.stdout).unwrap();
+    assert!(second.status.success(), "{}", text(&second.stderr));
+    let json: Value = serde_json::from_slice(&second.stdout).unwrap();
     assert_eq!(json["instructions"]["version"], 2);
 
-    let conflito = cenario.poph(&[
+    let conflict = scenario.poph(&[
         "--org",
         &org,
         "instructions",
@@ -296,13 +284,12 @@ fn if_match_velho_e_recusado_e_versao_sobe_a_cada_escrita() {
         "--if-match",
         "1",
         "--file",
-        arquivo.to_str().unwrap(),
+        file.to_str().unwrap(),
     ]);
-    assert_eq!(conflito.status.code(), Some(1));
-    assert!(texto(&conflito.stderr).contains("conflito de versão"));
+    assert_eq!(conflict.status.code(), Some(1));
+    assert!(text(&conflict.stderr).contains("conflito de versão"));
 
-    // Agente: versão 1 → 2, e a versão 1 deixa de valer.
-    let alterado = cenario.poph(&[
+    let updated = scenario.poph(&[
         "--org",
         &org,
         "agent",
@@ -314,10 +301,10 @@ fn if_match_velho_e_recusado_e_versao_sobe_a_cada_escrita() {
         "nova descrição",
         "--json",
     ]);
-    assert!(alterado.status.success(), "{}", texto(&alterado.stderr));
-    let json: Value = serde_json::from_slice(&alterado.stdout).unwrap();
+    assert!(updated.status.success(), "{}", text(&updated.stderr));
+    let json: Value = serde_json::from_slice(&updated.stdout).unwrap();
     assert_eq!(json["agent"]["version"], 2);
-    let conflito = cenario.poph(&[
+    let conflict = scenario.poph(&[
         "--org",
         &org,
         "agent",
@@ -328,30 +315,29 @@ fn if_match_velho_e_recusado_e_versao_sobe_a_cada_escrita() {
         "--description",
         "de novo",
     ]);
-    assert_eq!(conflito.status.code(), Some(1));
-    assert!(texto(&conflito.stderr).contains("conflito de versão"));
+    assert_eq!(conflict.status.code(), Some(1));
+    assert!(text(&conflict.stderr).contains("conflito de versão"));
 
-    // Sem `--if-match` no update de instruções: erro claro, sem tocar no banco.
-    let sem_if_match = cenario.poph(&[
+    let without_if_match = scenario.poph(&[
         "--org",
         &org,
         "instructions",
         "update",
         "agente-if-match",
         "--file",
-        arquivo.to_str().unwrap(),
+        file.to_str().unwrap(),
     ]);
-    assert_eq!(sem_if_match.status.code(), Some(1));
-    assert!(texto(&sem_if_match.stderr).contains("--if-match"));
+    assert_eq!(without_if_match.status.code(), Some(1));
+    assert!(text(&without_if_match.stderr).contains("--if-match"));
 }
 
 #[test]
-fn d05_agente_inativo_para_de_abrir_turno_pela_cli() {
-    let cenario = Cenario::novo("d05");
-    let org = cenario.slug.clone();
-    cenario.poph(&["--org", &org, "agent", "create", "--name", "Agente Inativo"]);
+fn d05_inactive_agent_stops_opening_turn_via_cli() {
+    let scenario = Scenario::new("d05");
+    let org = scenario.slug.clone();
+    scenario.poph(&["--org", &org, "agent", "create", "--name", "Agente Inativo"]);
 
-    let inativado = cenario.poph(&[
+    let deactivated = scenario.poph(&[
         "--org",
         &org,
         "agent",
@@ -363,25 +349,28 @@ fn d05_agente_inativo_para_de_abrir_turno_pela_cli() {
         "inactive",
         "--json",
     ]);
-    assert!(inativado.status.success(), "{}", texto(&inativado.stderr));
-    let json: Value = serde_json::from_slice(&inativado.stdout).unwrap();
+    assert!(
+        deactivated.status.success(),
+        "{}",
+        text(&deactivated.stderr)
+    );
+    let json: Value = serde_json::from_slice(&deactivated.stdout).unwrap();
     assert_eq!(json["agent"]["status"], "inactive");
     assert_eq!(json["agent"]["abre_turno"], false);
 
-    let mostrado = cenario.poph(&["--org", &org, "agent", "show", "agente-inativo"]);
-    let saida = texto(&mostrado.stdout);
-    assert!(saida.contains("não abre turno (D-05)"), "{saida}");
+    let shown = scenario.poph(&["--org", &org, "agent", "show", "agente-inativo"]);
+    let output = text(&shown.stdout);
+    assert!(output.contains("não abre turno (D-05)"), "{output}");
 
-    let ativos = cenario.poph(&["--org", &org, "agent", "list", "--only-active", "--json"]);
-    let json: Value = serde_json::from_slice(&ativos.stdout).unwrap();
+    let active = scenario.poph(&["--org", &org, "agent", "list", "--only-active", "--json"]);
+    let json: Value = serde_json::from_slice(&active.stdout).unwrap();
     assert_eq!(json["total"], 0);
 
-    let todos = cenario.poph(&["--org", &org, "agent", "list", "--json"]);
-    let json: Value = serde_json::from_slice(&todos.stdout).unwrap();
+    let all = scenario.poph(&["--org", &org, "agent", "list", "--json"]);
+    let json: Value = serde_json::from_slice(&all.stdout).unwrap();
     assert_eq!(json["total"], 1, "inativo continua listado para o Console");
 
-    // Status desconhecido é recusado.
-    let errado = cenario.poph(&[
+    let wrong = scenario.poph(&[
         "--org",
         &org,
         "agent",
@@ -392,16 +381,16 @@ fn d05_agente_inativo_para_de_abrir_turno_pela_cli() {
         "--status",
         "dormindo",
     ]);
-    assert_eq!(errado.status.code(), Some(1));
-    assert!(texto(&errado.stderr).contains("status"));
+    assert_eq!(wrong.status.code(), Some(1));
+    assert!(text(&wrong.stderr).contains("status"));
 }
 
 #[test]
-fn uma_org_nao_ve_nem_apaga_o_agente_de_outra() {
-    let cenario = Cenario::novo("org-a");
-    let org_a = cenario.slug.clone();
-    let org_b = cenario.criar_org("org-b");
-    cenario.poph(&[
+fn one_org_neither_sees_nor_deletes_another_org_agent() {
+    let scenario = Scenario::new("org-a");
+    let org_a = scenario.slug.clone();
+    let org_b = scenario.create_org("org-b");
+    scenario.poph(&[
         "--org",
         &org_a,
         "agent",
@@ -410,69 +399,67 @@ fn uma_org_nao_ve_nem_apaga_o_agente_de_outra() {
         "Agente Exclusivo",
     ]);
 
-    let visto = cenario.poph(&["--org", &org_b, "agent", "show", "agente-exclusivo"]);
-    assert_eq!(visto.status.code(), Some(1));
-    assert!(texto(&visto.stderr).contains("não encontrado"));
+    let seen = scenario.poph(&["--org", &org_b, "agent", "show", "agente-exclusivo"]);
+    assert_eq!(seen.status.code(), Some(1));
+    assert!(text(&seen.stderr).contains("não encontrado"));
 
-    let lista = cenario.poph(&["--org", &org_b, "agent", "list"]);
-    assert!(lista.status.success());
-    assert!(!texto(&lista.stdout).contains("agente-exclusivo"));
+    let list = scenario.poph(&["--org", &org_b, "agent", "list"]);
+    assert!(list.status.success());
+    assert!(!text(&list.stdout).contains("agente-exclusivo"));
 
-    // Pelo id também não: a leitura é escopada por org.
     let id = {
-        let lista = cenario.poph(&["--org", &org_a, "agent", "list", "--json"]);
-        let json: Value = serde_json::from_slice(&lista.stdout).unwrap();
+        let list = scenario.poph(&["--org", &org_a, "agent", "list", "--json"]);
+        let json: Value = serde_json::from_slice(&list.stdout).unwrap();
         json["agentes"][0]["id"].as_str().unwrap().to_owned()
     };
-    let por_id = cenario.poph(&["--org", &org_b, "agent", "show", &id]);
-    assert_eq!(por_id.status.code(), Some(1));
-    assert!(texto(&por_id.stderr).contains("não encontrado"));
+    let by_id = scenario.poph(&["--org", &org_b, "agent", "show", &id]);
+    assert_eq!(by_id.status.code(), Some(1));
+    assert!(text(&by_id.stderr).contains("não encontrado"));
 
-    let exclusao = cenario.poph(&["--org", &org_b, "agent", "delete", &id]);
-    assert_eq!(exclusao.status.code(), Some(1));
-    let ainda_la = cenario.poph(&["--org", &org_a, "agent", "show", "agente-exclusivo"]);
+    let deletion = scenario.poph(&["--org", &org_b, "agent", "delete", &id]);
+    assert_eq!(deletion.status.code(), Some(1));
+    let still_there = scenario.poph(&["--org", &org_a, "agent", "show", "agente-exclusivo"]);
     assert!(
-        ainda_la.status.success(),
+        still_there.status.success(),
         "o agente da org A não pode ser apagado pela org B"
     );
 }
 
 #[test]
-fn ferramenta_fora_da_v1_e_recusada_com_a_lista_do_motor() {
-    let cenario = Cenario::novo("ferramenta");
-    let org = cenario.slug.clone();
-    cenario.poph(&["--org", &org, "agent", "create", "--name", "Agente Legado"]);
-    let legado = cenario.arquivo(
+fn tool_outside_v1_is_refused_with_the_engine_list() {
+    let scenario = Scenario::new("ferramenta");
+    let org = scenario.slug.clone();
+    scenario.poph(&["--org", &org, "agent", "create", "--name", "Agente Legado"]);
+    let legacy = scenario.file(
         "legado.json",
         r#"{"tools":[{"name":"search_knowledge_base","enabled":true}]}"#,
     );
-    let saida = cenario.poph(&[
+    let output = scenario.poph(&[
         "--org",
         &org,
         "instructions",
         "create",
         "agente-legado",
         "--file",
-        legado.to_str().unwrap(),
+        legacy.to_str().unwrap(),
     ]);
-    assert_eq!(saida.status.code(), Some(1));
-    let erro = texto(&saida.stderr);
-    assert!(erro.contains("search_knowledge_base"), "{erro}");
-    assert!(erro.contains("consultar_base"), "{erro}");
+    assert_eq!(output.status.code(), Some(1));
+    let error = text(&output.stderr);
+    assert!(error.contains("search_knowledge_base"), "{error}");
+    assert!(error.contains("consultar_base"), "{error}");
 
-    // Nada foi gravado.
-    let lista = cenario.poph(&["--org", &org, "instructions", "list", "--json"]);
-    let json: Value = serde_json::from_slice(&lista.stdout).unwrap();
+    let list = scenario.poph(&["--org", &org, "instructions", "list", "--json"]);
+    let json: Value = serde_json::from_slice(&list.stdout).unwrap();
     assert_eq!(json["total"], 0);
 }
 
 #[test]
-fn markdown_editado_a_mao_e_preservado_sem_recomposicao() {
-    let cenario = Cenario::novo("manual");
-    let org = cenario.slug.clone();
-    cenario.poph(&["--org", &org, "agent", "create", "--name", "Agente Manual"]);
-    let manual = cenario.arquivo("manual.md", "# Prompt escrito a mao\n\nNao mexa.");
-    let saida = cenario.poph(&[
+fn hand_edited_markdown_is_preserved_without_recomposition() {
+    let scenario = Scenario::new("manual");
+    let org = scenario.slug.clone();
+    scenario.poph(&["--org", &org, "agent", "create", "--name", "Agente Manual"]);
+    let manual = scenario.file("manual.md", "# Prompt escrito a mao\n\nNao mexa.");
+    let output = scenario.poph(&[
         "--org",
         &org,
         "instructions",
@@ -482,45 +469,44 @@ fn markdown_editado_a_mao_e_preservado_sem_recomposicao() {
         manual.to_str().unwrap(),
         "--json",
     ]);
-    assert!(saida.status.success(), "{}", texto(&saida.stderr));
-    let json: Value = serde_json::from_slice(&saida.stdout).unwrap();
+    assert!(output.status.success(), "{}", text(&output.stderr));
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
         json["instructions"]["markdown"],
         "# Prompt escrito a mao\n\nNao mexa."
     );
     assert_eq!(json["instructions"]["derived_from_json"], false);
 
-    // Apagar as instruções não apaga o agente.
-    let apagado = cenario.poph(&["--org", &org, "instructions", "delete", "agente-manual"]);
-    assert!(apagado.status.success(), "{}", texto(&apagado.stderr));
-    let mostrado = cenario.poph(&["--org", &org, "agent", "show", "agente-manual"]);
-    assert!(mostrado.status.success());
-    assert!(texto(&mostrado.stdout).contains("sem instruções gravadas"));
+    let deleted = scenario.poph(&["--org", &org, "instructions", "delete", "agente-manual"]);
+    assert!(deleted.status.success(), "{}", text(&deleted.stderr));
+    let shown = scenario.poph(&["--org", &org, "agent", "show", "agente-manual"]);
+    assert!(shown.status.success());
+    assert!(text(&shown.stdout).contains("sem instruções gravadas"));
 }
 
 #[test]
-fn sem_org_o_comando_falha_dizendo_o_que_falta() {
-    let cenario = Cenario::novo("sem-org");
-    let saida = cenario.poph(&["agent", "list"]);
-    assert_eq!(saida.status.code(), Some(1));
-    assert!(texto(&saida.stderr).contains("--org"));
+fn without_org_the_command_fails_saying_what_is_missing() {
+    let scenario = Scenario::new("sem-org");
+    let output = scenario.poph(&["agent", "list"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(text(&output.stderr).contains("--org"));
 }
 
 #[test]
-fn ajuda_lista_os_dois_novos_subcomandos() {
-    let cenario = Cenario::novo("ajuda");
-    let saida = cenario.poph(&["--help"]);
-    let ajuda = texto(&saida.stdout);
-    assert!(ajuda.contains("agent"), "{ajuda}");
-    assert!(ajuda.contains("instructions"), "{ajuda}");
+fn help_lists_the_two_new_subcommands() {
+    let scenario = Scenario::new("ajuda");
+    let output = scenario.poph(&["--help"]);
+    let help = text(&output.stdout);
+    assert!(help.contains("agent"), "{help}");
+    assert!(help.contains("instructions"), "{help}");
 }
 
 #[test]
-fn vinculo_de_categorias_de_produto_fica_escopado_por_org() {
-    let cenario = Cenario::novo("categoria");
-    let org_a = cenario.slug.clone();
-    let org_b = cenario.criar_org("org-b-categoria");
-    cenario.poph(&[
+fn product_category_link_stays_scoped_by_org() {
+    let scenario = Scenario::new("categoria");
+    let org_a = scenario.slug.clone();
+    let org_b = scenario.create_org("org-b-categoria");
+    scenario.poph(&[
         "--org",
         &org_a,
         "agent",
@@ -528,10 +514,10 @@ fn vinculo_de_categorias_de_produto_fica_escopado_por_org() {
         "--name",
         "Agente Categoria",
     ]);
-    let categoria_a = cenario.criar_categoria(&org_a, "Bebidas");
-    let categoria_b = cenario.criar_categoria(&org_b, "De Outra Org");
+    let category_a = scenario.create_category(&org_a, "Bebidas");
+    let category_b = scenario.create_category(&org_b, "De Outra Org");
 
-    let vinculado = cenario.poph(&[
+    let linked = scenario.poph(&[
         "--org",
         &org_a,
         "agent",
@@ -540,12 +526,12 @@ fn vinculo_de_categorias_de_produto_fica_escopado_por_org() {
         "--if-match",
         "1",
         "--category-id",
-        &categoria_a,
+        &category_a,
         "--json",
     ]);
-    assert!(vinculado.status.success(), "{}", texto(&vinculado.stderr));
+    assert!(linked.status.success(), "{}", text(&linked.stderr));
 
-    let mostrado = cenario.poph(&[
+    let shown = scenario.poph(&[
         "--org",
         &org_a,
         "agent",
@@ -553,14 +539,13 @@ fn vinculo_de_categorias_de_produto_fica_escopado_por_org() {
         "agente-categoria",
         "--json",
     ]);
-    let json: Value = serde_json::from_slice(&mostrado.stdout).unwrap();
+    let json: Value = serde_json::from_slice(&shown.stdout).unwrap();
     assert_eq!(
         json["agent"]["product_category_ids"],
-        serde_json::json!([categoria_a])
+        serde_json::json!([category_a])
     );
 
-    // Categoria de outra org é recusada (o vínculo não atravessa o isolamento).
-    let cruzado = cenario.poph(&[
+    let crossed = scenario.poph(&[
         "--org",
         &org_a,
         "agent",
@@ -569,8 +554,8 @@ fn vinculo_de_categorias_de_produto_fica_escopado_por_org() {
         "--if-match",
         "2",
         "--category-id",
-        &categoria_b,
+        &category_b,
     ]);
-    assert_eq!(cruzado.status.code(), Some(1));
-    assert!(texto(&cruzado.stderr).contains("não encontrado"));
+    assert_eq!(crossed.status.code(), Some(1));
+    assert!(text(&crossed.stderr).contains("não encontrado"));
 }

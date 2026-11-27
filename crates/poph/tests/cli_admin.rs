@@ -1,9 +1,3 @@
-//! Testes de ponta a ponta de `poph org`, `token`, `category` e `department` (HR-08).
-//!
-//! Processo de verdade, banco de verdade numa pasta temporária, `--offline` em todos os comandos.
-//! A org de teste é criada pela própria CLI, exceto quando o teste precisa de agentes (o `agent`
-//! do teste é criado pelo armazenamento, como em `cli_agente.rs`).
-
 use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Output};
@@ -14,50 +8,45 @@ use poph_store::{NewAgent, Store};
 use poph_types::{AdminTokenId, OrgId};
 use serde_json::Value;
 
-/// UUID v4 fixo: não é v7, então a CLI deve recusá-lo com o motivo.
 const UUID_V4: &str = "f47ac10b-58cc-4372-a567-0e02b2c3d479";
 
-/// Pasta temporária com a pasta de dados. O banco nasce na primeira execução da CLI.
-struct Cenario {
-    pasta: PathBuf,
+struct Scenario {
+    dir: PathBuf,
 }
 
-impl Cenario {
-    fn novo(rotulo: &str) -> Self {
-        let pasta =
-            std::env::temp_dir().join(format!("poph-cli-admin-{rotulo}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&pasta);
-        fs::create_dir_all(pasta.join("dados")).expect("cria a pasta de dados");
-        Self { pasta }
+impl Scenario {
+    fn new(label: &str) -> Self {
+        let dir =
+            std::env::temp_dir().join(format!("poph-cli-admin-{label}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("dados")).expect("cria a pasta de dados");
+        Self { dir }
     }
 
-    fn dados(&self) -> PathBuf {
-        self.pasta.join("dados")
+    fn data_dir(&self) -> PathBuf {
+        self.dir.join("dados")
     }
 
     fn harness(&self) -> PathBuf {
-        self.dados().join("harness.db")
+        self.data_dir().join("harness.db")
     }
 
-    /// Roda `poph` com ambiente limpo, pasta atual isolada e a pasta de dados do teste.
     fn poph(&self, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_poph"))
             .args(args)
-            .current_dir(&self.pasta)
+            .current_dir(&self.dir)
             .env_clear()
-            .env("POPH_DADOS_DIRETORIO", self.dados())
+            .env("POPH_DADOS_DIRETORIO", self.data_dir())
             .output()
             .expect("executa o poph")
     }
 
-    /// Abre o banco direto (para semear o que a CLI ainda não cria, como agentes).
     fn store(&self) -> Store {
-        Store::open_at(&self.harness(), &self.dados().join("rag.db")).expect("abre o banco")
+        Store::open_at(&self.harness(), &self.data_dir().join("rag.db")).expect("abre o banco")
     }
 
-    /// Cria a org pela CLI e devolve o id (UUID v7) lido do JSON.
-    fn criar_org(&self, slug: &str) -> String {
-        let saida = self.poph(&[
+    fn create_org(&self, slug: &str) -> String {
+        let output = self.poph(&[
             "--offline",
             "org",
             "create",
@@ -67,53 +56,52 @@ impl Cenario {
             slug,
             "--json",
         ]);
-        assert_eq!(codigo(&saida), 0, "{}", texto(&saida.stderr));
-        json(&saida)["org"]["id"]
+        assert_eq!(exit_code(&output), 0, "{}", text(&output.stderr));
+        json(&output)["org"]["id"]
             .as_str()
             .expect("id da org")
             .to_owned()
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.pasta);
+        let _ = fs::remove_dir_all(&self.dir);
     }
 }
 
-fn codigo(saida: &Output) -> i32 {
-    saida.status.code().unwrap_or(-1)
+fn exit_code(output: &Output) -> i32 {
+    output.status.code().unwrap_or(-1)
 }
 
-fn texto(bytes: &[u8]) -> String {
+fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
-fn json(saida: &Output) -> Value {
-    serde_json::from_str(&texto(&saida.stdout))
-        .unwrap_or_else(|erro| panic!("saída não é JSON ({erro}): {}", texto(&saida.stdout)))
+fn json(output: &Output) -> Value {
+    serde_json::from_str(&text(&output.stdout))
+        .unwrap_or_else(|error| panic!("saída não é JSON ({error}): {}", text(&output.stdout)))
 }
 
-/// Lê um campo de um JSON de saída, que tem de existir.
-fn campo(valor: &Value, caminho: &str) -> String {
-    let mut atual = valor;
-    for parte in caminho.split('.') {
-        atual = &atual[parte];
+fn field(value: &Value, path: &str) -> String {
+    let mut current = value;
+    for part in path.split('.') {
+        current = &current[part];
     }
-    atual
+    current
         .as_str()
-        .unwrap_or_else(|| panic!("campo {caminho} ausente ou não é texto"))
+        .unwrap_or_else(|| panic!("campo {path} ausente ou não é texto"))
         .to_owned()
 }
 
 #[test]
-fn ponta_a_ponta_cria_e_lista_os_quatro() {
-    let cenario = Cenario::novo("ponta-a-ponta");
+fn end_to_end_creates_and_lists_the_four() {
+    let scenario = Scenario::new("ponta-a-ponta");
 
-    let org = cenario.criar_org("loja-teste");
+    let org = scenario.create_org("loja-teste");
     assert!(org.len() == 36, "id da org: {org}");
 
-    let token = cenario.poph(&[
+    let token = scenario.poph(&[
         "--offline",
         "--org",
         "loja-teste",
@@ -123,10 +111,10 @@ fn ponta_a_ponta_cria_e_lista_os_quatro() {
         "site",
         "--json",
     ]);
-    assert_eq!(codigo(&token), 0, "{}", texto(&token.stderr));
-    assert!(campo(&json(&token), "valor_do_token").starts_with("poph_"));
+    assert_eq!(exit_code(&token), 0, "{}", text(&token.stderr));
+    assert!(field(&json(&token), "valor_do_token").starts_with("poph_"));
 
-    let categoria = cenario.poph(&[
+    let category = scenario.poph(&[
         "--offline",
         "--org",
         "loja-teste",
@@ -138,10 +126,10 @@ fn ponta_a_ponta_cria_e_lista_os_quatro() {
         "Planos de assinatura",
         "--json",
     ]);
-    assert_eq!(codigo(&categoria), 0, "{}", texto(&categoria.stderr));
-    let id_categoria = campo(&json(&categoria), "category.id");
+    assert_eq!(exit_code(&category), 0, "{}", text(&category.stderr));
+    let category_id = field(&json(&category), "category.id");
 
-    let departamento = cenario.poph(&[
+    let department = scenario.poph(&[
         "--offline",
         "--org",
         "loja-teste",
@@ -151,13 +139,12 @@ fn ponta_a_ponta_cria_e_lista_os_quatro() {
         "Vendas",
         "--json",
     ]);
-    assert_eq!(codigo(&departamento), 0, "{}", texto(&departamento.stderr));
-    let id_departamento = campo(&json(&departamento), "department.id");
+    assert_eq!(exit_code(&department), 0, "{}", text(&department.stderr));
+    let department_id = field(&json(&department), "department.id");
 
-    // Lista os quatro e mostra cada um.
-    let orgs = json(&cenario.poph(&["--offline", "org", "list", "--json"]));
+    let orgs = json(&scenario.poph(&["--offline", "org", "list", "--json"]));
     assert_eq!(orgs["total"], 1);
-    let tokens = json(&cenario.poph(&[
+    let tokens = json(&scenario.poph(&[
         "--offline",
         "--org",
         "loja-teste",
@@ -166,7 +153,7 @@ fn ponta_a_ponta_cria_e_lista_os_quatro() {
         "--json",
     ]));
     assert_eq!(tokens["total"], 1);
-    let categorias = json(&cenario.poph(&[
+    let categories = json(&scenario.poph(&[
         "--offline",
         "--org",
         "loja-teste",
@@ -174,8 +161,8 @@ fn ponta_a_ponta_cria_e_lista_os_quatro() {
         "list",
         "--json",
     ]));
-    assert_eq!(categorias["total"], 1);
-    let departamentos = json(&cenario.poph(&[
+    assert_eq!(categories["total"], 1);
+    let departments = json(&scenario.poph(&[
         "--offline",
         "--org",
         "loja-teste",
@@ -183,45 +170,42 @@ fn ponta_a_ponta_cria_e_lista_os_quatro() {
         "list",
         "--json",
     ]));
-    assert_eq!(departamentos["total"], 1);
+    assert_eq!(departments["total"], 1);
 
-    let mostra_org = cenario.poph(&["--offline", "org", "show", "loja-teste"]);
-    assert_eq!(codigo(&mostra_org), 0);
-    assert!(texto(&mostra_org.stdout).contains("Org loja-teste"));
+    let show_org = scenario.poph(&["--offline", "org", "show", "loja-teste"]);
+    assert_eq!(exit_code(&show_org), 0);
+    assert!(text(&show_org.stdout).contains("Org loja-teste"));
 
-    let mostra_categoria = cenario.poph(&[
+    let show_category = scenario.poph(&[
         "--offline",
         "--org",
         "loja-teste",
         "category",
         "show",
-        &id_categoria,
+        &category_id,
     ]);
-    assert_eq!(codigo(&mostra_categoria), 0);
-    assert!(texto(&mostra_categoria.stdout).contains("Planos"));
+    assert_eq!(exit_code(&show_category), 0);
+    assert!(text(&show_category.stdout).contains("Planos"));
 
-    let mostra_departamento = cenario.poph(&[
+    let show_department = scenario.poph(&[
         "--offline",
         "--org",
         "loja-teste",
         "department",
         "show",
-        &id_departamento,
+        &department_id,
         "--json",
     ]);
-    assert_eq!(codigo(&mostra_departamento), 0);
-    assert_eq!(
-        campo(&json(&mostra_departamento), "department.name"),
-        "Vendas"
-    );
+    assert_eq!(exit_code(&show_department), 0);
+    assert_eq!(field(&json(&show_department), "department.name"), "Vendas");
 }
 
 #[test]
-fn token_de_org_aparece_uma_unica_vez_e_fica_so_como_hash() {
-    let cenario = Cenario::novo("token-unico");
-    let org = cenario.criar_org("loja-token");
+fn org_token_shows_once_and_stays_only_as_hash() {
+    let scenario = Scenario::new("token-unico");
+    let org = scenario.create_org("loja-token");
 
-    let criado = cenario.poph(&[
+    let created = scenario.poph(&[
         "--offline",
         "--org",
         "loja-token",
@@ -231,14 +215,13 @@ fn token_de_org_aparece_uma_unica_vez_e_fica_so_como_hash() {
         "integração",
         "--json",
     ]);
-    assert_eq!(codigo(&criado), 0, "{}", texto(&criado.stderr));
-    let valor = campo(&json(&criado), "valor_do_token");
-    let id_token = campo(&json(&criado), "token.id");
-    assert!(valor.len() > 60, "valor curto demais");
+    assert_eq!(exit_code(&created), 0, "{}", text(&created.stderr));
+    let value = field(&json(&created), "valor_do_token");
+    let token_id = field(&json(&created), "token.id");
+    assert!(value.len() > 60, "valor curto demais");
 
-    // Nenhum comando depois da criação mostra o valor, nem em texto, nem em JSON.
-    let mut saidas = Vec::new();
-    for argumentos in [
+    let mut outputs = Vec::new();
+    for arguments in [
         vec!["--offline", "--org", "loja-token", "token", "list"],
         vec![
             "--offline",
@@ -254,7 +237,7 @@ fn token_de_org_aparece_uma_unica_vez_e_fica_so_como_hash() {
             "loja-token",
             "token",
             "show",
-            id_token.as_str(),
+            token_id.as_str(),
         ],
         vec![
             "--offline",
@@ -262,91 +245,90 @@ fn token_de_org_aparece_uma_unica_vez_e_fica_so_como_hash() {
             "loja-token",
             "token",
             "show",
-            id_token.as_str(),
+            token_id.as_str(),
             "--json",
         ],
         vec!["--offline", "org", "show", org.as_str(), "--json"],
         vec!["--offline", "org", "list", "--json"],
     ] {
-        let saida = cenario.poph(&argumentos);
+        let output = scenario.poph(&arguments);
         assert_eq!(
-            codigo(&saida),
+            exit_code(&output),
             0,
-            "{argumentos:?}: {}",
-            texto(&saida.stderr)
+            "{arguments:?}: {}",
+            text(&output.stderr)
         );
-        saidas.push(texto(&saida.stdout));
-        saidas.push(texto(&saida.stderr));
+        outputs.push(text(&output.stdout));
+        outputs.push(text(&output.stderr));
     }
-    for saida in &saidas {
-        assert!(!saida.contains(&valor), "o valor do token vazou: {saida}");
+    for output in &outputs {
+        assert!(!output.contains(&value), "o valor do token vazou: {output}");
     }
 
-    // Depois da criação, o `show` diz que o valor não está disponível (em vez de mostrá-lo).
-    let mostra = cenario.poph(&[
+    let show = scenario.poph(&[
         "--offline",
         "--org",
         "loja-token",
         "token",
         "show",
-        id_token.as_str(),
+        token_id.as_str(),
     ]);
     assert!(
-        texto(&mostra.stdout).contains("valor: não disponível"),
+        text(&show.stdout).contains("valor: não disponível"),
         "mensagem: {}",
-        texto(&mostra.stdout)
+        text(&show.stdout)
     );
 
-    // O banco também não guarda o valor em claro (nem no arquivo de escrita antecipada).
-    for arquivo in [cenario.harness(), cenario.dados().join("harness.db-wal")] {
-        if let Ok(bytes) = fs::read(&arquivo) {
+    for file in [
+        scenario.harness(),
+        scenario.data_dir().join("harness.db-wal"),
+    ] {
+        if let Ok(bytes) = fs::read(&file) {
             assert!(
                 !bytes
-                    .windows(valor.len())
-                    .any(|trecho| trecho == valor.as_bytes()),
+                    .windows(value.len())
+                    .any(|chunk| chunk == value.as_bytes()),
                 "o valor em claro está no arquivo {}",
-                arquivo.display()
+                file.display()
             );
         }
     }
 
-    // O que fica guardado é um hash argon2 do **segredo** (HR-20): o valor carrega o id do token
-    // (`poph_<uuid>_<segredo>`) e a API localiza o registro pelo uuid antes de conferir o segredo.
-    let store = cenario.store();
+    let store = scenario.store();
     let token = store
         .tokens()
         .get(
             org.parse::<OrgId>().expect("id da org"),
-            id_token.parse::<AdminTokenId>().expect("id do token"),
+            token_id.parse::<AdminTokenId>().expect("id do token"),
         )
         .expect("token gravado");
     assert!(token.hash.starts_with("$argon2id$"), "hash: {}", token.hash);
-    let resto = valor.strip_prefix("poph_").expect("prefixo poph_");
-    let (id_no_valor, segredo) = resto.split_once('_').expect("uuid e segredo no valor");
+    let rest = value.strip_prefix("poph_").expect("prefixo poph_");
+    let (id_in_value, secret) = rest.split_once('_').expect("uuid e segredo no valor");
     assert_eq!(
-        id_no_valor, id_token,
+        id_in_value, token_id,
         "o valor tem de carregar o id do token"
     );
-    let lido = PasswordHash::new(&token.hash).expect("hash no formato PHC");
+    let parsed = PasswordHash::new(&token.hash).expect("hash no formato PHC");
     assert!(
         Argon2::default()
-            .verify_password(segredo.as_bytes(), &lido)
+            .verify_password(secret.as_bytes(), &parsed)
             .is_ok(),
         "o hash não confere com o segredo"
     );
     assert!(
         Argon2::default()
-            .verify_password(valor.as_bytes(), &lido)
+            .verify_password(value.as_bytes(), &parsed)
             .is_err(),
         "o hash não pode conferir com o valor inteiro (o valor tem de ir por id)"
     );
 }
 
 #[test]
-fn token_revogado_deixa_de_estar_ativo_e_repetir_revogacao_nao_erra() {
-    let cenario = Cenario::novo("token-revoga");
-    cenario.criar_org("loja-revoga");
-    let criado = json(&cenario.poph(&[
+fn revoked_token_is_no_longer_active_and_repeating_revocation_is_fine() {
+    let scenario = Scenario::new("token-revoga");
+    scenario.create_org("loja-revoga");
+    let created = json(&scenario.poph(&[
         "--offline",
         "--org",
         "loja-revoga",
@@ -356,50 +338,50 @@ fn token_revogado_deixa_de_estar_ativo_e_repetir_revogacao_nao_erra() {
         "antigo",
         "--json",
     ]));
-    let id_token = campo(&criado, "token.id");
+    let token_id = field(&created, "token.id");
 
-    let primeira = cenario.poph(&[
+    let first = scenario.poph(&[
         "--offline",
         "--org",
         "loja-revoga",
         "token",
         "delete",
-        &id_token,
+        &token_id,
         "--json",
     ]);
-    assert_eq!(codigo(&primeira), 0, "{}", texto(&primeira.stderr));
-    assert_eq!(json(&primeira)["ja_estava_revogado"], false);
+    assert_eq!(exit_code(&first), 0, "{}", text(&first.stderr));
+    assert_eq!(json(&first)["ja_estava_revogado"], false);
 
-    let mostra = json(&cenario.poph(&[
+    let show = json(&scenario.poph(&[
         "--offline",
         "--org",
         "loja-revoga",
         "token",
         "show",
-        &id_token,
+        &token_id,
         "--json",
     ]));
-    assert_eq!(campo(&mostra, "token.status"), "revoked");
+    assert_eq!(field(&show, "token.status"), "revoked");
 
-    let segunda = cenario.poph(&[
+    let second = scenario.poph(&[
         "--offline",
         "--org",
         "loja-revoga",
         "token",
         "delete",
-        &id_token,
+        &token_id,
         "--json",
     ]);
-    assert_eq!(codigo(&segunda), 0, "revogar de novo não é erro");
-    assert_eq!(json(&segunda)["ja_estava_revogado"], true);
+    assert_eq!(exit_code(&second), 0, "revogar de novo não é erro");
+    assert_eq!(json(&second)["ja_estava_revogado"], true);
 }
 
 #[test]
-fn org_com_agentes_so_sai_com_force() {
-    let cenario = Cenario::novo("org-agentes");
-    let org = cenario.criar_org("org-com-agente");
+fn org_with_agents_only_goes_with_force() {
+    let scenario = Scenario::new("org-agentes");
+    let org = scenario.create_org("org-com-agente");
     {
-        let store = cenario.store();
+        let store = scenario.store();
         let id = org.parse::<OrgId>().expect("id da org");
         store
             .agents()
@@ -414,18 +396,17 @@ fn org_com_agentes_so_sai_com_force() {
             .expect("cria o agente");
     }
 
-    let recusada = cenario.poph(&["--offline", "org", "delete", "org-com-agente"]);
-    assert_eq!(codigo(&recusada), 1, "sem --force a exclusão é recusada");
-    let aviso = texto(&recusada.stderr);
-    assert!(aviso.contains("--force"), "mensagem: {aviso}");
-    assert!(aviso.contains("1 agente(s)"), "mensagem: {aviso}");
+    let refused = scenario.poph(&["--offline", "org", "delete", "org-com-agente"]);
+    assert_eq!(exit_code(&refused), 1, "sem --force a exclusão é recusada");
+    let warning = text(&refused.stderr);
+    assert!(warning.contains("--force"), "mensagem: {warning}");
+    assert!(warning.contains("1 agente(s)"), "mensagem: {warning}");
 
-    // A recusa não pode ter apagado nada.
-    let ainda_existe = cenario.poph(&["--offline", "org", "show", "org-com-agente"]);
-    assert_eq!(codigo(&ainda_existe), 0);
-    assert!(texto(&ainda_existe.stdout).contains("agentes: 1"));
+    let still_exists = scenario.poph(&["--offline", "org", "show", "org-com-agente"]);
+    assert_eq!(exit_code(&still_exists), 0);
+    assert!(text(&still_exists.stdout).contains("agentes: 1"));
 
-    let confirmada = cenario.poph(&[
+    let confirmed = scenario.poph(&[
         "--offline",
         "org",
         "delete",
@@ -433,28 +414,27 @@ fn org_com_agentes_so_sai_com_force() {
         "--force",
         "--json",
     ]);
-    assert_eq!(codigo(&confirmada), 0, "{}", texto(&confirmada.stderr));
-    assert_eq!(json(&confirmada)["agentes_removidos"], 1);
+    assert_eq!(exit_code(&confirmed), 0, "{}", text(&confirmed.stderr));
+    assert_eq!(json(&confirmed)["agentes_removidos"], 1);
 
-    let sumiu = cenario.poph(&["--offline", "org", "show", "org-com-agente"]);
-    assert_eq!(codigo(&sumiu), 1);
-    assert!(texto(&sumiu.stderr).contains("não existe org com o slug `org-com-agente`"));
+    let gone = scenario.poph(&["--offline", "org", "show", "org-com-agente"]);
+    assert_eq!(exit_code(&gone), 1);
+    assert!(text(&gone.stderr).contains("não existe org com o slug `org-com-agente`"));
 }
 
 #[test]
-fn org_vazia_sai_sem_force() {
-    let cenario = Cenario::novo("org-vazia");
-    cenario.criar_org("org-vazia");
-    let saida = cenario.poph(&["--offline", "org", "delete", "org-vazia"]);
-    assert_eq!(codigo(&saida), 0, "{}", texto(&saida.stderr));
+fn empty_org_goes_without_force() {
+    let scenario = Scenario::new("org-vazia");
+    scenario.create_org("org-vazia");
+    let output = scenario.poph(&["--offline", "org", "delete", "org-vazia"]);
+    assert_eq!(exit_code(&output), 0, "{}", text(&output.stderr));
 }
 
 #[test]
-fn org_com_categoria_tambem_pede_force() {
-    // Além de agentes, a exclusão levaria junto categorias, departamentos e tokens.
-    let cenario = Cenario::novo("org-conteudo");
-    cenario.criar_org("org-conteudo");
-    let criada = cenario.poph(&[
+fn org_with_category_also_asks_for_force() {
+    let scenario = Scenario::new("org-conteudo");
+    scenario.create_org("org-conteudo");
+    let created = scenario.poph(&[
         "--offline",
         "--org",
         "org-conteudo",
@@ -463,44 +443,39 @@ fn org_com_categoria_tambem_pede_force() {
         "--name",
         "Planos",
     ]);
-    assert_eq!(codigo(&criada), 0);
+    assert_eq!(exit_code(&created), 0);
 
-    let recusada = cenario.poph(&["--offline", "org", "delete", "org-conteudo"]);
-    assert_eq!(codigo(&recusada), 1);
-    assert!(texto(&recusada.stderr).contains("1 categoria(s)"));
+    let refused = scenario.poph(&["--offline", "org", "delete", "org-conteudo"]);
+    assert_eq!(exit_code(&refused), 1);
+    assert!(text(&refused.stderr).contains("1 categoria(s)"));
 }
 
 #[test]
-fn codigos_de_saida_zero_um_e_dois() {
-    let cenario = Cenario::novo("codigos");
-    cenario.criar_org("org-codigos");
+fn exit_codes_zero_one_and_two() {
+    let scenario = Scenario::new("codigos");
+    scenario.create_org("org-codigos");
 
-    // 0: deu certo.
-    assert_eq!(codigo(&cenario.poph(&["--offline", "org", "list"])), 0);
-    // 1: erro a corrigir (org inexistente).
+    assert_eq!(exit_code(&scenario.poph(&["--offline", "org", "list"])), 0);
     assert_eq!(
-        codigo(&cenario.poph(&["--offline", "org", "show", "nao-existe"])),
+        exit_code(&scenario.poph(&["--offline", "org", "show", "nao-existe"])),
         1
     );
-    // 1: falta --offline.
-    let sem_offline = cenario.poph(&["org", "list"]);
-    assert_eq!(codigo(&sem_offline), 1);
-    assert!(texto(&sem_offline.stderr).contains("--offline"));
-    // 2: sem ação (uso incorreto da linha de comando).
-    assert_eq!(codigo(&cenario.poph(&["--offline", "org"])), 2);
-    // 2: falta argumento obrigatório (--if-match no update).
+    let without_offline = scenario.poph(&["org", "list"]);
+    assert_eq!(exit_code(&without_offline), 1);
+    assert!(text(&without_offline.stderr).contains("--offline"));
+    assert_eq!(exit_code(&scenario.poph(&["--offline", "org"])), 2);
     assert_eq!(
-        codigo(&cenario.poph(&["--offline", "org", "update", "org-codigos", "--name", "X"])),
+        exit_code(&scenario.poph(&["--offline", "org", "update", "org-codigos", "--name", "X"])),
         2
     );
 }
 
 #[test]
-fn mensagens_de_erro_sao_legiveis() {
-    let cenario = Cenario::novo("mensagens");
-    cenario.criar_org("org-msg");
+fn error_messages_are_readable() {
+    let scenario = Scenario::new("mensagens");
+    scenario.create_org("org-msg");
 
-    let slug_ruim = cenario.poph(&[
+    let bad_slug = scenario.poph(&[
         "--offline",
         "org",
         "create",
@@ -509,10 +484,10 @@ fn mensagens_de_erro_sao_legiveis() {
         "--slug",
         "A_B",
     ]);
-    assert_eq!(codigo(&slug_ruim), 1);
-    assert!(texto(&slug_ruim.stderr).contains("slug `A_B` inválido"));
+    assert_eq!(exit_code(&bad_slug), 1);
+    assert!(text(&bad_slug.stderr).contains("slug `A_B` inválido"));
 
-    let duplicado = cenario.poph(&[
+    let duplicate = scenario.poph(&[
         "--offline",
         "org",
         "create",
@@ -521,27 +496,26 @@ fn mensagens_de_erro_sao_legiveis() {
         "--slug",
         "org-msg",
     ]);
-    assert_eq!(codigo(&duplicado), 1);
-    assert!(texto(&duplicado.stderr).contains("já existe uma org com o slug `org-msg`"));
+    assert_eq!(exit_code(&duplicate), 1);
+    assert!(text(&duplicate.stderr).contains("já existe uma org com o slug `org-msg`"));
 
-    let v4 = cenario.poph(&["--offline", "org", "show", UUID_V4]);
-    assert_eq!(codigo(&v4), 1);
+    let v4 = scenario.poph(&["--offline", "org", "show", UUID_V4]);
+    assert_eq!(exit_code(&v4), 1);
     assert!(
-        texto(&v4.stderr).contains("esperado UUID v7"),
+        text(&v4.stderr).contains("esperado UUID v7"),
         "{}",
-        texto(&v4.stderr)
+        text(&v4.stderr)
     );
 
-    let sem_org = cenario.poph(&["--offline", "token", "list"]);
-    assert_eq!(codigo(&sem_org), 1);
-    assert!(texto(&sem_org.stderr).contains("informe --org"));
+    let without_org = scenario.poph(&["--offline", "token", "list"]);
+    assert_eq!(exit_code(&without_org), 1);
+    assert!(text(&without_org.stderr).contains("informe --org"));
 
-    let categoria_ruim =
-        cenario.poph(&["--offline", "--org", "org-msg", "category", "show", "abc"]);
-    assert_eq!(codigo(&categoria_ruim), 1);
-    assert!(texto(&categoria_ruim.stderr).contains("id de categoria de produto inválido"));
+    let bad_category = scenario.poph(&["--offline", "--org", "org-msg", "category", "show", "abc"]);
+    assert_eq!(exit_code(&bad_category), 1);
+    assert!(text(&bad_category.stderr).contains("id de categoria de produto inválido"));
 
-    let token_inexistente = cenario.poph(&[
+    let missing_token = scenario.poph(&[
         "--offline",
         "--org",
         "org-msg",
@@ -549,22 +523,21 @@ fn mensagens_de_erro_sao_legiveis() {
         "show",
         "0190a000-0000-7000-8000-000000000000",
     ]);
-    assert_eq!(codigo(&token_inexistente), 1);
-    assert!(texto(&token_inexistente.stderr).contains("não existe token"));
+    assert_eq!(exit_code(&missing_token), 1);
+    assert!(text(&missing_token.stderr).contains("não existe token"));
 
-    // Nome repetido na mesma org, sem diferenciar maiúsculas.
-    for nome in ["Planos", "planos"] {
-        let _ = cenario.poph(&[
+    for name in ["Planos", "planos"] {
+        let _ = scenario.poph(&[
             "--offline",
             "--org",
             "org-msg",
             "category",
             "create",
             "--name",
-            nome,
+            name,
         ]);
     }
-    let repetida = cenario.poph(&[
+    let repeated = scenario.poph(&[
         "--offline",
         "--org",
         "org-msg",
@@ -573,24 +546,23 @@ fn mensagens_de_erro_sao_legiveis() {
         "--name",
         "PLANOS",
     ]);
-    assert_eq!(codigo(&repetida), 1);
+    assert_eq!(exit_code(&repeated), 1);
     assert!(
-        texto(&repetida.stderr).contains("já existe um registro"),
+        text(&repeated.stderr).contains("já existe um registro"),
         "{}",
-        texto(&repetida.stderr)
+        text(&repeated.stderr)
     );
 
-    // Ação sem nenhum campo para mudar.
-    let nada = cenario.poph(&["--offline", "org", "update", "org-msg", "--if-match", "1"]);
-    assert_eq!(codigo(&nada), 1);
-    assert!(texto(&nada.stderr).contains("nada a alterar"));
+    let nothing = scenario.poph(&["--offline", "org", "update", "org-msg", "--if-match", "1"]);
+    assert_eq!(exit_code(&nothing), 1);
+    assert!(text(&nothing.stderr).contains("nada a alterar"));
 }
 
 #[test]
-fn alteracao_exige_a_versao_certa() {
-    let cenario = Cenario::novo("versao");
-    cenario.criar_org("org-versao");
-    let criada = json(&cenario.poph(&[
+fn change_requires_the_right_version() {
+    let scenario = Scenario::new("versao");
+    scenario.create_org("org-versao");
+    let created = json(&scenario.poph(&[
         "--offline",
         "--org",
         "org-versao",
@@ -600,9 +572,9 @@ fn alteracao_exige_a_versao_certa() {
         "Planos",
         "--json",
     ]));
-    let id = campo(&criada, "category.id");
+    let id = field(&created, "category.id");
 
-    let ok = cenario.poph(&[
+    let ok = scenario.poph(&[
         "--offline",
         "--org",
         "org-versao",
@@ -614,10 +586,9 @@ fn alteracao_exige_a_versao_certa() {
         "--name",
         "Planos 2",
     ]);
-    assert_eq!(codigo(&ok), 0, "{}", texto(&ok.stderr));
+    assert_eq!(exit_code(&ok), 0, "{}", text(&ok.stderr));
 
-    // Com a versão antiga (1), depois da alteração (agora 2), a escrita é recusada.
-    let antiga = cenario.poph(&[
+    let old = scenario.poph(&[
         "--offline",
         "--org",
         "org-versao",
@@ -629,10 +600,10 @@ fn alteracao_exige_a_versao_certa() {
         "--name",
         "Outro",
     ]);
-    assert_eq!(codigo(&antiga), 1);
-    assert!(texto(&antiga.stderr).contains("a versão não confere"));
+    assert_eq!(exit_code(&old), 1);
+    assert!(text(&old.stderr).contains("a versão não confere"));
 
-    let org_ok = cenario.poph(&[
+    let org_ok = scenario.poph(&[
         "--offline",
         "org",
         "update",
@@ -642,18 +613,18 @@ fn alteracao_exige_a_versao_certa() {
         "--name",
         "Nome novo",
     ]);
-    assert_eq!(codigo(&org_ok), 0, "{}", texto(&org_ok.stderr));
+    assert_eq!(exit_code(&org_ok), 0, "{}", text(&org_ok.stderr));
     assert_eq!(
-        json(&cenario.poph(&["--offline", "org", "show", "org-versao", "--json"]))["org"]["version"],
+        json(&scenario.poph(&["--offline", "org", "show", "org-versao", "--json"]))["org"]["version"],
         2
     );
 }
 
 #[test]
-fn categoria_so_sai_com_force_e_department_sai_direto() {
-    let cenario = Cenario::novo("exclusoes");
-    cenario.criar_org("org-exclui");
-    let categoria = json(&cenario.poph(&[
+fn category_only_goes_with_force_and_department_goes_directly() {
+    let scenario = Scenario::new("exclusoes");
+    scenario.create_org("org-exclui");
+    let category = json(&scenario.poph(&[
         "--offline",
         "--org",
         "org-exclui",
@@ -663,19 +634,19 @@ fn categoria_so_sai_com_force_e_department_sai_direto() {
         "Planos",
         "--json",
     ]));
-    let id_categoria = campo(&categoria, "category.id");
+    let category_id = field(&category, "category.id");
 
-    let sem_force = cenario.poph(&[
+    let without_force = scenario.poph(&[
         "--offline",
         "--org",
         "org-exclui",
         "category",
         "delete",
-        &id_categoria,
+        &category_id,
     ]);
-    assert_eq!(codigo(&sem_force), 1);
-    assert!(texto(&sem_force.stderr).contains("--force"));
-    let lista = json(&cenario.poph(&[
+    assert_eq!(exit_code(&without_force), 1);
+    assert!(text(&without_force.stderr).contains("--force"));
+    let list = json(&scenario.poph(&[
         "--offline",
         "--org",
         "org-exclui",
@@ -683,20 +654,20 @@ fn categoria_so_sai_com_force_e_department_sai_direto() {
         "list",
         "--json",
     ]));
-    assert_eq!(lista["total"], 1, "a recusa não pode apagar a categoria");
+    assert_eq!(list["total"], 1, "a recusa não pode apagar a categoria");
 
-    let com_force = cenario.poph(&[
+    let with_force = scenario.poph(&[
         "--offline",
         "--org",
         "org-exclui",
         "category",
         "delete",
-        &id_categoria,
+        &category_id,
         "--force",
     ]);
-    assert_eq!(codigo(&com_force), 0, "{}", texto(&com_force.stderr));
+    assert_eq!(exit_code(&with_force), 0, "{}", text(&with_force.stderr));
 
-    let departamento = json(&cenario.poph(&[
+    let department = json(&scenario.poph(&[
         "--offline",
         "--org",
         "org-exclui",
@@ -706,35 +677,35 @@ fn categoria_so_sai_com_force_e_department_sai_direto() {
         "Vendas",
         "--json",
     ]));
-    let id_departamento = campo(&departamento, "department.id");
-    let sai = cenario.poph(&[
+    let department_id = field(&department, "department.id");
+    let leaves = scenario.poph(&[
         "--offline",
         "--org",
         "org-exclui",
         "department",
         "delete",
-        &id_departamento,
+        &department_id,
     ]);
-    assert_eq!(codigo(&sai), 0, "{}", texto(&sai.stderr));
-    let sumiu = cenario.poph(&[
+    assert_eq!(exit_code(&leaves), 0, "{}", text(&leaves.stderr));
+    let gone = scenario.poph(&[
         "--offline",
         "--org",
         "org-exclui",
         "department",
         "show",
-        &id_departamento,
+        &department_id,
     ]);
-    assert_eq!(codigo(&sumiu), 1);
-    assert!(texto(&sumiu.stderr).contains("não existe departamento"));
+    assert_eq!(exit_code(&gone), 1);
+    assert!(text(&gone.stderr).contains("não existe departamento"));
 }
 
 #[test]
-fn dados_de_uma_org_nao_aparecem_em_outra() {
-    let cenario = Cenario::novo("isolamento");
-    cenario.criar_org("org-a");
-    cenario.criar_org("org-b");
+fn data_from_one_org_does_not_show_in_another() {
+    let scenario = Scenario::new("isolamento");
+    scenario.create_org("org-a");
+    scenario.create_org("org-b");
 
-    let categoria = json(&cenario.poph(&[
+    let category = json(&scenario.poph(&[
         "--offline",
         "--org",
         "org-a",
@@ -744,8 +715,8 @@ fn dados_de_uma_org_nao_aparecem_em_outra() {
         "Planos",
         "--json",
     ]));
-    let id_categoria = campo(&categoria, "category.id");
-    let token = json(&cenario.poph(&[
+    let category_id = field(&category, "category.id");
+    let token = json(&scenario.poph(&[
         "--offline",
         "--org",
         "org-a",
@@ -755,24 +726,28 @@ fn dados_de_uma_org_nao_aparecem_em_outra() {
         "a",
         "--json",
     ]));
-    let id_token = campo(&token, "token.id");
+    let token_id = field(&token, "token.id");
 
-    let lista_b =
-        json(&cenario.poph(&["--offline", "--org", "org-b", "category", "list", "--json"]));
-    assert_eq!(lista_b["total"], 0, "org B não pode ver categoria da org A");
+    let list_b =
+        json(&scenario.poph(&["--offline", "--org", "org-b", "category", "list", "--json"]));
+    assert_eq!(list_b["total"], 0, "org B não pode ver categoria da org A");
 
-    let mostra_b = cenario.poph(&[
+    let show_b = scenario.poph(&[
         "--offline",
         "--org",
         "org-b",
         "category",
         "show",
-        &id_categoria,
+        &category_id,
     ]);
-    assert_eq!(codigo(&mostra_b), 1);
+    assert_eq!(exit_code(&show_b), 1);
 
-    let token_b = cenario.poph(&["--offline", "--org", "org-b", "token", "show", &id_token]);
-    assert_eq!(codigo(&token_b), 1, "token da org A não aparece na org B");
-    let revoga_b = cenario.poph(&["--offline", "--org", "org-b", "token", "delete", &id_token]);
-    assert_eq!(codigo(&revoga_b), 1, "org B não revoga token da org A");
+    let token_b = scenario.poph(&["--offline", "--org", "org-b", "token", "show", &token_id]);
+    assert_eq!(
+        exit_code(&token_b),
+        1,
+        "token da org A não aparece na org B"
+    );
+    let revoke_b = scenario.poph(&["--offline", "--org", "org-b", "token", "delete", &token_id]);
+    assert_eq!(exit_code(&revoke_b), 1, "org B não revoga token da org A");
 }

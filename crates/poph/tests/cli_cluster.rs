@@ -1,19 +1,9 @@
-//! `poph cluster show|check` de ponta a ponta: binário de verdade, arquivos de verdade.
-//!
-//! O que se prova:
-//! - sem `cluster.toml`, os dois comandos dizem que a instalação roda em modo instância única;
-//! - com o arquivo, `show` traz instância local, orgs por instância e impressão digital;
-//! - `show --json` tem formato estável (`versao_relatorio: 1`) e nenhum segredo;
-//! - mapa inválido (`check`) sai com código 1 e aponta a chave; arquivo com TOML quebrado também;
-//! - cluster sem `POPH_CLUSTER_SECRET` é recusado, sem imprimir o valor de segredo nenhum;
-//! - `POPH_CLUSTER` aponta o arquivo fora do diretório do `poph.toml`.
-
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-const SEGREDO: &str = "SENTINELA-SEGREDO-CLUSTER-cli";
-const MAPA: &str = r#"
+const SECRET: &str = "SENTINELA-SEGREDO-CLUSTER-cli";
+const MAP: &str = r#"
 instance_id = "a"
 default_instance = "b"
 
@@ -30,50 +20,49 @@ org_01 = "a"
 org_02 = "b"
 "#;
 
-fn pasta_de_teste(rotulo: &str) -> PathBuf {
-    let pasta =
-        std::env::temp_dir().join(format!("poph-cli-cluster-{rotulo}-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&pasta);
-    fs::create_dir_all(&pasta).expect("cria pasta de teste");
-    pasta
+fn test_dir(label: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("poph-cli-cluster-{label}-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("cria pasta de teste");
+    dir
 }
 
-fn poph(pasta_atual: &Path, args: &[&str], variaveis: &[(&str, &str)]) -> Output {
-    let mut comando = Command::new(env!("CARGO_BIN_EXE_poph"));
-    comando.args(args).current_dir(pasta_atual).env_clear();
-    for (chave, valor) in variaveis {
-        comando.env(chave, valor);
+fn poph(current_dir: &Path, args: &[&str], variables: &[(&str, &str)]) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_poph"));
+    command.args(args).current_dir(current_dir).env_clear();
+    for (key, value) in variables {
+        command.env(key, value);
     }
-    comando.output().expect("executa o poph")
+    command.output().expect("executa o poph")
 }
 
-fn texto(saida: &[u8]) -> String {
-    String::from_utf8_lossy(saida).into_owned()
+fn text(output: &[u8]) -> String {
+    String::from_utf8_lossy(output).into_owned()
 }
 
 #[test]
-fn sem_cluster_toml_e_modo_instancia_unica() {
-    let pasta = pasta_de_teste("unica");
-    let show = poph(&pasta, &["cluster", "show"], &[]);
-    let stdout = texto(&show.stdout);
+fn no_cluster_toml_means_single_instance_mode() {
+    let dir = test_dir("unica");
+    let show = poph(&dir, &["cluster", "show"], &[]);
+    let stdout = text(&show.stdout);
     assert_eq!(show.status.code(), Some(0), "stdout: {stdout}");
     assert!(stdout.contains("modo: instância única"), "stdout: {stdout}");
-    assert!(!stdout.contains(SEGREDO));
+    assert!(!stdout.contains(SECRET));
 
-    let check = poph(&pasta, &["cluster", "check"], &[]);
-    let stdout = texto(&check.stdout);
+    let check = poph(&dir, &["cluster", "check"], &[]);
+    let stdout = text(&check.stdout);
     assert_eq!(check.status.code(), Some(0), "stdout: {stdout}");
     assert!(stdout.contains("Nada a corrigir"), "stdout: {stdout}");
 }
 
 #[test]
-fn show_mostra_o_mapa_com_instancia_local_e_orgs_por_instancia() {
-    let pasta = pasta_de_teste("mapa");
-    fs::write(pasta.join("cluster.toml"), MAPA).expect("cluster.toml");
-    let variaveis = [("POPH_CLUSTER_SECRET", SEGREDO)];
-    let saida = poph(&pasta, &["cluster", "show"], &variaveis);
-    let stdout = texto(&saida.stdout);
-    assert_eq!(saida.status.code(), Some(0), "stdout: {stdout}");
+fn show_prints_map_with_local_instance_and_orgs_per_instance() {
+    let dir = test_dir("mapa");
+    fs::write(dir.join("cluster.toml"), MAP).expect("cluster.toml");
+    let variables = [("POPH_CLUSTER_SECRET", SECRET)];
+    let output = poph(&dir, &["cluster", "show"], &variables);
+    let stdout = text(&output.stdout);
+    assert_eq!(output.status.code(), Some(0), "stdout: {stdout}");
     assert!(
         stdout.contains("modo: cluster (2 instância(s))"),
         "stdout: {stdout}"
@@ -86,13 +75,10 @@ fn show_mostra_o_mapa_com_instancia_local_e_orgs_por_instancia() {
         "stdout: {stdout}"
     );
     assert!(stdout.contains("fingerprint: "), "stdout: {stdout}");
-    assert!(
-        !stdout.contains(SEGREDO),
-        "o valor do segredo não pode sair"
-    );
+    assert!(!stdout.contains(SECRET), "o valor do segredo não pode sair");
 
-    let check = poph(&pasta, &["cluster", "check"], &variaveis);
-    let stdout = texto(&check.stdout);
+    let check = poph(&dir, &["cluster", "check"], &variables);
+    let stdout = text(&check.stdout);
     assert_eq!(check.status.code(), Some(0), "stdout: {stdout}");
     assert!(
         stdout.contains("Mapa do cluster válido"),
@@ -101,17 +87,17 @@ fn show_mostra_o_mapa_com_instancia_local_e_orgs_por_instancia() {
 }
 
 #[test]
-fn show_json_tem_formato_estavel_e_nao_traz_segredo() {
-    let pasta = pasta_de_teste("json");
-    fs::write(pasta.join("cluster.toml"), MAPA).expect("cluster.toml");
-    let saida = poph(
-        &pasta,
+fn show_json_has_stable_format_and_no_secret() {
+    let dir = test_dir("json");
+    fs::write(dir.join("cluster.toml"), MAP).expect("cluster.toml");
+    let output = poph(
+        &dir,
         &["cluster", "show", "--json"],
-        &[("POPH_CLUSTER_SECRET", SEGREDO)],
+        &[("POPH_CLUSTER_SECRET", SECRET)],
     );
-    let stdout = texto(&saida.stdout);
-    assert_eq!(saida.status.code(), Some(0), "stdout: {stdout}");
-    assert!(!stdout.contains(SEGREDO));
+    let stdout = text(&output.stdout);
+    assert_eq!(output.status.code(), Some(0), "stdout: {stdout}");
+    assert!(!stdout.contains(SECRET));
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("stdout é JSON");
     assert_eq!(json["versao_relatorio"], 1);
     assert_eq!(json["mapa"]["modo"], "cluster");
@@ -122,24 +108,24 @@ fn show_json_tem_formato_estavel_e_nao_traz_segredo() {
 }
 
 #[test]
-fn mapa_invalido_reprova_o_check_com_a_chave() {
-    let pasta = pasta_de_teste("invalido");
-    let invalido = MAPA.replace("org_01 = \"a\"", "org_01 = \"c\"");
-    fs::write(pasta.join("cluster.toml"), invalido).expect("cluster.toml");
-    let saida = poph(
-        &pasta,
+fn invalid_map_fails_check_pointing_at_key() {
+    let dir = test_dir("invalido");
+    let invalid = MAP.replace("org_01 = \"a\"", "org_01 = \"c\"");
+    fs::write(dir.join("cluster.toml"), invalid).expect("cluster.toml");
+    let output = poph(
+        &dir,
         &["cluster", "check"],
-        &[("POPH_CLUSTER_SECRET", SEGREDO)],
+        &[("POPH_CLUSTER_SECRET", SECRET)],
     );
-    let stdout = texto(&saida.stdout);
-    assert_eq!(saida.status.code(), Some(1), "stdout: {stdout}");
+    let stdout = text(&output.stdout);
+    assert_eq!(output.status.code(), Some(1), "stdout: {stdout}");
     assert!(stdout.contains("orgs.org_01"), "stdout: {stdout}");
-    assert!(!stdout.contains(SEGREDO));
+    assert!(!stdout.contains(SECRET));
 
     let show = poph(
-        &pasta,
+        &dir,
         &["cluster", "show"],
-        &[("POPH_CLUSTER_SECRET", SEGREDO)],
+        &[("POPH_CLUSTER_SECRET", SECRET)],
     );
     assert_eq!(
         show.status.code(),
@@ -149,44 +135,43 @@ fn mapa_invalido_reprova_o_check_com_a_chave() {
 }
 
 #[test]
-fn toml_quebrado_reprova_com_a_origem() {
-    let pasta = pasta_de_teste("toml");
-    fs::write(pasta.join("cluster.toml"), "[orgs\norg_01 = \"a\"\n").expect("cluster.toml");
-    let saida = poph(
-        &pasta,
+fn broken_toml_fails_with_source() {
+    let dir = test_dir("toml");
+    fs::write(dir.join("cluster.toml"), "[orgs\norg_01 = \"a\"\n").expect("cluster.toml");
+    let output = poph(
+        &dir,
         &["cluster", "check"],
-        &[("POPH_CLUSTER_SECRET", SEGREDO)],
+        &[("POPH_CLUSTER_SECRET", SECRET)],
     );
-    let stderr = texto(&saida.stderr);
-    assert_eq!(saida.status.code(), Some(1));
+    let stderr = text(&output.stderr);
+    assert_eq!(output.status.code(), Some(1));
     assert!(stderr.contains("cluster.toml"), "stderr: {stderr}");
     assert!(stderr.contains("sintaxe"), "stderr: {stderr}");
 }
 
 #[test]
-fn cluster_sem_segredo_no_ambiente_e_recusado() {
-    let pasta = pasta_de_teste("sem-segredo");
-    fs::write(pasta.join("cluster.toml"), MAPA).expect("cluster.toml");
-    let saida = poph(&pasta, &["cluster", "check"], &[]);
-    let stderr = texto(&saida.stderr);
-    assert_eq!(saida.status.code(), Some(1), "stderr: {stderr}");
+fn cluster_without_secret_in_environment_is_refused() {
+    let dir = test_dir("sem-segredo");
+    fs::write(dir.join("cluster.toml"), MAP).expect("cluster.toml");
+    let output = poph(&dir, &["cluster", "check"], &[]);
+    let stderr = text(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "stderr: {stderr}");
     assert!(stderr.contains("POPH_CLUSTER_SECRET"), "stderr: {stderr}");
 }
 
 #[test]
-fn poph_cluster_aponta_o_arquivo_fora_da_pasta_do_poph_toml() {
-    let pasta = pasta_de_teste("override");
-    // `poph.toml` na pasta, mas o mapa num arquivo separado indicado por POPH_CLUSTER.
-    fs::write(pasta.join("poph.toml"), "[servidor]\nporta = 7499\n").expect("poph.toml");
-    let outro = pasta.join("outro-lugar.toml");
-    fs::write(&outro, MAPA).expect("cluster alternativo");
-    let variaveis = [
-        ("POPH_CLUSTER_SECRET", SEGREDO),
-        ("POPH_CLUSTER", outro.to_str().expect("caminho UTF-8")),
+fn poph_cluster_points_at_file_outside_poph_toml_dir() {
+    let dir = test_dir("override");
+    fs::write(dir.join("poph.toml"), "[servidor]\nporta = 7499\n").expect("poph.toml");
+    let other = dir.join("outro-lugar.toml");
+    fs::write(&other, MAP).expect("cluster alternativo");
+    let variables = [
+        ("POPH_CLUSTER_SECRET", SECRET),
+        ("POPH_CLUSTER", other.to_str().expect("caminho UTF-8")),
     ];
-    let saida = poph(&pasta, &["cluster", "show"], &variaveis);
-    let stdout = texto(&saida.stdout);
-    assert_eq!(saida.status.code(), Some(0), "stdout: {stdout}");
+    let output = poph(&dir, &["cluster", "show"], &variables);
+    let stdout = text(&output.stdout);
+    assert_eq!(output.status.code(), Some(0), "stdout: {stdout}");
     assert!(
         stdout.contains("outro-lugar.toml"),
         "o caminho de POPH_CLUSTER aparece: {stdout}"
@@ -195,72 +180,63 @@ fn poph_cluster_aponta_o_arquivo_fora_da_pasta_do_poph_toml() {
 }
 
 #[test]
-fn fingerprint_do_mapa_e_igual_entre_instancias_do_mesmo_cluster() {
-    // HR-50b: o `x-poph-mapa` compara o conteúdo compartilhado, não o nome local. Duas instâncias
-    // com o mesmo cluster.toml (só o `instance_id` muda) têm a mesma impressão do mapa e
-    // impressões locais diferentes.
-    let pasta_a = pasta_de_teste("mapa-a");
-    let pasta_b = pasta_de_teste("mapa-b");
-    fs::write(pasta_a.join("cluster.toml"), MAPA).expect("cluster.toml de a");
+fn map_fingerprint_is_equal_across_instances_of_same_cluster() {
+    let dir_a = test_dir("mapa-a");
+    let dir_b = test_dir("mapa-b");
+    fs::write(dir_a.join("cluster.toml"), MAP).expect("cluster.toml de a");
     fs::write(
-        pasta_b.join("cluster.toml"),
-        MAPA.replace("instance_id = \"a\"", "instance_id = \"b\""),
+        dir_b.join("cluster.toml"),
+        MAP.replace("instance_id = \"a\"", "instance_id = \"b\""),
     )
     .expect("cluster.toml de b");
 
-    let de_a = poph(
-        &pasta_a,
+    let from_a = poph(
+        &dir_a,
         &["cluster", "show", "--json"],
-        &[("POPH_CLUSTER_SECRET", SEGREDO)],
+        &[("POPH_CLUSTER_SECRET", SECRET)],
     );
-    let de_b = poph(
-        &pasta_b,
+    let from_b = poph(
+        &dir_b,
         &["cluster", "show", "--json"],
-        &[("POPH_CLUSTER_SECRET", SEGREDO)],
+        &[("POPH_CLUSTER_SECRET", SECRET)],
     );
-    let a: serde_json::Value = serde_json::from_str(&texto(&de_a.stdout)).expect("json de a");
-    let b: serde_json::Value = serde_json::from_str(&texto(&de_b.stdout)).expect("json de b");
+    let a: serde_json::Value = serde_json::from_str(&text(&from_a.stdout)).expect("json de a");
+    let b: serde_json::Value = serde_json::from_str(&text(&from_b.stdout)).expect("json de b");
     assert_eq!(a["fingerprint_mapa"].as_str().map(str::len), Some(32));
     assert_eq!(a["fingerprint_mapa"], b["fingerprint_mapa"]);
     assert_ne!(a["fingerprint"], b["fingerprint"]);
 
-    let texto_de_a = poph(
-        &pasta_a,
+    let text_from_a = poph(
+        &dir_a,
         &["cluster", "show"],
-        &[("POPH_CLUSTER_SECRET", SEGREDO)],
+        &[("POPH_CLUSTER_SECRET", SECRET)],
     );
-    let stdout = texto(&texto_de_a.stdout);
+    let stdout = text(&text_from_a.stdout);
     assert!(
         stdout.contains("fingerprint do mapa (sem a instância local): "),
         "stdout: {stdout}"
     );
-    assert!(!stdout.contains(SEGREDO), "segredo no stdout");
+    assert!(!stdout.contains(SECRET), "segredo no stdout");
 }
 
-// ───────────── `cluster check --remoto` (HR-50b-2): mapa entre instâncias ─────────────
-
-/// Serve uma única resposta JSON em cada conexão, num `/healthz` falso, e devolve o endereço.
-///
-/// O listener já vem aberto para o endereço entrar no mapa **antes** de o teste calcular a
-/// impressão digital (a URL faz parte do texto canônico).
-fn servir_healthz(listener: std::net::TcpListener, corpo: String) -> std::thread::JoinHandle<()> {
+fn serve_healthz(listener: std::net::TcpListener, body: String) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         use std::io::{Read, Write};
-        for fluxo in listener.incoming().take(8) {
-            let Ok(mut fluxo) = fluxo else { continue };
+        for stream in listener.incoming().take(8) {
+            let Ok(mut stream) = stream else { continue };
             let mut buffer = [0u8; 4096];
-            let _ = fluxo.read(&mut buffer);
-            let resposta = format!(
+            let _ = stream.read(&mut buffer);
+            let response = format!(
                 "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\
-                 connection: close\r\n\r\n{corpo}",
-                corpo.len()
+                 connection: close\r\n\r\n{body}",
+                body.len()
             );
-            let _ = fluxo.write_all(resposta.as_bytes());
+            let _ = stream.write_all(response.as_bytes());
         }
     })
 }
 
-fn mapa_com_vizinha(url_b: &str) -> String {
+fn map_with_neighbor(url_b: &str) -> String {
     format!(
         r#"
 instance_id = "a"
@@ -280,40 +256,37 @@ org_01 = "b"
     )
 }
 
-/// `--remoto` com o mapa igual nas duas pontas: sai 0 e diz que está tudo certo.
 #[test]
-fn check_remoto_aprova_mapa_igual_entre_instancias() {
-    let pasta = pasta_de_teste("remoto-ok");
+fn remote_check_approves_equal_map_across_instances() {
+    let dir = test_dir("remoto-ok");
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("porta livre");
     let url_b = format!("http://{}", listener.local_addr().expect("endereço"));
-    fs::write(pasta.join("cluster.toml"), mapa_com_vizinha(&url_b)).expect("mapa");
+    fs::write(dir.join("cluster.toml"), map_with_neighbor(&url_b)).expect("mapa");
 
-    // A impressão digital do mapa é calculada antes de o servidor falso responder.
     let show = poph(
-        &pasta,
+        &dir,
         &["cluster", "show", "--json"],
-        &[("POPH_CLUSTER_SECRET", SEGREDO)],
+        &[("POPH_CLUSTER_SECRET", SECRET)],
     );
-    assert_eq!(show.status.code(), Some(0), "{}", texto(&show.stderr));
-    let relatorio: serde_json::Value =
-        serde_json::from_str(&texto(&show.stdout)).expect("json do show");
-    let fingerprint = relatorio["fingerprint_mapa"]
+    assert_eq!(show.status.code(), Some(0), "{}", text(&show.stderr));
+    let report: serde_json::Value =
+        serde_json::from_str(&text(&show.stdout)).expect("json do show");
+    let fingerprint = report["fingerprint_mapa"]
         .as_str()
         .expect("fingerprint do mapa")
         .to_owned();
 
-    let corpo = format!(
+    let body = format!(
         r#"{{"status":"ok","version":"0.1.0","uptime_seconds":1,"databases":{{"harness":1,"rag":0}},"instance_id":"b","cluster_map_fingerprint":"{fingerprint}"}}"#
     );
-    // O servidor falso fica de pé até o fim do processo de teste (não se junta à thread).
-    let _servidor = servir_healthz(listener, corpo);
+    let _server = serve_healthz(listener, body);
 
     let check = poph(
-        &pasta,
+        &dir,
         &["cluster", "check", "--remoto"],
-        &[("POPH_CLUSTER_SECRET", SEGREDO)],
+        &[("POPH_CLUSTER_SECRET", SECRET)],
     );
-    let stdout = texto(&check.stdout);
+    let stdout = text(&check.stdout);
     assert_eq!(check.status.code(), Some(0), "stdout: {stdout}");
     assert!(
         stdout.contains("consulta remota (mapa local:"),
@@ -324,21 +297,19 @@ fn check_remoto_aprova_mapa_igual_entre_instancias() {
         stdout.contains("respondem com o mesmo mapa"),
         "stdout: {stdout}"
     );
-    assert!(!stdout.contains(SEGREDO), "segredo na saída: {stdout}");
+    assert!(!stdout.contains(SECRET), "segredo na saída: {stdout}");
 }
 
-/// `--remoto` com mapa divergente numa ponta e a outra fora do ar: sai 1 e aponta as duas.
 #[test]
-fn check_remoto_reprova_mapa_divergente_e_instancia_fora_do_ar() {
-    let pasta = pasta_de_teste("remoto-divergente");
+fn remote_check_fails_divergent_map_and_instance_down() {
+    let dir = test_dir("remoto-divergente");
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("porta livre");
     let url_b = format!("http://{}", listener.local_addr().expect("endereço"));
-    // Porta que ninguém escuta (abre e fecha em seguida).
-    let fora = std::net::TcpListener::bind("127.0.0.1:0").expect("porta livre");
-    let url_c = format!("http://{}", fora.local_addr().expect("endereço"));
-    drop(fora);
+    let down = std::net::TcpListener::bind("127.0.0.1:0").expect("porta livre");
+    let url_c = format!("http://{}", down.local_addr().expect("endereço"));
+    drop(down);
 
-    let mapa = format!(
+    let map = format!(
         r#"
 instance_id = "a"
 default_instance = "b"
@@ -359,18 +330,17 @@ url = "{url_c}"
 org_01 = "b"
 "#
     );
-    fs::write(pasta.join("cluster.toml"), mapa).expect("mapa");
+    fs::write(dir.join("cluster.toml"), map).expect("mapa");
 
-    let corpo = r#"{"status":"ok","version":"0.1.0","uptime_seconds":1,"databases":{"harness":1,"rag":0},"instance_id":"b","cluster_map_fingerprint":"outro-mapa-qualquer"}"#.to_owned();
-    // O servidor falso fica de pé até o fim do processo de teste (não se junta à thread).
-    let _servidor = servir_healthz(listener, corpo);
+    let body = r#"{"status":"ok","version":"0.1.0","uptime_seconds":1,"databases":{"harness":1,"rag":0},"instance_id":"b","cluster_map_fingerprint":"outro-mapa-qualquer"}"#.to_owned();
+    let _server = serve_healthz(listener, body);
 
     let check = poph(
-        &pasta,
+        &dir,
         &["cluster", "check", "--remoto"],
-        &[("POPH_CLUSTER_SECRET", SEGREDO)],
+        &[("POPH_CLUSTER_SECRET", SECRET)],
     );
-    let stdout = texto(&check.stdout);
+    let stdout = text(&check.stdout);
     assert_eq!(check.status.code(), Some(1), "stdout: {stdout}");
     assert!(stdout.contains("mapa divergente"), "stdout: {stdout}");
     assert!(stdout.contains("inacessível"), "stdout: {stdout}");
@@ -379,34 +349,32 @@ org_01 = "b"
         "stdout: {stdout}"
     );
 
-    // Em JSON: `ok: false`, um problema remoto por instância e nenhum segredo.
     let json = poph(
-        &pasta,
+        &dir,
         &["cluster", "check", "--remoto", "--json"],
-        &[("POPH_CLUSTER_SECRET", SEGREDO)],
+        &[("POPH_CLUSTER_SECRET", SECRET)],
     );
-    let saida = texto(&json.stdout);
-    let relatorio: serde_json::Value = serde_json::from_str(&saida).expect("json do check");
-    assert_eq!(relatorio["ok"], serde_json::json!(false), "{saida}");
+    let output = text(&json.stdout);
+    let report: serde_json::Value = serde_json::from_str(&output).expect("json do check");
+    assert_eq!(report["ok"], serde_json::json!(false), "{output}");
     assert_eq!(
-        relatorio["problemas_remotos"].as_array().map(Vec::len),
+        report["problemas_remotos"].as_array().map(Vec::len),
         Some(2),
-        "{saida}"
+        "{output}"
     );
     assert_eq!(
-        relatorio["remoto"].as_array().map(Vec::len),
+        report["remoto"].as_array().map(Vec::len),
         Some(2),
-        "{saida}"
+        "{output}"
     );
-    assert!(!saida.contains(SEGREDO), "segredo na saída: {saida}");
+    assert!(!output.contains(SECRET), "segredo na saída: {output}");
 }
 
-/// `--remoto` numa instalação sem cluster: nada a consultar, sai 0 e diz isso.
 #[test]
-fn check_remoto_sem_cluster_nao_consulta_nada() {
-    let pasta = pasta_de_teste("remoto-sem-cluster");
-    let check = poph(&pasta, &["cluster", "check", "--remoto"], &[]);
-    let stdout = texto(&check.stdout);
+fn remote_check_without_cluster_consults_nothing() {
+    let dir = test_dir("remoto-sem-cluster");
+    let check = poph(&dir, &["cluster", "check", "--remoto"], &[]);
+    let stdout = text(&check.stdout);
     assert_eq!(check.status.code(), Some(0), "stdout: {stdout}");
     assert!(stdout.contains("modo instância única"), "stdout: {stdout}");
     assert!(!stdout.contains("consulta remota"), "stdout: {stdout}");

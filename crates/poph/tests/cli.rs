@@ -1,176 +1,167 @@
-//! Testes do binário `poph` de ponta a ponta: processo de verdade, ambiente controlado.
-//!
-//! Os valores de segredo usados aqui são sentinelas (`SENTINELA-...`). Os testes provam que
-//! nenhum deles aparece no stdout, no stderr nem no JSON, mesmo com log em nível `trace`.
-
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-const SENTINELA_CIFRA: &str = "SENTINELA-CIFRA-7f3a";
-const SENTINELA_LLM: &str = "SENTINELA-LLM-91bc";
-const SENTINELA_JEV: &str = "SENTINELA-JEV-204d";
+const CIPHER_SENTINEL: &str = "SENTINELA-CIFRA-7f3a";
+const LLM_SENTINEL: &str = "SENTINELA-LLM-91bc";
+const JEV_SENTINEL: &str = "SENTINELA-JEV-204d";
 
-fn pasta_de_teste(rotulo: &str) -> PathBuf {
-    let pasta = std::env::temp_dir().join(format!("poph-cli-{rotulo}-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&pasta);
-    fs::create_dir_all(&pasta).expect("cria pasta de teste");
-    pasta
+fn test_dir(label: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("poph-cli-{label}-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).expect("cria pasta de teste");
+    dir
 }
 
-/// Roda `poph` com ambiente limpo, pasta atual isolada e as variáveis dadas.
-fn poph(pasta_atual: &Path, args: &[&str], variaveis: &[(&str, &str)]) -> Output {
-    let mut comando = Command::new(env!("CARGO_BIN_EXE_poph"));
-    comando.args(args).current_dir(pasta_atual).env_clear();
-    for (chave, valor) in variaveis {
-        comando.env(chave, valor);
+fn poph(current_dir: &Path, args: &[&str], variables: &[(&str, &str)]) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_poph"));
+    command.args(args).current_dir(current_dir).env_clear();
+    for (key, value) in variables {
+        command.env(key, value);
     }
-    comando.output().expect("executa o poph")
+    command.output().expect("executa o poph")
 }
 
-/// Ambiente completo e correto, com a pasta de dados dentro da pasta de teste.
-fn ambiente_completo(pasta: &Path) -> Vec<(&'static str, String)> {
+fn full_environment(dir: &Path) -> Vec<(&'static str, String)> {
     vec![
         (
             "POPH_DADOS_DIRETORIO",
-            pasta.join("dados").display().to_string(),
+            dir.join("dados").display().to_string(),
         ),
-        ("POPH_CHAVE_CIFRA", SENTINELA_CIFRA.to_owned()),
-        ("ANTIGRAVITY_API_KEY", SENTINELA_LLM.to_owned()),
+        ("POPH_CHAVE_CIFRA", CIPHER_SENTINEL.to_owned()),
+        ("ANTIGRAVITY_API_KEY", LLM_SENTINEL.to_owned()),
     ]
 }
 
-fn como_refs<'a>(pares: &'a [(&'static str, String)]) -> Vec<(&'a str, &'a str)> {
-    pares.iter().map(|(k, v)| (*k, v.as_str())).collect()
+fn as_refs<'a>(pairs: &'a [(&'static str, String)]) -> Vec<(&'a str, &'a str)> {
+    pairs.iter().map(|(k, v)| (*k, v.as_str())).collect()
 }
 
-fn texto(saida: &[u8]) -> String {
-    String::from_utf8_lossy(saida).into_owned()
+fn text(output: &[u8]) -> String {
+    String::from_utf8_lossy(output).into_owned()
 }
 
-fn sem_sentinelas(saida: &str) {
-    for sentinela in [SENTINELA_CIFRA, SENTINELA_LLM, SENTINELA_JEV] {
+fn without_sentinels(output: &str) {
+    for sentinel in [CIPHER_SENTINEL, LLM_SENTINEL, JEV_SENTINEL] {
         assert!(
-            !saida.contains(sentinela),
-            "segredo vazou na saída: {saida}"
+            !output.contains(sentinel),
+            "segredo vazou na saída: {output}"
         );
     }
 }
 
 #[test]
-fn versao_e_ajuda_continuam_funcionando() {
-    let pasta = pasta_de_teste("versao");
-    let versao = poph(&pasta, &["--version"], &[]);
-    assert!(versao.status.success());
-    assert_eq!(texto(&versao.stdout).trim(), "poph 0.1.0");
+fn version_and_help_keep_working() {
+    let dir = test_dir("versao");
+    let version = poph(&dir, &["--version"], &[]);
+    assert!(version.status.success());
+    assert_eq!(text(&version.stdout).trim(), "poph 0.1.0");
 
-    let ajuda = poph(&pasta, &["--help"], &[]);
-    assert!(ajuda.status.success());
-    assert!(texto(&ajuda.stdout).contains("doctor"));
+    let help = poph(&dir, &["--help"], &[]);
+    assert!(help.status.success());
+    assert!(text(&help.stdout).contains("doctor"));
 }
 
 #[test]
-fn sem_comando_mostra_ajuda_e_sai_com_2() {
-    let pasta = pasta_de_teste("sem-comando");
-    let saida = poph(&pasta, &[], &[]);
-    assert_eq!(saida.status.code(), Some(2));
-    // O clap escreve a ajuda no erro padrão quando falta comando.
-    assert!(texto(&saida.stderr).contains("doctor"));
+fn missing_command_shows_help_and_exits_two() {
+    let dir = test_dir("sem-comando");
+    let output = poph(&dir, &[], &[]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(text(&output.stderr).contains("doctor"));
 }
 
 #[test]
-fn doctor_com_ambiente_correto_sai_0_e_nao_mostra_segredo() {
-    let pasta = pasta_de_teste("ok");
-    let ambiente = ambiente_completo(&pasta);
-    let saida = poph(&pasta, &["doctor"], &como_refs(&ambiente));
-    let stdout = texto(&saida.stdout);
-    assert_eq!(saida.status.code(), Some(0), "stdout: {stdout}");
+fn doctor_with_correct_environment_exits_zero_and_shows_no_secret() {
+    let dir = test_dir("ok");
+    let environment = full_environment(&dir);
+    let output = poph(&dir, &["doctor"], &as_refs(&environment));
+    let stdout = text(&output.stdout);
+    assert_eq!(output.status.code(), Some(0), "stdout: {stdout}");
     assert!(stdout.contains("Ambiente pronto"), "stdout: {stdout}");
     assert!(stdout.contains("variável POPH_CHAVE_CIFRA: definida"));
-    sem_sentinelas(&stdout);
-    sem_sentinelas(&texto(&saida.stderr));
+    without_sentinels(&stdout);
+    without_sentinels(&text(&output.stderr));
 }
 
 #[test]
-fn doctor_json_e_valido_e_nao_mostra_segredo() {
-    let pasta = pasta_de_teste("json");
-    let ambiente = ambiente_completo(&pasta);
-    let saida = poph(&pasta, &["doctor", "--json"], &como_refs(&ambiente));
-    let stdout = texto(&saida.stdout);
-    assert_eq!(saida.status.code(), Some(0), "stdout: {stdout}");
-    sem_sentinelas(&stdout);
+fn doctor_json_is_valid_and_shows_no_secret() {
+    let dir = test_dir("json");
+    let environment = full_environment(&dir);
+    let output = poph(&dir, &["doctor", "--json"], &as_refs(&environment));
+    let stdout = text(&output.stdout);
+    assert_eq!(output.status.code(), Some(0), "stdout: {stdout}");
+    without_sentinels(&stdout);
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("stdout é JSON válido");
     assert_eq!(json["versao_relatorio"], 1);
     assert_eq!(json["status"], "ok");
 }
 
 #[test]
-fn variavel_obrigatoria_faltando_sai_diferente_de_0_e_diz_qual() {
-    let pasta = pasta_de_teste("sem-cifra");
-    let mut ambiente = ambiente_completo(&pasta);
-    ambiente.retain(|(k, _)| *k != "POPH_CHAVE_CIFRA");
-    let saida = poph(&pasta, &["doctor"], &como_refs(&ambiente));
-    let stdout = texto(&saida.stdout);
-    assert_ne!(saida.status.code(), Some(0));
+fn missing_required_variable_exits_nonzero_and_names_it() {
+    let dir = test_dir("sem-cifra");
+    let mut environment = full_environment(&dir);
+    environment.retain(|(k, _)| *k != "POPH_CHAVE_CIFRA");
+    let output = poph(&dir, &["doctor"], &as_refs(&environment));
+    let stdout = text(&output.stdout);
+    assert_ne!(output.status.code(), Some(0));
     assert!(stdout.contains("POPH_CHAVE_CIFRA"), "stdout: {stdout}");
     assert!(stdout.contains("erro(s) a corrigir"), "stdout: {stdout}");
-    sem_sentinelas(&stdout);
+    without_sentinels(&stdout);
 }
 
 #[test]
-fn segredos_nao_vazam_no_log_mesmo_em_nivel_trace_e_json() {
-    let pasta = pasta_de_teste("log");
-    let mut ambiente = ambiente_completo(&pasta);
-    ambiente.push(("TYPESAFE_API_KEY", SENTINELA_JEV.to_owned()));
-    ambiente.push(("POPH_JEV_ATIVO", "true".to_owned()));
-    ambiente.push(("POPH_LOG_NIVEL", "trace".to_owned()));
-    ambiente.push(("POPH_LOG_FORMATO", "json".to_owned()));
-    let saida = poph(&pasta, &["doctor", "--json"], &como_refs(&ambiente));
-    let stderr = texto(&saida.stderr);
+fn secrets_do_not_leak_in_log_even_at_trace_level_and_json() {
+    let dir = test_dir("log");
+    let mut environment = full_environment(&dir);
+    environment.push(("TYPESAFE_API_KEY", JEV_SENTINEL.to_owned()));
+    environment.push(("POPH_JEV_ATIVO", "true".to_owned()));
+    environment.push(("POPH_LOG_NIVEL", "trace".to_owned()));
+    environment.push(("POPH_LOG_FORMATO", "json".to_owned()));
+    let output = poph(&dir, &["doctor", "--json"], &as_refs(&environment));
+    let stderr = text(&output.stderr);
     assert!(
         stderr.contains("verificacao"),
         "o log em trace deveria ter eventos: {stderr}"
     );
-    for linha in stderr.lines().filter(|l| !l.trim().is_empty()) {
-        serde_json::from_str::<serde_json::Value>(linha)
-            .unwrap_or_else(|erro| panic!("linha de log não é JSON ({erro}): {linha}"));
+    for line in stderr.lines().filter(|l| !l.trim().is_empty()) {
+        serde_json::from_str::<serde_json::Value>(line)
+            .unwrap_or_else(|error| panic!("linha de log não é JSON ({error}): {line}"));
     }
-    sem_sentinelas(&stderr);
-    sem_sentinelas(&texto(&saida.stdout));
+    without_sentinels(&stderr);
+    without_sentinels(&text(&output.stdout));
 }
 
 #[test]
-fn toml_invalido_diz_arquivo_e_chave_e_sai_diferente_de_0() {
-    let pasta = pasta_de_teste("toml");
-    let arquivo = pasta.join("poph.toml");
-    fs::write(&arquivo, "[servidor]\nportaa = 2000\n").expect("escreve");
-    let ambiente = ambiente_completo(&pasta);
-    let caminho = arquivo.display().to_string();
-    let args = ["--config", caminho.as_str(), "doctor"];
-    let saida = poph(&pasta, &args, &como_refs(&ambiente));
-    let stdout = texto(&saida.stdout);
-    assert_ne!(saida.status.code(), Some(0));
-    assert!(stdout.contains(&caminho), "faltou o arquivo: {stdout}");
+fn invalid_toml_names_file_and_key_and_exits_nonzero() {
+    let dir = test_dir("toml");
+    let file = dir.join("poph.toml");
+    fs::write(&file, "[servidor]\nportaa = 2000\n").expect("escreve");
+    let environment = full_environment(&dir);
+    let path = file.display().to_string();
+    let args = ["--config", path.as_str(), "doctor"];
+    let output = poph(&dir, &args, &as_refs(&environment));
+    let stdout = text(&output.stdout);
+    assert_ne!(output.status.code(), Some(0));
+    assert!(stdout.contains(&path), "faltou o arquivo: {stdout}");
     assert!(
         stdout.contains("servidor.portaa"),
         "faltou a chave: {stdout}"
     );
-    sem_sentinelas(&stdout);
+    without_sentinels(&stdout);
 }
 
 #[test]
-fn precedencia_do_arquivo_e_do_ambiente_aparece_no_doctor() {
-    let pasta = pasta_de_teste("precedencia");
-    let arquivo = pasta.join("poph.toml");
-    fs::write(&arquivo, "[dados]\ndiretorio = \"do-arquivo\"\n").expect("escreve");
-    let caminho = arquivo.display().to_string();
-    let args = ["--config", caminho.as_str(), "doctor", "--json"];
-    let ambiente = ambiente_completo(&pasta);
-    // O ambiente vence o arquivo: a pasta de dados vira a do ambiente.
-    let saida = poph(&pasta, &args, &como_refs(&ambiente));
-    let stdout = texto(&saida.stdout);
+fn file_and_environment_precedence_shows_in_doctor() {
+    let dir = test_dir("precedencia");
+    let file = dir.join("poph.toml");
+    fs::write(&file, "[dados]\ndiretorio = \"do-arquivo\"\n").expect("escreve");
+    let path = file.display().to_string();
+    let args = ["--config", path.as_str(), "doctor", "--json"];
+    let environment = full_environment(&dir);
+    let output = poph(&dir, &args, &as_refs(&environment));
+    let stdout = text(&output.stdout);
     let json: serde_json::Value = serde_json::from_str(&stdout).expect("JSON");
-    let pasta_dados = json["verificacoes"]
+    let data_dir = json["verificacoes"]
         .as_array()
         .expect("lista")
         .iter()
@@ -179,53 +170,50 @@ fn precedencia_do_arquivo_e_do_ambiente_aparece_no_doctor() {
         .as_str()
         .expect("texto")
         .to_owned();
-    assert!(pasta_dados.contains("dados"), "detalhe: {pasta_dados}");
+    assert!(data_dir.contains("dados"), "detalhe: {data_dir}");
     assert!(
-        !pasta_dados.contains("do-arquivo"),
-        "arquivo venceu o ambiente: {pasta_dados}"
+        !data_dir.contains("do-arquivo"),
+        "arquivo venceu o ambiente: {data_dir}"
     );
 }
 
 #[test]
-fn migrate_cria_os_bancos_e_e_idempotente() {
-    let pasta = pasta_de_teste("migrate");
-    let ambiente = ambiente_completo(&pasta);
+fn migrate_creates_databases_and_is_idempotent() {
+    let dir = test_dir("migrate");
+    let environment = full_environment(&dir);
 
-    // Primeira vez: cria os dois bancos do zero e aplica o esquema inicial.
-    let primeira = poph(&pasta, &["migrate"], &como_refs(&ambiente));
-    let saida = texto(&primeira.stdout);
-    assert_eq!(primeira.status.code(), Some(0), "saída: {saida}");
-    let alvo = poph_store::harness_target_version();
+    let first = poph(&dir, &["migrate"], &as_refs(&environment));
+    let output = text(&first.stdout);
+    assert_eq!(first.status.code(), Some(0), "saída: {output}");
+    let target = poph_store::harness_target_version();
     assert!(
-        saida.contains(&format!("versão 0 → {alvo}")),
-        "saída: {saida}"
+        output.contains(&format!("versão 0 → {target}")),
+        "saída: {output}"
     );
-    assert!(saida.contains("0001_esquema_inicial"), "saída: {saida}");
+    assert!(output.contains("0001_esquema_inicial"), "saída: {output}");
     assert!(
-        saida.contains("0003_origem_autor_mensagens"),
-        "saída: {saida}"
-    );
-    assert!(
-        saida.contains("0002_entrada_proxima_tentativa"),
-        "saída: {saida}"
+        output.contains("0003_origem_autor_mensagens"),
+        "saída: {output}"
     );
     assert!(
-        pasta.join("dados").join("harness.db").is_file(),
+        output.contains("0002_entrada_proxima_tentativa"),
+        "saída: {output}"
+    );
+    assert!(
+        dir.join("dados").join("harness.db").is_file(),
         "harness.db não foi criado"
     );
-    sem_sentinelas(&saida);
+    without_sentinels(&output);
 
-    // Segunda vez: nada a aplicar, mesmo código de saída.
-    let segunda = poph(&pasta, &["migrate", "--json"], &como_refs(&ambiente));
+    let second = poph(&dir, &["migrate", "--json"], &as_refs(&environment));
     let json: serde_json::Value =
-        serde_json::from_str(&texto(&segunda.stdout)).expect("JSON do migrate");
-    assert_eq!(segunda.status.code(), Some(0));
+        serde_json::from_str(&text(&second.stdout)).expect("JSON do migrate");
+    assert_eq!(second.status.code(), Some(0));
     assert_eq!(json["ja_estava_em_dia"], true);
-    // A versão vem da fonte única do `poph-store` (versão alvo do esquema do Harness).
-    let versao_do_esquema = poph_store::harness_target_version();
+    let schema_version = poph_store::harness_target_version();
     assert_eq!(
         json["harness"]["versao_depois"].as_u64(),
-        Some(u64::from(versao_do_esquema))
+        Some(u64::from(schema_version))
     );
     assert_eq!(json["rag"]["versao_depois"], 0);
     assert_eq!(
@@ -233,13 +221,12 @@ fn migrate_cria_os_bancos_e_e_idempotente() {
         Some(0)
     );
 
-    // O doctor passa a mostrar a versão real do esquema e continua sem vazar segredo.
-    let doctor = poph(&pasta, &["doctor"], &como_refs(&ambiente));
-    let saida = texto(&doctor.stdout);
-    assert_eq!(doctor.status.code(), Some(0), "saída: {saida}");
+    let doctor = poph(&dir, &["doctor"], &as_refs(&environment));
+    let output = text(&doctor.stdout);
+    assert_eq!(doctor.status.code(), Some(0), "saída: {output}");
     assert!(
-        saida.contains(&format!("esquema versão {versao_do_esquema}")),
-        "saída: {saida}"
+        output.contains(&format!("esquema versão {schema_version}")),
+        "saída: {output}"
     );
-    sem_sentinelas(&saida);
+    without_sentinels(&output);
 }
