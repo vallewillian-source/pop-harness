@@ -3,14 +3,10 @@
 # do not edit by hand.
 M08c	3	crates/poph-store/migrations/harness/0004_audit_log_matrix_user.sql
 M11a-c	49	crates/poph-server/build.rs
-M12a	3	crates/poph/src/main.rs
 M13a	3	console/src/api/backup.test.ts
-M13a	11	console/src/api/backup.ts
 M13a	6	console/src/api/integrations.ts
-M13a	6	console/src/api/knowledge.ts
 M13a	13	console/src/api/modelJev.test.ts
 M13a	52	console/src/api/operation.test.ts
-M13a	6	console/src/api/products.ts
 M13a	1	console/src/api/routing.ts
 M13a	1	console/src/api/structure.ts
 M13a	1	console/src/api/testChat.ts
@@ -21,10 +17,9 @@ M13b	8	console/src/components/ChipCluster.tsx
 M13b	2	console/src/components/DialogDeleteCategory.test.tsx
 M13b	16	console/src/components/DialogDeleteCategory.tsx
 M13b	2	console/src/components/DialogDeleteProduct.test.tsx
-M13b	6	console/src/components/DialogDeleteProduct.tsx
 M13b	5	console/src/components/DialogExclusion.tsx
 M13b	27	console/src/components/ExportImportOrganization.test.tsx
-M13b	28	console/src/components/ExportImportOrganization.tsx
+M13b	8	console/src/components/ExportImportOrganization.tsx
 M13b	3	console/src/components/FormInstructions.tsx
 M13b	8	console/src/components/FormSchema.test.tsx
 M13b	7	console/src/components/InspectorOrg.test.tsx
@@ -56,7 +51,6 @@ M13c	1	console/src/screens/AgentInstructions.tsx
 M13c	22	console/src/screens/AgentIntegrations.test.tsx
 M13c	1	console/src/screens/AgentIntegrations.tsx
 M13c	9	console/src/screens/AgentKnowledge.test.tsx
-M13c	6	console/src/screens/AgentKnowledge.tsx
 M13c	16	console/src/screens/AgentModelJev.test.tsx
 M13c	2	console/src/screens/AgentModelJev.tsx
 M13c	7	console/src/screens/AgentRouting.test.tsx
