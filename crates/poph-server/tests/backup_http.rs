@@ -22,7 +22,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
-use poph_server::{ChaveDeCifra, Estado};
+use poph_server::{CipherKey, Estado};
 use poph_store::Store;
 use poph_types::HarnessConfig;
 use poph_types::config::GlobalTokenConfig;
@@ -92,7 +92,7 @@ impl Cenario {
         config.validar().expect("configuração válida");
 
         let store = Arc::new(Store::open(&config).expect("abre o banco"));
-        let chave = ChaveDeCifra::derivar(CHAVE_CIFRA).expect("chave de cifra");
+        let chave = CipherKey::derive(CHAVE_CIFRA).expect("chave de cifra");
         let estado = Estado::novo(Arc::clone(&store), config)
             .expect("estado do servidor")
             .com_chave_de_cifra(Some(chave));
@@ -103,7 +103,7 @@ impl Cenario {
         let endereco = listener.local_addr().expect("endereço local");
         let (desligar, sinal) = oneshot::channel();
         tokio::spawn(async move {
-            let _ = poph_server::servir_em(listener, estado, async {
+            let _ = poph_server::serve_at(listener, estado, async {
                 let _ = sinal.await;
             })
             .await;
@@ -368,7 +368,7 @@ async fn montar_org(c: &Cenario, slug: &str) -> (String, String, Value) {
         .await;
     assert_eq!(status, StatusCode::OK, "vínculo do grupo: {vinculo}");
     // Integração com segredo gravado e cifrado (o valor nunca pode sair no arquivo).
-    let cifrado = ChaveDeCifra::derivar(CHAVE_CIFRA)
+    let cifrado = CipherKey::derive(CHAVE_CIFRA)
         .expect("chave")
         .cifrar(&std::collections::BTreeMap::from([(
             "token".to_owned(),

@@ -12,8 +12,8 @@ use utoipa::ToSchema;
 
 use super::{ListJson, PageQuery, if_match_version, next_cursor, request_status};
 use crate::{
-    auth::Identidade,
-    erro::{ApiError, id_da_url as parse_path_id},
+    auth::Identity,
+    error::{ApiError, id_from_url as parse_path_id},
     estado::Estado,
     fluxos_servico::{
         Ator, FalhaFluxo, Operacoes, json_comparacao, json_fluxo, json_fluxo_com_rascunho,
@@ -121,12 +121,12 @@ pub struct ExclusionQuery {
 
 fn flow_refusal(diagnostic: &[Diagnostic]) -> ApiError {
     let errors = diagnostic.iter().filter(|d| d.is_error()).count();
-    ApiError::novo(
+    ApiError::new(
         StatusCode::UNPROCESSABLE_ENTITY,
         "fluxo_invalido",
         format!("o script não passa na validação: {errors} erro(s) a corrigir; nada foi gravado"),
     )
-    .com_detalhes(json!({ "diagnostics": diagnostic }))
+    .with_details(json!({ "diagnostics": diagnostic }))
 }
 
 impl From<FalhaFluxo> for ApiError {
@@ -136,31 +136,31 @@ impl From<FalhaFluxo> for ApiError {
                 id,
                 esperada: expected_version,
                 atual: current_version,
-            } => ApiError::conflito_de_versao("fluxo", &id, expected_version, current_version),
+            } => ApiError::version_conflict("fluxo", &id, expected_version, current_version),
             FalhaFluxo::ScriptVazio => {
-                ApiError::validacao("source", "o script está vazio: não há o que publicar")
+                ApiError::validation("source", "o script está vazio: não há o que publicar")
             }
             FalhaFluxo::ScriptInvalido(diagnostic) => flow_refusal(&diagnostic),
-            FalhaFluxo::SemRevisao => ApiError::novo(
+            FalhaFluxo::SemRevisao => ApiError::new(
                 StatusCode::CONFLICT,
                 "fluxo_nao_publicado",
                 "o fluxo ainda não tem revisão publicada: publique o rascunho antes",
             ),
-            FalhaFluxo::IrDivergente(code) => ApiError::novo(
+            FalhaFluxo::IrDivergente(code) => ApiError::new(
                 StatusCode::CONFLICT,
                 code,
                 "a revisão publicada não confere com o texto guardado: a leitura falha fechada",
             ),
-            FalhaFluxo::Interno => ApiError::interno(),
+            FalhaFluxo::Interno => ApiError::internal(),
             FalhaFluxo::TetoDeFluxos {
                 atual: count,
                 teto: limit,
-            } => ApiError::novo(
+            } => ApiError::new(
                 StatusCode::CONFLICT,
                 "teto_de_fluxos_por_org",
                 format!("a organização já tem {count} fluxos e o teto é {limit}"),
             )
-            .com_detalhes(json!({ "flows": count, "limit": limit })),
+            .with_details(json!({ "flows": count, "limit": limit })),
             FalhaFluxo::Banco(error) => ApiError::from(error),
         }
     }
@@ -179,22 +179,22 @@ impl From<FalhaFluxo> for ApiError {
     request_body = ScriptData,
     responses(
         (status = 200, description = "Compila o script e devolve `valid`, a IR, os diagnósticos (com linha e coluna) e as resoluções de departamento; não grava nada", body = Value),
-        (status = 400, description = "Corpo sem `source`", body = crate::erro::RespostaErro),
+        (status = 400, description = "Corpo sem `source`", body = crate::error::ErrorResponse),
     )
 )]
 pub async fn validate_script(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<OrgPath>,
     body: Result<Json<ScriptData>, JsonRejection>,
 ) -> Result<Json<Value>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let Json(d) = body.map_err(|_| {
-        ApiError::invalido("corpo JSON inválido: use {\"source\": \"<script do fluxo>\"}")
+        ApiError::invalid("corpo JSON inválido: use {\"source\": \"<script do fluxo>\"}")
     })?;
     if d.source.trim().is_empty() {
-        return Err(ApiError::validacao(
+        return Err(ApiError::validation(
             "source",
             "envie o texto do script em `source`",
         ));
@@ -219,17 +219,17 @@ pub async fn validate_script(
     ),
     responses(
         (status = 200, description = "Fluxos da org: `items` e `next_cursor`", body = ListJson<Value>),
-        (status = 400, description = "`status` ou `cursor` inválido", body = crate::erro::RespostaErro),
+        (status = 400, description = "`status` ou `cursor` inválido", body = crate::error::ErrorResponse),
     )
 )]
 pub async fn list(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<OrgPath>,
     Query(q): Query<FlowsQuery>,
 ) -> Result<Json<ListJson<Value>>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let status = match q.status.as_deref() {
         None | Some("") => None,
         Some(text) => Some(request_status(text)?),
@@ -259,31 +259,31 @@ pub async fn list(
     request_body = CreationData,
     responses(
         (status = 201, description = "Fluxo criado com o rascunho; com `publish: true`, a revisão 1 sai junto", body = Value),
-        (status = 409, description = "Teto de fluxos da org atingido (`teto_de_fluxos_por_org`), com `details.flows` e `details.limit`", body = crate::erro::RespostaErro),
-        (status = 422, description = "Script não passa na validação (`fluxo_invalido`), com a lista de diagnósticos; nada é gravado", body = crate::erro::RespostaErro),
+        (status = 409, description = "Teto de fluxos da org atingido (`teto_de_fluxos_por_org`), com `details.flows` e `details.limit`", body = crate::error::ErrorResponse),
+        (status = 422, description = "Script não passa na validação (`fluxo_invalido`), com a lista de diagnósticos; nada é gravado", body = crate::error::ErrorResponse),
     )
 )]
 pub async fn create(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<OrgPath>,
     body: Result<Json<CreationData>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let Json(d) = body.map_err(|_| {
-        ApiError::invalido(
+        ApiError::invalid(
             "corpo JSON inválido: use {\"source\": \"<script do fluxo>\", \"publish\": false}",
         )
     })?;
     if d.source.trim().is_empty() {
-        return Err(ApiError::validacao(
+        return Err(ApiError::validation(
             "source",
             "envie o texto do script em `source`",
         ));
     }
     let ops = Operacoes::novo(&e.store, &e.cache_fluxos, &e.config);
-    let creation = ops.criar(org, &d.source, d.publish, &Ator::token(ident.ator_id()))?;
+    let creation = ops.criar(org, &d.source, d.publish, &Ator::token(ident.actor_id()))?;
     let mut body = json_fluxo_com_rascunho(&creation.fluxo);
     match creation.publicacao {
         Some(done) => {
@@ -310,16 +310,16 @@ pub async fn create(
     ),
     responses(
         (status = 200, description = "Fluxo com o rascunho e a revisão que vale hoje (`null` se nunca publicou)", body = Value),
-        (status = 404, description = "Fluxo inexistente ou de outra org", body = crate::erro::RespostaErro),
+        (status = 404, description = "Fluxo inexistente ou de outra org", body = crate::error::ErrorResponse),
     )
 )]
 pub async fn show(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<FlowPath>,
 ) -> Result<Json<Value>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let flow = e
         .store
         .flows()
@@ -345,25 +345,25 @@ pub async fn show(
     request_body = PatchData,
     responses(
         (status = 200, description = "Fluxo alterado (só os campos enviados mudam)", body = Value),
-        (status = 400, description = "Corpo ou `status` inválido", body = crate::erro::RespostaErro),
-        (status = 404, description = "Fluxo inexistente ou de outra org", body = crate::erro::RespostaErro),
-        (status = 412, description = "Versão do fluxo diferente da atual", body = crate::erro::RespostaErro),
-        (status = 428, description = "Falta o `If-Match`", body = crate::erro::RespostaErro),
+        (status = 400, description = "Corpo ou `status` inválido", body = crate::error::ErrorResponse),
+        (status = 404, description = "Fluxo inexistente ou de outra org", body = crate::error::ErrorResponse),
+        (status = 412, description = "Versão do fluxo diferente da atual", body = crate::error::ErrorResponse),
+        (status = 428, description = "Falta o `If-Match`", body = crate::error::ErrorResponse),
     )
 )]
 pub async fn update(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<FlowPath>,
     h: HeaderMap,
     body: Result<Json<PatchData>, JsonRejection>,
 ) -> Result<Json<Value>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let id = parse_path_id::<FlowId>(&c.flow_id)?;
     let version = if_match_version(&h, "fluxo")?;
     let Json(d) = body.map_err(|_| {
-        ApiError::invalido(
+        ApiError::invalid(
             "corpo JSON inválido: use {\"name\", \"description\", \"status\", \"source\"}",
         )
     })?;
@@ -400,27 +400,27 @@ pub async fn update(
     ),
     responses(
         (status = 200, description = "Fluxo excluído: `id`, `deleted` e `abandoned_runs`", body = Value),
-        (status = 400, description = "`force` que não é `true` nem `false`", body = crate::erro::RespostaErro),
-        (status = 404, description = "Fluxo inexistente ou de outra org", body = crate::erro::RespostaErro),
-        (status = 409, description = "Há execução ativa e `force` não veio; `details.active_runs` traz a contagem, nada é apagado", body = crate::erro::RespostaErro),
+        (status = 400, description = "`force` que não é `true` nem `false`", body = crate::error::ErrorResponse),
+        (status = 404, description = "Fluxo inexistente ou de outra org", body = crate::error::ErrorResponse),
+        (status = 409, description = "Há execução ativa e `force` não veio; `details.active_runs` traz a contagem, nada é apagado", body = crate::error::ErrorResponse),
     )
 )]
 pub async fn delete(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<FlowPath>,
     Query(q): Query<ExclusionQuery>,
 ) -> Result<Json<Value>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let id = parse_path_id::<FlowId>(&c.flow_id)?;
     let force = match q.force.as_deref() {
         None | Some("") | Some("false") => false,
         Some("true") => true,
         Some(other) => {
             return Err(
-                ApiError::invalido(format!("`force` é true ou false, e veio `{other}`"))
-                    .com_detalhes(json!({ "field": "force", "value": other })),
+                ApiError::invalid(format!("`force` é true ou false, e veio `{other}`"))
+                    .with_details(json!({ "field": "force", "value": other })),
             );
         }
     };
@@ -433,7 +433,7 @@ pub async fn delete(
         .map(|(_, count)| *count)
         .sum();
     if active > 0 && !force {
-        return Err(ApiError::novo(
+        return Err(ApiError::new(
             StatusCode::CONFLICT,
             "conflict",
             format!(
@@ -441,7 +441,7 @@ pub async fn delete(
                  para abandoná-las e excluir"
             ),
         )
-        .com_detalhes(json!({ "active_runs": active })));
+        .with_details(json!({ "active_runs": active })));
     }
     let abandoned = e.store.flows().delete(org, id, force)?;
     super::audit::register(&e, &ident, Some(org), "flow_delete", "flow", id.to_string())?;
@@ -467,22 +467,22 @@ pub async fn delete(
     request_body = Option<PublicationData>,
     responses(
         (status = 201, description = "Revisão nova publicada: `revision`, `version` do fluxo e `warnings`", body = Value),
-        (status = 400, description = "`source` em branco", body = crate::erro::RespostaErro),
-        (status = 404, description = "Fluxo inexistente ou de outra org", body = crate::erro::RespostaErro),
-        (status = 412, description = "Versão do fluxo diferente da atual; nada é gravado", body = crate::erro::RespostaErro),
-        (status = 422, description = "Script não passa na validação (`fluxo_invalido`), com a lista de diagnósticos; nada é gravado", body = crate::erro::RespostaErro),
-        (status = 428, description = "Falta o `If-Match`", body = crate::erro::RespostaErro),
+        (status = 400, description = "`source` em branco", body = crate::error::ErrorResponse),
+        (status = 404, description = "Fluxo inexistente ou de outra org", body = crate::error::ErrorResponse),
+        (status = 412, description = "Versão do fluxo diferente da atual; nada é gravado", body = crate::error::ErrorResponse),
+        (status = 422, description = "Script não passa na validação (`fluxo_invalido`), com a lista de diagnósticos; nada é gravado", body = crate::error::ErrorResponse),
+        (status = 428, description = "Falta o `If-Match`", body = crate::error::ErrorResponse),
     )
 )]
 pub async fn publish(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<FlowPath>,
     h: HeaderMap,
     body: Result<Json<PublicationData>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let id = parse_path_id::<FlowId>(&c.flow_id)?;
     let version = if_match_version(&h, "fluxo")?;
     let data = match body {
@@ -492,7 +492,7 @@ pub async fn publish(
     let flow = e.store.flows().get(org, id)?;
     let source = data.source.unwrap_or_else(|| flow.rascunho_fonte.clone());
     let ops = Operacoes::novo(&e.store, &e.cache_fluxos, &e.config);
-    let done = ops.publicar(org, &flow, version, &source, &Ator::token(ident.ator_id()))?;
+    let done = ops.publicar(org, &flow, version, &source, &Ator::token(ident.actor_id()))?;
     Ok((
         StatusCode::CREATED,
         Json(json!({
@@ -518,18 +518,18 @@ pub async fn publish(
     ),
     responses(
         (status = 200, description = "Revisões em ordem de número: `items` e `next_cursor`", body = ListJson<Value>),
-        (status = 400, description = "`cursor` inválido", body = crate::erro::RespostaErro),
-        (status = 404, description = "Fluxo inexistente ou de outra org", body = crate::erro::RespostaErro),
+        (status = 400, description = "`cursor` inválido", body = crate::error::ErrorResponse),
+        (status = 404, description = "Fluxo inexistente ou de outra org", body = crate::error::ErrorResponse),
     )
 )]
 pub async fn list_revisions(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<FlowPath>,
     Query(q): Query<RevisionsQuery>,
 ) -> Result<Json<ListJson<Value>>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let id = parse_path_id::<FlowId>(&c.flow_id)?;
     let limit = q
         .limit
@@ -538,8 +538,8 @@ pub async fn list_revisions(
     let after = match q.cursor.as_deref() {
         None | Some("") => None,
         Some(text) => Some(text.parse::<u64>().map_err(|_| {
-            ApiError::invalido("cursor inválido: use o `next_cursor` da página anterior")
-                .com_detalhes(json!({ "field": "cursor", "value": text }))
+            ApiError::invalid("cursor inválido: use o `next_cursor` da página anterior")
+                .with_details(json!({ "field": "cursor", "value": text }))
         })?),
     };
     let revision = e.store.revisions().list(org, id, after, limit)?;
@@ -566,21 +566,21 @@ pub async fn list_revisions(
     ),
     responses(
         (status = 200, description = "Revisão com o texto publicado, a IR, o hash e as resoluções", body = Value),
-        (status = 400, description = "Número que não é de revisão", body = crate::erro::RespostaErro),
-        (status = 404, description = "Revisão inexistente ou fluxo de outra org", body = crate::erro::RespostaErro),
+        (status = 400, description = "Número que não é de revisão", body = crate::error::ErrorResponse),
+        (status = 404, description = "Revisão inexistente ou fluxo de outra org", body = crate::error::ErrorResponse),
     )
 )]
 pub async fn show_revision(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<RevisionPath>,
 ) -> Result<Json<Value>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let id = parse_path_id::<FlowId>(&c.flow_id)?;
     let number = c.number.parse::<u64>().map_err(|_| {
-        ApiError::invalido(format!("`{}` não é um número de revisão", c.number))
-            .com_detalhes(json!({ "field": "revision", "value": c.number }))
+        ApiError::invalid(format!("`{}` não é um número de revisão", c.number))
+            .with_details(json!({ "field": "revision", "value": c.number }))
     })?;
     let revision = e.store.revisions().get(org, id, number)?;
     Ok(Json(json_revisao_completa(&revision)))
@@ -605,25 +605,25 @@ pub async fn show_revision(
     ),
     responses(
         (status = 200, description = "Frases do que mudou e, para cada revisão, quantas execuções ativas estão nela", body = Value),
-        (status = 400, description = "`de` ou `para` que não são números de revisão", body = crate::erro::RespostaErro),
-        (status = 404, description = "Revisão inexistente ou fluxo de outra org", body = crate::erro::RespostaErro),
-        (status = 409, description = "Fluxo sem revisão publicada (`fluxo_nao_publicado`) ou IR que não confere com o texto (`ir_divergente`)", body = crate::erro::RespostaErro),
+        (status = 400, description = "`de` ou `para` que não são números de revisão", body = crate::error::ErrorResponse),
+        (status = 404, description = "Revisão inexistente ou fluxo de outra org", body = crate::error::ErrorResponse),
+        (status = 409, description = "Fluxo sem revisão publicada (`fluxo_nao_publicado`) ou IR que não confere com o texto (`ir_divergente`)", body = crate::error::ErrorResponse),
     )
 )]
 pub async fn diff(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<FlowPath>,
     Query(q): Query<DiffQuery>,
 ) -> Result<Json<Value>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let id = parse_path_id::<FlowId>(&c.flow_id)?;
     let flow = e.store.flows().get(org, id)?;
     let number = |text: &str, field: &'static str| -> Result<u64, ApiError> {
         text.parse::<u64>().map_err(|_| {
-            ApiError::invalido(format!("`{text}` não é um número de revisão"))
-                .com_detalhes(json!({ "field": field, "value": text }))
+            ApiError::invalid(format!("`{text}` não é um número de revisão"))
+                .with_details(json!({ "field": field, "value": text }))
         })
     };
     let to = match q.to.as_deref() {
@@ -653,18 +653,18 @@ pub async fn diff(
     ),
     responses(
         (status = 200, description = "Bloco do prompt que o agente veria naquela etapa, com a revisão usada", body = Value),
-        (status = 404, description = "Etapa inexistente no fluxo, ou fluxo de outra org", body = crate::erro::RespostaErro),
-        (status = 409, description = "IR que não confere com o texto publicado (`ir_divergente`)", body = crate::erro::RespostaErro),
+        (status = 404, description = "Etapa inexistente no fluxo, ou fluxo de outra org", body = crate::error::ErrorResponse),
+        (status = 409, description = "IR que não confere com o texto publicado (`ir_divergente`)", body = crate::error::ErrorResponse),
     )
 )]
 pub async fn preview(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<FlowPath>,
     Query(q): Query<PreviewQuery>,
 ) -> Result<Json<Value>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let id = parse_path_id::<FlowId>(&c.flow_id)?;
     let flow = e.store.flows().get(org, id)?;
     let ops = Operacoes::novo(&e.store, &e.cache_fluxos, &e.config);
@@ -685,23 +685,23 @@ pub async fn preview(
     request_body = ScriptData,
     responses(
         (status = 200, description = "Script na forma canônica (`source`)", body = Value),
-        (status = 400, description = "Corpo sem `source`", body = crate::erro::RespostaErro),
-        (status = 422, description = "Script não compila (`fluxo_invalido`), com a lista de diagnósticos", body = crate::erro::RespostaErro),
+        (status = 400, description = "Corpo sem `source`", body = crate::error::ErrorResponse),
+        (status = 422, description = "Script não compila (`fluxo_invalido`), com a lista de diagnósticos", body = crate::error::ErrorResponse),
     )
 )]
 pub async fn format(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<OrgPath>,
     body: Result<Json<ScriptData>, JsonRejection>,
 ) -> Result<Json<Value>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let Json(d) = body.map_err(|_| {
-        ApiError::invalido("corpo JSON inválido: use {\"source\": \"<script do fluxo>\"}")
+        ApiError::invalid("corpo JSON inválido: use {\"source\": \"<script do fluxo>\"}")
     })?;
     if d.source.trim().is_empty() {
-        return Err(ApiError::validacao(
+        return Err(ApiError::validation(
             "source",
             "envie o texto do script em `source`",
         ));

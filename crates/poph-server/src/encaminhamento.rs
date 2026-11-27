@@ -79,7 +79,7 @@ use serde_json::json;
 
 use crate::api::LIMIT_IMPORT_BYTES;
 use crate::cluster::ClusterVivo;
-use crate::erro::ApiError;
+use crate::error::ApiError;
 use crate::estado::Estado;
 
 /// Nome da instância que encaminhou.
@@ -341,7 +341,7 @@ fn cabecalho<'a>(cabecalhos: &'a HeaderMap, nome: &str) -> Result<&'a str, ApiEr
         .map(str::trim)
         .filter(|valor| !valor.is_empty())
         .ok_or_else(|| {
-            ApiError::novo(
+            ApiError::new(
                 StatusCode::UNAUTHORIZED,
                 "assinatura_invalida",
                 format!("cabeçalho `{nome}` ausente ou ilegível no encaminhamento"),
@@ -350,33 +350,33 @@ fn cabecalho<'a>(cabecalhos: &'a HeaderMap, nome: &str) -> Result<&'a str, ApiEr
 }
 
 fn assinatura_invalida(motivo: impl Into<String>) -> ApiError {
-    ApiError::novo(StatusCode::UNAUTHORIZED, "assinatura_invalida", motivo)
+    ApiError::new(StatusCode::UNAUTHORIZED, "assinatura_invalida", motivo)
 }
 
 fn rota_em_laco(motivo: impl Into<String>, detalhes: serde_json::Value) -> ApiError {
-    ApiError::novo(StatusCode::MISDIRECTED_REQUEST, "rota_em_laco", motivo).com_detalhes(detalhes)
+    ApiError::new(StatusCode::MISDIRECTED_REQUEST, "rota_em_laco", motivo).with_details(detalhes)
 }
 
 fn mapa_divergente(recebido: &str, local: &str) -> ApiError {
-    ApiError::novo(
+    ApiError::new(
         StatusCode::MISDIRECTED_REQUEST,
         "mapa_divergente",
         "o mapa do cluster de quem encaminhou não é o mesmo desta instância; \
          atualize o cluster.toml dos dois lados e recarregue",
     )
-    .com_detalhes(json!({
+    .with_details(json!({
         "fingerprint_recebido": recebido,
         "fingerprint_local": local,
     }))
 }
 
 fn instancia_fora(instancia: &str, url: &str, motivo: &str) -> ApiError {
-    ApiError::novo(
+    ApiError::new(
         StatusCode::SERVICE_UNAVAILABLE,
         "instancia_fora",
         format!("a instância `{instancia}` não respondeu: {motivo}"),
     )
-    .com_detalhes(json!({ "instancia": instancia, "url": url }))
+    .with_details(json!({ "instancia": instancia, "url": url }))
 }
 
 /// Middleware do roteamento entre instâncias: verifica quem chega de par, encaminha quem é de
@@ -487,7 +487,7 @@ async fn atender_de_par(
     let bytes = match axum::body::to_bytes(corpo, teto).await {
         Ok(bytes) => bytes,
         Err(_) => {
-            return ApiError::novo(
+            return ApiError::new(
                 StatusCode::PAYLOAD_TOO_LARGE,
                 "payload_too_large",
                 "o corpo do pedido encaminhado passa do limite desta rota",
@@ -593,7 +593,7 @@ async fn encaminhar(cluster: &ClusterVivo, org: &str, destino: &str, pedido: Req
         .into_response();
     };
     let Some(segredo) = cluster.segredo.as_ref() else {
-        return ApiError::novo(
+        return ApiError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal",
             "o cluster não tem segredo compartilhado configurado; reinicie com \
@@ -608,7 +608,7 @@ async fn encaminhar(cluster: &ClusterVivo, org: &str, destino: &str, pedido: Req
     let bytes = match axum::body::to_bytes(corpo, teto).await {
         Ok(bytes) => bytes,
         Err(_) => {
-            return ApiError::novo(
+            return ApiError::new(
                 StatusCode::PAYLOAD_TOO_LARGE,
                 "payload_too_large",
                 "o corpo do pedido passa do limite desta rota",
@@ -719,7 +719,7 @@ fn resposta_encaminhada(resposta: reqwest::Response) -> Response {
         construir = construir.header(nome, valor);
     }
     construir.body(corpo).unwrap_or_else(|_| {
-        ApiError::novo(
+        ApiError::new(
             StatusCode::BAD_GATEWAY,
             "internal",
             "não consegui montar a resposta encaminhada",

@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use clap::{Args, Subcommand};
 use poph_files::FileConfig;
-use poph_server::ChaveDeCifra;
+use poph_server::CipherKey;
 use poph_store::Store;
 use poph_store::backup::{ImportTarget, OrgSnapshot};
 use poph_store::backup_document;
@@ -130,7 +130,7 @@ fn exportar(flag: Option<PathBuf>, ambiente: &config::Ambiente, args: ExportarOr
     let chave = config::segredos(ambiente)
         .cifra
         .as_ref()
-        .and_then(|valor| ChaveDeCifra::derivar(valor.expose()).ok());
+        .and_then(|valor| CipherKey::derive(valor.expose()).ok());
     // A chave só serve para ler os **nomes** dos campos de segredo preenchidos; o valor nunca sai.
     let nomes_do_segredo = |blob: &[u8]| -> Option<Vec<String>> {
         let mapa = chave.as_ref()?.decifrar(blob).ok()?;
@@ -378,7 +378,7 @@ fn blobs_do_documento(documento: &Value) -> Result<BTreeMap<String, Vec<u8>>, St
 fn marcar_segredos(
     tabelas: &mut BTreeMap<String, Vec<Value>>,
     cifrados: &BTreeMap<String, Vec<u8>>,
-    chave: Option<&ChaveDeCifra>,
+    chave: Option<&CipherKey>,
 ) {
     let nomes = |blob: &[u8]| -> Option<Vec<String>> {
         let mapa = chave?.decifrar(blob).ok()?;
@@ -612,7 +612,7 @@ mod testes {
 
     #[test]
     fn segredo_legivel_vira_nomes_e_ilegivel_vira_nulo() {
-        let chave = ChaveDeCifra::derivar("chave-do-teste").expect("deriva");
+        let chave = CipherKey::derive("chave-do-teste").expect("deriva");
         let mut mapa = std::collections::BTreeMap::new();
         mapa.insert("token".to_owned(), "valor-secreto".to_owned());
         let blob = chave.cifrar(&mapa).expect("cifra");

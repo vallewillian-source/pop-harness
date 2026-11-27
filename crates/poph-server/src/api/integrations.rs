@@ -2,9 +2,9 @@ use std::collections::BTreeMap;
 
 use super::{ListJson, PageQuery, if_match_version, next_cursor};
 use crate::{
-    auth::Identidade,
-    cifra::ChaveDeCifra,
-    erro::{ApiError, id_da_url as parse_path_id},
+    auth::Identity,
+    cipher::CipherKey,
+    error::{ApiError, id_from_url as parse_path_id},
     estado::Estado,
     manifestos::{FalhaManifesto, validar_objeto},
 };
@@ -47,13 +47,13 @@ fn validate_status(status: Option<String>) -> Result<Option<String>, ApiError> {
     }
     Ok(status)
 }
-fn ids(org: &str, agent_id: &str, ident: &Identidade) -> Result<(OrgId, AgentId), ApiError> {
+fn ids(org: &str, agent_id: &str, ident: &Identity) -> Result<(OrgId, AgentId), ApiError> {
     let org = parse_path_id::<OrgId>(org)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     Ok((org, parse_path_id::<AgentId>(agent_id)?))
 }
 
-fn value(v: AdminIntegration, key: Option<&ChaveDeCifra>) -> Value {
+fn value(v: AdminIntegration, key: Option<&CipherKey>) -> Value {
     let filled = match (&v.encrypted_secrets, key) {
         (None, _) => Some(Vec::<String>::new()),
         (Some(_), None) => None,
@@ -99,24 +99,24 @@ fn check(
         return Ok(());
     };
     validar_objeto(values, &schema.0, field)
-        .map_err(|failure| ApiError::validacao(failure.campo, failure.motivo))
+        .map_err(|failure| ApiError::validation(failure.campo, failure.motivo))
 }
 
 async fn kind_manifest(e: &Estado, kind: &str) -> Result<Option<Manifest>, ApiError> {
     match e.manifestos.manifesto(kind).await {
         Ok(manifesto) => Ok(Some(manifesto)),
         Err(FalhaManifesto::NaoDeclarado) => Ok(None),
-        Err(failure @ FalhaManifesto::Indisponivel { .. }) => Err(ApiError::novo(
+        Err(failure @ FalhaManifesto::Indisponivel { .. }) => Err(ApiError::new(
             StatusCode::SERVICE_UNAVAILABLE,
             "manifesto_indisponivel",
             failure.mensagem(),
         )
-        .com_detalhes(json!({ "kind": kind }))),
+        .with_details(json!({ "kind": kind }))),
     }
 }
 
 fn without_manifest() -> ApiError {
-    ApiError::novo(
+    ApiError::new(
         StatusCode::UNPROCESSABLE_ENTITY,
         "manifest_indisponivel",
         "configuração de integração exige o manifesto do plugin, disponível na entrega de \
@@ -167,7 +167,7 @@ fn prepare(
         });
     }
     let key = e.chave_de_cifra.as_deref().ok_or_else(|| {
-        ApiError::novo(
+        ApiError::new(
             StatusCode::SERVICE_UNAVAILABLE,
             "cifra_indisponivel",
             "o servidor está sem a chave de cifra (`POPH_CHAVE_CIFRA`): segredo de integração não \
@@ -176,7 +176,7 @@ fn prepare(
     })?;
     let blob = key.cifrar(&secrets).map_err(|failure| {
         tracing::error!(%failure, "falha ao cifrar segredo de integração");
-        ApiError::novo(
+        ApiError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             "cifra_falhou",
             "não consegui cifrar o segredo da integração",
@@ -197,7 +197,7 @@ fn merge_secrets(
         None => BTreeMap::new(),
         Some(blob) => {
             let key = e.chave_de_cifra.as_deref().ok_or_else(|| {
-                ApiError::novo(
+                ApiError::new(
                     StatusCode::SERVICE_UNAVAILABLE,
                     "cifra_indisponivel",
                     "o servidor está sem a chave de cifra (`POPH_CHAVE_CIFRA`): não consigo ler os \
@@ -206,7 +206,7 @@ fn merge_secrets(
             })?;
             key.decifrar(blob).map_err(|failure| {
                 tracing::error!(%failure, "segredo de integração ilegível com a chave atual");
-                ApiError::novo(
+                ApiError::new(
                     StatusCode::SERVICE_UNAVAILABLE,
                     "cifra_indisponivel",
                     format!("os segredos gravados não abrem com a chave atual: {failure}"),
@@ -227,12 +227,12 @@ fn merge_secrets(
 #[utoipa::path(operation_id = "listar", get,path="/admin/v1/orgs/{org_id}/agents/{agent_id}/integrations",tag="integrations",params(("org_id"=String,Path),("agent_id"=String,Path),("limit"=Option<u32>,Query),("cursor"=Option<String>,Query)),security(("bearer"=[])),responses((status=200,description="Integrações",body=ListJson<Value>)))]
 pub async fn list(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<PathParams>,
     query: Result<Query<PageQuery>, QueryRejection>,
 ) -> Result<Json<ListJson<Value>>, ApiError> {
     let (org, agent_id) = ids(&c.org_id, &c.agent_id, &ident)?;
-    let Query(q) = query.map_err(|_| ApiError::invalido("parâmetros de paginação inválidos"))?;
+    let Query(q) = query.map_err(|_| ApiError::invalid("parâmetros de paginação inválidos"))?;
     let page = q.page()?;
     let items: Vec<_> = e
         .store
@@ -249,7 +249,7 @@ pub async fn list(
 #[utoipa::path(operation_id = "mostrar", get,path="/admin/v1/orgs/{org_id}/agents/{agent_id}/integrations/{integration_id}",tag="integrations",params(("org_id"=String,Path),("agent_id"=String,Path),("integration_id"=String,Path)),security(("bearer"=[])),responses((status=200,description="Integração",body=Value)))]
 pub async fn show(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<ItemPath>,
 ) -> Result<Json<Value>, ApiError> {
     let (org, agent_id) = ids(&c.org_id, &c.agent_id, &ident)?;
@@ -263,14 +263,14 @@ pub async fn show(
 #[utoipa::path(operation_id = "criar", post,path="/admin/v1/orgs/{org_id}/agents/{agent_id}/integrations",tag="integrations",params(("org_id"=String,Path),("agent_id"=String,Path)),security(("bearer"=[])),request_body=Dados,responses((status=201,description="Integração criada",body=Value)))]
 pub async fn create(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<PathParams>,
     body: Result<Json<Dados>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let (org, agent_id) = ids(&c.org_id, &c.agent_id, &ident)?;
-    let Json(d) = body.map_err(|_| ApiError::invalido("corpo JSON de integração inválido"))?;
+    let Json(d) = body.map_err(|_| ApiError::invalid("corpo JSON de integração inválido"))?;
     if d.connection_state.is_some() {
-        return Err(ApiError::validacao(
+        return Err(ApiError::validation(
             "connection_state",
             "não permitido na criação",
         ));
@@ -278,7 +278,7 @@ pub async fn create(
     let kind = d
         .kind
         .filter(|s| !s.trim().is_empty())
-        .ok_or_else(|| ApiError::validacao("kind", "obrigatório"))?;
+        .ok_or_else(|| ApiError::validation("kind", "obrigatório"))?;
     let status = validate_status(d.status)?.unwrap_or_else(|| "active".into());
     let send = sent_configuration(&d.config_json) || sent_secrets(&d.secrets);
     let (configuration, secrets) = match kind_manifest(&e, &kind).await? {
@@ -313,10 +313,10 @@ pub async fn create(
     ))
 }
 
-#[utoipa::path(operation_id = "atualizar", patch,path="/admin/v1/orgs/{org_id}/agents/{agent_id}/integrations/{integration_id}",tag="integrations",params(("org_id"=String,Path),("agent_id"=String,Path),("integration_id"=String,Path),("If-Match"=String,Header)),security(("bearer"=[])),request_body=Dados,responses((status=200,description="Integração alterada",body=Value),(status=412,description="Conflito",body=crate::erro::RespostaErro)))]
+#[utoipa::path(operation_id = "atualizar", patch,path="/admin/v1/orgs/{org_id}/agents/{agent_id}/integrations/{integration_id}",tag="integrations",params(("org_id"=String,Path),("agent_id"=String,Path),("integration_id"=String,Path),("If-Match"=String,Header)),security(("bearer"=[])),request_body=Dados,responses((status=200,description="Integração alterada",body=Value),(status=412,description="Conflito",body=crate::error::ErrorResponse)))]
 pub async fn update(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<ItemPath>,
     h: HeaderMap,
     body: Result<Json<Dados>, JsonRejection>,
@@ -324,13 +324,13 @@ pub async fn update(
     let (org, agent_id) = ids(&c.org_id, &c.agent_id, &ident)?;
     let id = parse_path_id::<IntegrationId>(&c.integration_id)?;
     let version = if_match_version(&h, "integração")?;
-    let Json(d) = body.map_err(|_| ApiError::invalido("corpo JSON de integração inválido"))?;
+    let Json(d) = body.map_err(|_| ApiError::invalid("corpo JSON de integração inválido"))?;
     if d.kind.is_some() {
-        return Err(ApiError::validacao("kind", "não pode ser alterado"));
+        return Err(ApiError::validation("kind", "não pode ser alterado"));
     }
     let touches_configuration = sent_configuration(&d.config_json) || sent_secrets(&d.secrets);
     if d.status.is_none() && d.connection_state.is_none() && !touches_configuration {
-        return Err(ApiError::invalido("nada a alterar"));
+        return Err(ApiError::invalid("nada a alterar"));
     }
     let status = validate_status(d.status)?;
     let prepared = if touches_configuration {
@@ -382,7 +382,7 @@ pub async fn update(
 #[utoipa::path(operation_id = "excluir", delete,path="/admin/v1/orgs/{org_id}/agents/{agent_id}/integrations/{integration_id}",tag="integrations",params(("org_id"=String,Path),("agent_id"=String,Path),("integration_id"=String,Path)),security(("bearer"=[])),responses((status=200,description="Integração excluída",body=Value)))]
 pub async fn delete(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<ItemPath>,
 ) -> Result<Json<Value>, ApiError> {
     let (org, agent_id) = ids(&c.org_id, &c.agent_id, &ident)?;

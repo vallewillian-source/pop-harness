@@ -3,9 +3,9 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use serde_json::{Value, json};
 
-use crate::auth::Identidade;
+use crate::auth::Identity;
 use crate::cluster;
-use crate::erro::ApiError;
+use crate::error::ApiError;
 use crate::estado::Estado;
 
 #[utoipa::path(
@@ -16,15 +16,12 @@ use crate::estado::Estado;
     security(("bearer" = [])),
     responses(
         (status = 200, description = "Mapa recarregado: impressão digital antes e depois, resumo dos dois mapas e o que mudou (orgs que trocaram de instância, instâncias adicionadas e removidas)", body = Value),
-        (status = 400, description = "cluster.toml inválido: o mapa anterior continua em uso (detalhe em `details.problemas`)", body = crate::erro::RespostaErro),
-        (status = 403, description = "token de org (a recarga exige token global)", body = crate::erro::RespostaErro)
+        (status = 400, description = "cluster.toml inválido: o mapa anterior continua em uso (detalhe em `details.problemas`)", body = crate::error::ErrorResponse),
+        (status = 403, description = "token de org (a recarga exige token global)", body = crate::error::ErrorResponse)
     )
 )]
-pub async fn reload(
-    State(state): State<Estado>,
-    ident: Identidade,
-) -> Result<Json<Value>, ApiError> {
-    ident.exigir_global()?;
+pub async fn reload(State(state): State<Estado>, ident: Identity) -> Result<Json<Value>, ApiError> {
+    ident.require_global()?;
     match cluster::recarregar(&state) {
         Ok(report) => Ok(Json(
             serde_json::to_value(report).unwrap_or_else(|_| json!({})),
@@ -35,12 +32,12 @@ pub async fn reload(
                 .first()
                 .cloned()
                 .unwrap_or_else(|| error.to_string());
-            Err(ApiError::novo(
+            Err(ApiError::new(
                 StatusCode::BAD_REQUEST,
                 "cluster_invalido",
                 format!("cluster.toml inválido: {first}"),
             )
-            .com_detalhes(json!({
+            .with_details(json!({
                 "arquivo": state.cluster().caminho.display().to_string(),
                 "problemas": problem,
             })))

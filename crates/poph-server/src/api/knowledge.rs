@@ -1,7 +1,7 @@
 use super::{ListJson, PageQuery, if_match_version, next_cursor, request_status};
 use crate::{
-    auth::Identidade,
-    erro::{ApiError, id_da_url as parse_path_id},
+    auth::Identity,
+    error::{ApiError, id_from_url as parse_path_id},
     estado::Estado,
 };
 use axum::{
@@ -30,16 +30,16 @@ pub struct Dados {
     description: Option<String>,
     status: Option<String>,
 }
-fn ids(c: PathParams, ident: &Identidade) -> Result<(OrgId, Option<KnowledgeGroupId>), ApiError> {
+fn ids(c: PathParams, ident: &Identity) -> Result<(OrgId, Option<KnowledgeGroupId>), ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     Ok((
         org,
         c.group_id
             .as_deref()
             .map(|s| {
                 s.parse::<KnowledgeGroupId>()
-                    .map_err(|_| ApiError::invalido("id de grupo inválido"))
+                    .map_err(|_| ApiError::invalid("id de grupo inválido"))
             })
             .transpose()?,
     ))
@@ -50,12 +50,12 @@ fn group(g: &KnowledgeGroup) -> Value {
 #[utoipa::path(operation_id = "listar", get,path="/admin/v1/orgs/{org_id}/knowledge",tag="knowledge",params(("org_id"=String,Path),("limit"=Option<u32>,Query),("cursor"=Option<String>,Query)),security(("bearer"=[])),responses((status=200,description="Grupos",body=ListJson<Value>)))]
 pub async fn list(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<PathParams>,
     q: Result<Query<PageQuery>, QueryRejection>,
 ) -> Result<Json<ListJson<Value>>, ApiError> {
     let (org, _) = ids(c, &ident)?;
-    let Query(q) = q.map_err(|_| ApiError::invalido("parâmetros de paginação inválidos"))?;
+    let Query(q) = q.map_err(|_| ApiError::invalid("parâmetros de paginação inválidos"))?;
     let p = q.page()?;
     let items: Vec<_> = e
         .store
@@ -72,11 +72,11 @@ pub async fn list(
 #[utoipa::path(operation_id = "mostrar", get,path="/admin/v1/orgs/{org_id}/knowledge/{group_id}",tag="knowledge",params(("org_id"=String,Path),("group_id"=String,Path)),security(("bearer"=[])),responses((status=200,description="Grupo",body=Value)))]
 pub async fn show(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<PathParams>,
 ) -> Result<Json<Value>, ApiError> {
     let (org, id) = ids(c, &ident)?;
-    let id = id.ok_or_else(|| ApiError::invalido("grupo ausente"))?;
+    let id = id.ok_or_else(|| ApiError::invalid("grupo ausente"))?;
     let mut value = group(&e.store.knowledge().get_group(org, id)?);
     let agents = e.store.knowledge().agents_from_group(org, id)?;
     value["agents"] = json!(agents.iter().map(ToString::to_string).collect::<Vec<_>>());
@@ -85,21 +85,21 @@ pub async fn show(
 #[utoipa::path(operation_id = "criar", post,path="/admin/v1/orgs/{org_id}/knowledge",tag="knowledge",params(("org_id"=String,Path)),security(("bearer"=[])),request_body=Dados,responses((status=201,description="Criado",body=Value)))]
 pub async fn create(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<PathParams>,
     body: Result<Json<Dados>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let (org, _) = ids(c, &ident)?;
-    let Json(d) = body.map_err(|_| ApiError::invalido("corpo JSON inválido"))?;
+    let Json(d) = body.map_err(|_| ApiError::invalid("corpo JSON inválido"))?;
     if d.status.is_some() {
-        return Err(ApiError::invalido("status não é aceito na criação"));
+        return Err(ApiError::invalid("status não é aceito na criação"));
     }
     let g = e.store.knowledge().create_group(
         org,
         NewKnowledgeGroup {
             name: d
                 .name
-                .ok_or_else(|| ApiError::invalido("name é obrigatório"))?,
+                .ok_or_else(|| ApiError::invalid("name é obrigatório"))?,
             description: d.description.unwrap_or_default(),
         },
     )?;
@@ -113,18 +113,18 @@ pub async fn create(
     )?;
     Ok((StatusCode::CREATED, Json(group(&g))))
 }
-#[utoipa::path(operation_id = "atualizar", patch,path="/admin/v1/orgs/{org_id}/knowledge/{group_id}",tag="knowledge",params(("org_id"=String,Path),("group_id"=String,Path),("If-Match"=String,Header)),security(("bearer"=[])),request_body=Dados,responses((status=200,description="Alterado",body=Value),(status=412,description="Conflito",body=crate::erro::RespostaErro)))]
+#[utoipa::path(operation_id = "atualizar", patch,path="/admin/v1/orgs/{org_id}/knowledge/{group_id}",tag="knowledge",params(("org_id"=String,Path),("group_id"=String,Path),("If-Match"=String,Header)),security(("bearer"=[])),request_body=Dados,responses((status=200,description="Alterado",body=Value),(status=412,description="Conflito",body=crate::error::ErrorResponse)))]
 pub async fn update(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<PathParams>,
     h: HeaderMap,
     body: Result<Json<Dados>, JsonRejection>,
 ) -> Result<Json<Value>, ApiError> {
     let (org, id) = ids(c, &ident)?;
-    let id = id.ok_or_else(|| ApiError::invalido("grupo ausente"))?;
+    let id = id.ok_or_else(|| ApiError::invalid("grupo ausente"))?;
     let version = if_match_version(&h, "grupo")?;
-    let Json(d) = body.map_err(|_| ApiError::invalido("corpo JSON inválido"))?;
+    let Json(d) = body.map_err(|_| ApiError::invalid("corpo JSON inválido"))?;
     let g = e.store.knowledge().update_group(
         org,
         id,
@@ -151,15 +151,15 @@ pub async fn update(
 #[utoipa::path(operation_id = "excluir", delete,path="/admin/v1/orgs/{org_id}/knowledge/{group_id}",tag="knowledge",params(("org_id"=String,Path),("group_id"=String,Path),("force"=Option<bool>,Query)),security(("bearer"=[])),responses((status=200,description="Excluído",body=Value)))]
 pub async fn delete(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<PathParams>,
     q: Result<Query<ConfirmExclusion>, QueryRejection>,
 ) -> Result<Json<Value>, ApiError> {
     let (org, id) = ids(c, &ident)?;
-    let id = id.ok_or_else(|| ApiError::invalido("grupo ausente"))?;
-    let Query(q) = q.map_err(|_| ApiError::invalido("parâmetro force inválido"))?;
+    let id = id.ok_or_else(|| ApiError::invalid("grupo ausente"))?;
+    let Query(q) = q.map_err(|_| ApiError::invalid("parâmetro force inválido"))?;
     if !q.force.unwrap_or(false) {
-        return Err(ApiError::conflito(
+        return Err(ApiError::conflict(
             "grupo pode conter itens e vínculos; confirme com force=true",
         ));
     }
@@ -203,19 +203,19 @@ pub struct ItemData {
 }
 fn ids_item(
     c: ItemPath,
-    ident: &Identidade,
+    ident: &Identity,
 ) -> Result<(OrgId, KnowledgeGroupId, Option<poph_types::KnowledgeItemId>), ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let group = c
         .group_id
         .parse()
-        .map_err(|_| ApiError::invalido("id de grupo inválido"))?;
+        .map_err(|_| ApiError::invalid("id de grupo inválido"))?;
     let item = c
         .item_id
         .map(|s| {
             s.parse()
-                .map_err(|_| ApiError::invalido("id de item inválido"))
+                .map_err(|_| ApiError::invalid("id de item inválido"))
         })
         .transpose()?;
     Ok((org, group, item))
@@ -231,7 +231,7 @@ fn check_item(
 ) -> Result<poph_store::KnowledgeItem, ApiError> {
     let i = e.store.knowledge().get_item(org, id)?;
     if i.group_id != group {
-        return Err(ApiError::novo(
+        return Err(ApiError::new(
             StatusCode::NOT_FOUND,
             "not_found",
             "item não pertence ao grupo",
@@ -242,13 +242,13 @@ fn check_item(
 #[utoipa::path(operation_id = "listar_itens", get,path="/admin/v1/orgs/{org_id}/knowledge/{group_id}/items",tag="knowledge",params(("org_id"=String,Path),("group_id"=String,Path),("limit"=Option<u32>,Query),("cursor"=Option<String>,Query)),security(("bearer"=[])),responses((status=200,description="Itens",body=ListJson<Value>)))]
 pub async fn list_items(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<ItemPath>,
     q: Result<Query<PageQuery>, QueryRejection>,
 ) -> Result<Json<ListJson<Value>>, ApiError> {
     let (org, g, _) = ids_item(c, &ident)?;
     e.store.knowledge().get_group(org, g)?;
-    let Query(q) = q.map_err(|_| ApiError::invalido("parâmetros de paginação inválidos"))?;
+    let Query(q) = q.map_err(|_| ApiError::invalid("parâmetros de paginação inválidos"))?;
     let p = q.page()?;
     let items: Vec<_> = e
         .store
@@ -265,7 +265,7 @@ pub async fn list_items(
 #[utoipa::path(operation_id = "mostrar_item", get,path="/admin/v1/orgs/{org_id}/knowledge/{group_id}/items/{item_id}",tag="knowledge",params(("org_id"=String,Path),("group_id"=String,Path),("item_id"=String,Path)),security(("bearer"=[])),responses((status=200,description="Item",body=Value)))]
 pub async fn show_item(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<ItemPath>,
 ) -> Result<Json<Value>, ApiError> {
     let (org, g, id) = ids_item(c, &ident)?;
@@ -273,20 +273,20 @@ pub async fn show_item(
         &e,
         org,
         g,
-        id.ok_or_else(|| ApiError::invalido("item ausente"))?,
+        id.ok_or_else(|| ApiError::invalid("item ausente"))?,
     )?)))
 }
 #[utoipa::path(operation_id = "criar_item", post,path="/admin/v1/orgs/{org_id}/knowledge/{group_id}/items",tag="knowledge",params(("org_id"=String,Path),("group_id"=String,Path)),security(("bearer"=[])),request_body=ItemData,responses((status=201,description="Criado",body=Value)))]
 pub async fn create_item(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<ItemPath>,
     body: Result<Json<ItemData>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let (org, g, _) = ids_item(c, &ident)?;
-    let Json(d) = body.map_err(|_| ApiError::invalido("corpo JSON inválido"))?;
+    let Json(d) = body.map_err(|_| ApiError::invalid("corpo JSON inválido"))?;
     if d.status.is_some() || d.group_id.is_some() {
-        return Err(ApiError::invalido(
+        return Err(ApiError::invalid(
             "status e group_id não são aceitos na criação",
         ));
     }
@@ -296,10 +296,10 @@ pub async fn create_item(
             group_id: g,
             title: d
                 .title
-                .ok_or_else(|| ApiError::invalido("title é obrigatório"))?,
+                .ok_or_else(|| ApiError::invalid("title é obrigatório"))?,
             content: d
                 .content
-                .ok_or_else(|| ApiError::invalido("content é obrigatório"))?,
+                .ok_or_else(|| ApiError::invalid("content é obrigatório"))?,
             tags: d.tags.unwrap_or_default(),
             position: d.position.unwrap_or_default(),
         },
@@ -317,25 +317,25 @@ pub async fn create_item(
     value["index_warning"] = json!(notice);
     Ok((StatusCode::CREATED, Json(value)))
 }
-#[utoipa::path(operation_id = "atualizar_item", patch,path="/admin/v1/orgs/{org_id}/knowledge/{group_id}/items/{item_id}",tag="knowledge",params(("org_id"=String,Path),("group_id"=String,Path),("item_id"=String,Path),("If-Match"=String,Header)),security(("bearer"=[])),request_body=ItemData,responses((status=200,description="Alterado",body=Value),(status=412,description="Conflito",body=crate::erro::RespostaErro)))]
+#[utoipa::path(operation_id = "atualizar_item", patch,path="/admin/v1/orgs/{org_id}/knowledge/{group_id}/items/{item_id}",tag="knowledge",params(("org_id"=String,Path),("group_id"=String,Path),("item_id"=String,Path),("If-Match"=String,Header)),security(("bearer"=[])),request_body=ItemData,responses((status=200,description="Alterado",body=Value),(status=412,description="Conflito",body=crate::error::ErrorResponse)))]
 pub async fn update_item(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<ItemPath>,
     h: HeaderMap,
     body: Result<Json<ItemData>, JsonRejection>,
 ) -> Result<Json<Value>, ApiError> {
     let (org, g, id) = ids_item(c, &ident)?;
-    let id = id.ok_or_else(|| ApiError::invalido("item ausente"))?;
+    let id = id.ok_or_else(|| ApiError::invalid("item ausente"))?;
     check_item(&e, org, g, id)?;
     let version = if_match_version(&h, "item")?;
-    let Json(d) = body.map_err(|_| ApiError::invalido("corpo JSON inválido"))?;
+    let Json(d) = body.map_err(|_| ApiError::invalid("corpo JSON inválido"))?;
     let new_group = d
         .group_id
         .as_deref()
         .map(|v| {
             v.parse::<KnowledgeGroupId>()
-                .map_err(|_| ApiError::invalido("id de grupo inválido"))
+                .map_err(|_| ApiError::invalid("id de grupo inválido"))
         })
         .transpose()?;
     let i = e.store.knowledge().update_item(
@@ -371,11 +371,11 @@ pub async fn update_item(
 #[utoipa::path(operation_id = "excluir_item", delete,path="/admin/v1/orgs/{org_id}/knowledge/{group_id}/items/{item_id}",tag="knowledge",params(("org_id"=String,Path),("group_id"=String,Path),("item_id"=String,Path)),security(("bearer"=[])),responses((status=200,description="Excluído",body=Value)))]
 pub async fn delete_item(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<ItemPath>,
 ) -> Result<Json<Value>, ApiError> {
     let (org, g, id) = ids_item(c, &ident)?;
-    let id = id.ok_or_else(|| ApiError::invalido("item ausente"))?;
+    let id = id.ok_or_else(|| ApiError::invalid("item ausente"))?;
     check_item(&e, org, g, id)?;
     e.store.knowledge().delete_item(org, id)?;
     super::audit::register(
@@ -400,17 +400,17 @@ pub struct AgentPath {
 }
 fn agent_ids(
     c: AgentPath,
-    ident: &Identidade,
+    ident: &Identity,
 ) -> Result<(OrgId, poph_types::AgentId, Option<KnowledgeGroupId>), ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let agent_id = parse_path_id::<poph_types::AgentId>(&c.agent_id)?;
     let group = c
         .group_id
         .as_deref()
         .map(|s| {
             s.parse::<KnowledgeGroupId>()
-                .map_err(|_| ApiError::invalido("id de grupo inválido"))
+                .map_err(|_| ApiError::invalid("id de grupo inválido"))
         })
         .transpose()?;
     Ok((org, agent_id, group))
@@ -419,11 +419,11 @@ fn agent_ids(
 #[utoipa::path(operation_id = "vincular", post,path="/admin/v1/orgs/{org_id}/agents/{agent_id}/knowledge/{group_id}",tag="knowledge",params(("org_id"=String,Path),("agent_id"=String,Path),("group_id"=String,Path)),security(("bearer"=[])),responses((status=200,description="Vínculo criado",body=Value)))]
 pub async fn link(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<AgentPath>,
 ) -> Result<Json<Value>, ApiError> {
     let (org, agent_id, group) = agent_ids(c, &ident)?;
-    let group = group.ok_or_else(|| ApiError::invalido("grupo ausente"))?;
+    let group = group.ok_or_else(|| ApiError::invalid("grupo ausente"))?;
     e.store.knowledge().link_agent(org, agent_id, group)?;
     super::audit::register(
         &e,
@@ -441,11 +441,11 @@ pub async fn link(
 #[utoipa::path(operation_id = "desvincular", delete,path="/admin/v1/orgs/{org_id}/agents/{agent_id}/knowledge/{group_id}",tag="knowledge",params(("org_id"=String,Path),("agent_id"=String,Path),("group_id"=String,Path)),security(("bearer"=[])),responses((status=200,description="Vínculo removido",body=Value)))]
 pub async fn unlink(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<AgentPath>,
 ) -> Result<Json<Value>, ApiError> {
     let (org, agent_id, group) = agent_ids(c, &ident)?;
-    let group = group.ok_or_else(|| ApiError::invalido("grupo ausente"))?;
+    let group = group.ok_or_else(|| ApiError::invalid("grupo ausente"))?;
     e.store.agents().get(org, agent_id)?;
     e.store.knowledge().get_group(org, group)?;
     let change = e.store.knowledge().unlink_agent(org, agent_id, group)?;
@@ -465,7 +465,7 @@ pub async fn unlink(
 #[utoipa::path(operation_id = "reindexar", post,path="/admin/v1/orgs/{org_id}/agents/{agent_id}/knowledge/reindex",tag="knowledge",params(("org_id"=String,Path),("agent_id"=String,Path)),security(("bearer"=[])),responses((status=200,description="Índice sincronizado",body=Value)))]
 pub async fn reindex(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<AgentPath>,
 ) -> Result<Json<Value>, ApiError> {
     let (org, agent_id, _) = agent_ids(c, &ident)?;
@@ -502,9 +502,9 @@ async fn synchronise(
     };
     let model = tokio::task::spawn_blocking(move || OrtEmbedder::open_model(&config, None))
         .await
-        .map_err(|_| ApiError::interno())?
+        .map_err(|_| ApiError::internal())?
         .map_err(|_| {
-            ApiError::novo(
+            ApiError::new(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "embedding_unavailable",
                 "modelo de embedding indisponível; instale o modelo",
@@ -514,15 +514,15 @@ async fn synchronise(
     let model: Arc<dyn Embedder> = Arc::new(model);
     let queue = Arc::new(
         EmbeddingQueue::start(model, QueueConfig::default(), None)
-            .map_err(|_| ApiError::interno())?,
+            .map_err(|_| ApiError::internal())?,
     );
     let adapter = Arc::new(QueuedEmbedder::new(queue, org, identity));
     let (index, _) = Index::open(e.store.rag_path(), adapter, IndexConfig::default())
-        .map_err(|_| ApiError::interno())?;
+        .map_err(|_| ApiError::internal())?;
     let base = poph_agent::KnowledgeBase::new(Arc::clone(&e.store), Arc::new(index));
     base.synchronise_agent(org, agent_id)
         .await
-        .map_err(|_| ApiError::interno())
+        .map_err(|_| ApiError::internal())
 }
 
 async fn sync_notice(

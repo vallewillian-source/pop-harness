@@ -1,8 +1,8 @@
 use super::orgs::OrgPath;
 use super::{ListJson, PageQuery, next_cursor};
 use crate::{
-    auth::Identidade,
-    erro::{ApiError, id_da_url as parse_path_id},
+    auth::Identity,
+    error::{ApiError, id_from_url as parse_path_id},
     estado::Estado,
 };
 use axum::{
@@ -41,13 +41,13 @@ fn product_json(p: &poph_store::Product) -> Value {
 #[utoipa::path(get, path="/admin/v1/orgs/{org_id}/products", tag="products", operation_id="produtos_listar", security(("bearer"=[])), params(("org_id"=String, Path), ("limit"=Option<u32>, Query), ("cursor"=Option<String>, Query), ("all"=Option<bool>, Query)), responses((status=200, description="Produtos", body=ListJson<Value>)))]
 pub async fn list(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<OrgPath>,
     query: Result<Query<ProductsQuery>, QueryRejection>,
 ) -> Result<Json<ListJson<Value>>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
-    let Query(q) = query.map_err(|_| ApiError::invalido("parâmetros de paginação inválidos"))?;
+    ident.require_org(org)?;
+    let Query(q) = query.map_err(|_| ApiError::invalid("parâmetros de paginação inválidos"))?;
     let page = q.page.page()?;
     let products = if q.all.unwrap_or(false) {
         e.store.products().list(org, page)?
@@ -61,14 +61,14 @@ pub async fn list(
     Ok(Json(ListJson { items, next_cursor }))
 }
 
-#[utoipa::path(get, path="/admin/v1/orgs/{org_id}/products/{product_id}", tag="products", operation_id="produtos_mostrar", security(("bearer"=[])), params(("org_id"=String, Path), ("product_id"=String, Path)), responses((status=200, description="Produto", body=Value), (status=404, description="Não encontrado", body=crate::erro::RespostaErro)))]
+#[utoipa::path(get, path="/admin/v1/orgs/{org_id}/products/{product_id}", tag="products", operation_id="produtos_mostrar", security(("bearer"=[])), params(("org_id"=String, Path), ("product_id"=String, Path)), responses((status=200, description="Produto", body=Value), (status=404, description="Não encontrado", body=crate::error::ErrorResponse)))]
 pub async fn show(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<ProductPath>,
 ) -> Result<Json<Value>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let id = parse_path_id::<ProductId>(&c.product_id)?;
     Ok(Json(product_json(&e.store.products().get(org, id)?)))
 }
@@ -95,13 +95,13 @@ pub struct ProductData {
 #[utoipa::path(operation_id = "criar", post,path="/admin/v1/orgs/{org_id}/products",tag="products",security(("bearer"=[])),params(("org_id"=String,Path)),request_body=ProductData,responses((status=201,description="Produto criado",body=Value)))]
 pub async fn create(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<OrgPath>,
     body: Result<Json<ProductData>, JsonRejection>,
 ) -> Result<(axum::http::StatusCode, Json<Value>), ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
-    let Json(d) = body.map_err(|_| ApiError::invalido("corpo JSON de produto inválido"))?;
+    ident.require_org(org)?;
+    let Json(d) = body.map_err(|_| ApiError::invalid("corpo JSON de produto inválido"))?;
     let new_product = poph_store::NewProduct {
         category_id: d
             .category_id
@@ -110,7 +110,7 @@ pub async fn create(
             .transpose()?,
         name: d
             .name
-            .ok_or_else(|| ApiError::validacao("name", "campo obrigatório"))?,
+            .ok_or_else(|| ApiError::validation("name", "campo obrigatório"))?,
         slug: d.slug,
         aliases: d.aliases.unwrap_or_default(),
         description: d.description.unwrap_or_default(),
@@ -123,7 +123,7 @@ pub async fn create(
         tags: d.tags.unwrap_or_default(),
     };
     if d.status.is_some() {
-        return Err(ApiError::validacao("status", "não permitido na criação"));
+        return Err(ApiError::validation("status", "não permitido na criação"));
     }
     let p = e.store.products().create(org, new_product)?;
     super::audit::register(&e, &ident, Some(org), "create", "product", p.id.to_string())?;
@@ -132,19 +132,19 @@ pub async fn create(
     Ok((axum::http::StatusCode::CREATED, Json(response)))
 }
 
-#[utoipa::path(operation_id = "atualizar", patch,path="/admin/v1/orgs/{org_id}/products/{product_id}",tag="products",security(("bearer"=[])),params(("org_id"=String,Path),("product_id"=String,Path),("If-Match"=String,Header)),request_body=ProductData,responses((status=200,description="Produto alterado",body=Value),(status=412,description="Conflito",body=crate::erro::RespostaErro)))]
+#[utoipa::path(operation_id = "atualizar", patch,path="/admin/v1/orgs/{org_id}/products/{product_id}",tag="products",security(("bearer"=[])),params(("org_id"=String,Path),("product_id"=String,Path),("If-Match"=String,Header)),request_body=ProductData,responses((status=200,description="Produto alterado",body=Value),(status=412,description="Conflito",body=crate::error::ErrorResponse)))]
 pub async fn update(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<ProductPath>,
     headers: axum::http::HeaderMap,
     body: Result<Json<ProductData>, JsonRejection>,
 ) -> Result<Json<Value>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let id = parse_path_id::<ProductId>(&c.product_id)?;
     let version = super::if_match_version(&headers, "produto")?;
-    let Json(d) = body.map_err(|_| ApiError::invalido("corpo JSON de produto inválido"))?;
+    let Json(d) = body.map_err(|_| ApiError::invalid("corpo JSON de produto inválido"))?;
     let change = poph_store::ProductChange {
         category_id: d
             .category_id
@@ -198,30 +198,30 @@ pub struct ExclusionProduct {
     ),
     responses(
         (status = 200, description = "Produto excluído", body = Value),
-        (status = 404, description = "Produto não encontrado", body = crate::erro::RespostaErro),
-        (status = 409, description = "Produto está em itens de carrinho e faltou force", body = crate::erro::RespostaErro)
+        (status = 404, description = "Produto não encontrado", body = crate::error::ErrorResponse),
+        (status = 409, description = "Produto está em itens de carrinho e faltou force", body = crate::error::ErrorResponse)
     )
 )]
 pub async fn delete(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<ProductPath>,
     Query(deletion): Query<ExclusionProduct>,
 ) -> Result<Json<Value>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let id = parse_path_id::<ProductId>(&c.product_id)?;
     let forced = deletion.force.unwrap_or(false);
     if !forced {
         let refs = e.store.products().references(org, id)?;
         if refs.cart_items > 0 {
-            return Err(ApiError::conflito(format!(
+            return Err(ApiError::conflict(format!(
                 "o produto está em {} item(ns) de {} carrinho(s); excluir faz esses itens ficarem \
                  como \"produto removido do catálogo\" (o preço gravado continua). \
                  Para confirmar, repita com force=true",
                 refs.cart_items, refs.carts
             ))
-            .com_detalhes(json!({
+            .with_details(json!({
                 "itens_de_carrinho": refs.cart_items,
                 "carrinhos": refs.carts
             })));

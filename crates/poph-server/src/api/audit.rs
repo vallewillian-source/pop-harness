@@ -1,10 +1,10 @@
-use crate::{auth::Identidade, erro::ApiError, estado::Estado};
+use crate::{auth::Identity, error::ApiError, estado::Estado};
 use poph_store::NewAuditEntry;
 use poph_types::OrgId;
 
 pub(super) fn register(
     state: &Estado,
-    identity: &Identidade,
+    identity: &Identity,
     org: Option<OrgId>,
     acao: &str,
     entity: &str,
@@ -14,7 +14,7 @@ pub(super) fn register(
         org,
         NewAuditEntry {
             ator_tipo: "admin_token".into(),
-            actor_id: Some(identity.ator_id()),
+            actor_id: Some(identity.actor_id()),
             acao: acao.into(),
             entity: entity.into(),
             entity_id: Some(id),

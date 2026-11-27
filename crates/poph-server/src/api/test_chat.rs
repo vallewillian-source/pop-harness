@@ -22,8 +22,8 @@ use utoipa::ToSchema;
 
 use super::{ListJson, PageQuery, if_match_version, next_cursor};
 use crate::{
-    auth::Identidade,
-    erro::{ApiError, id_da_url as parse_path_id},
+    auth::Identity,
+    error::{ApiError, id_from_url as parse_path_id},
     estado::Estado,
 };
 
@@ -181,7 +181,7 @@ fn agent_and_conversation(
     state.store.agents().get(org, agent_id)?;
     let conversation = state.store.conversations().get(org, conversation)?;
     if conversation.agent_id != agent_id || conversation.canal != CHANNEL_OF_TEST {
-        return Err(ApiError::nao_encontrado(
+        return Err(ApiError::not_found(
             "conversa de teste",
             &conversation.id.to_string(),
         ));
@@ -189,14 +189,14 @@ fn agent_and_conversation(
     Ok(conversation)
 }
 
-#[utoipa::path(post, path="/admin/v1/orgs/{org_id}/agents/{agent_id}/test-chat", tag="test-chat", operation_id="teste_chat_criar", security(("bearer"=[])), params(("org_id"=String, Path), ("agent_id"=String, Path)), responses((status=201, description="Conversa de teste criada", body=Value), (status=404, description="Agente não encontrado", body=crate::erro::RespostaErro)))]
+#[utoipa::path(post, path="/admin/v1/orgs/{org_id}/agents/{agent_id}/test-chat", tag="test-chat", operation_id="teste_chat_criar", security(("bearer"=[])), params(("org_id"=String, Path), ("agent_id"=String, Path)), responses((status=201, description="Conversa de teste criada", body=Value), (status=404, description="Agente não encontrado", body=crate::error::ErrorResponse)))]
 pub async fn create(
     State(state): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<AgentPath>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let agent_id = parse_path_id::<AgentId>(&c.agent_id)?;
     state.store.agents().get(org, agent_id)?;
 
@@ -227,12 +227,12 @@ pub async fn create(
 #[utoipa::path(get, path="/admin/v1/orgs/{org_id}/agents/{agent_id}/test-chat", tag="test-chat", operation_id="teste_chat_listar", security(("bearer"=[])), params(("org_id"=String, Path), ("agent_id"=String, Path), ("limit"=Option<u32>, Query), ("cursor"=Option<String>, Query)), responses((status=200, description="Conversas de teste do agente, mais recentes primeiro", body=ListJson<Value>)))]
 pub async fn list(
     State(state): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<AgentPath>,
     Query(q): Query<PageQuery>,
 ) -> Result<Json<ListJson<Value>>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let agent_id = parse_path_id::<AgentId>(&c.agent_id)?;
     state.store.agents().get(org, agent_id)?;
     let page = q.page()?;
@@ -241,7 +241,7 @@ pub async fn list(
         .after
         .map(|id| id.to_string().parse::<ConversationId>())
         .transpose()
-        .map_err(|_| ApiError::invalido("cursor não é um id de conversa"))?;
+        .map_err(|_| ApiError::invalid("cursor não é um id de conversa"))?;
     let conversations = state.store.conversations().list_by_agent_channel(
         org,
         agent_id,
@@ -266,14 +266,14 @@ pub async fn list(
     Ok(Json(ListJson { items, next_cursor }))
 }
 
-#[utoipa::path(get, path="/admin/v1/orgs/{org_id}/agents/{agent_id}/test-chat/{conversation_id}", tag="test-chat", operation_id="teste_chat_historico", security(("bearer"=[])), params(("org_id"=String, Path), ("agent_id"=String, Path), ("conversation_id"=String, Path)), responses((status=200, description="Conversa, mensagens e turnos (com o que o painel do porquê lê)", body=Value), (status=404, description="Não encontrado", body=crate::erro::RespostaErro)))]
+#[utoipa::path(get, path="/admin/v1/orgs/{org_id}/agents/{agent_id}/test-chat/{conversation_id}", tag="test-chat", operation_id="teste_chat_historico", security(("bearer"=[])), params(("org_id"=String, Path), ("agent_id"=String, Path), ("conversation_id"=String, Path)), responses((status=200, description="Conversa, mensagens e turnos (com o que o painel do porquê lê)", body=Value), (status=404, description="Não encontrado", body=crate::error::ErrorResponse)))]
 pub async fn history(
     State(state): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<ConversationPath>,
 ) -> Result<Json<Value>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let agent_id = parse_path_id::<AgentId>(&c.agent_id)?;
     let conversation_id = parse_path_id::<ConversationId>(&c.conversation_id)?;
     let conversation = agent_and_conversation(&state, org, agent_id, conversation_id)?;
@@ -347,14 +347,14 @@ pub struct AttachmentPath {
 #[doc = " O escopo é o caminho inteiro — org, agente, conversa, mensagem e anexo: qualquer id de outra"]
 #[doc = " org (ou de outra conversa/agente da mesma org) dá `404`, e o conteúdo nunca é servido fora do"]
 #[doc = " escopo. Blob ausente no disco também dá `404` com a mesma mensagem genérica."]
-#[utoipa::path(get, path="/admin/v1/orgs/{org_id}/agents/{agent_id}/test-chat/{conversation_id}/messages/{message_id}/attachments/{attachment_id}/content", tag="test-chat", operation_id="teste_chat_anexo_conteudo", security(("bearer"=[])), params(("org_id"=String, Path), ("agent_id"=String, Path), ("conversation_id"=String, Path), ("message_id"=String, Path), ("attachment_id"=String, Path)), responses((status=200, description="Conteúdo do anexo (bytes com o MIME gravado e o sha256 no cabeçalho `x-content-sha256`)", body=Vec<u8>, content_type="application/octet-stream"), (status=403, description="Org de outro token", body=crate::erro::RespostaErro), (status=404, description="Anexo ou conteúdo não encontrado", body=crate::erro::RespostaErro)))]
+#[utoipa::path(get, path="/admin/v1/orgs/{org_id}/agents/{agent_id}/test-chat/{conversation_id}/messages/{message_id}/attachments/{attachment_id}/content", tag="test-chat", operation_id="teste_chat_anexo_conteudo", security(("bearer"=[])), params(("org_id"=String, Path), ("agent_id"=String, Path), ("conversation_id"=String, Path), ("message_id"=String, Path), ("attachment_id"=String, Path)), responses((status=200, description="Conteúdo do anexo (bytes com o MIME gravado e o sha256 no cabeçalho `x-content-sha256`)", body=Vec<u8>, content_type="application/octet-stream"), (status=403, description="Org de outro token", body=crate::error::ErrorResponse), (status=404, description="Anexo ou conteúdo não encontrado", body=crate::error::ErrorResponse)))]
 pub async fn attachment_content(
     State(state): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<AttachmentPath>,
 ) -> Result<axum::response::Response, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let agent_id = parse_path_id::<AgentId>(&c.agent_id)?;
     let conversation = parse_path_id::<ConversationId>(&c.conversation_id)?;
     let message = parse_path_id::<MessageId>(&c.message_id)?;
@@ -365,13 +365,13 @@ pub async fn attachment_content(
     let attachment = attachments
         .into_iter()
         .find(|a| a.id == attachment)
-        .ok_or_else(|| ApiError::nao_encontrado("anexo", &c.attachment_id))?;
+        .ok_or_else(|| ApiError::not_found("anexo", &c.attachment_id))?;
     let folder = state.config.blobs();
     let sha256 = attachment.sha256.clone();
     let bytes =
         tokio::task::spawn_blocking(move || super::content::read_blob(&folder, org, &sha256))
             .await
-            .map_err(|_| ApiError::interno())??;
+            .map_err(|_| ApiError::internal())??;
     Ok(super::content::response(
         bytes,
         &attachment.mime,
@@ -380,15 +380,15 @@ pub async fn attachment_content(
     ))
 }
 
-#[utoipa::path(post, path="/admin/v1/orgs/{org_id}/agents/{agent_id}/test-chat/{conversation_id}/reopen", tag="test-chat", operation_id="teste_chat_reabrir", security(("bearer"=[])), params(("org_id"=String, Path), ("agent_id"=String, Path), ("conversation_id"=String, Path), ("If-Match"=String, Header)), responses((status=200, description="Conversa reaberta", body=Value), (status=412, description="Versão desatualizada", body=crate::erro::RespostaErro)))]
+#[utoipa::path(post, path="/admin/v1/orgs/{org_id}/agents/{agent_id}/test-chat/{conversation_id}/reopen", tag="test-chat", operation_id="teste_chat_reabrir", security(("bearer"=[])), params(("org_id"=String, Path), ("agent_id"=String, Path), ("conversation_id"=String, Path), ("If-Match"=String, Header)), responses((status=200, description="Conversa reaberta", body=Value), (status=412, description="Versão desatualizada", body=crate::error::ErrorResponse)))]
 pub async fn reopen(
     State(state): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<ConversationPath>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let agent_id = parse_path_id::<AgentId>(&c.agent_id)?;
     let conversation_id = parse_path_id::<ConversationId>(&c.conversation_id)?;
     agent_and_conversation(&state, org, agent_id, conversation_id)?;
@@ -397,7 +397,7 @@ pub async fn reopen(
         org,
         conversation_id,
         version,
-        ident.ator_id(),
+        ident.actor_id(),
     )?;
     let count = state
         .store
@@ -407,20 +407,20 @@ pub async fn reopen(
     Ok(Json(conversation_json(&conversation, count)))
 }
 
-#[utoipa::path(post, path="/admin/v1/orgs/{org_id}/agents/{agent_id}/test-chat/{conversation_id}/messages", tag="test-chat", operation_id="teste_chat_mensagem", security(("bearer"=[])), params(("org_id"=String, Path), ("agent_id"=String, Path), ("conversation_id"=String, Path)), request_body(content = inline(TestMessageData), content_type = "multipart/form-data"), responses((status=200, description="Turno em `text/event-stream`: `mensagem`, `inicio`, `texto`, `base`, `ferramenta`, `transferencia`, `fim` ou `erro`", body=String, content_type="text/event-stream"), (status=409, description="Já existe turno em voo nesta conversa", body=crate::erro::RespostaErro), (status=503, description="Turno indisponível (sem chave do modelo)", body=crate::erro::RespostaErro)))]
+#[utoipa::path(post, path="/admin/v1/orgs/{org_id}/agents/{agent_id}/test-chat/{conversation_id}/messages", tag="test-chat", operation_id="teste_chat_mensagem", security(("bearer"=[])), params(("org_id"=String, Path), ("agent_id"=String, Path), ("conversation_id"=String, Path)), request_body(content = inline(TestMessageData), content_type = "multipart/form-data"), responses((status=200, description="Turno em `text/event-stream`: `mensagem`, `inicio`, `texto`, `base`, `ferramenta`, `transferencia`, `fim` ou `erro`", body=String, content_type="text/event-stream"), (status=409, description="Já existe turno em voo nesta conversa", body=crate::error::ErrorResponse), (status=503, description="Turno indisponível (sem chave do modelo)", body=crate::error::ErrorResponse)))]
 pub async fn send_message(
     State(state): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<ConversationPath>,
     multipart: Result<Multipart, axum::extract::multipart::MultipartRejection>,
 ) -> Result<Response, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let agent_id = parse_path_id::<AgentId>(&c.agent_id)?;
     let conversation_id = parse_path_id::<ConversationId>(&c.conversation_id)?;
     agent_and_conversation(&state, org, agent_id, conversation_id)?;
     let engine = state.motor.clone().ok_or_else(|| {
-        ApiError::novo(
+        ApiError::new(
             StatusCode::SERVICE_UNAVAILABLE,
             "turno_indisponivel",
             "o turno não está ligado neste servidor: defina a chave do modelo para conversar no \
@@ -429,7 +429,7 @@ pub async fn send_message(
     })?;
 
     let multipart = multipart.map_err(|_| {
-        ApiError::novo(
+        ApiError::new(
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
             "corpo_invalido",
             "envie o corpo em `multipart/form-data` com o texto em `text` e os arquivos em `file`",
@@ -437,7 +437,7 @@ pub async fn send_message(
     })?;
 
     if !state.reservar_turno_de_teste(conversation_id) {
-        return Err(ApiError::novo(
+        return Err(ApiError::new(
             StatusCode::CONFLICT,
             "turno_em_andamento",
             "esta conversa já tem um turno em andamento: feche a outra aba ou espere a resposta",
@@ -447,7 +447,7 @@ pub async fn send_message(
 
     let (text, file) = read_multipart(multipart).await?;
     if text.is_empty() && file.is_empty() {
-        return Err(ApiError::validacao(
+        return Err(ApiError::validation(
             "text",
             "envie um texto ou ao menos um arquivo",
         ));
@@ -569,7 +569,7 @@ async fn read_multipart(
     while let Some(field) = multipart
         .next_field()
         .await
-        .map_err(|_| ApiError::invalido("corpo multipart inválido ou maior que o limite"))?
+        .map_err(|_| ApiError::invalid("corpo multipart inválido ou maior que o limite"))?
     {
         read_field(&mut text, &mut file, field).await?;
     }
@@ -586,7 +586,7 @@ async fn read_field(
             *text = field
                 .text()
                 .await
-                .map_err(|_| ApiError::invalido("o campo `text` não é texto"))?;
+                .map_err(|_| ApiError::invalid("o campo `text` não é texto"))?;
         }
         Some("file") => {
             let name = field
@@ -596,7 +596,7 @@ async fn read_field(
             let bytes = field
                 .bytes()
                 .await
-                .map_err(|_| ApiError::invalido("não consegui ler o arquivo enviado"))?
+                .map_err(|_| ApiError::invalid("não consegui ler o arquivo enviado"))?
                 .to_vec();
             file.push((name, bytes));
         }
@@ -623,7 +623,7 @@ async fn receive_files(
             .collect::<Vec<Result<_, FileError>>>()
     })
     .await
-    .map_err(|_| ApiError::interno())?;
+    .map_err(|_| ApiError::internal())?;
 
     let mut attachments = Vec::with_capacity(processed.len());
     let mut summary = Vec::with_capacity(processed.len());
@@ -634,7 +634,7 @@ async fn receive_files(
             .blob_path
             .strip_prefix(&folder_blobs)
             .map(|relative| relative.to_string_lossy().replace('\\', "/"))
-            .map_err(|_| ApiError::interno())?;
+            .map_err(|_| ApiError::internal())?;
         let (extracted_text, extraction_status) = match received.content {
             Content::Image { .. } => (None, "skipped"),
             Content::Texto { envelopado, .. } => (Some(envelopado), "ok"),
@@ -666,42 +666,42 @@ fn file_error(error: FileError) -> ApiError {
         FileError::Large {
             size_mb: upload_size_mb,
             limit_mb: upload_limit_mb,
-        } => ApiError::validacao(
+        } => ApiError::validation(
             "file",
             format!(
                 "o arquivo tem {upload_size_mb:.1} MB e o limite por arquivo é {upload_limit_mb:.0} MB"
             ),
         ),
-        FileError::Vazio => ApiError::validacao("file", "o arquivo está vazio"),
+        FileError::Vazio => ApiError::validation("file", "o arquivo está vazio"),
         FileError::UnsupportedType(reason) => {
-            ApiError::validacao("file", format!("arquivo recusado: {reason}"))
+            ApiError::validation("file", format!("arquivo recusado: {reason}"))
         }
-        FileError::MisleadingExtension { declared, real } => ApiError::validacao(
+        FileError::MisleadingExtension { declared, real } => ApiError::validation(
             "file",
             format!("arquivo recusado: o nome termina em .{declared}, mas o conteúdo é {real}"),
         ),
         FileError::Reading(reason) => {
-            ApiError::validacao("file", format!("não consegui ler o arquivo: {reason}"))
+            ApiError::validation("file", format!("não consegui ler o arquivo: {reason}"))
         }
         FileError::Time {
             limit_seconds: time_limit_seconds,
-        } => ApiError::validacao(
+        } => ApiError::validation(
             "file",
             format!("a leitura do arquivo passou de {time_limit_seconds} s e foi interrompida"),
         ),
         FileError::Extrator(detail) => {
             tracing::error!(detail = %detail, "leitor de arquivos indisponível");
-            ApiError::interno()
+            ApiError::internal()
         }
         FileError::WriteOutcome(detail) => {
             tracing::error!(detail = %detail, "não consegui gravar o blob do anexo");
-            ApiError::interno()
+            ApiError::internal()
         }
         FileError::Configuracao(detail) => {
             tracing::error!(detail = %detail, "configuração de arquivos inválida");
-            ApiError::interno()
+            ApiError::internal()
         }
-        other => ApiError::validacao("file", format!("arquivo recusado: {other}")),
+        other => ApiError::validation("file", format!("arquivo recusado: {other}")),
     }
 }
 

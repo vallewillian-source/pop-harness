@@ -1,7 +1,7 @@
 use super::{ListJson, if_match_version};
 use crate::{
-    auth::Identidade,
-    erro::{ApiError, id_da_url as parse_path_id},
+    auth::Identity,
+    error::{ApiError, id_from_url as parse_path_id},
     estado::Estado,
 };
 use axum::{
@@ -39,14 +39,14 @@ fn flow_json(f: &Fluxo) -> Value {
     })
 }
 
-#[utoipa::path(operation_id = "listar", get,path="/admin/v1/orgs/{org_id}/agents/{agent_id}/flows",tag="agents",params(("org_id"=String,Path),("agent_id"=String,Path)),security(("bearer"=[])),responses((status=200,description="Fluxos liberados ao agente, em ordem de slug",body=ListJson<Value>),(status=404,description="Agente não encontrado nesta org",body=crate::erro::RespostaErro)))]
+#[utoipa::path(operation_id = "listar", get,path="/admin/v1/orgs/{org_id}/agents/{agent_id}/flows",tag="agents",params(("org_id"=String,Path),("agent_id"=String,Path)),security(("bearer"=[])),responses((status=200,description="Fluxos liberados ao agente, em ordem de slug",body=ListJson<Value>),(status=404,description="Agente não encontrado nesta org",body=crate::error::ErrorResponse)))]
 pub async fn list(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<AgentPath>,
 ) -> Result<Json<ListJson<Value>>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let agent_id = parse_path_id::<AgentId>(&c.agent_id)?;
     e.store.agents().get(org, agent_id)?;
     let items: Vec<Value> = e
@@ -62,20 +62,20 @@ pub async fn list(
     }))
 }
 
-#[utoipa::path(operation_id = "substituir", put,path="/admin/v1/orgs/{org_id}/agents/{agent_id}/flows",tag="agents",params(("org_id"=String,Path),("agent_id"=String,Path),("If-Match"=String,Header)),security(("bearer"=[])),request_body=FlowAgentData,responses((status=200,description="Lista de fluxos do agente substituída: o que entrou, o que saiu e a versão nova do agente",body=Value),(status=404,description="Agente ou fluxo não encontrado nesta org",body=crate::erro::RespostaErro),(status=409,description="Mais de 20 fluxos por agente (teto_de_fluxos_por_agente)",body=crate::erro::RespostaErro),(status=412,description="If-Match diferente da versão atual do agente",body=crate::erro::RespostaErro),(status=428,description="Falta o If-Match",body=crate::erro::RespostaErro)))]
+#[utoipa::path(operation_id = "substituir", put,path="/admin/v1/orgs/{org_id}/agents/{agent_id}/flows",tag="agents",params(("org_id"=String,Path),("agent_id"=String,Path),("If-Match"=String,Header)),security(("bearer"=[])),request_body=FlowAgentData,responses((status=200,description="Lista de fluxos do agente substituída: o que entrou, o que saiu e a versão nova do agente",body=Value),(status=404,description="Agente ou fluxo não encontrado nesta org",body=crate::error::ErrorResponse),(status=409,description="Mais de 20 fluxos por agente (teto_de_fluxos_por_agente)",body=crate::error::ErrorResponse),(status=412,description="If-Match diferente da versão atual do agente",body=crate::error::ErrorResponse),(status=428,description="Falta o If-Match",body=crate::error::ErrorResponse)))]
 pub async fn replace(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<AgentPath>,
     h: HeaderMap,
     body: Result<Json<FlowAgentData>, JsonRejection>,
 ) -> Result<Json<Value>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let agent_id = parse_path_id::<AgentId>(&c.agent_id)?;
     let version = if_match_version(&h, "agente")?;
     let Json(d) = body.map_err(|_| {
-        ApiError::invalido("corpo JSON inválido: use {\"flow_ids\": [ids de fluxo]}")
+        ApiError::invalid("corpo JSON inválido: use {\"flow_ids\": [ids de fluxo]}")
     })?;
     let ids = d
         .flow_ids

@@ -63,7 +63,7 @@ impl Scenario {
         let address = listener.local_addr().expect("local address");
         let (shutdown, signal) = oneshot::channel();
         tokio::spawn(async move {
-            let _ = poph_server::servir_em(listener, estado, async {
+            let _ = poph_server::serve_at(listener, estado, async {
                 let _ = signal.await;
             })
             .await;

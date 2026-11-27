@@ -2,7 +2,7 @@ use poph_store::Page;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::erro::ApiError;
+use crate::error::ApiError;
 
 #[doc = " Parâmetros de listagem comuns a todas as coleções."]
 #[derive(Debug, Clone, Default, Deserialize, ToSchema)]
@@ -19,8 +19,8 @@ impl PageQuery {
         let limit = self.limit.unwrap_or(50).clamp(1, 200);
         let after = match &self.cursor {
             Some(text) if !text.is_empty() => Some(text.parse::<uuid::Uuid>().map_err(|_| {
-                ApiError::invalido("cursor inválido: use o `next_cursor` da resposta anterior")
-                    .com_detalhes(serde_json::json!({ "field": "cursor", "value": text }))
+                ApiError::invalid("cursor inválido: use o `next_cursor` da resposta anterior")
+                    .with_details(serde_json::json!({ "field": "cursor", "value": text }))
             })?),
             _ => None,
         };

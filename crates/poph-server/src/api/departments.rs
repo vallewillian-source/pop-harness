@@ -9,8 +9,8 @@ use utoipa::ToSchema;
 use super::orgs::OrgPath;
 use super::pagination::{ListJson, PageQuery, next_cursor};
 use super::{if_match_version, request_status, status_text};
-use crate::auth::Identidade;
-use crate::erro::{ApiError, id_da_url as parse_path_id};
+use crate::auth::Identity;
+use crate::error::{ApiError, id_from_url as parse_path_id};
 use crate::estado::Estado;
 
 #[doc = " Departamento na resposta da API."]
@@ -92,17 +92,17 @@ pub struct DepartmentPath {
     ),
     responses(
         (status = 200, description = "Página de departamentos", body = ListJson<DepartmentJson>),
-        (status = 403, description = "Org de outro token", body = crate::erro::RespostaErro)
+        (status = 403, description = "Org de outro token", body = crate::error::ErrorResponse)
     )
 )]
 pub async fn list(
     State(state): State<Estado>,
-    identity: Identidade,
+    identity: Identity,
     Path(path): Path<OrgPath>,
     Query(query): Query<PageQuery>,
 ) -> Result<Json<ListJson<DepartmentJson>>, ApiError> {
     let org = parse_path_id::<OrgId>(&path.org_id)?;
-    identity.exigir_org(org)?;
+    identity.require_org(org)?;
     let page = query.page()?;
     let departments = state.store.departments().list(org, page)?;
     let items: Vec<DepartmentJson> = departments
@@ -124,17 +124,17 @@ pub async fn list(
     request_body = CreateDepartment,
     responses(
         (status = 201, description = "Departamento criado", body = DepartmentJson),
-        (status = 400, description = "Campo inválido", body = crate::erro::RespostaErro)
+        (status = 400, description = "Campo inválido", body = crate::error::ErrorResponse)
     )
 )]
 pub async fn create(
     State(state): State<Estado>,
-    identity: Identidade,
+    identity: Identity,
     Path(path): Path<OrgPath>,
     Json(body): Json<CreateDepartment>,
 ) -> Result<(StatusCode, Json<DepartmentJson>), ApiError> {
     let org = parse_path_id::<OrgId>(&path.org_id)?;
-    identity.exigir_org(org)?;
+    identity.require_org(org)?;
     let name = validate_name(&body.name)?;
     let department = state.store.departments().create(
         org,
@@ -170,17 +170,17 @@ pub async fn create(
     ),
     responses(
         (status = 200, description = "Departamento", body = DepartmentJson),
-        (status = 404, description = "Departamento não encontrado", body = crate::erro::RespostaErro)
+        (status = 404, description = "Departamento não encontrado", body = crate::error::ErrorResponse)
     )
 )]
 pub async fn show(
     State(state): State<Estado>,
-    identity: Identidade,
+    identity: Identity,
     Path(path): Path<DepartmentPath>,
 ) -> Result<Json<DepartmentJson>, ApiError> {
     let org = parse_path_id::<OrgId>(&path.org_id)?;
     let id = parse_path_id::<DepartmentId>(&path.department_id)?;
-    identity.exigir_org(org)?;
+    identity.require_org(org)?;
     let department = state.store.departments().get(org, id)?;
     Ok(Json(DepartmentJson::from_department(&department)))
 }
@@ -200,19 +200,19 @@ pub async fn show(
     request_body = UpdateDepartment,
     responses(
         (status = 200, description = "Departamento alterado", body = DepartmentJson),
-        (status = 412, description = "Versão desatualizada", body = crate::erro::RespostaErro)
+        (status = 412, description = "Versão desatualizada", body = crate::error::ErrorResponse)
     )
 )]
 pub async fn update(
     State(state): State<Estado>,
-    identity: Identidade,
+    identity: Identity,
     Path(path): Path<DepartmentPath>,
     headers: HeaderMap,
     Json(body): Json<UpdateDepartment>,
 ) -> Result<Json<DepartmentJson>, ApiError> {
     let org = parse_path_id::<OrgId>(&path.org_id)?;
     let id = parse_path_id::<DepartmentId>(&path.department_id)?;
-    identity.exigir_org(org)?;
+    identity.require_org(org)?;
     let expected = if_match_version(&headers, "departamento")?;
     let status = match &body.status {
         Some(text) => Some(request_status(text)?),
@@ -251,17 +251,17 @@ pub async fn update(
     ),
     responses(
         (status = 204, description = "Departamento excluído"),
-        (status = 404, description = "Departamento não encontrado", body = crate::erro::RespostaErro)
+        (status = 404, description = "Departamento não encontrado", body = crate::error::ErrorResponse)
     )
 )]
 pub async fn delete(
     State(state): State<Estado>,
-    identity: Identidade,
+    identity: Identity,
     Path(path): Path<DepartmentPath>,
 ) -> Result<StatusCode, ApiError> {
     let org = parse_path_id::<OrgId>(&path.org_id)?;
     let id = parse_path_id::<DepartmentId>(&path.department_id)?;
-    identity.exigir_org(org)?;
+    identity.require_org(org)?;
     state.store.departments().delete(org, id)?;
     super::audit::register(
         &state,
@@ -277,7 +277,7 @@ pub async fn delete(
 fn validate_name(text: &str) -> Result<String, ApiError> {
     let clean = text.trim();
     if clean.is_empty() || clean.chars().count() > 120 {
-        return Err(ApiError::validacao(
+        return Err(ApiError::validation(
             "name",
             "deve ter de 1 a 120 caracteres",
         ));

@@ -19,7 +19,7 @@ use std::time::{Duration, SystemTime};
 
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
-use poph_server::{ChaveDeCifra, Estado};
+use poph_server::{CipherKey, Estado};
 use poph_store::{NewAgent, NewOrg, Store};
 use poph_types::config::GlobalTokenConfig;
 use poph_types::{AgentId, DeclaredPlugin, HarnessConfig, OrgId};
@@ -221,7 +221,7 @@ impl Cenario {
         let estado = Estado::novo(Arc::clone(&store), config)
             .expect("estado do servidor")
             .com_chave_de_cifra(Some(
-                ChaveDeCifra::derivar(CHAVE_CIFRA).expect("chave de cifra"),
+                CipherKey::derive(CHAVE_CIFRA).expect("chave de cifra"),
             ));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -229,7 +229,7 @@ impl Cenario {
         let endereco = listener.local_addr().expect("endereço local");
         let (desligar, sinal) = oneshot::channel();
         tokio::spawn(async move {
-            let _ = poph_server::servir_em(listener, estado, async {
+            let _ = poph_server::serve_at(listener, estado, async {
                 let _ = sinal.await;
             })
             .await;

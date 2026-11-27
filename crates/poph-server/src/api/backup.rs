@@ -14,8 +14,8 @@ use poph_types::{DomainError, OrgId};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
-use crate::auth::Identidade;
-use crate::erro::{ApiError, id_da_url as parse_path_id};
+use crate::auth::Identity;
+use crate::error::{ApiError, id_from_url as parse_path_id};
 use crate::estado::Estado;
 
 use super::audit;
@@ -49,7 +49,7 @@ impl ImportParameters {
             None => Ok(false),
             Some(text) if text.eq_ignore_ascii_case("true") => Ok(true),
             Some(text) if text.eq_ignore_ascii_case("false") => Ok(false),
-            Some(other) => Err(ApiError::validacao(
+            Some(other) => Err(ApiError::validation(
                 "sobrescrever",
                 format!("`{other}` não é um booleano; use true ou false"),
             )),
@@ -58,21 +58,21 @@ impl ImportParameters {
 }
 
 #[doc = " `GET …/backup`: devolve o arquivo do retrato da org."]
-#[utoipa::path(get, operation_id="backup_exportar", path="/admin/v1/orgs/{org_id}/backup", tag="backup", security(("bearer" = [])), params(("org_id" = String, Path), ("com_conversas" = Option<bool>, Query, description = "Inclui conversas, mensagens, turnos, as duas filas e os carrinhos (padrão: `false`)")), responses((status = 200, description = "Arquivo do backup da org (JSON no formato `poph-backup-org`, versão 1), como anexo. Segredo de integração sai só com a marca e o nome do campo; caminho de blob não sai", body = Value, content_type = "application/json"), (status = 400, description = "`com_conversas` inválido", body = crate::erro::RespostaErro), (status = 401, description = "Sem token", body = crate::erro::RespostaErro), (status = 403, description = "Org de outro token", body = crate::erro::RespostaErro), (status = 404, description = "Org não encontrada", body = crate::erro::RespostaErro), (status = 409, description = "Arquivo da biblioteca sem conteúdo no disco", body = crate::erro::RespostaErro)))]
+#[utoipa::path(get, operation_id="backup_exportar", path="/admin/v1/orgs/{org_id}/backup", tag="backup", security(("bearer" = [])), params(("org_id" = String, Path), ("com_conversas" = Option<bool>, Query, description = "Inclui conversas, mensagens, turnos, as duas filas e os carrinhos (padrão: `false`)")), responses((status = 200, description = "Arquivo do backup da org (JSON no formato `poph-backup-org`, versão 1), como anexo. Segredo de integração sai só com a marca e o nome do campo; caminho de blob não sai", body = Value, content_type = "application/json"), (status = 400, description = "`com_conversas` inválido", body = crate::error::ErrorResponse), (status = 401, description = "Sem token", body = crate::error::ErrorResponse), (status = 403, description = "Org de outro token", body = crate::error::ErrorResponse), (status = 404, description = "Org não encontrada", body = crate::error::ErrorResponse), (status = 409, description = "Arquivo da biblioteca sem conteúdo no disco", body = crate::error::ErrorResponse)))]
 pub async fn export(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<OrgPath>,
     Query(q): Query<ExportParameters>,
 ) -> Result<Response, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let include_conversations = match q.include_conversations.as_deref() {
         None => false,
         Some(text) if text.eq_ignore_ascii_case("true") => true,
         Some(text) if text.eq_ignore_ascii_case("false") => false,
         Some(other) => {
-            return Err(ApiError::validacao(
+            return Err(ApiError::validation(
                 "com_conversas",
                 format!("`{other}` não é um booleano; use true ou false"),
             ));
@@ -84,7 +84,7 @@ pub async fn export(
     let (bytes, name) =
         tokio::task::spawn_blocking(move || build_file(&state, org, include_conversations))
             .await
-            .map_err(|_| ApiError::interno())??;
+            .map_err(|_| ApiError::internal())??;
 
     let mut response = (StatusCode::OK, bytes).into_response();
     let header = response.headers_mut();
@@ -128,7 +128,7 @@ fn build_file(
         &name_of_secret,
     );
     let bytes = serde_json::to_vec(&document).map_err(|_| {
-        ApiError::novo(
+        ApiError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal",
             "não consegui montar o arquivo de backup",
@@ -167,7 +167,7 @@ fn read_blobs(
     for (sha, name) in names_by_sha {
         let bytes = poph_files::blob::read(folder, org, &sha, limit).map_err(|error| {
             tracing::warn!(org = %org, sha = %sha, reason = %error, "exportação sem o conteúdo de um arquivo");
-            ApiError::novo(
+            ApiError::new(
                 StatusCode::CONFLICT,
                 "backup_incompleto",
                 format!(
@@ -175,7 +175,7 @@ fn read_blobs(
                      exportação não sai pela metade; restaure o arquivo e exporte de novo"
                 ),
             )
-            .com_detalhes(json!({ "name": name }))
+            .with_details(json!({ "name": name }))
         })?;
         blobs.insert(sha, bytes);
     }
@@ -231,17 +231,17 @@ fn civil_date(days: i64) -> (i64, u32, u32) {
 }
 
 #[doc = " `POST …/backup/import`: reconstrói a org do caminho a partir do arquivo do corpo."]
-#[utoipa::path(post, operation_id="backup_importar", path="/admin/v1/orgs/{org_id}/backup/import", tag="backup", security(("bearer" = [])), params(("org_id" = String, Path), ("sobrescrever" = Option<bool>, Query, description = "Autoriza a importação a atualizar linhas que já existem na org (padrão: `false`, que recusa com `409 importacao_sobrescreve` e nada grava)")), request_body(content = Value, content_type = "application/json", description = "Arquivo gerado por `GET …/backup` (ou `poph backup export`), até 64 MB"), responses((status = 200, description = "Relatório da importação: linhas inseridas/atualizadas por tabela, segredos a digitar de novo e o índice", body = Value), (status = 400, description = "Arquivo corrompido, formato ou versão desconhecidos, ou `sobrescrever` que não é booleano", body = crate::erro::RespostaErro), (status = 401, description = "Sem token", body = crate::erro::RespostaErro), (status = 403, description = "Org de outro token", body = crate::erro::RespostaErro), (status = 404, description = "Org de destino não encontrada", body = crate::erro::RespostaErro), (status = 409, description = "`importacao_sobrescreve` (atualizaria linhas existentes sem `sobrescrever=true`), conflito de chave natural ou arquivo da biblioteca sem conteúdo no disco; nada foi gravado", body = crate::erro::RespostaErro), (status = 413, description = "Arquivo acima do limite", body = crate::erro::RespostaErro)))]
+#[utoipa::path(post, operation_id="backup_importar", path="/admin/v1/orgs/{org_id}/backup/import", tag="backup", security(("bearer" = [])), params(("org_id" = String, Path), ("sobrescrever" = Option<bool>, Query, description = "Autoriza a importação a atualizar linhas que já existem na org (padrão: `false`, que recusa com `409 importacao_sobrescreve` e nada grava)")), request_body(content = Value, content_type = "application/json", description = "Arquivo gerado por `GET …/backup` (ou `poph backup export`), até 64 MB"), responses((status = 200, description = "Relatório da importação: linhas inseridas/atualizadas por tabela, segredos a digitar de novo e o índice", body = Value), (status = 400, description = "Arquivo corrompido, formato ou versão desconhecidos, ou `sobrescrever` que não é booleano", body = crate::error::ErrorResponse), (status = 401, description = "Sem token", body = crate::error::ErrorResponse), (status = 403, description = "Org de outro token", body = crate::error::ErrorResponse), (status = 404, description = "Org de destino não encontrada", body = crate::error::ErrorResponse), (status = 409, description = "`importacao_sobrescreve` (atualizaria linhas existentes sem `sobrescrever=true`), conflito de chave natural ou arquivo da biblioteca sem conteúdo no disco; nada foi gravado", body = crate::error::ErrorResponse), (status = 413, description = "Arquivo acima do limite", body = crate::error::ErrorResponse)))]
 pub async fn import(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<OrgPath>,
     Query(q): Query<ImportParameters>,
     header: HeaderMap,
     body: Result<Bytes, BytesRejection>,
 ) -> Result<Json<Value>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let overwrite = q.overwrite()?;
 
     if let Some(size) = header
@@ -259,7 +259,7 @@ pub async fn import(
             return Err(if response.status() == StatusCode::PAYLOAD_TOO_LARGE {
                 file_large()
             } else {
-                ApiError::invalido("não consegui ler o corpo da requisição")
+                ApiError::invalid("não consegui ler o corpo da requisição")
             });
         }
     };
@@ -271,7 +271,7 @@ pub async fn import(
 
     let document = tokio::task::spawn_blocking(move || backup_document::read_document(&bytes))
         .await
-        .map_err(|_| ApiError::interno())?
+        .map_err(|_| ApiError::internal())?
         .map_err(file_refused)?;
 
     let BackupDocument {
@@ -303,7 +303,7 @@ pub async fn import(
         })
     })
     .await
-    .map_err(|_| ApiError::interno())??;
+    .map_err(|_| ApiError::internal())??;
     let report = match result {
         ImportOutcome::Conflict(conflict) => return Err(conflict_of_import(&conflict)),
         ImportOutcome::WouldOverwrite(update) => {
@@ -340,7 +340,7 @@ enum ImportOutcome {
 }
 
 fn file_large() -> ApiError {
-    ApiError::novo(
+    ApiError::new(
         StatusCode::PAYLOAD_TOO_LARGE,
         "payload_too_large",
         format!(
@@ -353,19 +353,19 @@ fn file_large() -> ApiError {
 
 fn file_refused(error: backup_document::DocumentError) -> ApiError {
     match &error {
-        backup_document::DocumentError::Json(_) => ApiError::novo(
+        backup_document::DocumentError::Json(_) => ApiError::new(
             StatusCode::BAD_REQUEST,
             "invalid_backup",
             format!("o corpo não é um backup do POP Harness ({error})"),
         ),
         backup_document::DocumentError::Formato(_) => {
-            ApiError::novo(StatusCode::BAD_REQUEST, "invalid_backup", error.to_string())
+            ApiError::new(StatusCode::BAD_REQUEST, "invalid_backup", error.to_string())
         }
         backup_document::DocumentError::Versao {
             read: read_version,
             entendida: supported_version,
-        } => ApiError::novo(StatusCode::BAD_REQUEST, "invalid_backup", error.to_string())
-            .com_detalhes(
+        } => ApiError::new(StatusCode::BAD_REQUEST, "invalid_backup", error.to_string())
+            .with_details(
                 json!({ "version": read_version, "supported_version": supported_version }),
             ),
     }
@@ -394,7 +394,7 @@ fn conflict_of_import(conflict: &[String]) -> ApiError {
     reason.push_str(
         ". Nada foi gravado: renomeie um dos dois lados ou importe numa instância sem esses recursos",
     );
-    ApiError::novo(StatusCode::CONFLICT, "conflict", reason).com_detalhes(json!({
+    ApiError::new(StatusCode::CONFLICT, "conflict", reason).with_details(json!({
         "conflicts": shown,
         "conflicts_more": rest,
     }))
@@ -407,7 +407,7 @@ fn overwrites_import(update: &ImportUpdates) -> ApiError {
         .iter()
         .map(|(table, rows)| (table.clone(), Value::from(*rows)))
         .collect();
-    ApiError::novo(
+    ApiError::new(
         StatusCode::CONFLICT,
         "importacao_sobrescreve",
         format!(
@@ -415,7 +415,7 @@ fn overwrites_import(update: &ImportUpdates) -> ApiError {
             update.total
         ),
     )
-    .com_detalhes(json!({
+    .with_details(json!({
         "tabelas": tables,
         "linhas": update.total,
         "exemplos": example,
@@ -434,7 +434,7 @@ fn write_in_target(
         match poph_files::blob::write(folder, org, content) {
             Ok(stored) if stored.sha256 == *sha => {}
             Ok(_) => {
-                return Err(ApiError::novo(
+                return Err(ApiError::new(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "internal",
                     "o conteúdo de um arquivo do backup foi gravado com outro sha256; nada foi importado",
@@ -442,7 +442,7 @@ fn write_in_target(
             }
             Err(error) => {
                 tracing::warn!(org = %org, reason = %error, "falha ao gravar o blob da importação");
-                return Err(ApiError::novo(
+                return Err(ApiError::new(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "internal",
                     "não consegui gravar o conteúdo de um arquivo do backup",
@@ -458,7 +458,7 @@ fn write_in_target(
 fn check_error(error: StoreError) -> ApiError {
     match error {
         StoreError::Domain(DomainError::NotFound { entity, id }) => {
-            ApiError::nao_encontrado(entity, &id)
+            ApiError::not_found(entity, &id)
         }
         other => ApiError::from(other),
     }
@@ -469,8 +469,8 @@ fn import_error(error: StoreError) -> ApiError {
         StoreError::Domain(DomainError::Validation {
             field: "backup",
             reason,
-        }) => ApiError::novo(StatusCode::BAD_REQUEST, "invalid_backup", reason)
-            .com_detalhes(json!({ "field": "backup" })),
+        }) => ApiError::new(StatusCode::BAD_REQUEST, "invalid_backup", reason)
+            .with_details(json!({ "field": "backup" })),
         other => ApiError::from(other),
     }
 }

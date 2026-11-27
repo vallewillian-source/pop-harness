@@ -9,8 +9,8 @@ use utoipa::ToSchema;
 
 use poph_types::OrgId;
 
-use crate::auth::Identidade;
-use crate::erro::{ApiError, id_da_url as parse_path_id};
+use crate::auth::Identity;
+use crate::error::{ApiError, id_from_url as parse_path_id};
 use crate::estado::Estado;
 
 #[derive(Deserialize)]
@@ -52,18 +52,18 @@ pub struct OperationalSummaryJson {
     ),
     responses(
         (status = 200, description = "Contadores e execuções ativas por nó", body = OperationalSummaryJson),
-        (status = 422, description = "`from` ou `to` ausente ou inválido, ou `from` não anterior a `to`", body = crate::erro::RespostaErro),
-        (status = 404, description = "Org inexistente", body = crate::erro::RespostaErro),
+        (status = 422, description = "`from` ou `to` ausente ou inválido, ou `from` não anterior a `to`", body = crate::error::ErrorResponse),
+        (status = 404, description = "Org inexistente", body = crate::error::ErrorResponse),
     )
 )]
 pub async fn operational_summary(
     State(state): State<Estado>,
-    identity: Identidade,
+    identity: Identity,
     Path(path): Path<OrgPath>,
     Query(query): Query<SummaryQuery>,
 ) -> Result<Json<OperationalSummaryJson>, ApiError> {
     let org = parse_path_id::<OrgId>(&path.org_id)?;
-    identity.exigir_org(org)?;
+    identity.require_org(org)?;
     let from = parse_milliseconds("from", query.from.as_deref())?;
     let to = parse_milliseconds("to", query.to.as_deref())?;
     if from >= to {
@@ -95,10 +95,10 @@ fn parse_milliseconds(field: &'static str, value: Option<&str>) -> Result<i64, A
 }
 
 fn invalid_field(field: &'static str, reason: &str) -> ApiError {
-    ApiError::novo(
+    ApiError::new(
         StatusCode::UNPROCESSABLE_ENTITY,
         "validation_error",
         format!("campo `{field}` inválido"),
     )
-    .com_detalhes(json!({ "field": field, "reason": reason }))
+    .with_details(json!({ "field": field, "reason": reason }))
 }

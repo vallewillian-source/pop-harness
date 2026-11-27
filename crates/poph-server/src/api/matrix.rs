@@ -9,8 +9,8 @@ use utoipa::ToSchema;
 
 use super::if_match_version;
 use super::orgs::OrgPath;
-use crate::auth::Identidade;
-use crate::erro::{ApiError, id_da_url as parse_path_id};
+use crate::auth::Identity;
+use crate::error::{ApiError, id_from_url as parse_path_id};
 use crate::estado::Estado;
 
 #[doc = " Como o módulo está numa org."]
@@ -122,20 +122,20 @@ pub struct SpaceDisabledJson {
     params(("org_id" = String, Path, description = "Id da org")),
     responses(
         (status = 200, description = "Estado do módulo Matrix na org", body = MatrixStateJson),
-        (status = 401, description = "Sem token", body = crate::erro::RespostaErro),
-        (status = 403, description = "Token de outra org", body = crate::erro::RespostaErro),
-        (status = 404, description = "Org inexistente", body = crate::erro::RespostaErro)
+        (status = 401, description = "Sem token", body = crate::error::ErrorResponse),
+        (status = 403, description = "Token de outra org", body = crate::error::ErrorResponse),
+        (status = 404, description = "Org inexistente", body = crate::error::ErrorResponse)
     )
 ,
     summary = "`GET /admin/v1/orgs/{org_id}/matrix`.",
 )]
 pub async fn show(
     State(state): State<Estado>,
-    identity: Identidade,
+    identity: Identity,
     Path(path): Path<OrgPath>,
 ) -> Result<Response, ApiError> {
     let org = parse_path_id::<OrgId>(&path.org_id)?;
-    identity.exigir_org(org)?;
+    identity.require_org(org)?;
     org_state(&state, org)
 }
 
@@ -153,30 +153,30 @@ pub async fn show(
     request_body = EnableDisable,
     responses(
         (status = 200, description = "Estado do módulo depois da alteração", body = MatrixStateJson),
-        (status = 401, description = "Sem token", body = crate::erro::RespostaErro),
-        (status = 403, description = "Token de outra org", body = crate::erro::RespostaErro),
-        (status = 404, description = "Org inexistente", body = crate::erro::RespostaErro),
-        (status = 412, description = "`If-Match` desatualizado", body = crate::erro::RespostaErro),
-        (status = 428, description = "Sem o cabeçalho `If-Match`", body = crate::erro::RespostaErro)
+        (status = 401, description = "Sem token", body = crate::error::ErrorResponse),
+        (status = 403, description = "Token de outra org", body = crate::error::ErrorResponse),
+        (status = 404, description = "Org inexistente", body = crate::error::ErrorResponse),
+        (status = 412, description = "`If-Match` desatualizado", body = crate::error::ErrorResponse),
+        (status = 428, description = "Sem o cabeçalho `If-Match`", body = crate::error::ErrorResponse)
     )
 ,
     summary = "`PUT /admin/v1/orgs/{org_id}/matrix` (exige `If-Match` com o `updated_at` lido antes).",
 )]
 pub async fn update(
     State(state): State<Estado>,
-    identity: Identidade,
+    identity: Identity,
     Path(path): Path<OrgPath>,
     headers: HeaderMap,
     Json(body): Json<EnableDisable>,
 ) -> Result<Response, ApiError> {
     let org = parse_path_id::<OrgId>(&path.org_id)?;
-    identity.exigir_org(org)?;
+    identity.require_org(org)?;
     state.store.orgs().get(org)?;
     let expected = if_match_version(&headers, "módulo Matrix da org")?;
     let current = state.store.matrix().state(org)?;
     let current_etag = u64::try_from(current.updated_at).unwrap_or(0);
     if expected != current_etag {
-        return Err(ApiError::conflito_de_versao(
+        return Err(ApiError::version_conflict(
             "módulo Matrix da org",
             &org.to_string(),
             expected,
@@ -236,7 +236,7 @@ fn org_state(state: &Estado, org: OrgId) -> Result<Response, ApiError> {
 }
 
 fn with_etag(body: MatrixStateJson, etag: i64) -> Result<Response, ApiError> {
-    let value = HeaderValue::from_str(&format!("\"{etag}\"")).map_err(|_| ApiError::interno())?;
+    let value = HeaderValue::from_str(&format!("\"{etag}\"")).map_err(|_| ApiError::internal())?;
     let mut response = Json(body).into_response();
     response.headers_mut().insert(header::ETAG, value);
     Ok(response)
@@ -252,20 +252,20 @@ fn with_etag(body: MatrixStateJson, etag: i64) -> Result<Response, ApiError> {
     params(("org_id" = String, Path, description = "Id da org")),
     responses(
         (status = 200, description = "Espaços por departamento", body = SpacesJson),
-        (status = 401, description = "Sem token", body = crate::erro::RespostaErro),
-        (status = 403, description = "Token de outra org", body = crate::erro::RespostaErro),
-        (status = 404, description = "Org inexistente", body = crate::erro::RespostaErro)
+        (status = 401, description = "Sem token", body = crate::error::ErrorResponse),
+        (status = 403, description = "Token de outra org", body = crate::error::ErrorResponse),
+        (status = 404, description = "Org inexistente", body = crate::error::ErrorResponse)
     )
 ,
     summary = "`GET /admin/v1/orgs/{org_id}/matrix/spaces`.",
 )]
 pub async fn list_space(
     State(state): State<Estado>,
-    identity: Identidade,
+    identity: Identity,
     Path(path): Path<OrgPath>,
 ) -> Result<Json<SpacesJson>, ApiError> {
     let org = parse_path_id::<OrgId>(&path.org_id)?;
-    identity.exigir_org(org)?;
+    identity.require_org(org)?;
     state.store.orgs().get(org)?;
     let items = state
         .store
@@ -301,24 +301,24 @@ pub async fn list_space(
     request_body = EnableSpace,
     responses(
         (status = 200, description = "Espaço do departamento", body = SpaceJson),
-        (status = 400, description = "Departamento ou espaço inválido", body = crate::erro::RespostaErro),
-        (status = 401, description = "Sem token", body = crate::erro::RespostaErro),
-        (status = 403, description = "Token de outra org", body = crate::erro::RespostaErro),
-        (status = 404, description = "Org ou departamento inexistente", body = crate::erro::RespostaErro),
-        (status = 409, description = "Sem permissão no espaço, ou módulo desligado nesta instância", body = crate::erro::RespostaErro),
-        (status = 503, description = "Synapse ou armazenamento não respondeu; tente de novo", body = crate::erro::RespostaErro)
+        (status = 400, description = "Departamento ou espaço inválido", body = crate::error::ErrorResponse),
+        (status = 401, description = "Sem token", body = crate::error::ErrorResponse),
+        (status = 403, description = "Token de outra org", body = crate::error::ErrorResponse),
+        (status = 404, description = "Org ou departamento inexistente", body = crate::error::ErrorResponse),
+        (status = 409, description = "Sem permissão no espaço, ou módulo desligado nesta instância", body = crate::error::ErrorResponse),
+        (status = 503, description = "Synapse ou armazenamento não respondeu; tente de novo", body = crate::error::ErrorResponse)
     )
 ,
     summary = "`PUT /admin/v1/orgs/{org_id}/matrix/spaces` — cria o espaço do departamento ou liga um existente.",
 )]
 pub async fn enable_space(
     State(state): State<Estado>,
-    identity: Identidade,
+    identity: Identity,
     Path(path): Path<OrgPath>,
     Json(body): Json<EnableSpace>,
 ) -> Result<Json<SpaceJson>, ApiError> {
     let org = parse_path_id::<OrgId>(&path.org_id)?;
-    identity.exigir_org(org)?;
+    identity.require_org(org)?;
     state.store.orgs().get(org)?;
     let department_id = parse_path_id::<DepartmentId>(&body.department_id)?;
     let department = state.store.departments().get(org, department_id)?;
@@ -371,20 +371,20 @@ pub async fn enable_space(
     ),
     responses(
         (status = 200, description = "Espaço desligado", body = SpaceDisabledJson),
-        (status = 401, description = "Sem token", body = crate::erro::RespostaErro),
-        (status = 403, description = "Token de outra org", body = crate::erro::RespostaErro),
-        (status = 404, description = "Org ou departamento inexistente", body = crate::erro::RespostaErro)
+        (status = 401, description = "Sem token", body = crate::error::ErrorResponse),
+        (status = 403, description = "Token de outra org", body = crate::error::ErrorResponse),
+        (status = 404, description = "Org ou departamento inexistente", body = crate::error::ErrorResponse)
     )
 ,
     summary = "`DELETE /admin/v1/orgs/{org_id}/matrix/spaces/{department_id}`.",
 )]
 pub async fn disable_space(
     State(state): State<Estado>,
-    identity: Identidade,
+    identity: Identity,
     Path(path): Path<SpacePath>,
 ) -> Result<Json<SpaceDisabledJson>, ApiError> {
     let org = parse_path_id::<OrgId>(&path.org_id)?;
-    identity.exigir_org(org)?;
+    identity.require_org(org)?;
     state.store.orgs().get(org)?;
     let department = parse_path_id::<DepartmentId>(&path.department_id)?;
     state.store.departments().get(org, department)?;
@@ -405,7 +405,7 @@ pub async fn disable_space(
 }
 
 fn module_disabled() -> ApiError {
-    ApiError::novo(
+    ApiError::new(
         StatusCode::CONFLICT,
         "matrix_desligado",
         "o módulo Matrix não está ligado nesta instância: suba o `poph serve` com `[matrix] habilitado = true`",
@@ -414,28 +414,28 @@ fn module_disabled() -> ApiError {
 
 fn space_error(error: SpaceError) -> ApiError {
     match error {
-        SpaceError::WithoutPermission { what_is_missing } => ApiError::conflito(what_is_missing),
-        SpaceError::InvalidSpace { reason } => ApiError::validacao("space", reason.to_owned()),
+        SpaceError::WithoutPermission { what_is_missing } => ApiError::conflict(what_is_missing),
+        SpaceError::InvalidSpace { reason } => ApiError::validation("space", reason.to_owned()),
         SpaceError::Internal { .. } => {
             tracing::error!(
                 target: "poph_server::api::matrix",
                 reason = "espaco_interno",
                 "falha interna ao garantir o espaço do departamento"
             );
-            ApiError::interno()
+            ApiError::internal()
         }
-        SpaceError::Armazenamento(_) => ApiError::novo(
+        SpaceError::Armazenamento(_) => ApiError::new(
             StatusCode::SERVICE_UNAVAILABLE,
             "matrix_indisponivel",
             "o armazenamento do módulo Matrix não respondeu: tente de novo",
         ),
         SpaceError::Call(call) => match call.classification() {
-            poph_matrix::Classification::Transient => ApiError::novo(
+            poph_matrix::Classification::Transient => ApiError::new(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "synapse_indisponivel",
                 "o Synapse não respondeu: tente de novo em instantes",
             ),
-            poph_matrix::Classification::Definitive => ApiError::novo(
+            poph_matrix::Classification::Definitive => ApiError::new(
                 StatusCode::CONFLICT,
                 "synapse_recusou",
                 "o Synapse recusou a operação do espaço: confira o espaço informado no Element",

@@ -28,8 +28,8 @@ use utoipa::ToSchema;
 use super::{ListJson, PageQuery, if_match_version, next_cursor};
 use crate::fichas_servico::{detalhe as detail, evento_json, execucao_json, ficha_json};
 use crate::{
-    auth::Identidade,
-    erro::{ApiError, id_da_url as parse_path_id},
+    auth::Identity,
+    error::{ApiError, id_from_url as parse_path_id},
     estado::Estado,
     fluxos_efeitos::efeito_da_transicao,
     fluxos_transicao::{estado_para_banco, transicao_do_motor},
@@ -88,17 +88,17 @@ pub struct EventsQuery {
     ),
     responses(
         (status = 200, description = "Página de Fichas: `items` e `next_cursor`", body = ListJson<Value>),
-        (status = 400, description = "Filtro ou cursor inválido (`status`, `agente`, `canal`, `desde`, `limit` ou `cursor`)", body = crate::erro::RespostaErro),
+        (status = 400, description = "Filtro ou cursor inválido (`status`, `agente`, `canal`, `desde`, `limit` ou `cursor`)", body = crate::error::ErrorResponse),
     )
 )]
 pub async fn list(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<OrgPath>,
     Query(q): Query<CasesQuery>,
 ) -> Result<Json<ListJson<Value>>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let filter = query_filter(&q)?;
     let page = PageQuery {
         limit: q.limit,
@@ -125,16 +125,16 @@ pub async fn list(
     ),
     responses(
         (status = 200, description = "A Ficha com as execuções, as etapas com os campos respondidos (W6) e os fluxos liberados ao agente", body = Value),
-        (status = 404, description = "Ficha inexistente ou de outra org", body = crate::erro::RespostaErro),
+        (status = 404, description = "Ficha inexistente ou de outra org", body = crate::error::ErrorResponse),
     )
 )]
 pub async fn show(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<CasePath>,
 ) -> Result<Json<Value>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let case_id = parse_path_id::<RecordId>(&c.case_id)?;
     let body = detail(&e.store, org, case_id)?;
     Ok(Json(body))
@@ -155,18 +155,18 @@ pub async fn show(
     ),
     responses(
         (status = 200, description = "Linha do tempo da Ficha em ordem de `seq`: `items` e `next_cursor` (um `seq`)", body = ListJson<Value>),
-        (status = 400, description = "Cursor inválido", body = crate::erro::RespostaErro),
-        (status = 404, description = "Ficha inexistente ou de outra org", body = crate::erro::RespostaErro),
+        (status = 400, description = "Cursor inválido", body = crate::error::ErrorResponse),
+        (status = 404, description = "Ficha inexistente ou de outra org", body = crate::error::ErrorResponse),
     )
 )]
 pub async fn events(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<CasePath>,
     Query(q): Query<EventsQuery>,
 ) -> Result<Json<ListJson<Value>>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let case_id = parse_path_id::<RecordId>(&c.case_id)?;
     let limit = q.limit.unwrap_or(LIMIT_DEFAULT_EVENT).clamp(1, 200);
     let after = seq_cursor(q.cursor.as_deref())?;
@@ -181,7 +181,7 @@ fn query_filter(q: &CasesQuery) -> Result<RecordFilter, ApiError> {
         None => None,
         Some(text) => Some(
             RecordStatus::from_text(text)
-                .map_err(|_| ApiError::validacao("status", "use open ou closed"))?,
+                .map_err(|_| ApiError::validation("status", "use open ou closed"))?,
         ),
     };
     let agent = match q.agent.as_deref() {
@@ -191,7 +191,7 @@ fn query_filter(q: &CasesQuery) -> Result<RecordFilter, ApiError> {
     let channel = match q.channel.as_deref() {
         None => None,
         Some(text) if text.trim().is_empty() => {
-            return Err(ApiError::validacao(
+            return Err(ApiError::validation(
                 "canal",
                 "informe o canal, por exemplo whatsapp",
             ));
@@ -201,7 +201,7 @@ fn query_filter(q: &CasesQuery) -> Result<RecordFilter, ApiError> {
     let since = match q.since.as_deref() {
         None => None,
         Some(text) => Some(text.trim().parse::<i64>().map_err(|_| {
-            ApiError::validacao("desde", "use milissegundos desde 1970, como número inteiro")
+            ApiError::validation("desde", "use milissegundos desde 1970, como número inteiro")
         })?),
     };
     Ok(RecordFilter {
@@ -221,8 +221,8 @@ fn seq_cursor(cursor: Option<&str>) -> Result<Option<i64>, ApiError> {
             .filter(|seq| *seq >= 0)
             .map(Some)
             .ok_or_else(|| {
-                ApiError::invalido("cursor inválido: use o `next_cursor` da resposta anterior")
-                    .com_detalhes(json!({ "field": "cursor", "value": text }))
+                ApiError::invalid("cursor inválido: use o `next_cursor` da resposta anterior")
+                    .with_details(json!({ "field": "cursor", "value": text }))
             }),
     }
 }
@@ -287,27 +287,27 @@ pub struct AbandonmentData {
     responses(
         (status = 201, description = "Execução aberta na etapa de início do fluxo", body = Value),
         (status = 200, description = "Chave já usada: devolve a execução que a primeira chamada abriu, com `repetida: true`", body = Value),
-        (status = 400, description = "Chave de idempotência vazia ou corpo inválido", body = crate::erro::RespostaErro),
-        (status = 403, description = "Fluxo não liberado ao agente da Ficha (`fluxo_nao_liberado`); nada é aberto", body = crate::erro::RespostaErro),
-        (status = 404, description = "Ficha ou fluxo inexistente na org", body = crate::erro::RespostaErro),
-        (status = 409, description = "Ficha fechada (`ficha_encerrada`) ou fluxo sem revisão publicada (`conflict`)", body = crate::erro::RespostaErro),
-        (status = 412, description = "Versão da Ficha diferente da atual", body = crate::erro::RespostaErro),
-        (status = 428, description = "Falta o `If-Match`", body = crate::erro::RespostaErro),
+        (status = 400, description = "Chave de idempotência vazia ou corpo inválido", body = crate::error::ErrorResponse),
+        (status = 403, description = "Fluxo não liberado ao agente da Ficha (`fluxo_nao_liberado`); nada é aberto", body = crate::error::ErrorResponse),
+        (status = 404, description = "Ficha ou fluxo inexistente na org", body = crate::error::ErrorResponse),
+        (status = 409, description = "Ficha fechada (`ficha_encerrada`) ou fluxo sem revisão publicada (`conflict`)", body = crate::error::ErrorResponse),
+        (status = 412, description = "Versão da Ficha diferente da atual", body = crate::error::ErrorResponse),
+        (status = 428, description = "Falta o `If-Match`", body = crate::error::ErrorResponse),
     )
 )]
 pub async fn start_flow(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<CasePath>,
     h: HeaderMap,
     body: Result<Json<StartData>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let case_id = parse_path_id::<RecordId>(&c.case_id)?;
     let version = if_match_version(&h, "ficha")?;
     let Json(data) = body.map_err(|_| {
-        ApiError::invalido(
+        ApiError::invalid(
             "corpo JSON inválido: use {\"fluxo_id\": ..., \"chave_idempotencia\": ...}",
         )
     })?;
@@ -330,7 +330,7 @@ pub async fn start_flow(
         }));
     }
     if case.version != version {
-        return Err(ApiError::conflito_de_versao(
+        return Err(ApiError::version_conflict(
             "ficha",
             &case_id.to_string(),
             version,
@@ -341,7 +341,7 @@ pub async fn start_flow(
         .store
         .revisions()
         .current(org, flow)?
-        .ok_or_else(|| ApiError::conflito("o fluxo ainda não tem revisão publicada"))?;
+        .ok_or_else(|| ApiError::conflict("o fluxo ainda não tem revisão publicada"))?;
     let ir = revision_ir(&e, &revision)?;
     let evaluator = revision_evaluator(&e, &revision, &ir)?;
     let case_text = case_id.to_string();
@@ -351,7 +351,7 @@ pub async fn start_flow(
         .with_client(&peer);
     let state = start(&ir).map_err(domain)?;
     let effect = entry_effects(&ir, state.no_atual.id(), &state.dados, &context).map_err(domain)?;
-    let token = ident.ator_id();
+    let token = ident.actor_id();
     let stored = e.store.executions().start_execution(
         org,
         ExecutionStart {
@@ -406,27 +406,27 @@ pub async fn start_flow(
     request_body = ActionData,
     responses(
         (status = 200, description = "Execução depois da ação; chave repetida devolve a execução atual, sem evento nem efeito novo", body = Value),
-        (status = 400, description = "Chave vazia ou campos inválidos (`campos_invalidos`)", body = crate::erro::RespostaErro),
-        (status = 404, description = "Execução fora da Ficha ou da org", body = crate::erro::RespostaErro),
-        (status = 409, description = "Ação que só o agente pode fazer (`acao_invalida`) ou Ficha fechada (`ficha_encerrada`)", body = crate::erro::RespostaErro),
-        (status = 412, description = "Versão da execução diferente da atual (corrida com o agente)", body = crate::erro::RespostaErro),
-        (status = 428, description = "Falta o `If-Match`", body = crate::erro::RespostaErro),
+        (status = 400, description = "Chave vazia ou campos inválidos (`campos_invalidos`)", body = crate::error::ErrorResponse),
+        (status = 404, description = "Execução fora da Ficha ou da org", body = crate::error::ErrorResponse),
+        (status = 409, description = "Ação que só o agente pode fazer (`acao_invalida`) ou Ficha fechada (`ficha_encerrada`)", body = crate::error::ErrorResponse),
+        (status = 412, description = "Versão da execução diferente da atual (corrida com o agente)", body = crate::error::ErrorResponse),
+        (status = 428, description = "Falta o `If-Match`", body = crate::error::ErrorResponse),
     )
 )]
 pub async fn apply_action(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<ExecutionPath>,
     h: HeaderMap,
     body: Result<Json<ActionData>, JsonRejection>,
 ) -> Result<Json<Value>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let case_id = parse_path_id::<RecordId>(&c.case_id)?;
     let run = execution_id(&c.run_id)?;
     let version = if_match_version(&h, "execução de fluxo")?;
     let Json(data) = body.map_err(|_| {
-        ApiError::invalido(
+        ApiError::invalid(
             "corpo JSON inválido: use {\"acao\": ..., \"campos\": {...}, \"chave_idempotencia\": ...}",
         )
     })?;
@@ -446,7 +446,7 @@ pub async fn apply_action(
         }));
     }
     if current.version != version {
-        return Err(ApiError::conflito_de_versao(
+        return Err(ApiError::version_conflict(
             "execução de fluxo",
             &run.to_string(),
             version,
@@ -469,7 +469,7 @@ pub async fn apply_action(
         &context,
     )
     .map_err(domain)?;
-    let token = ident.ator_id();
+    let token = ident.actor_id();
     let stored = e.store.executions().apply_transition(
         org,
         run,
@@ -519,29 +519,27 @@ pub async fn apply_action(
     request_body = AbandonmentData,
     responses(
         (status = 200, description = "Execução abandonada; não gera efeito", body = Value),
-        (status = 400, description = "Chave vazia ou corpo inválido", body = crate::erro::RespostaErro),
-        (status = 404, description = "Execução fora da Ficha ou da org", body = crate::erro::RespostaErro),
-        (status = 409, description = "Execução que já não está ativa, ou Ficha fechada (`ficha_encerrada`)", body = crate::erro::RespostaErro),
-        (status = 412, description = "Versão da execução diferente da atual", body = crate::erro::RespostaErro),
-        (status = 428, description = "Falta o `If-Match`", body = crate::erro::RespostaErro),
+        (status = 400, description = "Chave vazia ou corpo inválido", body = crate::error::ErrorResponse),
+        (status = 404, description = "Execução fora da Ficha ou da org", body = crate::error::ErrorResponse),
+        (status = 409, description = "Execução que já não está ativa, ou Ficha fechada (`ficha_encerrada`)", body = crate::error::ErrorResponse),
+        (status = 412, description = "Versão da execução diferente da atual", body = crate::error::ErrorResponse),
+        (status = 428, description = "Falta o `If-Match`", body = crate::error::ErrorResponse),
     )
 )]
 pub async fn abandon(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<ExecutionPath>,
     h: HeaderMap,
     body: Result<Json<AbandonmentData>, JsonRejection>,
 ) -> Result<Json<Value>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let case_id = parse_path_id::<RecordId>(&c.case_id)?;
     let run = execution_id(&c.run_id)?;
     let version = if_match_version(&h, "execução de fluxo")?;
     let Json(data) = body.map_err(|_| {
-        ApiError::invalido(
-            "corpo JSON inválido: use {\"motivo\": ..., \"chave_idempotencia\": ...}",
-        )
+        ApiError::invalid("corpo JSON inválido: use {\"motivo\": ..., \"chave_idempotencia\": ...}")
     })?;
     let key = key_required(&data.idempotency_key)?;
     let current = case_execution(&e, org, case_id, run)?;
@@ -558,7 +556,7 @@ pub async fn abandon(
         }));
     }
     if current.version != version {
-        return Err(ApiError::conflito_de_versao(
+        return Err(ApiError::version_conflict(
             "execução de fluxo",
             &run.to_string(),
             version,
@@ -568,7 +566,7 @@ pub async fn abandon(
     let (_ir, _evaluator, state) = action_state(&e, org, &current)?;
     let result =
         abandon_run(&state, &data.reason, ActionActor::Attendant, Some(&key)).map_err(domain)?;
-    let token = ident.ator_id();
+    let token = ident.actor_id();
     let stored = e.store.executions().apply_transition(
         org,
         run,
@@ -619,20 +617,20 @@ pub async fn abandon(
     ),
     responses(
         (status = 200, description = "Ficha fechada (e a conversa, quando há); a execução ativa vai para `abandonada`", body = Value),
-        (status = 404, description = "Ficha inexistente ou de outra org", body = crate::erro::RespostaErro),
-        (status = 409, description = "Ficha já fechada (`ficha_encerrada`)", body = crate::erro::RespostaErro),
-        (status = 412, description = "Versão da Ficha diferente da atual", body = crate::erro::RespostaErro),
-        (status = 428, description = "Falta o `If-Match`", body = crate::erro::RespostaErro),
+        (status = 404, description = "Ficha inexistente ou de outra org", body = crate::error::ErrorResponse),
+        (status = 409, description = "Ficha já fechada (`ficha_encerrada`)", body = crate::error::ErrorResponse),
+        (status = 412, description = "Versão da Ficha diferente da atual", body = crate::error::ErrorResponse),
+        (status = 428, description = "Falta o `If-Match`", body = crate::error::ErrorResponse),
     )
 )]
 pub async fn close(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<CasePath>,
     h: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let case_id = parse_path_id::<RecordId>(&c.case_id)?;
     let expected = if_match_version(&h, "ficha")?;
     let case = e.store.cases().get(org, case_id)?;
@@ -642,7 +640,7 @@ pub async fn close(
         }));
     }
     if case.version != expected {
-        return Err(ApiError::conflito_de_versao(
+        return Err(ApiError::version_conflict(
             "ficha",
             &case_id.to_string(),
             expected,
@@ -656,7 +654,7 @@ pub async fn close(
                 org,
                 conversation,
                 record.version,
-                ident.ator_id(),
+                ident.actor_id(),
             )?;
         }
         None => {
@@ -679,7 +677,7 @@ fn domain(error: DomainError) -> ApiError {
 fn key_required(text: &str) -> Result<String, ApiError> {
     let clean = text.trim();
     if clean.is_empty() {
-        return Err(ApiError::validacao(
+        return Err(ApiError::validation(
             "chave_idempotencia",
             "informe uma chave: repetir a mesma tem de devolver o mesmo resultado",
         ));
@@ -691,7 +689,7 @@ fn body_fields(fields: Option<Value>) -> Result<Campos, ApiError> {
     match fields {
         None | Some(Value::Null) => Ok(Campos::new()),
         Some(Value::Object(map)) => Ok(map),
-        Some(_) => Err(ApiError::validacao(
+        Some(_) => Err(ApiError::validation(
             "campos",
             "use um objeto: {\"nome_do_campo\": valor}",
         )),
@@ -706,10 +704,7 @@ fn case_execution(
 ) -> Result<Execution, ApiError> {
     let execution = e.store.executions().get(org, run)?;
     if execution.ficha_id != case {
-        return Err(ApiError::nao_encontrado(
-            "execução de fluxo",
-            &run.to_string(),
-        ));
+        return Err(ApiError::not_found("execução de fluxo", &run.to_string()));
     }
     Ok(execution)
 }
@@ -717,7 +712,7 @@ fn case_execution(
 fn revision_ir(e: &Estado, revision: &FlowRevision) -> Result<Arc<Ir>, ApiError> {
     let stored = Ir::from_json(&revision.definicao_json).map_err(|error| {
         tracing::error!(error = ?error, "IR gravada de revisão de fluxo não lê");
-        ApiError::interno()
+        ApiError::internal()
     })?;
     let key = RevisionKey::with_hash(
         revision.fluxo_id.to_string(),
@@ -733,7 +728,7 @@ fn revision_ir(e: &Estado, revision: &FlowRevision) -> Result<Arc<Ir>, ApiError>
         )
         .map_err(|error| {
             tracing::error!(error = ?error, "revisão de fluxo publicada não carrega");
-            ApiError::interno()
+            ApiError::internal()
         })
 }
 
@@ -752,7 +747,7 @@ fn revision_evaluator(
     )
     .map_err(|error| {
         tracing::error!(error = ?error, "módulo de regras de revisão não carrega");
-        ApiError::interno()
+        ApiError::internal()
     })
 }
 
@@ -773,7 +768,7 @@ fn action_state(
         .unwrap_or_default();
     let data = serde_json::from_str::<Dados>(&execution.dados_json).map_err(|error| {
         tracing::error!(error = ?error, "dados de execução de fluxo não leem");
-        ApiError::interno()
+        ApiError::internal()
     })?;
     let state = EngineState {
         fluxo_id: ir.fluxo.id.clone(),
@@ -803,7 +798,7 @@ fn destination_id(ir: &Ir, id: &str) -> Result<Destination, ApiError> {
         });
     }
     tracing::error!(no = id, "nó da execução não existe na IR da revisão");
-    Err(ApiError::interno())
+    Err(ApiError::internal())
 }
 
 fn execution_response(
@@ -822,7 +817,7 @@ fn execution_response(
 
 fn execution_id(text: &str) -> Result<ExecutionId, ApiError> {
     text.parse::<ExecutionId>().map_err(|_| {
-        ApiError::id_invalido(
+        ApiError::invalid_id(
             "execução de fluxo",
             text,
             "use o id de uma execução (UUID v7)",

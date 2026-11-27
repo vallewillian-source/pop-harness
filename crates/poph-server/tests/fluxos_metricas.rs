@@ -67,7 +67,7 @@ async fn metricas_http(estado: Estado) -> String {
     let endereco = listener.local_addr().expect("endereço");
     let (desligar, sinal) = tokio::sync::oneshot::channel::<()>();
     let servidor = tokio::spawn(async move {
-        let _ = poph_server::servir_em(listener, estado, async {
+        let _ = poph_server::serve_at(listener, estado, async {
             let _ = sinal.await;
         })
         .await;

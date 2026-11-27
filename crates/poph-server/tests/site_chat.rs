@@ -103,7 +103,7 @@ impl Fixture {
             .com_motor(Arc::new(motor));
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
         let url = format!("http://{}", listener.local_addr().expect("address"));
-        let task = tokio::spawn(poph_server::servir_em(
+        let task = tokio::spawn(poph_server::serve_at(
             listener,
             state,
             std::future::pending(),

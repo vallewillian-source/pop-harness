@@ -9,8 +9,8 @@ use utoipa::ToSchema;
 
 use super::pagination::{ListJson, PageQuery, next_cursor};
 use super::{if_match_version, request_status, status_text};
-use crate::auth::Identidade;
-use crate::erro::{ApiError, id_da_url as parse_path_id};
+use crate::auth::Identity;
+use crate::error::{ApiError, id_from_url as parse_path_id};
 use crate::estado::Estado;
 
 #[doc = " Org na resposta da API."]
@@ -213,12 +213,12 @@ const PAGE_OF_LIST_REMOTE: u32 = 20;
     ),
     responses(
         (status = 200, description = "Página de orgs. Cada item traz `agents_active_count` (agentes com `status = active`, `0` quando não há nenhum), nas duas formas da listagem. Com `cluster=true`, `items` traz todas as orgs do cluster (cada uma com `instancia`) e `instancias` traz o estado de cada instância; sem o parâmetro é a página de sempre", body = ListJson<OrgJson>),
-        (status = 401, description = "Token ausente ou inválido", body = crate::erro::RespostaErro)
+        (status = 401, description = "Token ausente ou inválido", body = crate::error::ErrorResponse)
     )
 )]
 pub async fn list(
     State(state): State<Estado>,
-    identity: Identidade,
+    identity: Identity,
     Query(query): Query<OrgsQuery>,
     header: HeaderMap,
 ) -> Result<Json<OrgsListJson>, ApiError> {
@@ -277,7 +277,7 @@ async fn list_in_cluster(state: &Estado, header: &HeaderMap) -> Result<OrgsListJ
         .timeout(DEADLINE_OF_LIST_REMOTE)
         .build()
         .map_err(|_: reqwest::Error| {
-            ApiError::novo(
+            ApiError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal",
                 "não consegui montar o cliente HTTP da listagem entre instâncias",
@@ -401,39 +401,39 @@ async fn instance_orgs(
     request_body = CreateOrg,
     responses(
         (status = 201, description = "Org criada", body = OrgJson),
-        (status = 400, description = "Campo inválido", body = crate::erro::RespostaErro),
-        (status = 403, description = "Token de org não cria org", body = crate::erro::RespostaErro),
-        (status = 409, description = "Slug já existe", body = crate::erro::RespostaErro)
+        (status = 400, description = "Campo inválido", body = crate::error::ErrorResponse),
+        (status = 403, description = "Token de org não cria org", body = crate::error::ErrorResponse),
+        (status = 409, description = "Slug já existe", body = crate::error::ErrorResponse)
     )
 )]
 pub async fn create(
     State(state): State<Estado>,
-    identity: Identidade,
+    identity: Identity,
     Json(body): Json<CreateOrg>,
 ) -> Result<(StatusCode, Json<OrgJson>), ApiError> {
-    identity.exigir_global()?;
+    identity.require_global()?;
     let name = validate_name(&body.name)?;
     let slug = match body.slug.as_deref().map(str::trim) {
         Some(text) if !text.is_empty() => text.to_owned(),
         _ => derive_slug(&name),
     };
     if !valid_slug(&slug) {
-        return Err(ApiError::validacao(
+        return Err(ApiError::validation(
             "slug",
             format!("`{slug}`: use de 3 a 64 caracteres, só a-z, 0-9 e `-`"),
         ));
     }
     if state.store.orgs().by_slug(&slug).is_ok() {
-        return Err(ApiError::conflito(format!(
+        return Err(ApiError::conflict(format!(
             "já existe uma org com o slug `{slug}`"
         )));
     }
     let config_json = match &body.config {
         None | Some(Value::Null) => "{}".to_owned(),
         Some(Value::Object(_)) => serde_json::to_string(body.config.as_ref().unwrap())
-            .map_err(|_| ApiError::validacao("config", "não consegui serializar o objeto"))?,
+            .map_err(|_| ApiError::validation("config", "não consegui serializar o objeto"))?,
         Some(_) => {
-            return Err(ApiError::validacao(
+            return Err(ApiError::validation(
                 "config",
                 "deve ser um objeto JSON (ex.: {\"retencao\":{\"dias\":30}})",
             ));
@@ -465,17 +465,17 @@ pub async fn create(
     params(("org_id" = String, Path, description = "Id da org (UUID v7)")),
     responses(
         (status = 200, description = "Org", body = OrgJson),
-        (status = 403, description = "Org de outro token", body = crate::erro::RespostaErro),
-        (status = 404, description = "Org não encontrada", body = crate::erro::RespostaErro)
+        (status = 403, description = "Org de outro token", body = crate::error::ErrorResponse),
+        (status = 404, description = "Org não encontrada", body = crate::error::ErrorResponse)
     )
 )]
 pub async fn show(
     State(state): State<Estado>,
-    identity: Identidade,
+    identity: Identity,
     Path(path): Path<OrgPath>,
 ) -> Result<Json<OrgJson>, ApiError> {
     let id = parse_path_id::<OrgId>(&path.org_id)?;
-    identity.exigir_org(id)?;
+    identity.require_org(id)?;
     let org = state.store.orgs().get(id)?;
     let item = items_with_active_agents(&state, std::slice::from_ref(&org), None)?
         .pop()
@@ -497,19 +497,19 @@ pub async fn show(
     request_body = UpdateOrg,
     responses(
         (status = 200, description = "Org alterada", body = OrgJson),
-        (status = 412, description = "Versão desatualizada", body = crate::erro::RespostaErro),
-        (status = 428, description = "Faltou If-Match", body = crate::erro::RespostaErro)
+        (status = 412, description = "Versão desatualizada", body = crate::error::ErrorResponse),
+        (status = 428, description = "Faltou If-Match", body = crate::error::ErrorResponse)
     )
 )]
 pub async fn update(
     State(state): State<Estado>,
-    identity: Identidade,
+    identity: Identity,
     Path(path): Path<OrgPath>,
     headers: HeaderMap,
     Json(body): Json<UpdateOrg>,
 ) -> Result<Json<OrgJson>, ApiError> {
     let id = parse_path_id::<OrgId>(&path.org_id)?;
-    identity.exigir_org(id)?;
+    identity.require_org(id)?;
     let expected = if_match_version(&headers, "org")?;
     let status = match &body.status {
         Some(text) => Some(request_status(text)?),
@@ -519,10 +519,10 @@ pub async fn update(
         None => None,
         Some(Value::Object(_)) => Some(
             serde_json::to_string(body.config.as_ref().unwrap())
-                .map_err(|_| ApiError::validacao("config", "não consegui serializar o objeto"))?,
+                .map_err(|_| ApiError::validation("config", "não consegui serializar o objeto"))?,
         ),
         Some(_) => {
-            return Err(ApiError::validacao("config", "deve ser um objeto JSON"));
+            return Err(ApiError::validation("config", "deve ser um objeto JSON"));
         }
     };
     let change = OrgChange {
@@ -551,17 +551,17 @@ pub async fn update(
     ),
     responses(
         (status = 204, description = "Org excluída"),
-        (status = 409, description = "Org tem agentes e faltou force", body = crate::erro::RespostaErro)
+        (status = 409, description = "Org tem agentes e faltou force", body = crate::error::ErrorResponse)
     )
 )]
 pub async fn delete(
     State(state): State<Estado>,
-    identity: Identidade,
+    identity: Identity,
     Path(path): Path<OrgPath>,
     Query(deletion): Query<ExclusionOrg>,
 ) -> Result<StatusCode, ApiError> {
     let id = parse_path_id::<OrgId>(&path.org_id)?;
-    identity.exigir_global()?;
+    identity.require_global()?;
     if deletion.force.unwrap_or(false) {
         state.store.orgs().delete_forced(id)?;
     } else {
@@ -586,7 +586,7 @@ pub(crate) fn validate_name(text: &str) -> Result<String, ApiError> {
     let clean = text.trim();
     let size = clean.chars().count();
     if !(1..=120).contains(&size) {
-        return Err(ApiError::validacao(
+        return Err(ApiError::validation(
             "name",
             "deve ter de 1 a 120 caracteres",
         ));

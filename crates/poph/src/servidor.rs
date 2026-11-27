@@ -155,7 +155,7 @@ pub fn executar(flag: Option<PathBuf>, ambiente: &config::Ambiente, args: ServeA
             let _ = tokio::signal::ctrl_c().await;
             println!("\nencerrando o servidor…");
         };
-        match poph_server::servir_em(listener, estado, desligamento).await {
+        match poph_server::serve_at(listener, estado, desligamento).await {
             Ok(()) => ExitCode::SUCCESS,
             Err(erro) => {
                 eprintln!("o servidor parou com erro: {erro}");

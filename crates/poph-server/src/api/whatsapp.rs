@@ -11,8 +11,8 @@ use serde_json::{Value, json};
 
 use super::if_match_version;
 use crate::{
-    auth::Identidade,
-    erro::{ApiError, id_da_url as parse_path_id},
+    auth::Identity,
+    error::{ApiError, id_from_url as parse_path_id},
     estado::Estado,
 };
 
@@ -47,14 +47,14 @@ impl Target {
     }
 }
 
-fn target(e: &Estado, ident: &Identidade, c: &PathParams) -> Result<Target, ApiError> {
+fn target(e: &Estado, ident: &Identity, c: &PathParams) -> Result<Target, ApiError> {
     let org: OrgId = parse_path_id(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let agent_id: AgentId = parse_path_id(&c.agent_id)?;
     let id: IntegrationId = parse_path_id(&c.integration_id)?;
     let integration = e.store.get_integration(org, agent_id, id)?;
     if !integration.kind.trim().eq_ignore_ascii_case("whatsapp") {
-        return Err(ApiError::novo(
+        return Err(ApiError::new(
             StatusCode::CONFLICT,
             "integracao_nao_e_whatsapp",
             format!(
@@ -62,19 +62,19 @@ fn target(e: &Estado, ident: &Identidade, c: &PathParams) -> Result<Target, ApiE
                 integration.kind
             ),
         )
-        .com_detalhes(json!({ "kind": integration.kind })));
+        .with_details(json!({ "kind": integration.kind })));
     }
     let channel = e.canal_evolution_da_integracao(org, id).ok_or_else(|| {
-        ApiError::novo(
+        ApiError::new(
             StatusCode::CONFLICT,
             "whatsapp_nao_configurado",
             "esta integração não tem instância da Evolution declarada na configuração \
                  do servidor (`[evolution].instancias`: org, instância e integração)",
         )
-        .com_detalhes(json!({ "integration_id": id.to_string() }))
+        .with_details(json!({ "integration_id": id.to_string() }))
     })?;
     let client = channel.cliente.clone().ok_or_else(|| {
-        ApiError::novo(
+        ApiError::new(
             StatusCode::SERVICE_UNAVAILABLE,
             "evolution_indisponivel",
             "o servidor não tem como falar com a Evolution: falta `EVOLUTION_API_KEY` no ambiente",
@@ -92,7 +92,7 @@ fn target(e: &Estado, ident: &Identidade, c: &PathParams) -> Result<Target, ApiE
 fn check_version(target: &Target, h: &HeaderMap) -> Result<(), ApiError> {
     let version = if_match_version(h, "integração")?;
     if version != target.integration.version {
-        return Err(ApiError::conflito_de_versao(
+        return Err(ApiError::version_conflict(
             "integração",
             target.id(),
             version,
@@ -110,23 +110,23 @@ fn write_state(e: &Estado, target: &Target, state: &str) -> Result<(), ApiError>
 
 fn evolution_error(error: EvolutionError, operation: &str) -> ApiError {
     match &error {
-        EvolutionError::Network(_) => ApiError::novo(
+        EvolutionError::Network(_) => ApiError::new(
             StatusCode::SERVICE_UNAVAILABLE,
             "evolution_indisponivel",
             format!("não consegui falar com a Evolution em `{operation}`; tente de novo"),
         ),
-        EvolutionError::Response { status, message } => ApiError::novo(
+        EvolutionError::Response { status, message } => ApiError::new(
             StatusCode::BAD_GATEWAY,
             "evolution_recusou",
             format!("a Evolution recusou `{operation}`: {message}"),
         )
-        .com_detalhes(json!({ "evolution_status": status })),
-        EvolutionError::InvalidResponse(reason) => ApiError::novo(
+        .with_details(json!({ "evolution_status": status })),
+        EvolutionError::InvalidResponse(reason) => ApiError::new(
             StatusCode::BAD_GATEWAY,
             "evolution_resposta_invalida",
             format!("a resposta da Evolution não serve para `{operation}`: {reason}"),
         ),
-        other => ApiError::novo(
+        other => ApiError::new(
             StatusCode::BAD_GATEWAY,
             "evolution_falhou",
             format!("falha em `{operation}` com a Evolution: {other}"),
@@ -164,10 +164,10 @@ async fn optional_state(client: &EvolutionClient) -> Option<String> {
         .map(|state| state.trim().to_ascii_lowercase())
 }
 
-#[utoipa::path(operation_id = "qrcode", post,path="/admin/v1/orgs/{org_id}/agents/{agent_id}/integrations/{integration_id}/whatsapp/qrcode",tag="integrations",params(("org_id"=String,Path),("agent_id"=String,Path),("integration_id"=String,Path),("If-Match"=String,Header)),security(("bearer"=[])),request_body=PairingData,responses((status=200,description="QR de pareamento",body=Value),(status=412,description="Conflito de versão",body=crate::erro::RespostaErro)))]
+#[utoipa::path(operation_id = "qrcode", post,path="/admin/v1/orgs/{org_id}/agents/{agent_id}/integrations/{integration_id}/whatsapp/qrcode",tag="integrations",params(("org_id"=String,Path),("agent_id"=String,Path),("integration_id"=String,Path),("If-Match"=String,Header)),security(("bearer"=[])),request_body=PairingData,responses((status=200,description="QR de pareamento",body=Value),(status=412,description="Conflito de versão",body=crate::error::ErrorResponse)))]
 pub async fn qrcode(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<PathParams>,
     h: HeaderMap,
     body: Result<Json<PairingData>, JsonRejection>,
@@ -204,7 +204,7 @@ pub async fn qrcode(
         .map_err(|error| evolution_error(error, "parear"))?;
 
     if pairing.qr_base64.is_none() && pairing.qr_text.is_none() && pairing.pairing_code.is_none() {
-        return Err(ApiError::novo(
+        return Err(ApiError::new(
             StatusCode::BAD_GATEWAY,
             "evolution_sem_qr",
             "a Evolution respondeu o pareamento sem QR e sem código; peça de novo em alguns segundos",
@@ -238,7 +238,7 @@ pub async fn qrcode(
 #[utoipa::path(operation_id = "estado", get,path="/admin/v1/orgs/{org_id}/agents/{agent_id}/integrations/{integration_id}/whatsapp/state",tag="integrations",params(("org_id"=String,Path),("agent_id"=String,Path),("integration_id"=String,Path)),security(("bearer"=[])),responses((status=200,description="Estado da conexão",body=Value)))]
 pub async fn status(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<PathParams>,
 ) -> Result<Json<Value>, ApiError> {
     let target = target(&e, &ident, &c)?;
@@ -259,10 +259,10 @@ pub async fn status(
     })))
 }
 
-#[utoipa::path(operation_id = "desconectar", post,path="/admin/v1/orgs/{org_id}/agents/{agent_id}/integrations/{integration_id}/whatsapp/disconnect",tag="integrations",params(("org_id"=String,Path),("agent_id"=String,Path),("integration_id"=String,Path),("If-Match"=String,Header)),security(("bearer"=[])),responses((status=200,description="Instância desconectada",body=Value),(status=412,description="Conflito de versão",body=crate::erro::RespostaErro)))]
+#[utoipa::path(operation_id = "desconectar", post,path="/admin/v1/orgs/{org_id}/agents/{agent_id}/integrations/{integration_id}/whatsapp/disconnect",tag="integrations",params(("org_id"=String,Path),("agent_id"=String,Path),("integration_id"=String,Path),("If-Match"=String,Header)),security(("bearer"=[])),responses((status=200,description="Instância desconectada",body=Value),(status=412,description="Conflito de versão",body=crate::error::ErrorResponse)))]
 pub async fn disconnect(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<PathParams>,
     h: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {

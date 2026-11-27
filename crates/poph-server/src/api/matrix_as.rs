@@ -16,7 +16,7 @@ use poph_matrix::MatrixModule;
 use poph_types::Secret;
 use serde_json::{Value, json};
 
-use crate::erro::ApiError;
+use crate::error::ApiError;
 use crate::estado::Estado;
 
 pub const CAP_BODY: usize = 1024 * 1024;
@@ -112,15 +112,15 @@ impl AsReceiver {
             .get(header::AUTHORIZATION)
             .and_then(|value| value.to_str().ok());
         let Some(value) = value else {
-            return Err(ApiError::nao_autorizado());
+            return Err(ApiError::unauthorized());
         };
         let (scheme, presented) = value.split_once(' ').unwrap_or((value, ""));
         if !scheme.eq_ignore_ascii_case("bearer") || presented.trim().is_empty() {
-            return Err(ApiError::nao_autorizado());
+            return Err(ApiError::unauthorized());
         }
         let expected = self.hs_token.expose().as_bytes();
         if !constant_time_equal(expected, presented.trim().as_bytes()) {
-            return Err(ApiError::proibido("token do Application Service inválido"));
+            return Err(ApiError::forbidden("token do Application Service inválido"));
         }
         Ok(())
     }
@@ -319,7 +319,7 @@ pub(crate) async fn handle_transaction(
                 reason = %error.reason,
                 "transação do Application Service não foi processada: 5xx para o Synapse reenviar"
             );
-            ApiError::novo(
+            ApiError::new(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "matrix_indisponivel",
                 "não consegui processar a transação agora; o Synapse vai reenviar",
@@ -380,7 +380,7 @@ fn accepted() -> Response {
 }
 
 fn module_disabled() -> Response {
-    ApiError::novo(
+    ApiError::new(
         StatusCode::NOT_FOUND,
         "not_found",
         "o módulo Matrix está desligado nesta instância",
@@ -389,12 +389,12 @@ fn module_disabled() -> Response {
 }
 
 fn not_mine(that: &str) -> Response {
-    ApiError::novo(
+    ApiError::new(
         StatusCode::NOT_FOUND,
         "not_found",
         format!("este {that} não pertence a esta instância"),
     )
-    .com_detalhes(json!({ "errcode": ERRCODE_NOT_FOUND }))
+    .with_details(json!({ "errcode": ERRCODE_NOT_FOUND }))
     .into_response()
 }
 

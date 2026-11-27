@@ -58,7 +58,7 @@ impl Cenario {
         let endereco = listener.local_addr().expect("endereço local");
         let (desligar, sinal) = oneshot::channel();
         tokio::spawn(async move {
-            let _ = poph_server::servir_em(listener, estado, async {
+            let _ = poph_server::serve_at(listener, estado, async {
                 let _ = sinal.await;
             })
             .await;
@@ -137,7 +137,7 @@ async fn raiz_entrega_o_console_ou_a_pagina_de_aviso() {
         tipo(&resposta)
     );
     let corpo = resposta.text().await.expect("corpo");
-    if poph_server::console::tem_bundle() {
+    if poph_server::console::has_bundle() {
         assert!(
             corpo.contains("<div id=\"root\">"),
             "sem o ponto de montagem da SPA: {corpo}"
@@ -249,7 +249,7 @@ async fn fontes_da_sofa_ui_saem_do_binario() {
     let resposta = cenario
         .obter("/res/fonts/IBMPlexSans/latin-400-normal.woff2")
         .await;
-    if poph_server::console::tem_bundle() {
+    if poph_server::console::has_bundle() {
         assert_eq!(resposta.status(), StatusCode::OK);
         assert_eq!(tipo(&resposta), "font/woff2");
         let corpo = resposta.bytes().await.expect("corpo da fonte");

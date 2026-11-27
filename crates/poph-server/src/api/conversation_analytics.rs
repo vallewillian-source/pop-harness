@@ -1,6 +1,6 @@
 use crate::{
-    auth::Identidade,
-    erro::{ApiError, id_da_url as parse_path_id},
+    auth::Identity,
+    error::{ApiError, id_from_url as parse_path_id},
     estado::Estado,
 };
 use axum::{
@@ -64,15 +64,15 @@ pub struct ConversationReportJson {
     by_channel: Vec<ChannelJson>,
 }
 
-#[utoipa::path(get, path = "/admin/v1/orgs/{org_id}/analytics/conversations", tag = "analytics", operation_id = "conversation_analytics", security(("bearer" = [])), params(("org_id" = String, Path), ("from" = i64, Query), ("to" = i64, Query), ("agent_id" = Option<String>, Query), ("channel" = Option<String>, Query), ("tz_offset_minutes" = Option<i64>, Query)), responses((status = 200, body = ConversationReportJson), (status = 422, body = crate::erro::RespostaErro), (status = 404, body = crate::erro::RespostaErro)))]
+#[utoipa::path(get, path = "/admin/v1/orgs/{org_id}/analytics/conversations", tag = "analytics", operation_id = "conversation_analytics", security(("bearer" = [])), params(("org_id" = String, Path), ("from" = i64, Query), ("to" = i64, Query), ("agent_id" = Option<String>, Query), ("channel" = Option<String>, Query), ("tz_offset_minutes" = Option<i64>, Query)), responses((status = 200, body = ConversationReportJson), (status = 422, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]
 pub async fn report(
     State(state): State<Estado>,
-    identity: Identidade,
+    identity: Identity,
     Path(path): Path<OrgPath>,
     Query(query): Query<ConversationQuery>,
 ) -> Result<Json<ConversationReportJson>, ApiError> {
     let org = parse_path_id::<OrgId>(&path.org_id)?;
-    identity.exigir_org(org)?;
+    identity.require_org(org)?;
     let from = parse("from", query.from.as_deref())?;
     let to = parse("to", query.to.as_deref())?;
     if from >= to {
@@ -146,10 +146,10 @@ fn parse(field: &'static str, value: Option<&str>) -> Result<i64, ApiError> {
         .map_err(|_| invalid(field, "Input should be a valid integer"))
 }
 fn invalid(field: &'static str, reason: &str) -> ApiError {
-    ApiError::novo(
+    ApiError::new(
         StatusCode::UNPROCESSABLE_ENTITY,
         "validation_error",
         format!("campo `{field}` inválido"),
     )
-    .com_detalhes(json!({"field":field,"reason":reason}))
+    .with_details(json!({"field":field,"reason":reason}))
 }

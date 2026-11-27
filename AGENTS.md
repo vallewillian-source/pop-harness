@@ -130,7 +130,7 @@ check it against the table. Two rules the table makes clear:
 | Files and the agent library | `poph-files`, `poph-agent/src/biblioteca.rs` | `docs/ARQUIVOS.md`, `docs/BIBLIOTECA_ARQUIVOS.md` |
 | Jev: gates and fast decisions | `poph-jev/` (`gates.rs`, `engine.rs`, `cache.rs`) | `docs/JEV.md` |
 | Authentication: global and org token | `poph-server/src/auth.rs` | `docs/API.md` (Authentication section) |
-| Encryption of stored secrets | `poph-server/src/cifra.rs` | `docs/CONFIGURACAO.md` |
+| Encryption of stored secrets | `poph-server/src/cipher.rs` | `docs/CONFIGURACAO.md` |
 | Cluster: map, fingerprint, reload | `poph-server/src/cluster.rs`, `poph/src/cluster.rs`, `poph-types/src/config.rs` | `docs/CLUSTER.md` |
 | Forwarding between instances | `poph-server/src/encaminhamento.rs` | `docs/CLUSTER.md` (Forwarding section) |
 | History retention | `poph-retention/` | `docs/RETENCAO.md` |

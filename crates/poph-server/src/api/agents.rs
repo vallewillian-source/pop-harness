@@ -1,8 +1,8 @@
 use super::orgs::OrgPath;
 use super::{ListJson, PageQuery, if_match_version, next_cursor, request_status};
 use crate::{
-    auth::Identidade,
-    erro::{ApiError, id_da_url as parse_path_id},
+    auth::Identity,
+    error::{ApiError, id_from_url as parse_path_id},
     estado::Estado,
 };
 use axum::{
@@ -99,12 +99,12 @@ fn dep(s: Option<String>) -> Result<Option<DepartmentId>, ApiError> {
 #[utoipa::path(operation_id = "listar", get,path="/admin/v1/orgs/{org_id}/agents",tag="agents",params(("org_id"=String,Path),("limit"=Option<u32>,Query),("cursor"=Option<String>,Query)),security(("bearer"=[])),responses((status=200,description="Agentes",body=ListJson<Value>)))]
 pub async fn list(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<OrgPath>,
     Query(q): Query<PageQuery>,
 ) -> Result<Json<ListJson<Value>>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let page = q.page()?;
     let items: Vec<_> = e
         .store
@@ -121,11 +121,11 @@ pub async fn list(
 #[utoipa::path(operation_id = "mostrar", get,path="/admin/v1/orgs/{org_id}/agents/{agent_id}",tag="agents",params(("org_id"=String,Path),("agent_id"=String,Path)),security(("bearer"=[])),responses((status=200,description="Agente",body=Value)))]
 pub async fn show(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<AgentPath>,
 ) -> Result<Json<Value>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let id = parse_path_id::<AgentId>(&c.agent_id)?;
     let mut value = agent_json(&e.store.agents().get(org, id)?);
     value["product_category_ids"] = json!(
@@ -150,27 +150,27 @@ pub async fn show(
 #[utoipa::path(operation_id = "criar", post,path="/admin/v1/orgs/{org_id}/agents",tag="agents",params(("org_id"=String,Path)),security(("bearer"=[])),request_body=AgentData,responses((status=201,description="Agente criado",body=Value)))]
 pub async fn create(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<OrgPath>,
     body: Result<Json<AgentData>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
-    let Json(d) = body.map_err(|_| ApiError::invalido("corpo JSON de agente inválido"))?;
+    ident.require_org(org)?;
+    let Json(d) = body.map_err(|_| ApiError::invalid("corpo JSON de agente inválido"))?;
     if d.handoff.is_some()
         || d.jev_json.is_some()
         || d.status.is_some()
         || d.product_category_ids.is_some()
     {
-        return Err(ApiError::invalido(
+        return Err(ApiError::invalid(
             "campos de alteração não são aceitos na criação",
         ));
     }
     let name = d
         .name
-        .ok_or_else(|| ApiError::validacao("name", "obrigatório"))?;
+        .ok_or_else(|| ApiError::validation("name", "obrigatório"))?;
     if name.trim().len() < 3 {
-        return Err(ApiError::validacao("name", "mínimo de 3 caracteres"));
+        return Err(ApiError::validation("name", "mínimo de 3 caracteres"));
     }
     let s = d.slug.unwrap_or_else(|| slug(&name));
     if !(3..=64).contains(&s.len())
@@ -178,14 +178,14 @@ pub async fn create(
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
     {
-        return Err(ApiError::validacao(
+        return Err(ApiError::validation(
             "slug",
             "use 3 a 64 caracteres de a-z, 0-9 e hífen",
         ));
     }
     let agent_type = d.agent_type.unwrap_or_else(|| "custom".into());
     if agent_type != "custom" && agent_type != "standard" {
-        return Err(ApiError::validacao("type", "use custom ou standard"));
+        return Err(ApiError::validation("type", "use custom ou standard"));
     }
     let mut n = NewAgent {
         name,
@@ -206,7 +206,7 @@ pub async fn create(
     }
     if let Some(x) = d.provider {
         if let Err(error) = e.config.validate_provider_choice(&x) {
-            return Err(ApiError::validacao("provider", error.to_string()));
+            return Err(ApiError::validation("provider", error.to_string()));
         }
         n.provedor = x;
     }
@@ -249,32 +249,32 @@ pub async fn create(
     }
     Ok((StatusCode::CREATED, Json(agent_json(&a))))
 }
-#[utoipa::path(operation_id = "atualizar", patch,path="/admin/v1/orgs/{org_id}/agents/{agent_id}",tag="agents",params(("org_id"=String,Path),("agent_id"=String,Path),("If-Match"=String,Header)),security(("bearer"=[])),request_body=AgentData,responses((status=200,description="Agente alterado",body=Value),(status=412,description="Conflito",body=crate::erro::RespostaErro)))]
+#[utoipa::path(operation_id = "atualizar", patch,path="/admin/v1/orgs/{org_id}/agents/{agent_id}",tag="agents",params(("org_id"=String,Path),("agent_id"=String,Path),("If-Match"=String,Header)),security(("bearer"=[])),request_body=AgentData,responses((status=200,description="Agente alterado",body=Value),(status=412,description="Conflito",body=crate::error::ErrorResponse)))]
 pub async fn update(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<AgentPath>,
     h: HeaderMap,
     body: Result<Json<AgentData>, JsonRejection>,
 ) -> Result<Json<Value>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let id = parse_path_id::<AgentId>(&c.agent_id)?;
     let version = if_match_version(&h, "agente")?;
-    let Json(d) = body.map_err(|_| ApiError::invalido("corpo JSON de agente inválido"))?;
+    let Json(d) = body.map_err(|_| ApiError::invalid("corpo JSON de agente inválido"))?;
     if d.slug.is_some() || d.agent_type.is_some() || d.category.is_some() {
-        return Err(ApiError::invalido(
+        return Err(ApiError::invalid(
             "slug, type e category não podem ser alterados",
         ));
     }
     if let Some(ref j) = d.jev_json {
         serde_json::from_str::<Value>(j)
-            .map_err(|_| ApiError::validacao("jev_json", "JSON inválido"))?;
+            .map_err(|_| ApiError::validation("jev_json", "JSON inválido"))?;
     }
     if let Some(ref choice) = d.provider
         && let Err(error) = e.config.validate_provider_choice(choice)
     {
-        return Err(ApiError::validacao("provider", error.to_string()));
+        return Err(ApiError::validation("provider", error.to_string()));
     }
     let categories = d
         .product_category_ids
@@ -321,14 +321,14 @@ pub async fn update(
         || m.rag_cutoff.is_some()
         || m.jev_json.is_some();
     if !has && categories.is_none() {
-        return Err(ApiError::invalido("nada a alterar"));
+        return Err(ApiError::invalid("nada a alterar"));
     }
     let mut a = if has {
         e.store.agents().update(org, id, version, m)?
     } else {
         let a = e.store.agents().get(org, id)?;
         if a.version != version {
-            return Err(ApiError::conflito_de_versao(
+            return Err(ApiError::version_conflict(
                 "agente",
                 &id.to_string(),
                 version,
@@ -352,11 +352,11 @@ pub async fn update(
 #[utoipa::path(operation_id = "excluir", delete,path="/admin/v1/orgs/{org_id}/agents/{agent_id}",tag="agents",params(("org_id"=String,Path),("agent_id"=String,Path)),security(("bearer"=[])),responses((status=200,description="Agente excluído",body=Value)))]
 pub async fn delete(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<AgentPath>,
 ) -> Result<Json<Value>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let id = parse_path_id::<AgentId>(&c.agent_id)?;
     e.store.agents().delete(org, id)?;
     super::audit::register(&e, &ident, Some(org), "delete", "agent", id.to_string())?;

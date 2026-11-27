@@ -5,7 +5,7 @@ use axum::response::{IntoResponse, Response};
 use poph_files::FileConfig;
 use poph_types::OrgId;
 
-use crate::erro::ApiError;
+use crate::error::ApiError;
 
 pub const HEADER_SHA: &str = "x-content-sha256";
 const LIMIT_NAME: usize = 200;
@@ -17,7 +17,7 @@ pub fn read_limit(folder_blobs: &Path) -> u64 {
 pub fn read_blob(folder_blobs: &Path, org: OrgId, sha256: &str) -> Result<Vec<u8>, ApiError> {
     poph_files::blob::read(folder_blobs, org, sha256, read_limit(folder_blobs)).map_err(|error| {
         tracing::warn!(org = %org, reason = %error, "conteúdo de arquivo indisponível");
-        ApiError::novo(
+        ApiError::new(
             StatusCode::NOT_FOUND,
             "not_found",
             "o conteúdo deste arquivo não está disponível",

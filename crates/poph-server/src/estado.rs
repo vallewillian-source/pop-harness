@@ -13,7 +13,7 @@ use poph_flows::{Compiled, Ir, Limites, LoadFailure, RevisionCache, RevisionKey,
 use poph_store::Store;
 use poph_types::{BaseMetrics, ConversationId, HarnessConfig, OrgId, Registry};
 
-use crate::cifra::ChaveDeCifra;
+use crate::cipher::CipherKey;
 use crate::cluster::ClusterVivo;
 use crate::evolution::CanalEvolution;
 use crate::fluxos_metricas::MetricasFluxos;
@@ -55,7 +55,7 @@ pub struct Estado {
     pub manifestos: Arc<CatalogoManifestos>,
     /// Chave de cifra dos segredos de integração (`POPH_CHAVE_CIFRA`). `None` = segredo não é
     /// gravado nem lido (a API responde `503 cifra_indisponivel`).
-    pub chave_de_cifra: Option<Arc<ChaveDeCifra>>,
+    pub chave_de_cifra: Option<Arc<CipherKey>>,
     /// Motor do turno (HR-22): o chat de teste do Console roda o mesmo motor da conversa, com o
     /// mesmo provedor, memória e ferramentas. `None` = sem chave do modelo: o chat de teste
     /// responde `503 turno_indisponivel` em vez de abrir um turno que não pode responder.
@@ -157,7 +157,7 @@ impl Estado {
             turno: None,
             intervalo_turno: Duration::from_millis(1000),
             manifestos,
-            chave_de_cifra: ChaveDeCifra::do_ambiente().map(Arc::new),
+            chave_de_cifra: CipherKey::from_environment().map(Arc::new),
             motor: None,
             site_workers: Arc::default(),
             arquivos,
@@ -395,7 +395,7 @@ impl Estado {
 
     /// Define a chave de cifra dos segredos de integração (a raiz de composição passa a do
     /// ambiente; os testes passam uma própria, sem mexer em variável de processo).
-    pub fn com_chave_de_cifra(mut self, chave: Option<ChaveDeCifra>) -> Self {
+    pub fn com_chave_de_cifra(mut self, chave: Option<CipherKey>) -> Self {
         self.chave_de_cifra = chave.map(Arc::new);
         self
     }

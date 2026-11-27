@@ -12,9 +12,9 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use super::pagination::{ListJson, PageQuery, next_cursor};
-use crate::auth::Identidade;
-use crate::auth::PREFIXO_ORG;
-use crate::erro::{ApiError, id_da_url as parse_path_id};
+use crate::auth::Identity;
+use crate::auth::ORG_PREFIX;
+use crate::error::{ApiError, id_from_url as parse_path_id};
 use crate::estado::Estado;
 
 #[doc = " Token na resposta da API (nunca traz o segredo)."]
@@ -89,17 +89,17 @@ pub struct TokenPath {
     ),
     responses(
         (status = 200, description = "Página de tokens", body = ListJson<TokenJson>),
-        (status = 403, description = "Org de outro token", body = crate::erro::RespostaErro)
+        (status = 403, description = "Org de outro token", body = crate::error::ErrorResponse)
     )
 )]
 pub async fn list(
     State(state): State<Estado>,
-    identity: Identidade,
+    identity: Identity,
     Path(path): Path<super::orgs::OrgPath>,
     Query(query): Query<PageQuery>,
 ) -> Result<Json<ListJson<TokenJson>>, ApiError> {
     let org = parse_path_id::<OrgId>(&path.org_id)?;
-    identity.exigir_org(org)?;
+    identity.require_org(org)?;
     let page = query.page()?;
     let tokens = state.store.tokens().list(org, page)?;
     let items: Vec<TokenJson> = tokens.iter().map(TokenJson::de).collect();
@@ -118,21 +118,21 @@ pub async fn list(
     request_body = CreateToken,
     responses(
         (status = 201, description = "Token criado (valor aparece só aqui)", body = TokenCreatedJson),
-        (status = 403, description = "Só token global cria token", body = crate::erro::RespostaErro),
-        (status = 404, description = "Org não encontrada", body = crate::erro::RespostaErro)
+        (status = 403, description = "Só token global cria token", body = crate::error::ErrorResponse),
+        (status = 404, description = "Org não encontrada", body = crate::error::ErrorResponse)
     )
 )]
 pub async fn create(
     State(state): State<Estado>,
-    identity: Identidade,
+    identity: Identity,
     Path(path): Path<super::orgs::OrgPath>,
     Json(body): Json<CreateToken>,
 ) -> Result<(StatusCode, Json<TokenCreatedJson>), ApiError> {
     let org = parse_path_id::<OrgId>(&path.org_id)?;
-    identity.exigir_global()?;
+    identity.require_global()?;
     let label = body.label.trim();
     if label.is_empty() || label.chars().count() > 80 {
-        return Err(ApiError::validacao(
+        return Err(ApiError::validation(
             "label",
             "deve ter de 1 a 80 caracteres",
         ));
@@ -149,7 +149,7 @@ pub async fn create(
         "token",
         token.id.to_string(),
     )?;
-    let value = format!("{PREFIXO_ORG}{}_{secret}", token.id);
+    let value = format!("{ORG_PREFIX}{}_{secret}", token.id);
     Ok((
         StatusCode::CREATED,
         Json(TokenCreatedJson {
@@ -172,17 +172,17 @@ pub async fn create(
     ),
     responses(
         (status = 200, description = "Token", body = TokenJson),
-        (status = 404, description = "Token não encontrado", body = crate::erro::RespostaErro)
+        (status = 404, description = "Token não encontrado", body = crate::error::ErrorResponse)
     )
 )]
 pub async fn show(
     State(state): State<Estado>,
-    identity: Identidade,
+    identity: Identity,
     Path(path): Path<TokenPath>,
 ) -> Result<Json<TokenJson>, ApiError> {
     let org = parse_path_id::<OrgId>(&path.org_id)?;
     let token = parse_path_id::<AdminTokenId>(&path.token_id)?;
-    identity.exigir_org(org)?;
+    identity.require_org(org)?;
     let record = state.store.tokens().get(org, token)?;
     Ok(Json(TokenJson::de(&record)))
 }
@@ -200,17 +200,17 @@ pub async fn show(
     ),
     responses(
         (status = 204, description = "Token revogado"),
-        (status = 403, description = "Só token global revoga", body = crate::erro::RespostaErro)
+        (status = 403, description = "Só token global revoga", body = crate::error::ErrorResponse)
     )
 )]
 pub async fn revoke(
     State(state): State<Estado>,
-    identity: Identidade,
+    identity: Identity,
     Path(path): Path<TokenPath>,
 ) -> Result<StatusCode, ApiError> {
     let org = parse_path_id::<OrgId>(&path.org_id)?;
     let token = parse_path_id::<AdminTokenId>(&path.token_id)?;
-    identity.exigir_global()?;
+    identity.require_global()?;
     state.store.tokens().get(org, token)?;
     state.store.tokens().revoke(org, token)?;
     super::audit::register(
@@ -241,7 +241,7 @@ fn generate_hash(value: &str) -> Result<String, ApiError> {
         .map(|hash| hash.to_string())
         .map_err(|error| {
             tracing::error!(error = %error, "falha ao gerar o hash do token");
-            ApiError::interno()
+            ApiError::internal()
         })
 }
 

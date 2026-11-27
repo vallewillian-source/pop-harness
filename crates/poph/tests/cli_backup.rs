@@ -279,7 +279,7 @@ fn semear_origem(cenario: &Cenario) {
     let store = cenario.abrir_store();
     let org = store.orgs().by_slug(&cenario.slug).unwrap().id;
     let agente = store.agents().by_slug(org, "bia").unwrap().id;
-    let chave = poph_server::ChaveDeCifra::derivar(CHAVE_CIFRA).expect("deriva a chave");
+    let chave = poph_server::CipherKey::derive(CHAVE_CIFRA).expect("deriva a chave");
     let mut segredos = std::collections::BTreeMap::new();
     segredos.insert("token".to_owned(), SENTINELA_SEGREDO.to_owned());
     let blob = chave.cifrar(&segredos).expect("cifra o segredo");

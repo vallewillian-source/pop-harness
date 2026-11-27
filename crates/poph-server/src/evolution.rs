@@ -33,7 +33,7 @@ use poph_store::{
 use poph_types::{HarnessConfig, InboundEvent, IntegrationId, OrgId, Secret, StateEvent};
 use serde_json::{Value, json};
 
-use crate::erro::ApiError;
+use crate::error::ApiError;
 use crate::estado::Estado;
 
 /// Canal de WhatsApp de uma instância da Evolution, já resolvido na subida.
@@ -156,7 +156,7 @@ pub async fn receber(
         .canal_evolution(&org_id, &instancia)
         .cloned()
         .ok_or_else(|| {
-            ApiError::novo(
+            ApiError::new(
                 StatusCode::NOT_FOUND,
                 "not_found",
                 "instância do WhatsApp não configurada neste servidor",
@@ -172,7 +172,7 @@ pub async fn receber(
         .as_ref()
         .is_some_and(|segredo| check_secret(segredo, recebido).is_ok());
     if !autorizado {
-        return Err(ApiError::novo(
+        return Err(ApiError::new(
             StatusCode::UNAUTHORIZED,
             "webhook_nao_autorizado",
             "webhook recusado: segredo ausente ou inválido",
@@ -180,12 +180,12 @@ pub async fn receber(
     }
 
     let corpo = corpo.map_err(|_| {
-        ApiError::invalido("corpo do webhook inválido ou maior que o limite de 1 MB")
+        ApiError::invalid("corpo do webhook inválido ou maior que o limite de 1 MB")
     })?;
     let valor: Value = serde_json::from_slice(&corpo)
-        .map_err(|_| ApiError::invalido("corpo do webhook não é JSON"))?;
+        .map_err(|_| ApiError::invalid("corpo do webhook não é JSON"))?;
     if !valor.is_object() {
-        return Err(ApiError::invalido(
+        return Err(ApiError::invalid(
             "corpo do webhook deve ser um objeto JSON",
         ));
     }
@@ -277,7 +277,7 @@ async fn receber_entrada(
     let anexos = baixar_anexos(estado, canal, &entrada.attachments).await?;
 
     let evento = entrada.event;
-    let evento_json = serde_json::to_string(&evento).map_err(|_| ApiError::interno())?;
+    let evento_json = serde_json::to_string(&evento).map_err(|_| ApiError::internal())?;
     // Nome do cliente (MX-32): já vem filtrado pelo webhook (contato individual recebido).
     let nome_cliente = evento
         .metadata
@@ -343,7 +343,7 @@ fn integracao_do_webhook(
         .map_err(|erro| falha_de_gravacao("integração", &erro))?
         .filter(|integracao| integracao.kind == "whatsapp" && integracao.status != "archived")
         .ok_or_else(|| {
-            ApiError::novo(
+            ApiError::new(
                 StatusCode::NOT_FOUND,
                 "not_found",
                 "integração do WhatsApp não encontrada nesta org",
@@ -492,7 +492,7 @@ async fn baixar_anexos(
             poph_files::receive(&config_tarefa, org, &nome, &baixada.bytes)
         })
         .await
-        .map_err(|_| ApiError::interno())?;
+        .map_err(|_| ApiError::internal())?;
 
         let arquivo = match gravado {
             Ok(arquivo) => arquivo,
@@ -515,7 +515,7 @@ async fn baixar_anexos(
             .blob_path
             .strip_prefix(&config.blob_folder)
             .map(|relativo| relativo.to_string_lossy().replace('\\', "/"))
-            .map_err(|_| ApiError::interno())?;
+            .map_err(|_| ApiError::internal())?;
         let (texto_extraido, status_extracao) = match arquivo.content {
             Content::Image { .. } => (None, "skipped"),
             Content::Texto { envelopado, .. } => (Some(envelopado), "ok"),
@@ -564,7 +564,7 @@ fn falha_de_gravacao(onde: &'static str, erro: &poph_store::StoreError) -> ApiEr
 }
 
 fn indisponivel() -> ApiError {
-    ApiError::novo(
+    ApiError::new(
         StatusCode::SERVICE_UNAVAILABLE,
         "indisponivel",
         "não consegui gravar agora; a Evolution deve reenviar a entrega",

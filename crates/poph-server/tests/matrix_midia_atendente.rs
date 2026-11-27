@@ -525,7 +525,7 @@ impl Cenario {
         let endereco = listener.local_addr().expect("endereço local");
         let (desligar, sinal) = oneshot::channel::<()>();
         tokio::spawn(async move {
-            let _ = poph_server::servir_em(listener, state, async {
+            let _ = poph_server::serve_at(listener, state, async {
                 let _ = sinal.await;
             })
             .await;

@@ -36,7 +36,7 @@ use axum::routing::get;
 use poph_store::Status;
 use serde_json::json;
 
-use crate::erro::ApiError;
+use crate::error::ApiError;
 use crate::estado::Estado;
 
 pub use backup::{LIMIT_IMPORT, LIMIT_IMPORT_BYTES};
@@ -368,23 +368,23 @@ pub fn router(state: Estado) -> Router {
 
 async fn missing_route(uri: Uri) -> ApiError {
     let path = uri.path().to_owned();
-    ApiError::novo(
+    ApiError::new(
         StatusCode::NOT_FOUND,
         "not_found",
         format!("a rota `{path}` não existe"),
     )
-    .com_detalhes(json!({ "path": path }))
+    .with_details(json!({ "path": path }))
 }
 
 async fn console_page_or_404(method: Method, uri: Uri) -> axum::response::Response {
     if method == Method::GET || method == Method::HEAD {
-        return crate::console::servir(&uri, &method);
+        return crate::console::serve(&uri, &method);
     }
     missing_route(uri).await.into_response()
 }
 
 async fn method_not_allowed() -> ApiError {
-    ApiError::novo(
+    ApiError::new(
         StatusCode::METHOD_NOT_ALLOWED,
         "method_not_allowed",
         "método não permitido nesta rota",
@@ -394,20 +394,20 @@ async fn method_not_allowed() -> ApiError {
 pub fn if_match_version(headers: &HeaderMap, entity: &str) -> Result<u64, ApiError> {
     let value = headers
         .get(axum::http::header::IF_MATCH)
-        .ok_or_else(|| ApiError::if_match_obrigatorio(entity))?;
+        .ok_or_else(|| ApiError::if_match_required(entity))?;
     let text = value
         .to_str()
-        .map_err(|_| ApiError::invalido("If-Match não é texto ASCII"))?;
+        .map_err(|_| ApiError::invalid("If-Match não é texto ASCII"))?;
     let clean = text
         .trim()
         .trim_start_matches("W/")
         .trim_matches('"')
         .trim();
     clean.parse::<u64>().map_err(|_| {
-        ApiError::invalido(format!(
+        ApiError::invalid(format!(
             "If-Match `{text}` não é uma versão numérica (ex.: 3)"
         ))
-        .com_detalhes(serde_json::json!({ "header": "If-Match", "value": text }))
+        .with_details(serde_json::json!({ "header": "If-Match", "value": text }))
     })
 }
 
@@ -416,7 +416,7 @@ pub fn request_status(text: &str) -> Result<Status, ApiError> {
         "active" => Ok(Status::Active),
         "inactive" => Ok(Status::Inactive),
         "archived" => Ok(Status::Archived),
-        other => Err(ApiError::validacao(
+        other => Err(ApiError::validation(
             "status",
             format!("`{other}` não é uma situação; use active, inactive ou archived"),
         )),
@@ -526,7 +526,7 @@ pub fn document() -> utoipa::openapi::OpenApi {
         knowledge::Dados,
         agents::AgentData,
         instructions::Dados,
-        crate::erro::RespostaErro,
+        crate::error::ErrorResponse,
         orgs::OrgJson,
         orgs::CreateOrg,
         orgs::UpdateOrg,

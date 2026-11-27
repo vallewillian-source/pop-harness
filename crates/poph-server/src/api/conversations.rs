@@ -1,8 +1,8 @@
 use super::orgs::OrgPath;
 use super::{ListJson, PageQuery, next_cursor};
 use crate::{
-    auth::Identidade,
-    erro::{ApiError, id_da_url as parse_path_id},
+    auth::Identity,
+    error::{ApiError, id_from_url as parse_path_id},
     estado::Estado,
 };
 use axum::{
@@ -74,7 +74,7 @@ fn query_filter(q: &ConversationsQuery) -> Result<FilterConversations, ApiError>
         Some("transferred") => Some(ConversationStatus::Transferred),
         Some("closed") => Some(ConversationStatus::Closed),
         Some(_) => {
-            return Err(ApiError::invalido(
+            return Err(ApiError::invalid(
                 "status inválido: use open, transferred ou closed",
             ));
         }
@@ -84,7 +84,7 @@ fn query_filter(q: &ConversationsQuery) -> Result<FilterConversations, ApiError>
         Some(peer) => {
             let clean = peer.trim();
             if clean.is_empty() {
-                return Err(ApiError::invalido(
+                return Err(ApiError::invalid(
                     "external_peer não pode ser vazio: informe o identificador do cliente",
                 ));
             }
@@ -94,7 +94,7 @@ fn query_filter(q: &ConversationsQuery) -> Result<FilterConversations, ApiError>
     let last_activity_before = match q.last_activity_before.as_deref() {
         None => None,
         Some(text) => Some(text.trim().parse::<i64>().map_err(|_| {
-            ApiError::invalido(
+            ApiError::invalid(
                 "last_activity_before inválido: informe o instante em milissegundos desde 1970",
             )
         })?),
@@ -110,21 +110,21 @@ fn query_order(q: &ConversationsQuery) -> Result<OrderConversations, ApiError> {
     match q.sort.as_deref() {
         None => Ok(OrderConversations::Id),
         Some("recent") => Ok(OrderConversations::Recent),
-        Some(_) => Err(ApiError::invalido(
+        Some(_) => Err(ApiError::invalid(
             "sort inválido: use recent ou não envie sort",
         )),
     }
 }
 
-#[utoipa::path(get, path="/admin/v1/orgs/{org_id}/conversations", tag="conversations", operation_id="conversas_listar", security(("bearer"=[])), params(("org_id"=String, Path), ("limit"=Option<u32>, Query), ("cursor"=Option<String>, Query), ("external_peer"=Option<String>, Query), ("status"=Option<String>, Query), ("sort"=Option<String>, Query), ("last_activity_before"=Option<i64>, Query)), responses((status=200, description="Conversas", body=ListJson<Value>), (status=400, description="Parâmetro inválido", body=crate::erro::RespostaErro)))]
+#[utoipa::path(get, path="/admin/v1/orgs/{org_id}/conversations", tag="conversations", operation_id="conversas_listar", security(("bearer"=[])), params(("org_id"=String, Path), ("limit"=Option<u32>, Query), ("cursor"=Option<String>, Query), ("external_peer"=Option<String>, Query), ("status"=Option<String>, Query), ("sort"=Option<String>, Query), ("last_activity_before"=Option<i64>, Query)), responses((status=200, description="Conversas", body=ListJson<Value>), (status=400, description="Parâmetro inválido", body=crate::error::ErrorResponse)))]
 pub async fn list(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<OrgPath>,
     Query(q): Query<ConversationsQuery>,
 ) -> Result<Json<ListJson<Value>>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let filter = query_filter(&q)?;
     let order = query_order(&q)?;
     let (conversations, next_page) = match order {
@@ -139,13 +139,13 @@ pub async fn list(
         }
         OrderConversations::Recent => {
             if q.cursor.as_deref().is_some_and(|cursor| !cursor.is_empty()) {
-                return Err(ApiError::invalido(
+                return Err(ApiError::invalid(
                     "sort=recent não usa cursor: peça só limit",
                 ));
             }
             let limit = q.limit.unwrap_or(50);
             if !(1..=200).contains(&limit) {
-                return Err(ApiError::invalido("limit deve ficar entre 1 e 200"));
+                return Err(ApiError::invalid("limit deve ficar entre 1 e 200"));
             }
             let conversations = e.store.conversations().list_recents(org, &filter, limit)?;
             (conversations, None)
@@ -167,11 +167,11 @@ pub async fn list(
 #[utoipa::path(get, path="/admin/v1/orgs/{org_id}/conversations/{conversation_id}", tag="conversations", operation_id="conversas_mostrar", security(("bearer"=[])), params(("org_id"=String, Path), ("conversation_id"=String, Path)), responses((status=200, description="Conversa", body=Value)))]
 pub async fn show(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<ConversationPath>,
 ) -> Result<Json<Value>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let id = parse_path_id::<ConversationId>(&c.conversation_id)?;
     let conversation = e.store.conversations().get(org, id)?;
     let complements = complements_of(&e, org, std::slice::from_ref(&conversation))?;
@@ -180,12 +180,12 @@ pub async fn show(
 #[utoipa::path(get, path="/admin/v1/orgs/{org_id}/conversations/{conversation_id}/messages", tag="conversations", operation_id="mensagens_listar", security(("bearer"=[])), params(("org_id"=String, Path), ("conversation_id"=String, Path), ("limit"=Option<u32>, Query), ("cursor"=Option<String>, Query)), responses((status=200, description="Mensagens", body=ListJson<Value>)))]
 pub async fn messages(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<ConversationPath>,
     Query(q): Query<PageQuery>,
 ) -> Result<Json<ListJson<Value>>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let id = parse_path_id::<ConversationId>(&c.conversation_id)?;
     e.store.conversations().get(org, id)?;
     let p = q.page()?;
@@ -198,12 +198,12 @@ pub async fn messages(
 #[utoipa::path(get, path="/admin/v1/orgs/{org_id}/conversations/{conversation_id}/turns", tag="conversations", operation_id="turnos_listar", security(("bearer"=[])), params(("org_id"=String, Path), ("conversation_id"=String, Path), ("limit"=Option<u32>, Query), ("cursor"=Option<String>, Query)), responses((status=200, description="Turnos", body=ListJson<Value>)))]
 pub async fn turns(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<ConversationPath>,
     Query(q): Query<PageQuery>,
 ) -> Result<Json<ListJson<Value>>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let id = parse_path_id::<ConversationId>(&c.conversation_id)?;
     e.store.conversations().get(org, id)?;
     let p = q.page()?;
@@ -238,40 +238,40 @@ pub async fn turns(
     Ok(Json(ListJson { items, next_cursor }))
 }
 
-#[utoipa::path(post, path="/admin/v1/orgs/{org_id}/conversations/{conversation_id}/reopen", tag="conversations", operation_id="conversas_reabrir", security(("bearer"=[])), params(("org_id"=String, Path), ("conversation_id"=String, Path), ("If-Match"=String, Header)), responses((status=200, description="Conversa reaberta", body=Value), (status=409, description="Conversa encerrada (`conversa_encerrada`): não reabre; nada muda", body=crate::erro::RespostaErro), (status=412, description="Versão desatualizada", body=crate::erro::RespostaErro)))]
+#[utoipa::path(post, path="/admin/v1/orgs/{org_id}/conversations/{conversation_id}/reopen", tag="conversations", operation_id="conversas_reabrir", security(("bearer"=[])), params(("org_id"=String, Path), ("conversation_id"=String, Path), ("If-Match"=String, Header)), responses((status=200, description="Conversa reaberta", body=Value), (status=409, description="Conversa encerrada (`conversa_encerrada`): não reabre; nada muda", body=crate::error::ErrorResponse), (status=412, description="Versão desatualizada", body=crate::error::ErrorResponse)))]
 pub async fn reopen(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<ConversationPath>,
     headers: axum::http::HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let id = parse_path_id::<ConversationId>(&c.conversation_id)?;
     let version = super::if_match_version(&headers, "conversa")?;
-    let conversation = e
-        .store
-        .conversations()
-        .reopen_audited(org, id, version, ident.ator_id())?;
+    let conversation =
+        e.store
+            .conversations()
+            .reopen_audited(org, id, version, ident.actor_id())?;
     let complements = complements_of(&e, org, std::slice::from_ref(&conversation))?;
     Ok(Json(conversation_json(&conversation, &complements)))
 }
 
-#[utoipa::path(post, path="/admin/v1/orgs/{org_id}/conversations/{conversation_id}/close", tag="conversations", operation_id="conversas_fechar", security(("bearer"=[])), params(("org_id"=String, Path), ("conversation_id"=String, Path), ("If-Match"=String, Header)), responses((status=200, description="Conversa fechada", body=Value), (status=404, description="Conversa não encontrada na org", body=crate::erro::RespostaErro), (status=409, description="Conversa já fechada", body=crate::erro::RespostaErro), (status=412, description="Versão desatualizada", body=crate::erro::RespostaErro), (status=428, description="Faltou If-Match", body=crate::erro::RespostaErro)))]
+#[utoipa::path(post, path="/admin/v1/orgs/{org_id}/conversations/{conversation_id}/close", tag="conversations", operation_id="conversas_fechar", security(("bearer"=[])), params(("org_id"=String, Path), ("conversation_id"=String, Path), ("If-Match"=String, Header)), responses((status=200, description="Conversa fechada", body=Value), (status=404, description="Conversa não encontrada na org", body=crate::error::ErrorResponse), (status=409, description="Conversa já fechada", body=crate::error::ErrorResponse), (status=412, description="Versão desatualizada", body=crate::error::ErrorResponse), (status=428, description="Faltou If-Match", body=crate::error::ErrorResponse)))]
 pub async fn close(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<ConversationPath>,
     headers: axum::http::HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let id = parse_path_id::<ConversationId>(&c.conversation_id)?;
     let version = super::if_match_version(&headers, "conversa")?;
     let conversation = e
         .store
         .conversations()
-        .close_audited(org, id, version, ident.ator_id())?;
+        .close_audited(org, id, version, ident.actor_id())?;
     let complements = complements_of(&e, org, std::slice::from_ref(&conversation))?;
     Ok(Json(conversation_json(&conversation, &complements)))
 }
@@ -283,25 +283,25 @@ pub struct BodyTransfer {
     reason: Option<String>,
 }
 
-#[utoipa::path(post, path="/admin/v1/orgs/{org_id}/conversations/{conversation_id}/transfer", tag="conversations", operation_id="conversas_transferir", security(("bearer"=[])), params(("org_id"=String, Path), ("conversation_id"=String, Path)), request_body = BodyTransfer, responses((status=200, description="Conversa transferida para o departamento", body=Value), (status=400, description="Corpo inválido, motivo vazio ou departamento malformado", body=crate::erro::RespostaErro), (status=404, description="Conversa ou departamento fora da org", body=crate::erro::RespostaErro), (status=409, description="Conversa encerrada (`conversa_encerrada`): não transfere; nada muda", body=crate::erro::RespostaErro)))]
+#[utoipa::path(post, path="/admin/v1/orgs/{org_id}/conversations/{conversation_id}/transfer", tag="conversations", operation_id="conversas_transferir", security(("bearer"=[])), params(("org_id"=String, Path), ("conversation_id"=String, Path)), request_body = BodyTransfer, responses((status=200, description="Conversa transferida para o departamento", body=Value), (status=400, description="Corpo inválido, motivo vazio ou departamento malformado", body=crate::error::ErrorResponse), (status=404, description="Conversa ou departamento fora da org", body=crate::error::ErrorResponse), (status=409, description="Conversa encerrada (`conversa_encerrada`): não transfere; nada muda", body=crate::error::ErrorResponse)))]
 pub async fn transfer(
     State(e): State<Estado>,
-    ident: Identidade,
+    ident: Identity,
     Path(c): Path<ConversationPath>,
     body: Result<Json<BodyTransfer>, JsonRejection>,
 ) -> Result<Json<Value>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
-    ident.exigir_org(org)?;
+    ident.require_org(org)?;
     let id = parse_path_id::<ConversationId>(&c.conversation_id)?;
     let Json(data) = body.map_err(|_| {
-        ApiError::invalido("corpo JSON inválido: use {\"department_id\": ..., \"reason\": ...}")
+        ApiError::invalid("corpo JSON inválido: use {\"department_id\": ..., \"reason\": ...}")
     })?;
     let reason = data
         .reason
         .as_deref()
         .map(str::trim)
         .filter(|reason| !reason.is_empty())
-        .ok_or_else(|| ApiError::validacao("reason", "informe o motivo da transferência"))?
+        .ok_or_else(|| ApiError::validation("reason", "informe o motivo da transferência"))?
         .to_owned();
     let department =
         match data
@@ -311,7 +311,7 @@ pub async fn transfer(
             .filter(|text| !text.is_empty())
         {
             Some(text) => Some(text.parse::<DepartmentId>().map_err(|_| {
-                ApiError::validacao("department_id", "informe um id de departamento")
+                ApiError::validation("department_id", "informe um id de departamento")
             })?),
             None => None,
         };
@@ -325,7 +325,7 @@ pub async fn transfer(
         org,
         id,
         department,
-        Some(ident.ator_id()),
+        Some(ident.actor_id()),
         detail,
     )?;
     let complements = complements_of(&e, org, std::slice::from_ref(&conversation))?;

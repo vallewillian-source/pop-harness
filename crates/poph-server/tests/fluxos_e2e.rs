@@ -345,7 +345,7 @@ async fn api(c: &Cenario) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endereco = listener.local_addr().unwrap();
     tokio::spawn(async move {
-        let _ = poph_server::servir_em(listener, estado, std::future::pending::<()>()).await;
+        let _ = poph_server::serve_at(listener, estado, std::future::pending::<()>()).await;
     });
     format!("http://{endereco}")
 }

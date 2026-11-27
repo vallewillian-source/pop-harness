@@ -10,8 +10,8 @@ use utoipa::ToSchema;
 use super::orgs::OrgPath;
 use super::pagination::{ListJson, PageQuery, next_cursor};
 use super::{if_match_version, request_status, status_text};
-use crate::auth::Identidade;
-use crate::erro::{ApiError, id_da_url as parse_path_id};
+use crate::auth::Identity;
+use crate::error::{ApiError, id_from_url as parse_path_id};
 use crate::estado::Estado;
 
 #[doc = " Categoria na resposta da API."]
@@ -93,17 +93,17 @@ pub struct CategoryPath {
     ),
     responses(
         (status = 200, description = "Página de categorias", body = ListJson<CategoryJson>),
-        (status = 403, description = "Org de outro token", body = crate::erro::RespostaErro)
+        (status = 403, description = "Org de outro token", body = crate::error::ErrorResponse)
     )
 )]
 pub async fn list(
     State(state): State<Estado>,
-    identity: Identidade,
+    identity: Identity,
     Path(path): Path<OrgPath>,
     Query(query): Query<PageQuery>,
 ) -> Result<Json<ListJson<CategoryJson>>, ApiError> {
     let org = parse_path_id::<OrgId>(&path.org_id)?;
-    identity.exigir_org(org)?;
+    identity.require_org(org)?;
     let page = query.page()?;
     let categories = state.store.categories().list(org, page)?;
     let items: Vec<CategoryJson> = categories.iter().map(CategoryJson::from_category).collect();
@@ -122,18 +122,18 @@ pub async fn list(
     request_body = CreateCategory,
     responses(
         (status = 201, description = "Categoria criada", body = CategoryJson),
-        (status = 400, description = "Campo inválido", body = crate::erro::RespostaErro),
-        (status = 404, description = "Org não encontrada", body = crate::erro::RespostaErro)
+        (status = 400, description = "Campo inválido", body = crate::error::ErrorResponse),
+        (status = 404, description = "Org não encontrada", body = crate::error::ErrorResponse)
     )
 )]
 pub async fn create(
     State(state): State<Estado>,
-    identity: Identidade,
+    identity: Identity,
     Path(path): Path<OrgPath>,
     Json(body): Json<CreateCategory>,
 ) -> Result<(StatusCode, Json<CategoryJson>), ApiError> {
     let org = parse_path_id::<OrgId>(&path.org_id)?;
-    identity.exigir_org(org)?;
+    identity.require_org(org)?;
     let name = validate_name(&body.name)?;
     let description = body.description.unwrap_or_default();
     let category = state
@@ -167,17 +167,17 @@ pub async fn create(
     ),
     responses(
         (status = 200, description = "Categoria", body = CategoryJson),
-        (status = 404, description = "Categoria não encontrada", body = crate::erro::RespostaErro)
+        (status = 404, description = "Categoria não encontrada", body = crate::error::ErrorResponse)
     )
 )]
 pub async fn show(
     State(state): State<Estado>,
-    identity: Identidade,
+    identity: Identity,
     Path(path): Path<CategoryPath>,
 ) -> Result<Json<CategoryJson>, ApiError> {
     let org = parse_path_id::<OrgId>(&path.org_id)?;
     let id = parse_path_id::<ProductCategoryId>(&path.category_id)?;
-    identity.exigir_org(org)?;
+    identity.require_org(org)?;
     let category = state.store.categories().get(org, id)?;
     Ok(Json(CategoryJson::from_category(&category)))
 }
@@ -197,20 +197,20 @@ pub async fn show(
     request_body = UpdateCategory,
     responses(
         (status = 200, description = "Categoria alterada", body = CategoryJson),
-        (status = 412, description = "Versão desatualizada", body = crate::erro::RespostaErro),
-        (status = 428, description = "Faltou If-Match", body = crate::erro::RespostaErro)
+        (status = 412, description = "Versão desatualizada", body = crate::error::ErrorResponse),
+        (status = 428, description = "Faltou If-Match", body = crate::error::ErrorResponse)
     )
 )]
 pub async fn update(
     State(state): State<Estado>,
-    identity: Identidade,
+    identity: Identity,
     Path(path): Path<CategoryPath>,
     headers: HeaderMap,
     Json(body): Json<UpdateCategory>,
 ) -> Result<Json<CategoryJson>, ApiError> {
     let org = parse_path_id::<OrgId>(&path.org_id)?;
     let id = parse_path_id::<ProductCategoryId>(&path.category_id)?;
-    identity.exigir_org(org)?;
+    identity.require_org(org)?;
     let expected = if_match_version(&headers, "categoria")?;
     let status = match &body.status {
         Some(text) => Some(request_status(text)?),
@@ -301,29 +301,29 @@ fn count_links(state: &Estado, org: OrgId, id: ProductCategoryId) -> Result<(u64
     ),
     responses(
         (status = 204, description = "Categoria excluída"),
-        (status = 404, description = "Categoria não encontrada", body = crate::erro::RespostaErro),
-        (status = 409, description = "Categoria tem produtos ou agentes vinculados e faltou force", body = crate::erro::RespostaErro)
+        (status = 404, description = "Categoria não encontrada", body = crate::error::ErrorResponse),
+        (status = 409, description = "Categoria tem produtos ou agentes vinculados e faltou force", body = crate::error::ErrorResponse)
     )
 )]
 pub async fn delete(
     State(state): State<Estado>,
-    identity: Identidade,
+    identity: Identity,
     Path(path): Path<CategoryPath>,
     Query(deletion): Query<ExclusionCategory>,
 ) -> Result<StatusCode, ApiError> {
     let org = parse_path_id::<OrgId>(&path.org_id)?;
     let id = parse_path_id::<ProductCategoryId>(&path.category_id)?;
-    identity.exigir_org(org)?;
+    identity.require_org(org)?;
     let forced = deletion.force.unwrap_or(false);
     if !forced {
         let (products, agents) = count_links(&state, org, id)?;
         if products > 0 || agents > 0 {
-            return Err(ApiError::conflito(format!(
+            return Err(ApiError::conflict(format!(
                 "a categoria tem {products} produto(s) e {agents} agente(s) vinculados; \
                  excluir apaga os produtos dela e tira a categoria dos agentes. \
                  Para confirmar, repita com force=true"
             ))
-            .com_detalhes(json!({ "produtos": products, "agentes": agents })));
+            .with_details(json!({ "produtos": products, "agentes": agents })));
         }
     }
     state.store.categories().delete(org, id)?;
@@ -341,7 +341,7 @@ pub async fn delete(
 fn validate_name(text: &str) -> Result<String, ApiError> {
     let clean = text.trim();
     if clean.is_empty() || clean.chars().count() > 120 {
-        return Err(ApiError::validacao(
+        return Err(ApiError::validation(
             "name",
             "deve ter de 1 a 120 caracteres",
         ));
