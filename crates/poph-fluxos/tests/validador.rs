@@ -8,28 +8,27 @@
 use std::collections::BTreeSet;
 
 use poph_fluxos::{
-    Code, Departamento, Diagnostic, Ir, Limites, compile, resolver_departamentos, validar,
+    Code, Departamento, Diagnostic, Ir, Limites, compile, resolve_departments, validar,
 };
 use serde_json::{Value, json};
 
 // ------------------------------------------------------------------ auxiliares
 
 fn dourada(nome: &str) -> Value {
-    let caminho = format!(
+    let path = format!(
         "{}/../../tests/fluxos/ir/{nome}.json",
         env!("CARGO_MANIFEST_DIR")
     );
-    let texto =
-        std::fs::read_to_string(&caminho).unwrap_or_else(|erro| panic!("{caminho}: {erro}"));
-    serde_json::from_str(&texto).unwrap_or_else(|erro| panic!("{caminho}: {erro}"))
+    let texto = std::fs::read_to_string(&path).unwrap_or_else(|erro| panic!("{path}: {erro}"));
+    serde_json::from_str(&texto).unwrap_or_else(|erro| panic!("{path}: {erro}"))
 }
 
-fn ir(valor: &Value) -> Ir {
-    Ir::from_json(&valor.to_string()).expect("a IR mutada continua sendo JSON válido")
+fn ir(value: &Value) -> Ir {
+    Ir::from_json(&value.to_string()).expect("a IR mutada continua sendo JSON válido")
 }
 
-fn codigos(diagnosticos: &[Diagnostic]) -> BTreeSet<Code> {
-    diagnosticos.iter().map(|d| d.code).collect()
+fn codigos(diagnostics: &[Diagnostic]) -> BTreeSet<Code> {
+    diagnostics.iter().map(|d| d.code).collect()
 }
 
 // ------------------------------------------------------------------ a IR boa passa limpa
@@ -326,9 +325,9 @@ fn cada_codigo_semantico_pega_uma_ir_de_fora() {
     let mut vistos: BTreeSet<Code> = BTreeSet::new();
     let mut falhas: Vec<String> = Vec::new();
     for caso in casos() {
-        let mut valor = dourada(caso.base);
-        (caso.mutacao)(&mut valor);
-        let diagnostico = validar(&ir(&valor));
+        let mut value = dourada(caso.base);
+        (caso.mutacao)(&mut value);
+        let diagnostico = validar(&ir(&value));
         let Some(achado) = diagnostico.iter().find(|d| d.code == caso.codigo) else {
             falhas.push(format!(
                 "{}: {} não apareceu (tem {:?})",
@@ -338,10 +337,10 @@ fn cada_codigo_semantico_pega_uma_ir_de_fora() {
             ));
             continue;
         };
-        let caminho = achado.path().unwrap_or("<sem caminho>");
-        if !caminho.contains(caso.trecho) {
+        let path = achado.path().unwrap_or("<sem caminho>");
+        if !path.contains(caso.trecho) {
             falhas.push(format!(
-                "{}: caminho `{caminho}` não contém `{}`",
+                "{}: caminho `{path}` não contém `{}`",
                 caso.nome, caso.trecho
             ));
         }
@@ -390,15 +389,15 @@ fn cada_codigo_semantico_pega_uma_ir_de_fora() {
 
 #[test]
 fn a_ordem_dos_diagnosticos_e_a_dos_nos_e_nao_muda_entre_chamadas() {
-    let mut valor = dourada("confirmar_entrega");
+    let mut value = dourada("confirmar_entrega");
     // Três problemas em nós diferentes, sem mexer no grafo (para o alcance não entrar na conta):
     // uma ação que exige campo inexistente na etapa 0, uma opção só na etapa 1, etapa sem ação na 2.
-    valor["etapas"][0]["acoes"][0]["exige"] = json!(["pedido", "cep"]);
-    valor["etapas"][1]["campos"][0]["opcoes"] = json!(["sim"]);
-    valor["etapas"][2]["acoes"] = json!([]);
+    value["etapas"][0]["acoes"][0]["exige"] = json!(["pedido", "cep"]);
+    value["etapas"][1]["campos"][0]["opcoes"] = json!(["sim"]);
+    value["etapas"][2]["acoes"] = json!([]);
 
-    let primeira = validar(&ir(&valor));
-    let segunda = validar(&ir(&valor));
+    let primeira = validar(&ir(&value));
+    let segunda = validar(&ir(&value));
     assert_eq!(primeira, segunda, "mesma IR tem de dar a mesma lista");
 
     let codigos: Vec<Code> = primeira.iter().map(|d| d.code).collect();
@@ -572,9 +571,9 @@ fn decisao(regra: &str) -> String {
 // ------------------------------------------------------------------ departamentos
 
 fn encaminha_para_departamento(nome: &str) -> Ir {
-    let mut valor = dourada("confirmar_entrega");
-    valor["etapas"][2]["acoes"][0]["efeitos"][0]["departamento"] = json!(nome);
-    ir(&valor)
+    let mut value = dourada("confirmar_entrega");
+    value["etapas"][2]["acoes"][0]["efeitos"][0]["departamento"] = json!(nome);
+    ir(&value)
 }
 
 #[test]
@@ -584,13 +583,13 @@ fn resolve_o_departamento_citado_para_o_id_da_organizacao() {
         id: "dep_logistica".to_owned(),
         nome: "Logística".to_owned(),
     }];
-    let (resolucoes, diagnosticos) = resolver_departamentos(&fluxo, &departamentos);
-    assert!(diagnosticos.is_empty(), "{diagnosticos:?}");
+    let (resolucoes, diagnostics) = resolve_departments(&fluxo, &departamentos);
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
     assert_eq!(
         resolucoes,
-        vec![poph_fluxos::Resolucao {
+        vec![poph_fluxos::Resolution {
             nome: "Logística".to_owned(),
-            departamento_id: Some("dep_logistica".to_owned()),
+            department_id: Some("dep_logistica".to_owned()),
         }]
     );
 }
@@ -598,7 +597,7 @@ fn resolve_o_departamento_citado_para_o_id_da_organizacao() {
 #[test]
 fn departamento_que_a_organizacao_nao_tem_vira_aviso_flx65_sem_id() {
     let fluxo = ir(&dourada("confirmar_entrega"));
-    let (resolucoes, diagnosticos) = resolver_departamentos(
+    let (resolucoes, diagnostics) = resolve_departments(
         &fluxo,
         &[Departamento {
             id: "dep_x".to_owned(),
@@ -607,18 +606,18 @@ fn departamento_que_a_organizacao_nao_tem_vira_aviso_flx65_sem_id() {
     );
     assert_eq!(resolucoes.len(), 1);
     assert_eq!(resolucoes[0].nome, "Logística");
-    assert_eq!(resolucoes[0].departamento_id, None);
-    assert_eq!(diagnosticos.len(), 1);
-    assert_eq!(diagnosticos[0].code, Code::UnknownDepartment);
-    assert!(!diagnosticos[0].is_error(), "FLX65 é aviso, não erro");
+    assert_eq!(resolucoes[0].department_id, None);
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].code, Code::UnknownDepartment);
+    assert!(!diagnostics[0].is_error(), "FLX65 é aviso, não erro");
     assert!(
-        diagnosticos[0].path().is_some_and(
-            |caminho| caminho.contains("etapas[2] (id \"extravio\") > acoes[0] > efeitos[0]")
+        diagnostics[0].path().is_some_and(
+            |path| path.contains("etapas[2] (id \"extravio\") > acoes[0] > efeitos[0]")
         ),
         "{:?}",
-        diagnosticos[0].path()
+        diagnostics[0].path()
     );
-    assert!(diagnosticos[0].mensagem.contains("Logística"));
+    assert!(diagnostics[0].mensagem.contains("Logística"));
 }
 
 #[test]
@@ -634,13 +633,13 @@ fn nome_repetido_na_organizacao_vira_aviso_e_nao_resolve() {
             nome: " logística".to_owned(),
         },
     ];
-    let (resolucoes, diagnosticos) = resolver_departamentos(&fluxo, &departamentos);
-    assert_eq!(resolucoes[0].departamento_id, None);
-    assert_eq!(diagnosticos.len(), 1);
+    let (resolucoes, diagnostics) = resolve_departments(&fluxo, &departamentos);
+    assert_eq!(resolucoes[0].department_id, None);
+    assert_eq!(diagnostics.len(), 1);
     assert!(
-        diagnosticos[0].mensagem.contains("2 departamentos"),
+        diagnostics[0].mensagem.contains("2 departamentos"),
         "{:?}",
-        diagnosticos[0].mensagem
+        diagnostics[0].mensagem
     );
 }
 
@@ -648,55 +647,55 @@ fn nome_repetido_na_organizacao_vira_aviso_e_nao_resolve() {
 fn o_casamento_ignora_caixa_e_espacos_mas_nao_acento() {
     // Mesmo nome com outra caixa e com espaço nas pontas casa.
     let fluxo = encaminha_para_departamento("  LOGÍSTICA ");
-    let (resolucoes, diagnosticos) = resolver_departamentos(
+    let (resolucoes, diagnostics) = resolve_departments(
         &fluxo,
         &[Departamento {
             id: "dep_1".to_owned(),
             nome: "Logística".to_owned(),
         }],
     );
-    assert!(diagnosticos.is_empty(), "{diagnosticos:?}");
-    assert_eq!(resolucoes[0].departamento_id.as_deref(), Some("dep_1"));
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert_eq!(resolucoes[0].department_id.as_deref(), Some("dep_1"));
     // Acento conta: `Logistica` não é `Logística`.
     let fluxo = encaminha_para_departamento("Logistica");
-    let (resolucoes, diagnosticos) = resolver_departamentos(
+    let (resolucoes, diagnostics) = resolve_departments(
         &fluxo,
         &[Departamento {
             id: "dep_1".to_owned(),
             nome: "Logística".to_owned(),
         }],
     );
-    assert_eq!(resolucoes[0].departamento_id, None);
-    assert_eq!(diagnosticos.len(), 1);
+    assert_eq!(resolucoes[0].department_id, None);
+    assert_eq!(diagnostics.len(), 1);
 }
 
 #[test]
 fn fluxo_sem_encaminhamento_nao_resolve_nada_e_nao_avisa() {
-    let (resolucoes, diagnosticos) = resolver_departamentos(&ir(&dourada("agendar_visita")), &[]);
+    let (resolucoes, diagnostics) = resolve_departments(&ir(&dourada("agendar_visita")), &[]);
     assert!(resolucoes.is_empty());
-    assert!(diagnosticos.is_empty());
+    assert!(diagnostics.is_empty());
 }
 
 #[test]
 fn variavel_valida_nao_vira_aviso() {
-    let mut valor = dourada("confirmar_entrega");
+    let mut value = dourada("confirmar_entrega");
     // `{ficha.id}` já aparece no exemplo; `{cliente.peer}` e uma variável de campo existente têm de
     // passar limpas, inclusive dentro de uma ação e falando de outra etapa.
-    valor["etapas"][1]["ao_entrar"][0]["texto"] =
+    value["etapas"][1]["ao_entrar"][0]["texto"] =
         json!("Pedido {identificacao.pedido} do cliente {cliente.peer} (ficha {ficha.id}).");
-    valor["etapas"][1]["acoes"][0]["efeitos"][0]["mensagem"] =
+    value["etapas"][1]["acoes"][0]["efeitos"][0]["mensagem"] =
         json!("Pedido {identificacao.pedido} entregue para {cliente.peer}.");
-    let diagnostico = validar(&ir(&valor));
+    let diagnostico = validar(&ir(&value));
     assert!(diagnostico.is_empty(), "{diagnostico:?}");
 }
 
 #[test]
 fn o_nome_citado_duas_vezes_aparece_uma_vez_so() {
-    let mut valor = dourada("confirmar_entrega");
+    let mut value = dourada("confirmar_entrega");
     // O mesmo departamento no `ao_entrar` de uma etapa e nos efeitos de uma ação.
-    valor["etapas"][0]["ao_entrar"] = json!([{"tipo": "encaminhar", "departamento": "Logística"}]);
-    let fluxo = ir(&valor);
-    let (resolucoes, diagnosticos) = resolver_departamentos(
+    value["etapas"][0]["ao_entrar"] = json!([{"tipo": "encaminhar", "departamento": "Logística"}]);
+    let fluxo = ir(&value);
+    let (resolucoes, diagnostics) = resolve_departments(
         &fluxo,
         &[Departamento {
             id: "dep_1".to_owned(),
@@ -704,10 +703,10 @@ fn o_nome_citado_duas_vezes_aparece_uma_vez_so() {
         }],
     );
     assert_eq!(resolucoes.len(), 1, "{resolucoes:?}");
-    assert_eq!(resolucoes[0].departamento_id.as_deref(), Some("dep_1"));
-    assert!(diagnosticos.is_empty());
+    assert_eq!(resolucoes[0].department_id.as_deref(), Some("dep_1"));
+    assert!(diagnostics.is_empty());
     // A ordem é a da primeira citação na IR: `ao_entrar` da etapa 0 vem antes do efeito da ação.
-    let (resolucoes, _) = resolver_departamentos(&fluxo, &[]);
+    let (resolucoes, _) = resolve_departments(&fluxo, &[]);
     assert_eq!(resolucoes.len(), 1);
 }
 
@@ -715,12 +714,11 @@ fn o_nome_citado_duas_vezes_aparece_uma_vez_so() {
 
 #[test]
 fn todos_os_codigos_estao_documentados() {
-    let caminho = format!(
+    let path = format!(
         "{}/../../docs/FLUXOS_LINGUAGEM.md",
         env!("CARGO_MANIFEST_DIR")
     );
-    let documento =
-        std::fs::read_to_string(&caminho).unwrap_or_else(|erro| panic!("{caminho}: {erro}"));
+    let documento = std::fs::read_to_string(&path).unwrap_or_else(|erro| panic!("{path}: {erro}"));
     let faltando: Vec<&str> = Code::ALL
         .iter()
         .filter(|codigo| !documento.contains(codigo.as_text()))

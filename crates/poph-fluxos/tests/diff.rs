@@ -8,18 +8,17 @@
 use poph_fluxos::ir::{
     Acao, Campo, Decisao, Def, Destination, Effect, Etapa, Fim, Fluxo, Gatilho, Ir, Rule,
 };
-use poph_fluxos::{Impacto, Mudanca, TipoMudanca, diferenca};
+use poph_fluxos::{Change, ChangeType, Impact, diff};
 use poph_types::{ActionActor, FieldKind};
 
 // ------------------------------------------------------------------ auxiliares
 
 fn base() -> Ir {
-    let caminho = format!(
+    let path = format!(
         "{}/../../tests/fluxos/ir/agendar_visita.json",
         env!("CARGO_MANIFEST_DIR")
     );
-    let texto =
-        std::fs::read_to_string(&caminho).unwrap_or_else(|erro| panic!("{caminho}: {erro}"));
+    let texto = std::fs::read_to_string(&path).unwrap_or_else(|erro| panic!("{path}: {erro}"));
     Ir::from_json(&texto).expect("a IR dourada é JSON válido")
 }
 
@@ -45,13 +44,13 @@ fn em_acao<'a>(ir: &'a mut Ir, etapa: &str, acao: &str) -> &'a mut Acao {
         .expect("a ação existe na base")
 }
 
-fn campo(id: &str, rotulo: &str, tipo: FieldKind, obrigatorio: bool, opcoes: &[&str]) -> Campo {
+fn campo(id: &str, rotulo: &str, tipo: FieldKind, obrigatorio: bool, options: &[&str]) -> Campo {
     Campo {
         id: id.to_owned(),
         label: rotulo.to_owned(),
         tipo,
         required: obrigatorio,
-        options: opcoes.iter().map(|opcao| (*opcao).to_owned()).collect(),
+        options: options.iter().map(|opcao| (*opcao).to_owned()).collect(),
         help: None,
     }
 }
@@ -60,14 +59,14 @@ fn acao(
     id: &str,
     rotulo: &str,
     exige: &[&str],
-    ator: Option<ActionActor>,
+    actor: Option<ActionActor>,
     vai_para: Destination,
 ) -> Acao {
     Acao {
         id: id.to_owned(),
         label: rotulo.to_owned(),
         requires: exige.iter().map(|campo| (*campo).to_owned()).collect(),
-        actor: ator,
+        actor,
         goes_to: vai_para,
         effects: Vec::new(),
     }
@@ -89,19 +88,19 @@ fn no_etapa(id: &str) -> Destination {
     Destination::Etapa { id: id.to_owned() }
 }
 
-fn no_fim(id: &str, resultado: Option<&str>, encerra_atendimento: bool) -> Destination {
+fn no_fim(id: &str, resultado: Option<&str>, ends_service: bool) -> Destination {
     Destination::Fim {
         id: id.to_owned(),
         resultado: resultado.map(str::to_owned),
-        ends_service: encerra_atendimento,
+        ends_service,
     }
 }
 
-fn fim(id: &str, resultado: Option<&str>, encerra_atendimento: bool) -> Fim {
+fn fim(id: &str, resultado: Option<&str>, ends_service: bool) -> Fim {
     Fim {
         id: id.to_owned(),
         resultado: resultado.map(str::to_owned),
-        ends_service: encerra_atendimento,
+        ends_service,
     }
 }
 
@@ -114,16 +113,16 @@ fn decisao(id: &str, se: Rule, entao: Destination, senao: Destination) -> Decisa
     }
 }
 
-fn igual(campo: &str, valor: &str) -> Rule {
+fn igual(campo: &str, value: &str) -> Rule {
     Rule::Igual {
         campo: campo.to_owned(),
-        value: valor.to_owned(),
+        value: value.to_owned(),
     }
 }
 
 /// Acha a única mudança do tipo; falha com a lista inteira se houver outra ou nenhuma.
-fn unica(lista: &[Mudanca], tipo: TipoMudanca) -> &Mudanca {
-    let achadas: Vec<&Mudanca> = lista
+fn unica(lista: &[Change], tipo: ChangeType) -> &Change {
+    let achadas: Vec<&Change> = lista
         .iter()
         .filter(|mudanca| mudanca.tipo == tipo)
         .collect();
@@ -135,38 +134,38 @@ fn unica(lista: &[Mudanca], tipo: TipoMudanca) -> &Mudanca {
     achadas[0]
 }
 
-fn tipos(lista: &[Mudanca]) -> Vec<TipoMudanca> {
+fn tipos(lista: &[Change]) -> Vec<ChangeType> {
     lista.iter().map(|mudanca| mudanca.tipo).collect()
 }
 
-const TODOS_OS_TIPOS: [TipoMudanca; 27] = [
-    TipoMudanca::EtapaNova,
-    TipoMudanca::EtapaRemovida,
-    TipoMudanca::InstrucaoMudou,
-    TipoMudanca::AtoresDaEtapaMudou,
-    TipoMudanca::CampoNovo,
-    TipoMudanca::CampoRemovido,
-    TipoMudanca::CampoAgoraObrigatorio,
-    TipoMudanca::CampoDeixouDeSerObrigatorio,
-    TipoMudanca::CampoMudouTipo,
-    TipoMudanca::CampoMudouOpcoes,
-    TipoMudanca::AcaoPassouAExigir,
-    TipoMudanca::AcaoDeixouDeExigir,
-    TipoMudanca::AcaoNova,
-    TipoMudanca::AcaoRemovida,
-    TipoMudanca::DestinoMudou,
-    TipoMudanca::AtorDaAcaoMudou,
-    TipoMudanca::RegraMudou,
-    TipoMudanca::DecisaoNova,
-    TipoMudanca::DecisaoRemovida,
-    TipoMudanca::FimNovo,
-    TipoMudanca::FimRemovido,
-    TipoMudanca::FimMudou,
-    TipoMudanca::EfeitoNovo,
-    TipoMudanca::EfeitoRemovido,
-    TipoMudanca::GatilhoMudou,
-    TipoMudanca::InicioMudou,
-    TipoMudanca::TextoMudou,
+const TODOS_OS_TIPOS: [ChangeType; 27] = [
+    ChangeType::NewStage,
+    ChangeType::RemovedStage,
+    ChangeType::InstructionChanged,
+    ChangeType::StageActorsChanged,
+    ChangeType::NewField,
+    ChangeType::RemovedField,
+    ChangeType::FieldNowRequired,
+    ChangeType::FieldNoLongerRequired,
+    ChangeType::FieldTypeChanged,
+    ChangeType::FieldOptionsChanged,
+    ChangeType::ActionNowRequires,
+    ChangeType::ActionNoLongerRequires,
+    ChangeType::NewAction,
+    ChangeType::RemovedAction,
+    ChangeType::DestinationChanged,
+    ChangeType::ActionActorChanged,
+    ChangeType::RuleChanged,
+    ChangeType::NewDecision,
+    ChangeType::RemovedDecision,
+    ChangeType::NewEnd,
+    ChangeType::RemovedEnd,
+    ChangeType::EndChanged,
+    ChangeType::NewEffect,
+    ChangeType::RemovedEffect,
+    ChangeType::TriggerChanged,
+    ChangeType::StartChanged,
+    ChangeType::TextChanged,
 ];
 
 // ------------------------------------------------------------------ identidade
@@ -174,14 +173,14 @@ const TODOS_OS_TIPOS: [TipoMudanca; 27] = [
 #[test]
 fn fluxos_identicos_devolvem_lista_vazia() {
     let ir = base();
-    assert!(diferenca(&ir, &ir).is_empty());
+    assert!(diff(&ir, &ir).is_empty());
 }
 
 #[test]
 fn a_ida_e_volta_pelo_json_nao_gera_mudanca() {
     let ir = base();
     let volta = Ir::from_json(&ir.to_json()).expect("a IR gravada volta a ser lida");
-    assert!(diferenca(&ir, &volta).is_empty());
+    assert!(diff(&ir, &volta).is_empty());
 }
 
 #[test]
@@ -193,15 +192,15 @@ fn a_mesma_entrada_da_sempre_a_mesma_lista_na_mesma_ordem() {
             no_fim("concluida", Some("Visita agendada"), false);
         ir.gatilho.when = "Quando o cliente pedir remarcação.".to_owned();
     });
-    let primeira = diferenca(&a, &b);
-    let segunda = diferenca(&a, &b);
+    let primeira = diff(&a, &b);
+    let segunda = diff(&a, &b);
     assert_eq!(primeira, segunda);
     assert_eq!(
         tipos(&primeira),
         vec![
-            TipoMudanca::GatilhoMudou,
-            TipoMudanca::TextoMudou,
-            TipoMudanca::DestinoMudou,
+            ChangeType::TriggerChanged,
+            ChangeType::TextChanged,
+            ChangeType::DestinationChanged,
         ],
         "o fluxo vem primeiro, depois as etapas"
     );
@@ -211,28 +210,24 @@ fn a_mesma_entrada_da_sempre_a_mesma_lista_na_mesma_ordem() {
 fn a_ordem_dos_itens_no_script_nao_gera_mudanca() {
     let a = base();
     let b = com(&a, |ir| ir.stages.reverse());
-    assert!(diferenca(&a, &b).is_empty());
+    assert!(diff(&a, &b).is_empty());
 }
 
 #[test]
 fn codigos_de_tipo_e_impacto_batem_com_o_json_da_api() {
     for tipo in TODOS_OS_TIPOS {
         let json = serde_json::to_string(&tipo).expect("o tipo serializa");
-        assert_eq!(json, format!("\"{}\"", tipo.codigo()), "tipo {tipo:?}");
+        assert_eq!(json, format!("\"{}\"", tipo.code()), "tipo {tipo:?}");
     }
-    for impacto in [
-        Impacto::Nenhum,
-        Impacto::AtendimentosNovos,
-        Impacto::PedeDadoNovo,
-        Impacto::MudaRota,
-        Impacto::DisparaEfeito,
+    for impact in [
+        Impact::None,
+        Impact::NewServices,
+        Impact::NewDataRequested,
+        Impact::RouteChanged,
+        Impact::EffectTriggered,
     ] {
-        let json = serde_json::to_string(&impacto).expect("o impacto serializa");
-        assert_eq!(
-            json,
-            format!("\"{}\"", impacto.codigo()),
-            "impacto {impacto:?}"
-        );
+        let json = serde_json::to_string(&impact).expect("o impacto serializa");
+        assert_eq!(json, format!("\"{}\"", impact.code()), "impacto {impact:?}");
     }
 }
 
@@ -245,11 +240,11 @@ fn etapa_nova_sem_chegada_nao_muda_o_atendimento() {
         ir.stages
             .push(etapa("revisao", "Revisar dados", None, Vec::new()));
     });
-    let lista = diferenca(&a, &b);
+    let lista = diff(&a, &b);
     assert_eq!(lista.len(), 1, "{lista:#?}");
-    let nova = unica(&lista, TipoMudanca::EtapaNova);
-    assert_eq!(nova.impacto, Impacto::Nenhum);
-    assert_eq!(nova.alvo, "etapa:revisao");
+    let nova = unica(&lista, ChangeType::NewStage);
+    assert_eq!(nova.impact, Impact::None);
+    assert_eq!(nova.target, "etapa:revisao");
     assert_eq!(
         nova.texto,
         "a etapa `revisao` (Revisar dados) é nova, mas nenhuma ação ou decisão leva a ela: nada \
@@ -265,9 +260,9 @@ fn etapa_nova_que_recebe_chegada_muda_a_rota() {
             .push(etapa("revisao", "Revisar dados", None, Vec::new()));
         em_acao(ir, "coleta", "confirmar").goes_to = no_etapa("revisao");
     });
-    let lista = diferenca(&a, &b);
-    let nova = unica(&lista, TipoMudanca::EtapaNova);
-    assert_eq!(nova.impacto, Impacto::MudaRota);
+    let lista = diff(&a, &b);
+    let nova = unica(&lista, ChangeType::NewStage);
+    assert_eq!(nova.impact, Impact::RouteChanged);
     assert_eq!(
         nova.texto,
         "a etapa `revisao` (Revisar dados) é nova e já é destino de alguma ação ou decisão: os \
@@ -283,10 +278,10 @@ fn etapa_removida_que_era_alcancada_muda_a_rota() {
         em_acao(ir, "coleta", "confirmar").goes_to =
             no_fim("concluida", Some("Visita agendada"), false);
     });
-    let lista = diferenca(&a, &b);
-    let removida = unica(&lista, TipoMudanca::EtapaRemovida);
-    assert_eq!(removida.impacto, Impacto::MudaRota);
-    assert_eq!(removida.alvo, "etapa:confirmacao");
+    let lista = diff(&a, &b);
+    let removida = unica(&lista, ChangeType::RemovedStage);
+    assert_eq!(removida.impact, Impact::RouteChanged);
+    assert_eq!(removida.target, "etapa:confirmacao");
     assert_eq!(
         removida.texto,
         "a etapa `confirmacao` (Confirmar visita) foi removida: os atendimentos novos não passam \
@@ -300,10 +295,10 @@ fn etapa_removida_sem_chegada_nao_muda_o_atendimento() {
         ir.stages.push(etapa("sobra", "Sobra", None, Vec::new()));
     });
     let b = base();
-    let lista = diferenca(&a, &b);
+    let lista = diff(&a, &b);
     assert_eq!(lista.len(), 1, "{lista:#?}");
-    let removida = unica(&lista, TipoMudanca::EtapaRemovida);
-    assert_eq!(removida.impacto, Impacto::Nenhum);
+    let removida = unica(&lista, ChangeType::RemovedStage);
+    assert_eq!(removida.impact, Impact::None);
     assert_eq!(
         removida.texto,
         "a etapa `sobra` (Sobra) foi removida, mas nenhuma ação ou decisão a usava: nada muda no \
@@ -317,10 +312,10 @@ fn instrucao_mudou_vale_so_para_atendimentos_novos() {
     let b = com(&a, |ir| {
         em_etapa(ir, "coleta").instruction = Some("Pergunte só o endereço.".to_owned());
     });
-    let lista = diferenca(&a, &b);
-    let mudou = unica(&lista, TipoMudanca::InstrucaoMudou);
-    assert_eq!(mudou.impacto, Impacto::AtendimentosNovos);
-    assert_eq!(mudou.alvo, "etapa:coleta");
+    let lista = diff(&a, &b);
+    let mudou = unica(&lista, ChangeType::InstructionChanged);
+    assert_eq!(mudou.impact, Impact::NewServices);
+    assert_eq!(mudou.target, "etapa:coleta");
     assert_eq!(
         mudou.texto,
         "a instrução da etapa `coleta` mudou de \"Pergunte o endereço e o período preferido. Uma \
@@ -334,9 +329,9 @@ fn atores_da_etapa_mudou_muda_a_rota() {
     let b = com(&a, |ir| {
         em_etapa(ir, "coleta").action_actors = vec![ActionActor::Agent, ActionActor::Attendant];
     });
-    let lista = diferenca(&a, &b);
-    let mudou = unica(&lista, TipoMudanca::AtoresDaEtapaMudou);
-    assert_eq!(mudou.impacto, Impacto::MudaRota);
+    let lista = diff(&a, &b);
+    let mudou = unica(&lista, ChangeType::StageActorsChanged);
+    assert_eq!(mudou.impact, Impact::RouteChanged);
     assert_eq!(
         mudou.texto,
         "as ações da etapa `coleta` passam a ser feitas por agente ou atendente."
@@ -350,27 +345,24 @@ fn renomear_etapa_e_campo_nao_muda_o_atendimento() {
         em_etapa(ir, "coleta").nome = "Colher dados".to_owned();
         em_etapa(ir, "coleta").campos[0].label = "Endereço".to_owned();
     });
-    let lista = diferenca(&a, &b);
+    let lista = diff(&a, &b);
     assert_eq!(lista.len(), 2, "{lista:#?}");
-    assert!(
-        lista.iter().all(|m| m.impacto == Impacto::Nenhum),
-        "{lista:#?}"
-    );
+    assert!(lista.iter().all(|m| m.impact == Impact::None), "{lista:#?}");
     let nome = lista
         .iter()
-        .find(|m| m.alvo == "etapa:coleta")
+        .find(|m| m.target == "etapa:coleta")
         .expect("o nome da etapa aparece");
-    assert_eq!(nome.tipo, TipoMudanca::TextoMudou);
-    assert_eq!(nome.alvo, "etapa:coleta");
+    assert_eq!(nome.tipo, ChangeType::TextChanged);
+    assert_eq!(nome.target, "etapa:coleta");
     assert_eq!(
         nome.texto,
         "o nome da etapa `coleta` mudou de \"Coletar dados\" para \"Colher dados\"."
     );
     let rotulo = lista
         .iter()
-        .find(|m| m.alvo == "etapa:coleta/campo:endereco")
+        .find(|m| m.target == "etapa:coleta/campo:endereco")
         .expect("o rótulo do campo aparece");
-    assert_eq!(rotulo.tipo, TipoMudanca::TextoMudou);
+    assert_eq!(rotulo.tipo, ChangeType::TextChanged);
     assert_eq!(
         rotulo.texto,
         "o rótulo do campo `endereco` na etapa `coleta` mudou de \"Endereço completo\" para \
@@ -388,10 +380,10 @@ fn campo_novo_pede_dado_novo() {
             .campos
             .push(campo("cep", "CEP", FieldKind::Text, false, &[]));
     });
-    let lista = diferenca(&a, &b);
-    let novo = unica(&lista, TipoMudanca::CampoNovo);
-    assert_eq!(novo.impacto, Impacto::PedeDadoNovo);
-    assert_eq!(novo.alvo, "etapa:coleta/campo:cep");
+    let lista = diff(&a, &b);
+    let novo = unica(&lista, ChangeType::NewField);
+    assert_eq!(novo.impact, Impact::NewDataRequested);
+    assert_eq!(novo.target, "etapa:coleta/campo:cep");
     assert_eq!(
         novo.texto,
         "a etapa `coleta` passa a coletar o campo `cep` (CEP): o agente pedirá esse dado nos \
@@ -408,10 +400,10 @@ fn campo_removido_deixa_de_ser_pedido_nos_atendimentos_novos() {
             .retain(|campo| campo.id != "periodo");
         em_acao(ir, "coleta", "confirmar").requires = vec!["endereco".to_owned()];
     });
-    let lista = diferenca(&a, &b);
-    let removido = unica(&lista, TipoMudanca::CampoRemovido);
-    assert_eq!(removido.impacto, Impacto::AtendimentosNovos);
-    assert_eq!(removido.alvo, "etapa:coleta/campo:periodo");
+    let lista = diff(&a, &b);
+    let removido = unica(&lista, ChangeType::RemovedField);
+    assert_eq!(removido.impact, Impact::NewServices);
+    assert_eq!(removido.target, "etapa:coleta/campo:periodo");
     assert_eq!(
         removido.texto,
         "a etapa `coleta` deixa de coletar o campo `periodo` (Período): nos atendimentos novos, o \
@@ -425,10 +417,10 @@ fn campo_que_fica_obrigatorio_pede_dado_novo() {
         em_etapa(ir, "coleta").campos[0].required = false;
     });
     let b = base();
-    let lista = diferenca(&a, &b);
-    let agora = unica(&lista, TipoMudanca::CampoAgoraObrigatorio);
-    assert_eq!(agora.impacto, Impacto::PedeDadoNovo);
-    assert_eq!(agora.alvo, "etapa:coleta/campo:endereco");
+    let lista = diff(&a, &b);
+    let agora = unica(&lista, ChangeType::FieldNowRequired);
+    assert_eq!(agora.impact, Impact::NewDataRequested);
+    assert_eq!(agora.target, "etapa:coleta/campo:endereco");
     assert_eq!(
         agora.texto,
         "o campo `endereco` da etapa `coleta` agora é obrigatório: o agente vai pedi-lo antes de \
@@ -442,9 +434,9 @@ fn campo_que_deixa_de_ser_obrigatorio_vale_para_atendimentos_novos() {
     let b = com(&a, |ir| {
         em_etapa(ir, "coleta").campos[0].required = false;
     });
-    let lista = diferenca(&a, &b);
-    let deixou = unica(&lista, TipoMudanca::CampoDeixouDeSerObrigatorio);
-    assert_eq!(deixou.impacto, Impacto::AtendimentosNovos);
+    let lista = diff(&a, &b);
+    let deixou = unica(&lista, ChangeType::FieldNoLongerRequired);
+    assert_eq!(deixou.impact, Impact::NewServices);
     assert_eq!(
         deixou.texto,
         "o campo `endereco` da etapa `coleta` deixou de ser obrigatório: nos atendimentos novos, a \
@@ -458,9 +450,9 @@ fn campo_com_outro_tipo_pede_dado_do_novo_jeito() {
     let b = com(&a, |ir| {
         em_etapa(ir, "coleta").campos[1].tipo = FieldKind::Text;
     });
-    let lista = diferenca(&a, &b);
-    let mudou = unica(&lista, TipoMudanca::CampoMudouTipo);
-    assert_eq!(mudou.impacto, Impacto::PedeDadoNovo);
+    let lista = diff(&a, &b);
+    let mudou = unica(&lista, ChangeType::FieldTypeChanged);
+    assert_eq!(mudou.impact, Impact::NewDataRequested);
     assert_eq!(
         mudou.texto,
         "o campo `periodo` da etapa `coleta` mudou de opção para texto: o agente passará a pedir o \
@@ -476,9 +468,9 @@ fn campo_de_opcao_com_outras_opcoes_pede_dado_novo() {
             .options
             .push("noite".to_owned());
     });
-    let lista = diferenca(&a, &b);
-    let mudou = unica(&lista, TipoMudanca::CampoMudouOpcoes);
-    assert_eq!(mudou.impacto, Impacto::PedeDadoNovo);
+    let lista = diff(&a, &b);
+    let mudou = unica(&lista, ChangeType::FieldOptionsChanged);
+    assert_eq!(mudou.impact, Impact::NewDataRequested);
     assert_eq!(
         mudou.texto,
         "as opções do campo `periodo` da etapa `coleta` mudaram de (manhã, tarde) para (manhã, \
@@ -500,10 +492,10 @@ fn acao_nova_muda_a_rota() {
             no_etapa("confirmacao"),
         ));
     });
-    let lista = diferenca(&a, &b);
-    let nova = unica(&lista, TipoMudanca::AcaoNova);
-    assert_eq!(nova.impacto, Impacto::MudaRota);
-    assert_eq!(nova.alvo, "etapa:coleta/acao:remarcar");
+    let lista = diff(&a, &b);
+    let nova = unica(&lista, ChangeType::NewAction);
+    assert_eq!(nova.impact, Impact::RouteChanged);
+    assert_eq!(nova.target, "etapa:coleta/acao:remarcar");
     assert_eq!(
         nova.texto,
         "a etapa `coleta` ganhou a ação `remarcar` (Cliente quer remarcar), que leva para a etapa \
@@ -523,10 +515,10 @@ fn acao_removida_muda_a_rota() {
         ));
     });
     let b = base();
-    let lista = diferenca(&a, &b);
-    let removida = unica(&lista, TipoMudanca::AcaoRemovida);
-    assert_eq!(removida.impacto, Impacto::MudaRota);
-    assert_eq!(removida.alvo, "etapa:coleta/acao:remarcar");
+    let lista = diff(&a, &b);
+    let removida = unica(&lista, ChangeType::RemovedAction);
+    assert_eq!(removida.impact, Impact::RouteChanged);
+    assert_eq!(removida.target, "etapa:coleta/acao:remarcar");
     assert_eq!(
         removida.texto,
         "a etapa `coleta` perdeu a ação `remarcar` (Cliente quer remarcar): o agente não poderá \
@@ -541,10 +533,10 @@ fn destino_de_acao_mudou_muda_a_rota() {
         em_acao(ir, "coleta", "confirmar").goes_to =
             no_fim("concluida", Some("Visita agendada"), false);
     });
-    let lista = diferenca(&a, &b);
-    let destino = unica(&lista, TipoMudanca::DestinoMudou);
-    assert_eq!(destino.impacto, Impacto::MudaRota);
-    assert_eq!(destino.alvo, "etapa:coleta/acao:confirmar");
+    let lista = diff(&a, &b);
+    let destino = unica(&lista, ChangeType::DestinationChanged);
+    assert_eq!(destino.impact, Impact::RouteChanged);
+    assert_eq!(destino.target, "etapa:coleta/acao:confirmar");
     assert_eq!(
         destino.texto,
         "a ação `confirmar` da etapa `coleta` agora leva para o fim `concluida`, e antes levava \
@@ -563,14 +555,14 @@ fn acao_que_passa_a_exigir_campo_pede_o_dado() {
             .requires
             .push("cep".to_owned());
     });
-    let lista = diferenca(&a, &b);
+    let lista = diff(&a, &b);
     assert_eq!(
         tipos(&lista),
-        vec![TipoMudanca::CampoNovo, TipoMudanca::AcaoPassouAExigir]
+        vec![ChangeType::NewField, ChangeType::ActionNowRequires]
     );
-    let exige = unica(&lista, TipoMudanca::AcaoPassouAExigir);
-    assert_eq!(exige.impacto, Impacto::PedeDadoNovo);
-    assert_eq!(exige.alvo, "etapa:coleta/acao:confirmar");
+    let exige = unica(&lista, ChangeType::ActionNowRequires);
+    assert_eq!(exige.impact, Impact::NewDataRequested);
+    assert_eq!(exige.target, "etapa:coleta/acao:confirmar");
     assert_eq!(
         exige.texto,
         "a ação `confirmar` da etapa `coleta` agora exige o campo `cep` (CEP): o agente passará a \
@@ -586,9 +578,9 @@ fn acao_que_deixa_de_exigir_campo_vale_para_atendimentos_novos() {
             .requires
             .retain(|campo| campo != "endereco");
     });
-    let lista = diferenca(&a, &b);
-    let deixou = unica(&lista, TipoMudanca::AcaoDeixouDeExigir);
-    assert_eq!(deixou.impacto, Impacto::AtendimentosNovos);
+    let lista = diff(&a, &b);
+    let deixou = unica(&lista, ChangeType::ActionNoLongerRequires);
+    assert_eq!(deixou.impact, Impact::NewServices);
     assert_eq!(
         deixou.texto,
         "a ação `confirmar` da etapa `coleta` deixou de exigir o campo `endereco`: nos atendimentos \
@@ -602,11 +594,11 @@ fn ator_da_acao_mudou_muda_a_rota() {
     let b = com(&a, |ir| {
         em_acao(ir, "coleta", "confirmar").actor = Some(ActionActor::Attendant);
     });
-    let lista = diferenca(&a, &b);
-    let ator = unica(&lista, TipoMudanca::AtorDaAcaoMudou);
-    assert_eq!(ator.impacto, Impacto::MudaRota);
+    let lista = diff(&a, &b);
+    let actor = unica(&lista, ChangeType::ActionActorChanged);
+    assert_eq!(actor.impact, Impact::RouteChanged);
     assert_eq!(
-        ator.texto,
+        actor.texto,
         "a ação `confirmar` da etapa `coleta` passa a ser feita só pelo atendente."
     );
 }
@@ -630,10 +622,10 @@ fn regra_de_decisao_mudou_muda_a_rota() {
         campo: "coleta.periodo".to_owned(),
         value: "manhã".to_owned(),
     });
-    let lista = diferenca(&a, &b);
-    let regra = unica(&lista, TipoMudanca::RegraMudou);
-    assert_eq!(regra.impacto, Impacto::MudaRota);
-    assert_eq!(regra.alvo, "decisao:classificar");
+    let lista = diff(&a, &b);
+    let regra = unica(&lista, ChangeType::RuleChanged);
+    assert_eq!(regra.impact, Impact::RouteChanged);
+    assert_eq!(regra.target, "decisao:classificar");
     assert_eq!(
         regra.texto,
         "a condição da decisão `classificar` mudou: agora é verdadeira quando `coleta.periodo` é \
@@ -655,10 +647,10 @@ fn ramo_de_decisao_que_muda_de_destino_muda_a_rota() {
     };
     let a = com_decisao(no_fim("desistencia", Some("Cliente desistiu"), false));
     let b = com_decisao(no_fim("concluida", Some("Visita agendada"), false));
-    let lista = diferenca(&a, &b);
-    let destino = unica(&lista, TipoMudanca::DestinoMudou);
-    assert_eq!(destino.impacto, Impacto::MudaRota);
-    assert_eq!(destino.alvo, "decisao:classificar/ramo:senao");
+    let lista = diff(&a, &b);
+    let destino = unica(&lista, ChangeType::DestinationChanged);
+    assert_eq!(destino.impact, Impact::RouteChanged);
+    assert_eq!(destino.target, "decisao:classificar/ramo:senao");
     assert_eq!(
         destino.texto,
         "o ramo falso da decisão `classificar` agora leva para o fim `concluida`, e antes levava \
@@ -680,10 +672,10 @@ fn ramo_verdadeiro_de_decisao_que_muda_de_destino_muda_a_rota() {
     };
     let a = com_decisao(no_etapa("confirmacao"));
     let b = com_decisao(no_fim("concluida", Some("Visita agendada"), false));
-    let lista = diferenca(&a, &b);
-    let destino = unica(&lista, TipoMudanca::DestinoMudou);
-    assert_eq!(destino.impacto, Impacto::MudaRota);
-    assert_eq!(destino.alvo, "decisao:classificar/ramo:entao");
+    let lista = diff(&a, &b);
+    let destino = unica(&lista, ChangeType::DestinationChanged);
+    assert_eq!(destino.impact, Impact::RouteChanged);
+    assert_eq!(destino.target, "decisao:classificar/ramo:entao");
     assert_eq!(
         destino.texto,
         "o ramo verdadeiro da decisão `classificar` agora leva para o fim `concluida`, e antes \
@@ -702,10 +694,10 @@ fn decisao_nova_sem_chegada_nao_muda_o_atendimento() {
             no_fim("desistencia", Some("Cliente desistiu"), false),
         ));
     });
-    let lista = diferenca(&a, &b);
-    let nova = unica(&lista, TipoMudanca::DecisaoNova);
-    assert_eq!(nova.impacto, Impacto::Nenhum);
-    assert_eq!(nova.alvo, "decisao:classificar");
+    let lista = diff(&a, &b);
+    let nova = unica(&lista, ChangeType::NewDecision);
+    assert_eq!(nova.impact, Impact::None);
+    assert_eq!(nova.target, "decisao:classificar");
     assert_eq!(
         nova.texto,
         "a decisão `classificar` é nova, mas nenhuma ação ou decisão leva a ela: nada muda no \
@@ -727,9 +719,9 @@ fn decisao_nova_que_recebe_chegada_muda_a_rota() {
             id: "classificar".to_owned(),
         };
     });
-    let lista = diferenca(&a, &b);
-    let nova = unica(&lista, TipoMudanca::DecisaoNova);
-    assert_eq!(nova.impacto, Impacto::MudaRota);
+    let lista = diff(&a, &b);
+    let nova = unica(&lista, ChangeType::NewDecision);
+    assert_eq!(nova.impact, Impact::RouteChanged);
     assert_eq!(
         nova.texto,
         "a decisão `classificar` é nova e já é destino de alguma ação ou decisão: os atendimentos \
@@ -748,9 +740,9 @@ fn decisao_removida_sem_chegada_nao_muda_o_atendimento() {
         ));
     });
     let b = base();
-    let lista = diferenca(&a, &b);
-    let removida = unica(&lista, TipoMudanca::DecisaoRemovida);
-    assert_eq!(removida.impacto, Impacto::Nenhum);
+    let lista = diff(&a, &b);
+    let removida = unica(&lista, ChangeType::RemovedDecision);
+    assert_eq!(removida.impact, Impact::None);
     assert_eq!(
         removida.texto,
         "a decisão `classificar` foi removida, mas nenhuma ação ou decisão a usava: nada muda no \
@@ -762,10 +754,10 @@ fn decisao_removida_sem_chegada_nao_muda_o_atendimento() {
 fn fim_novo_sem_chegada_nao_muda_o_atendimento() {
     let a = base();
     let b = com(&a, |ir| ir.ends.push(fim("nova_saida", None, false)));
-    let lista = diferenca(&a, &b);
-    let novo = unica(&lista, TipoMudanca::FimNovo);
-    assert_eq!(novo.impacto, Impacto::Nenhum);
-    assert_eq!(novo.alvo, "fim:nova_saida");
+    let lista = diff(&a, &b);
+    let novo = unica(&lista, ChangeType::NewEnd);
+    assert_eq!(novo.impact, Impact::None);
+    assert_eq!(novo.target, "fim:nova_saida");
     assert_eq!(
         novo.texto,
         "o fim `nova_saida` é novo, mas nenhuma ação ou decisão leva a ele: nada muda no \
@@ -777,9 +769,9 @@ fn fim_novo_sem_chegada_nao_muda_o_atendimento() {
 fn fim_removido_sem_chegada_nao_muda_o_atendimento() {
     let a = com(&base(), |ir| ir.ends.push(fim("extra", None, false)));
     let b = base();
-    let lista = diferenca(&a, &b);
-    let removido = unica(&lista, TipoMudanca::FimRemovido);
-    assert_eq!(removido.impacto, Impacto::Nenhum);
+    let lista = diff(&a, &b);
+    let removido = unica(&lista, ChangeType::RemovedEnd);
+    assert_eq!(removido.impact, Impact::None);
     assert_eq!(
         removido.texto,
         "o fim `extra` foi removido, mas nenhuma ação ou decisão o usava: nada muda no atendimento."
@@ -796,10 +788,10 @@ fn fim_que_passa_a_encerrar_o_atendimento_muda_a_rota() {
             .expect("o fim existe")
             .ends_service = true;
     });
-    let lista = diferenca(&a, &b);
-    let mudou = unica(&lista, TipoMudanca::FimMudou);
-    assert_eq!(mudou.impacto, Impacto::MudaRota);
-    assert_eq!(mudou.alvo, "fim:desistencia");
+    let lista = diff(&a, &b);
+    let mudou = unica(&lista, ChangeType::EndChanged);
+    assert_eq!(mudou.impact, Impact::RouteChanged);
+    assert_eq!(mudou.target, "fim:desistencia");
     assert_eq!(
         mudou.texto,
         "o fim `desistencia` agora também encerra o atendimento: a conversa e a Ficha são \
@@ -817,9 +809,9 @@ fn resumo_de_fim_mudou_nao_muda_o_atendimento() {
             .expect("o fim existe")
             .resultado = Some("Visita confirmada".to_owned());
     });
-    let lista = diferenca(&a, &b);
-    let mudou = unica(&lista, TipoMudanca::FimMudou);
-    assert_eq!(mudou.impacto, Impacto::Nenhum);
+    let lista = diff(&a, &b);
+    let mudou = unica(&lista, ChangeType::EndChanged);
+    assert_eq!(mudou.impact, Impact::None);
     assert_eq!(
         mudou.texto,
         "o resumo do fim `concluida` mudou de \"Visita agendada\" para \"Visita confirmada\"."
@@ -846,10 +838,10 @@ fn regra_especial_usada_por_decisao_muda_a_rota_quando_o_texto_muda() {
     };
     let a = com_def("def afinidade(dados):\n    return True\n");
     let b = com_def("def afinidade(dados):\n    return False\n");
-    let lista = diferenca(&a, &b);
-    let regra = unica(&lista, TipoMudanca::RegraMudou);
-    assert_eq!(regra.impacto, Impacto::MudaRota);
-    assert_eq!(regra.alvo, "def:afinidade");
+    let lista = diff(&a, &b);
+    let regra = unica(&lista, ChangeType::RuleChanged);
+    assert_eq!(regra.impact, Impact::RouteChanged);
+    assert_eq!(regra.target, "def:afinidade");
     assert_eq!(
         regra.texto,
         "o texto da regra especial `afinidade` mudou: as decisões que a usam passam a decidir com \
@@ -866,10 +858,10 @@ fn regra_especial_nova_sem_uso_nao_muda_o_atendimento() {
             fonte: "def sem_uso(dados):\n    return True\n".to_owned(),
         });
     });
-    let lista = diferenca(&a, &b);
-    let nova = unica(&lista, TipoMudanca::RegraMudou);
-    assert_eq!(nova.impacto, Impacto::Nenhum);
-    assert_eq!(nova.alvo, "def:sem_uso");
+    let lista = diff(&a, &b);
+    let nova = unica(&lista, ChangeType::RuleChanged);
+    assert_eq!(nova.impact, Impact::None);
+    assert_eq!(nova.target, "def:sem_uso");
     assert_eq!(
         nova.texto,
         "a regra especial `sem_uso` é nova, mas nenhuma decisão a usa: nada muda no atendimento."
@@ -888,10 +880,10 @@ fn efeito_novo_numa_acao_dispara_efeito() {
                 texto: "Visita marcada!".to_owned(),
             });
     });
-    let lista = diferenca(&a, &b);
-    let novo = unica(&lista, TipoMudanca::EfeitoNovo);
-    assert_eq!(novo.impacto, Impacto::DisparaEfeito);
-    assert_eq!(novo.alvo, "etapa:coleta/acao:confirmar");
+    let lista = diff(&a, &b);
+    let novo = unica(&lista, ChangeType::NewEffect);
+    assert_eq!(novo.impact, Impact::EffectTriggered);
+    assert_eq!(novo.target, "etapa:coleta/acao:confirmar");
     assert_eq!(
         novo.texto,
         "a ação `confirmar` da etapa `coleta` passa a enviar ao cliente: \"Visita marcada!\"."
@@ -908,9 +900,9 @@ fn efeito_removido_de_uma_acao_dispara_efeito() {
             });
     });
     let b = base();
-    let lista = diferenca(&a, &b);
-    let removido = unica(&lista, TipoMudanca::EfeitoRemovido);
-    assert_eq!(removido.impacto, Impacto::DisparaEfeito);
+    let lista = diff(&a, &b);
+    let removido = unica(&lista, ChangeType::RemovedEffect);
+    assert_eq!(removido.impact, Impact::EffectTriggered);
     assert_eq!(
         removido.texto,
         "a ação `confirmar` da etapa `coleta` deixa de enviar ao cliente: \"Visita marcada!\"."
@@ -933,10 +925,10 @@ fn efeito_de_entrada_e_aviso_a_equipe_tem_texto_proprio() {
                 departamento: "Comercial".to_owned(),
             });
     });
-    let lista = diferenca(&a, &b);
+    let lista = diff(&a, &b);
     assert_eq!(
         tipos(&lista),
-        vec![TipoMudanca::EfeitoNovo, TipoMudanca::EfeitoNovo]
+        vec![ChangeType::NewEffect, ChangeType::NewEffect]
     );
     assert_eq!(
         lista[0].texto,
@@ -948,7 +940,7 @@ fn efeito_de_entrada_e_aviso_a_equipe_tem_texto_proprio() {
         "ao entrar na etapa `confirmacao`, o fluxo passa a encaminhar o atendimento ao \
          departamento `Comercial`."
     );
-    assert!(lista.iter().all(|m| m.impacto == Impacto::DisparaEfeito));
+    assert!(lista.iter().all(|m| m.impact == Impact::EffectTriggered));
 }
 
 #[test]
@@ -961,9 +953,9 @@ fn efeito_de_etapa_nova_sem_chegada_nao_dispara() {
         });
         ir.stages.push(sobra);
     });
-    let lista = diferenca(&a, &b);
-    assert_eq!(tipos(&lista), vec![TipoMudanca::EtapaNova], "{lista:#?}");
-    assert_eq!(lista[0].impacto, Impacto::Nenhum);
+    let lista = diff(&a, &b);
+    assert_eq!(tipos(&lista), vec![ChangeType::NewStage], "{lista:#?}");
+    assert_eq!(lista[0].impact, Impact::None);
 }
 
 #[test]
@@ -983,8 +975,8 @@ fn efeito_que_ja_existia_nao_aparece_de_novo() {
                 departamento: "Comercial".to_owned(),
             });
     });
-    let lista = diferenca(&a, &b);
-    assert_eq!(tipos(&lista), vec![TipoMudanca::EfeitoNovo], "{lista:#?}");
+    let lista = diff(&a, &b);
+    assert_eq!(tipos(&lista), vec![ChangeType::NewEffect], "{lista:#?}");
     assert_eq!(
         lista[0].texto,
         "a ação `confirmar` da etapa `coleta` passa a encaminhar o atendimento ao departamento \
@@ -1004,10 +996,10 @@ fn gatilho_mudou_vale_para_atendimentos_novos() {
             examples: Vec::new(),
         };
     });
-    let lista = diferenca(&a, &b);
-    let gatilho = unica(&lista, TipoMudanca::GatilhoMudou);
-    assert_eq!(gatilho.impacto, Impacto::AtendimentosNovos);
-    assert_eq!(gatilho.alvo, "gatilho");
+    let lista = diff(&a, &b);
+    let gatilho = unica(&lista, ChangeType::TriggerChanged);
+    assert_eq!(gatilho.impact, Impact::NewServices);
+    assert_eq!(gatilho.target, "gatilho");
     assert_eq!(
         gatilho.texto,
         "o critério para iniciar este fluxo mudou: nos atendimentos novos, o Jev passa a usar o \
@@ -1019,10 +1011,10 @@ fn gatilho_mudou_vale_para_atendimentos_novos() {
 fn etapa_inicial_mudou_vale_para_atendimentos_novos() {
     let a = base();
     let b = com(&a, |ir| ir.start = "confirmacao".to_owned());
-    let lista = diferenca(&a, &b);
-    let inicio = unica(&lista, TipoMudanca::InicioMudou);
-    assert_eq!(inicio.impacto, Impacto::AtendimentosNovos);
-    assert_eq!(inicio.alvo, "fluxo");
+    let lista = diff(&a, &b);
+    let inicio = unica(&lista, ChangeType::StartChanged);
+    assert_eq!(inicio.impact, Impact::NewServices);
+    assert_eq!(inicio.target, "fluxo");
     assert_eq!(
         inicio.texto,
         "os atendimentos novos passam a começar na etapa `confirmacao`, e não mais na etapa \
@@ -1040,10 +1032,10 @@ fn nome_do_fluxo_mudou_nao_muda_o_atendimento() {
             descricao: ir.fluxo.descricao.clone(),
         };
     });
-    let lista = diferenca(&a, &b);
-    let nome = unica(&lista, TipoMudanca::TextoMudou);
-    assert_eq!(nome.impacto, Impacto::Nenhum);
-    assert_eq!(nome.alvo, "fluxo");
+    let lista = diff(&a, &b);
+    let nome = unica(&lista, ChangeType::TextChanged);
+    assert_eq!(nome.impact, Impact::None);
+    assert_eq!(nome.target, "fluxo");
     assert_eq!(
         nome.texto,
         "o nome do fluxo mudou de \"Agendar visita\" para \"Marcar visita\"."
@@ -1068,17 +1060,17 @@ fn ordem_da_lista_numa_mudanca_grande_e_sempre_a_mesma() {
             no_fim("concluida", Some("Visita agendada"), false);
         ir.stages.retain(|etapa| etapa.id != "confirmacao");
     });
-    let lista = diferenca(&a, &b);
+    let lista = diff(&a, &b);
     assert_eq!(
         tipos(&lista),
         vec![
-            TipoMudanca::InicioMudou,
-            TipoMudanca::CampoDeixouDeSerObrigatorio,
-            TipoMudanca::CampoNovo,
-            TipoMudanca::AcaoPassouAExigir,
-            TipoMudanca::DestinoMudou,
-            TipoMudanca::EtapaRemovida,
+            ChangeType::StartChanged,
+            ChangeType::FieldNoLongerRequired,
+            ChangeType::NewField,
+            ChangeType::ActionNowRequires,
+            ChangeType::DestinationChanged,
+            ChangeType::RemovedStage,
         ]
     );
-    assert_eq!(lista, diferenca(&a, &b), "duas chamadas dão a mesma lista");
+    assert_eq!(lista, diff(&a, &b), "duas chamadas dão a mesma lista");
 }

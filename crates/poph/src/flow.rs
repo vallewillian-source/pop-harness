@@ -251,7 +251,7 @@ fn validar(sessao: &Sessao, org: Option<&str>, args: ArquivoArgs) -> Result<Exit
         }
         imprimir_diagnosticos(&validacao.diagnosticos);
         for resolucao in &validacao.resolucoes {
-            match &resolucao.departamento_id {
+            match &resolucao.department_id {
                 Some(id) => println!("  departamento \"{}\": encontrado ({id})", resolucao.nome),
                 None => println!(
                     "  departamento \"{}\": não encontrado nesta org",

@@ -360,6 +360,30 @@ marks the dependency as used, because the Rust `unused_dependencies` lint breaks
   a syntax diagnostic. The load limit only triggers on a script whose shape is already valid, so
   the only possible error there is a limit.
 
+### 8.6 Revision diff (`diff`)
+
+- The diff compares nodes by id, not by source order. Its deterministic output lists the flow header,
+  stages in the new revision order with removals after them, decisions, ends and `def` blocks.
+- A new or removed stage, decision, end or `def` is one change; its children are not repeated as
+  individual changes. Effects of a new or removed stage or action are reported separately only when
+  the node is reachable through an action or decision.
+- `nenhum` means text-only change, `atendimentos_novos` affects only new attendances,
+  `pede_dado_novo` means that a new value becomes necessary, `muda_rota` changes the execution path,
+  and `dispara_efeito` adds or removes a customer message, team notice or transfer.
+- For new or removed nodes, impact depends on reachability. Existing nodes use the impact of their
+  own change. The module is pure; counts of attendances attached to a revision are added by the API.
+
+### 8.7 Semantic validator (`validador`)
+
+- `validar` checks an already compiled IR. Diagnostics use a node path because an external IR has no
+  source line or column. The compiler performs the position-based checks over source text.
+- The validator checks references, ids, options, actors, rules, variables, reachability, cycles and
+  node limits in a deterministic order. It is pure: no database, network, clock or file access.
+- `resolve_departments` preserves the first-reference order, trims department names and compares
+  case-insensitively while keeping accents significant. Unknown or ambiguous names produce `FLX65`
+  and a resolution with `departamento_id = None`; publication stores the resolution and the runtime
+  effect fails closed at execution time.
+
 ## Medidas
 
 **Máquina:** Fedora 44, x86_64, AMD Ryzen 5 5600GT (6 núcleos, 12 threads), 32 GB de RAM.

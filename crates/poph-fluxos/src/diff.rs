@@ -1,220 +1,164 @@
-//! Diferença entre duas revisões de um fluxo, em linguagem comum (FX-17), para a tela de
-//! publicação e para o histórico.
-//!
-//! [`diferenca`] compara a revisão antiga (`ir_a`) com a nova (`ir_b`) e devolve uma [`Mudanca`]
-//! para cada coisa que mudou. Cada uma traz:
-//!
-//! - `tipo` ([`TipoMudanca`]): o que mudou (`acao_nova`, `campo_agora_obrigatorio`...);
-//! - `impacto` ([`Impacto`]): o que muda para o atendimento;
-//! - `alvo`: onde mudou, em código (`etapa:coleta/acao:confirmar`), para a tela e a API;
-//! - `texto`: a frase em português que a tela mostra.
-//!
-//! Regras de leitura:
-//!
-//! - Tudo é comparado pelo **id** (etapa, campo, ação, decisão, fim, def). A ordem dos itens no
-//!   script não gera mudança. A lista sai sempre na mesma ordem: o fluxo primeiro, depois as
-//!   etapas (na ordem da revisão nova, com o que foi removido logo depois), as decisões, os fins e
-//!   as defs. Nada aqui depende da ordem interna de um mapa JSON, então a ordem não muda entre o
-//!   build do workspace e o build isolado do crate.
-//! - Etapa, decisão, fim ou def **nova ou removida** sai como uma mudança só: o que ela contém não
-//!   é listado item a item. Os efeitos de uma etapa ou ação nova (ou removida) saem à parte, porque
-//!   disparam mensagem ou transferência, e só quando a etapa é alcançada por alguma ação ou
-//!   decisão. Etapa sem chegada não dispara nada.
-//! - Impacto:
-//!   - `nenhum`: o texto muda, o atendimento não (nome, rótulo, dica, resumo de fim);
-//!   - `atendimentos_novos`: só vale para os atendimentos que começarem depois da publicação;
-//!   - `pede_dado_novo`: o agente passa a pedir um dado que antes não pedia, ou a pedi-lo de outro
-//!     jeito;
-//!   - `muda_rota`: o caminho do atendimento muda (destino, ator, condição, encerramento);
-//!   - `dispara_efeito`: passa a sair, ou deixa de sair, mensagem ao cliente, aviso à equipe ou
-//!     transferência.
-//! - Para etapa, decisão, fim e def novos ou removidos, o impacto depende de haver chegada até
-//!   eles (ação ou decisão que aponta para o nó). Para o que já existia, o impacto é o da própria
-//!   mudança.
-//!
-//! Função pura: não acessa banco, relógio nem rede. A contagem de atendimentos em andamento por
-//! revisão não é daqui; quem a acrescenta é a API (FX-27).
-
 use serde::{Deserialize, Serialize};
 
 use crate::ir::{Acao, Campo, Decisao, Destination, Effect, Etapa, Fim, Ir, Rule};
 use poph_types::{ActionActor, FieldKind};
 
-/// O que uma mudança faz com o atendimento.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Impacto {
-    /// O texto muda, o atendimento não.
-    Nenhum,
-    /// Só os atendimentos que começarem depois da publicação seguem a mudança.
-    AtendimentosNovos,
-    /// O agente passa a pedir um dado que antes não pedia, ou pede de outro jeito.
-    PedeDadoNovo,
-    /// O caminho do atendimento muda.
-    MudaRota,
-    /// Passa a sair, ou deixa de sair, mensagem ao cliente, aviso à equipe ou transferência.
-    DisparaEfeito,
+pub enum Impact {
+    #[serde(rename = "nenhum")]
+    None,
+    #[serde(rename = "atendimentos_novos")]
+    NewServices,
+    #[serde(rename = "pede_dado_novo")]
+    NewDataRequested,
+    #[serde(rename = "muda_rota")]
+    RouteChanged,
+    #[serde(rename = "dispara_efeito")]
+    EffectTriggered,
 }
 
-impl Impacto {
-    /// Código estável: é o mesmo texto que o JSON da API usa.
-    pub fn codigo(self) -> &'static str {
+impl Impact {
+    pub fn code(self) -> &'static str {
         match self {
-            Self::Nenhum => "nenhum",
-            Self::AtendimentosNovos => "atendimentos_novos",
-            Self::PedeDadoNovo => "pede_dado_novo",
-            Self::MudaRota => "muda_rota",
-            Self::DisparaEfeito => "dispara_efeito",
+            Self::None => "nenhum",
+            Self::NewServices => "atendimentos_novos",
+            Self::NewDataRequested => "pede_dado_novo",
+            Self::RouteChanged => "muda_rota",
+            Self::EffectTriggered => "dispara_efeito",
         }
     }
 }
 
-/// Tipo de uma mudança entre duas revisões.
-///
-/// A lista da FX-17 foi completada por mudanças que não cabiam em nenhum tipo sem perder
-/// informação: `instrucao_mudou`, `atores_da_etapa_mudou`, `campo_deixou_de_ser_obrigatorio`,
-/// `campo_mudou_tipo`, `campo_mudou_opcoes`, `texto_mudou` (nome, rótulo, dica, descrição),
-/// `acao_passou_a_exigir`, `acao_deixou_de_exigir`, `ator_da_acao_mudou`, `decisao_nova`,
-/// `decisao_removida`, `fim_novo`, `fim_removido`, `fim_mudou` e `inicio_mudou`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum TipoMudanca {
-    /// Etapa que não existia na revisão antiga.
-    EtapaNova,
-    /// Etapa que deixou de existir.
-    EtapaRemovida,
-    /// Instrução da etapa (o que o agente deve fazer nela) mudou.
-    InstrucaoMudou,
-    /// Quem pode executar as ações da etapa mudou.
-    AtoresDaEtapaMudou,
-    /// Campo que a etapa passou a coletar.
-    CampoNovo,
-    /// Campo que a etapa deixou de coletar.
-    CampoRemovido,
-    /// Campo que passou a ser obrigatório.
-    CampoAgoraObrigatorio,
-    /// Campo que deixou de ser obrigatório.
-    CampoDeixouDeSerObrigatorio,
-    /// Campo com outro tipo de valor.
-    CampoMudouTipo,
-    /// Campo de opção com outra lista de valores.
-    CampoMudouOpcoes,
-    /// Ação que passou a exigir um campo da própria etapa.
-    AcaoPassouAExigir,
-    /// Ação que deixou de exigir um campo.
-    AcaoDeixouDeExigir,
-    /// Ação nova.
-    AcaoNova,
-    /// Ação que deixou de existir.
-    AcaoRemovida,
-    /// Ação, ou ramo de decisão, que leva para outro destino.
-    DestinoMudou,
-    /// Quem pode executar a ação mudou (ou deixou de ser restrita).
-    AtorDaAcaoMudou,
-    /// Condição de decisão, ou texto de regra especial (`def`), mudou.
-    RegraMudou,
-    /// Decisão nova.
-    DecisaoNova,
-    /// Decisão que deixou de existir.
-    DecisaoRemovida,
-    /// Desfecho novo.
-    FimNovo,
-    /// Desfecho que deixou de existir.
-    FimRemovido,
-    /// Desfecho com outro encerramento do atendimento ou outro resumo.
-    FimMudou,
-    /// Efeito novo: passa a sair mensagem, aviso ou transferência.
-    EfeitoNovo,
-    /// Efeito que deixou de sair.
-    EfeitoRemovido,
-    /// Critério para iniciar o fluxo mudou.
-    GatilhoMudou,
-    /// Etapa em que o fluxo começa mudou.
-    InicioMudou,
-    /// Texto sem efeito no atendimento (nome, rótulo, dica, descrição).
-    TextoMudou,
+pub enum ChangeType {
+    #[serde(rename = "etapa_nova")]
+    NewStage,
+    #[serde(rename = "etapa_removida")]
+    RemovedStage,
+    #[serde(rename = "instrucao_mudou")]
+    InstructionChanged,
+    #[serde(rename = "atores_da_etapa_mudou")]
+    StageActorsChanged,
+    #[serde(rename = "campo_novo")]
+    NewField,
+    #[serde(rename = "campo_removido")]
+    RemovedField,
+    #[serde(rename = "campo_agora_obrigatorio")]
+    FieldNowRequired,
+    #[serde(rename = "campo_deixou_de_ser_obrigatorio")]
+    FieldNoLongerRequired,
+    #[serde(rename = "campo_mudou_tipo")]
+    FieldTypeChanged,
+    #[serde(rename = "campo_mudou_opcoes")]
+    FieldOptionsChanged,
+    #[serde(rename = "acao_passou_a_exigir")]
+    ActionNowRequires,
+    #[serde(rename = "acao_deixou_de_exigir")]
+    ActionNoLongerRequires,
+    #[serde(rename = "acao_nova")]
+    NewAction,
+    #[serde(rename = "acao_removida")]
+    RemovedAction,
+    #[serde(rename = "destino_mudou")]
+    DestinationChanged,
+    #[serde(rename = "ator_da_acao_mudou")]
+    ActionActorChanged,
+    #[serde(rename = "regra_mudou")]
+    RuleChanged,
+    #[serde(rename = "decisao_nova")]
+    NewDecision,
+    #[serde(rename = "decisao_removida")]
+    RemovedDecision,
+    #[serde(rename = "fim_novo")]
+    NewEnd,
+    #[serde(rename = "fim_removido")]
+    RemovedEnd,
+    #[serde(rename = "fim_mudou")]
+    EndChanged,
+    #[serde(rename = "efeito_novo")]
+    NewEffect,
+    #[serde(rename = "efeito_removido")]
+    RemovedEffect,
+    #[serde(rename = "gatilho_mudou")]
+    TriggerChanged,
+    #[serde(rename = "inicio_mudou")]
+    StartChanged,
+    #[serde(rename = "texto_mudou")]
+    TextChanged,
 }
 
-impl TipoMudanca {
-    /// Código estável: é o mesmo texto que o JSON da API usa.
-    pub fn codigo(self) -> &'static str {
+impl ChangeType {
+    pub fn code(self) -> &'static str {
         match self {
-            Self::EtapaNova => "etapa_nova",
-            Self::EtapaRemovida => "etapa_removida",
-            Self::InstrucaoMudou => "instrucao_mudou",
-            Self::AtoresDaEtapaMudou => "atores_da_etapa_mudou",
-            Self::CampoNovo => "campo_novo",
-            Self::CampoRemovido => "campo_removido",
-            Self::CampoAgoraObrigatorio => "campo_agora_obrigatorio",
-            Self::CampoDeixouDeSerObrigatorio => "campo_deixou_de_ser_obrigatorio",
-            Self::CampoMudouTipo => "campo_mudou_tipo",
-            Self::CampoMudouOpcoes => "campo_mudou_opcoes",
-            Self::AcaoPassouAExigir => "acao_passou_a_exigir",
-            Self::AcaoDeixouDeExigir => "acao_deixou_de_exigir",
-            Self::AcaoNova => "acao_nova",
-            Self::AcaoRemovida => "acao_removida",
-            Self::DestinoMudou => "destino_mudou",
-            Self::AtorDaAcaoMudou => "ator_da_acao_mudou",
-            Self::RegraMudou => "regra_mudou",
-            Self::DecisaoNova => "decisao_nova",
-            Self::DecisaoRemovida => "decisao_removida",
-            Self::FimNovo => "fim_novo",
-            Self::FimRemovido => "fim_removido",
-            Self::FimMudou => "fim_mudou",
-            Self::EfeitoNovo => "efeito_novo",
-            Self::EfeitoRemovido => "efeito_removido",
-            Self::GatilhoMudou => "gatilho_mudou",
-            Self::InicioMudou => "inicio_mudou",
-            Self::TextoMudou => "texto_mudou",
+            Self::NewStage => "etapa_nova",
+            Self::RemovedStage => "etapa_removida",
+            Self::InstructionChanged => "instrucao_mudou",
+            Self::StageActorsChanged => "atores_da_etapa_mudou",
+            Self::NewField => "campo_novo",
+            Self::RemovedField => "campo_removido",
+            Self::FieldNowRequired => "campo_agora_obrigatorio",
+            Self::FieldNoLongerRequired => "campo_deixou_de_ser_obrigatorio",
+            Self::FieldTypeChanged => "campo_mudou_tipo",
+            Self::FieldOptionsChanged => "campo_mudou_opcoes",
+            Self::ActionNowRequires => "acao_passou_a_exigir",
+            Self::ActionNoLongerRequires => "acao_deixou_de_exigir",
+            Self::NewAction => "acao_nova",
+            Self::RemovedAction => "acao_removida",
+            Self::DestinationChanged => "destino_mudou",
+            Self::ActionActorChanged => "ator_da_acao_mudou",
+            Self::RuleChanged => "regra_mudou",
+            Self::NewDecision => "decisao_nova",
+            Self::RemovedDecision => "decisao_removida",
+            Self::NewEnd => "fim_novo",
+            Self::RemovedEnd => "fim_removido",
+            Self::EndChanged => "fim_mudou",
+            Self::NewEffect => "efeito_novo",
+            Self::RemovedEffect => "efeito_removido",
+            Self::TriggerChanged => "gatilho_mudou",
+            Self::StartChanged => "inicio_mudou",
+            Self::TextChanged => "texto_mudou",
         }
     }
 }
 
-/// Uma mudança entre duas revisões, pronta para a tela e para a API.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Mudanca {
-    /// O que mudou.
-    pub tipo: TipoMudanca,
-    /// O que a mudança faz com o atendimento.
-    pub impacto: Impacto,
-    /// Onde mudou, em código: `fluxo`, `gatilho`, `etapa:<id>`, `etapa:<id>/campo:<id>`,
-    /// `etapa:<id>/acao:<id>`, `decisao:<id>`, `decisao:<id>/ramo:entao|senao`, `fim:<id>`,
-    /// `def:<nome>`.
-    pub alvo: String,
-    /// A frase em português que a tela mostra.
+pub struct Change {
+    pub tipo: ChangeType,
+    #[serde(rename = "impacto")]
+    pub impact: Impact,
+    #[serde(rename = "alvo")]
+    pub target: String,
     pub texto: String,
 }
 
-impl Mudanca {
-    fn nova(tipo: TipoMudanca, impacto: Impacto, alvo: &str, texto: String) -> Self {
+impl Change {
+    fn new(tipo: ChangeType, impact: Impact, target: &str, texto: String) -> Self {
         Self {
             tipo,
-            impacto,
-            alvo: alvo.to_owned(),
+            impact,
+            target: target.to_owned(),
             texto,
         }
     }
 }
 
-/// Diferença entre a revisão antiga (`ir_a`) e a nova (`ir_b`), em mudanças com texto em
-/// português. Fluxos idênticos devolvem lista vazia.
-pub fn diferenca(ir_a: &Ir, ir_b: &Ir) -> Vec<Mudanca> {
+pub fn diff(old_ir: &Ir, new_ir: &Ir) -> Vec<Change> {
     let mut saida = Vec::new();
-    cabecalho(ir_a, ir_b, &mut saida);
-    etapas(ir_a, ir_b, &mut saida);
-    decisoes(ir_a, ir_b, &mut saida);
-    fins(ir_a, ir_b, &mut saida);
-    defs(ir_a, ir_b, &mut saida);
+    header(old_ir, new_ir, &mut saida);
+    stages(old_ir, new_ir, &mut saida);
+    decisions(old_ir, new_ir, &mut saida);
+    ends(old_ir, new_ir, &mut saida);
+    defs(old_ir, new_ir, &mut saida);
     saida
 }
 
-// ------------------------------------------------------------------ fluxo
-
-fn cabecalho(a: &Ir, b: &Ir, out: &mut Vec<Mudanca>) {
+fn header(a: &Ir, b: &Ir, out: &mut Vec<Change>) {
     if a.fluxo.nome != b.fluxo.nome {
-        out.push(Mudanca::nova(
-            TipoMudanca::TextoMudou,
-            Impacto::Nenhum,
+        out.push(Change::new(
+            ChangeType::TextChanged,
+            Impact::None,
             "fluxo",
             format!(
                 "o nome do fluxo mudou de \"{}\" para \"{}\".",
@@ -223,21 +167,21 @@ fn cabecalho(a: &Ir, b: &Ir, out: &mut Vec<Mudanca>) {
         ));
     }
     if a.fluxo.descricao != b.fluxo.descricao {
-        out.push(Mudanca::nova(
-            TipoMudanca::TextoMudou,
-            Impacto::Nenhum,
+        out.push(Change::new(
+            ChangeType::TextChanged,
+            Impact::None,
             "fluxo",
             format!(
                 "a descrição do fluxo mudou de {} para {}.",
-                texto_ou_vazio(a.fluxo.descricao.as_deref()),
-                texto_ou_vazio(b.fluxo.descricao.as_deref())
+                text_or_empty(a.fluxo.descricao.as_deref()),
+                text_or_empty(b.fluxo.descricao.as_deref())
             ),
         ));
     }
     if a.gatilho != b.gatilho {
-        out.push(Mudanca::nova(
-            TipoMudanca::GatilhoMudou,
-            Impacto::AtendimentosNovos,
+        out.push(Change::new(
+            ChangeType::TriggerChanged,
+            Impact::NewServices,
             "gatilho",
             "o critério para iniciar este fluxo mudou: nos atendimentos novos, o Jev passa a \
              usar o novo critério."
@@ -245,9 +189,9 @@ fn cabecalho(a: &Ir, b: &Ir, out: &mut Vec<Mudanca>) {
         ));
     }
     if a.start != b.start {
-        out.push(Mudanca::nova(
-            TipoMudanca::InicioMudou,
-            Impacto::AtendimentosNovos,
+        out.push(Change::new(
+            ChangeType::StartChanged,
+            Impact::NewServices,
             "fluxo",
             format!(
                 "os atendimentos novos passam a começar na etapa `{}`, e não mais na etapa `{}`.",
@@ -257,95 +201,93 @@ fn cabecalho(a: &Ir, b: &Ir, out: &mut Vec<Mudanca>) {
     }
 }
 
-// ------------------------------------------------------------------ etapas
-
-fn etapas(a: &Ir, b: &Ir, out: &mut Vec<Mudanca>) {
-    for nova in &b.stages {
-        match a.stages.iter().find(|antiga| antiga.id == nova.id) {
-            Some(antiga) => comparar_etapa(a, b, antiga, nova, out),
-            None => etapa_nova(b, nova, out),
+fn stages(a: &Ir, b: &Ir, out: &mut Vec<Change>) {
+    for new in &b.stages {
+        match a.stages.iter().find(|old| old.id == new.id) {
+            Some(old) => compare_stage(a, b, old, new, out),
+            None => new_stage(b, new, out),
         }
     }
-    for antiga in &a.stages {
-        if !b.stages.iter().any(|nova| nova.id == antiga.id) {
-            etapa_removida(a, antiga, out);
+    for old in &a.stages {
+        if !b.stages.iter().any(|new| new.id == old.id) {
+            removed_stage(a, old, out);
         }
     }
 }
 
-fn etapa_nova(b: &Ir, etapa: &Etapa, out: &mut Vec<Mudanca>) {
-    let alvo = alvo_etapa(&etapa.id);
-    let chega = alcancada(b, &etapa.id);
-    let (impacto, texto) = if chega {
+fn new_stage(b: &Ir, etapa: &Etapa, out: &mut Vec<Change>) {
+    let target = stage_target(&etapa.id);
+    let reaches = reachable(b, &etapa.id);
+    let (impact, texto) = if reaches {
         (
-            Impacto::MudaRota,
+            Impact::RouteChanged,
             format!(
                 "a etapa `{}`{} é nova e já é destino de alguma ação ou decisão: os atendimentos \
                  novos passam por ela.",
                 etapa.id,
-                entre_parenteses(&etapa.nome)
+                parenthesize(&etapa.nome)
             ),
         )
     } else {
         (
-            Impacto::Nenhum,
+            Impact::None,
             format!(
                 "a etapa `{}`{} é nova, mas nenhuma ação ou decisão leva a ela: nada muda no \
                  atendimento.",
                 etapa.id,
-                entre_parenteses(&etapa.nome)
+                parenthesize(&etapa.nome)
             ),
         )
     };
-    out.push(Mudanca::nova(TipoMudanca::EtapaNova, impacto, &alvo, texto));
-    if chega {
-        efeitos_da_etapa(out, etapa, true);
+    out.push(Change::new(ChangeType::NewStage, impact, &target, texto));
+    if reaches {
+        stage_effects(out, etapa, true);
     }
 }
 
-fn etapa_removida(a: &Ir, etapa: &Etapa, out: &mut Vec<Mudanca>) {
-    let alvo = alvo_etapa(&etapa.id);
-    let chegava = alcancada(a, &etapa.id);
-    let (impacto, texto) = if chegava {
+fn removed_stage(a: &Ir, etapa: &Etapa, out: &mut Vec<Change>) {
+    let target = stage_target(&etapa.id);
+    let reached = reachable(a, &etapa.id);
+    let (impact, texto) = if reached {
         (
-            Impacto::MudaRota,
+            Impact::RouteChanged,
             format!(
                 "a etapa `{}`{} foi removida: os atendimentos novos não passam mais por ela.",
                 etapa.id,
-                entre_parenteses(&etapa.nome)
+                parenthesize(&etapa.nome)
             ),
         )
     } else {
         (
-            Impacto::Nenhum,
+            Impact::None,
             format!(
                 "a etapa `{}`{} foi removida, mas nenhuma ação ou decisão a usava: nada muda no \
                  atendimento.",
                 etapa.id,
-                entre_parenteses(&etapa.nome)
+                parenthesize(&etapa.nome)
             ),
         )
     };
-    out.push(Mudanca::nova(
-        TipoMudanca::EtapaRemovida,
-        impacto,
-        &alvo,
+    out.push(Change::new(
+        ChangeType::RemovedStage,
+        impact,
+        &target,
         texto,
     ));
-    if chegava {
-        efeitos_da_etapa(out, etapa, false);
+    if reached {
+        stage_effects(out, etapa, false);
     }
 }
 
-fn comparar_etapa(a: &Ir, b: &Ir, ea: &Etapa, eb: &Etapa, out: &mut Vec<Mudanca>) {
+fn compare_stage(a: &Ir, b: &Ir, ea: &Etapa, eb: &Etapa, out: &mut Vec<Change>) {
     let et = eb.id.as_str();
-    let alvo = alvo_etapa(et);
+    let target = stage_target(et);
 
     if ea.nome != eb.nome {
-        out.push(Mudanca::nova(
-            TipoMudanca::TextoMudou,
-            Impacto::Nenhum,
-            &alvo,
+        out.push(Change::new(
+            ChangeType::TextChanged,
+            Impact::None,
+            &target,
             format!(
                 "o nome da etapa `{et}` mudou de \"{}\" para \"{}\".",
                 ea.nome, eb.nome
@@ -353,72 +295,70 @@ fn comparar_etapa(a: &Ir, b: &Ir, ea: &Etapa, eb: &Etapa, out: &mut Vec<Mudanca>
         ));
     }
     if ea.instruction != eb.instruction {
-        out.push(Mudanca::nova(
-            TipoMudanca::InstrucaoMudou,
-            Impacto::AtendimentosNovos,
-            &alvo,
+        out.push(Change::new(
+            ChangeType::InstructionChanged,
+            Impact::NewServices,
+            &target,
             format!(
                 "a instrução da etapa `{et}` mudou de {} para {}: vale para os atendimentos novos.",
-                texto_ou_vazio(ea.instruction.as_deref()),
-                texto_ou_vazio(eb.instruction.as_deref())
+                text_or_empty(ea.instruction.as_deref()),
+                text_or_empty(eb.instruction.as_deref())
             ),
         ));
     }
     if ea.action_actors != eb.action_actors {
-        out.push(Mudanca::nova(
-            TipoMudanca::AtoresDaEtapaMudou,
-            Impacto::MudaRota,
-            &alvo,
+        out.push(Change::new(
+            ChangeType::StageActorsChanged,
+            Impact::RouteChanged,
+            &target,
             format!(
                 "as ações da etapa `{et}` passam a ser feitas por {}.",
-                atores_em_texto(&eb.action_actors)
+                actors_text(&eb.action_actors)
             ),
         ));
     }
 
     for cb in &eb.campos {
         match ea.campos.iter().find(|ca| ca.id == cb.id) {
-            Some(ca) => comparar_campo(et, ca, cb, out),
-            None => campo_novo(et, cb, out),
+            Some(ca) => compare_field(et, ca, cb, out),
+            None => new_field(et, cb, out),
         }
     }
     for ca in &ea.campos {
         if !eb.campos.iter().any(|cb| cb.id == ca.id) {
-            campo_removido(et, ca, out);
+            removed_field(et, ca, out);
         }
     }
 
     for ab in &eb.actions {
         match ea.actions.iter().find(|aa| aa.id == ab.id) {
-            Some(aa) => comparar_acao(a, b, eb, aa, ab, out),
-            None => acao_nova(b, eb, ab, out),
+            Some(aa) => compare_action(a, b, eb, aa, ab, out),
+            None => new_action(b, eb, ab, out),
         }
     }
     for aa in &ea.actions {
         if !eb.actions.iter().any(|ab| ab.id == aa.id) {
-            acao_removida(a, ea, aa, out);
+            removed_action(a, ea, aa, out);
         }
     }
 
-    for efeito in sobras(&eb.on_enter, &ea.on_enter) {
-        efeito_mudou(out, Lugar::Entrada(et), efeito, true);
+    for effect in leftovers(&eb.on_enter, &ea.on_enter) {
+        effect_changed(out, Location::Entry(et), effect, true);
     }
-    for efeito in sobras(&ea.on_enter, &eb.on_enter) {
-        efeito_mudou(out, Lugar::Entrada(et), efeito, false);
+    for effect in leftovers(&ea.on_enter, &eb.on_enter) {
+        effect_changed(out, Location::Entry(et), effect, false);
     }
 }
 
-// ------------------------------------------------------------------ campos
-
-fn comparar_campo(et: &str, ca: &Campo, cb: &Campo, out: &mut Vec<Mudanca>) {
+fn compare_field(et: &str, ca: &Campo, cb: &Campo, out: &mut Vec<Change>) {
     let cid = cb.id.as_str();
-    let alvo = format!("etapa:{et}/campo:{cid}");
+    let target = format!("etapa:{et}/campo:{cid}");
 
     if ca.label != cb.label {
-        out.push(Mudanca::nova(
-            TipoMudanca::TextoMudou,
-            Impacto::Nenhum,
-            &alvo,
+        out.push(Change::new(
+            ChangeType::TextChanged,
+            Impact::None,
+            &target,
             format!(
                 "o rótulo do campo `{cid}` na etapa `{et}` mudou de \"{}\" para \"{}\": o agente \
                  passa a usar o novo nome ao perguntar.",
@@ -427,35 +367,35 @@ fn comparar_campo(et: &str, ca: &Campo, cb: &Campo, out: &mut Vec<Mudanca>) {
         ));
     }
     if ca.tipo != cb.tipo {
-        out.push(Mudanca::nova(
-            TipoMudanca::CampoMudouTipo,
-            Impacto::PedeDadoNovo,
-            &alvo,
+        out.push(Change::new(
+            ChangeType::FieldTypeChanged,
+            Impact::NewDataRequested,
+            &target,
             format!(
                 "o campo `{cid}` da etapa `{et}` mudou de {} para {}: o agente passará a pedir o \
                  dado do novo jeito.",
-                tipo_em_texto(ca.tipo),
-                tipo_em_texto(cb.tipo)
+                field_type_text(ca.tipo),
+                field_type_text(cb.tipo)
             ),
         ));
     }
     if ca.options != cb.options {
-        out.push(Mudanca::nova(
-            TipoMudanca::CampoMudouOpcoes,
-            Impacto::PedeDadoNovo,
-            &alvo,
+        out.push(Change::new(
+            ChangeType::FieldOptionsChanged,
+            Impact::NewDataRequested,
+            &target,
             format!(
                 "as opções do campo `{cid}` da etapa `{et}` mudaram de {} para {}.",
-                opcoes_em_texto(&ca.options),
-                opcoes_em_texto(&cb.options)
+                options_text(&ca.options),
+                options_text(&cb.options)
             ),
         ));
     }
     if !ca.required && cb.required {
-        out.push(Mudanca::nova(
-            TipoMudanca::CampoAgoraObrigatorio,
-            Impacto::PedeDadoNovo,
-            &alvo,
+        out.push(Change::new(
+            ChangeType::FieldNowRequired,
+            Impact::NewDataRequested,
+            &target,
             format!(
                 "o campo `{cid}` da etapa `{et}` agora é obrigatório: o agente vai pedi-lo antes \
                  de concluir a etapa."
@@ -463,10 +403,10 @@ fn comparar_campo(et: &str, ca: &Campo, cb: &Campo, out: &mut Vec<Mudanca>) {
         ));
     }
     if ca.required && !cb.required {
-        out.push(Mudanca::nova(
-            TipoMudanca::CampoDeixouDeSerObrigatorio,
-            Impacto::AtendimentosNovos,
-            &alvo,
+        out.push(Change::new(
+            ChangeType::FieldNoLongerRequired,
+            Impact::NewServices,
+            &target,
             format!(
                 "o campo `{cid}` da etapa `{et}` deixou de ser obrigatório: nos atendimentos \
                  novos, a etapa pode ser concluída sem ele."
@@ -474,10 +414,10 @@ fn comparar_campo(et: &str, ca: &Campo, cb: &Campo, out: &mut Vec<Mudanca>) {
         ));
     }
     if ca.help != cb.help {
-        out.push(Mudanca::nova(
-            TipoMudanca::TextoMudou,
-            Impacto::Nenhum,
-            &alvo,
+        out.push(Change::new(
+            ChangeType::TextChanged,
+            Impact::None,
+            &target,
             format!(
                 "a dica do campo `{cid}` na etapa `{et}` mudou: ela é só para quem edita o \
                  fluxo, o atendimento segue igual."
@@ -486,51 +426,49 @@ fn comparar_campo(et: &str, ca: &Campo, cb: &Campo, out: &mut Vec<Mudanca>) {
     }
 }
 
-fn campo_novo(et: &str, campo: &Campo, out: &mut Vec<Mudanca>) {
+fn new_field(et: &str, campo: &Campo, out: &mut Vec<Change>) {
     let cid = campo.id.as_str();
-    let obrigatorio = if campo.required {
+    let required = if campo.required {
         " Ele é obrigatório."
     } else {
         ""
     };
-    out.push(Mudanca::nova(
-        TipoMudanca::CampoNovo,
-        Impacto::PedeDadoNovo,
+    out.push(Change::new(
+        ChangeType::NewField,
+        Impact::NewDataRequested,
         &format!("etapa:{et}/campo:{cid}"),
         format!(
             "a etapa `{et}` passa a coletar o campo `{cid}`{}: o agente pedirá esse dado nos \
-             atendimentos novos.{obrigatorio}",
-            entre_parenteses(&campo.label)
+             atendimentos novos.{required}",
+            parenthesize(&campo.label)
         ),
     ));
 }
 
-fn campo_removido(et: &str, campo: &Campo, out: &mut Vec<Mudanca>) {
+fn removed_field(et: &str, campo: &Campo, out: &mut Vec<Change>) {
     let cid = campo.id.as_str();
-    out.push(Mudanca::nova(
-        TipoMudanca::CampoRemovido,
-        Impacto::AtendimentosNovos,
+    out.push(Change::new(
+        ChangeType::RemovedField,
+        Impact::NewServices,
         &format!("etapa:{et}/campo:{cid}"),
         format!(
             "a etapa `{et}` deixa de coletar o campo `{cid}`{}: nos atendimentos novos, o agente \
              não pedirá esse dado.",
-            entre_parenteses(&campo.label)
+            parenthesize(&campo.label)
         ),
     ));
 }
 
-// ------------------------------------------------------------------ ações
-
-fn comparar_acao(a: &Ir, b: &Ir, et_b: &Etapa, aa: &Acao, ab: &Acao, out: &mut Vec<Mudanca>) {
+fn compare_action(a: &Ir, b: &Ir, et_b: &Etapa, aa: &Acao, ab: &Acao, out: &mut Vec<Change>) {
     let et = et_b.id.as_str();
     let ac = ab.id.as_str();
-    let alvo = format!("etapa:{et}/acao:{ac}");
+    let target = format!("etapa:{et}/acao:{ac}");
 
     if aa.label != ab.label {
-        out.push(Mudanca::nova(
-            TipoMudanca::TextoMudou,
-            Impacto::Nenhum,
-            &alvo,
+        out.push(Change::new(
+            ChangeType::TextChanged,
+            Impact::None,
+            &target,
             format!(
                 "o rótulo da ação `{ac}` da etapa `{et}` mudou de \"{}\" para \"{}\".",
                 aa.label, ab.label
@@ -539,24 +477,24 @@ fn comparar_acao(a: &Ir, b: &Ir, et_b: &Etapa, aa: &Acao, ab: &Acao, out: &mut V
     }
     for campo in &ab.requires {
         if !aa.requires.contains(campo) {
-            out.push(Mudanca::nova(
-                TipoMudanca::AcaoPassouAExigir,
-                Impacto::PedeDadoNovo,
-                &alvo,
+            out.push(Change::new(
+                ChangeType::ActionNowRequires,
+                Impact::NewDataRequested,
+                &target,
                 format!(
                     "a ação `{ac}` da etapa `{et}` agora exige o campo `{campo}`{}: o agente \
                      passará a pedir esse dado antes de avançar.",
-                    entre_parenteses(rotulo_do_campo(et_b, campo))
+                    parenthesize(field_label(et_b, campo))
                 ),
             ));
         }
     }
     for campo in &aa.requires {
         if !ab.requires.contains(campo) {
-            out.push(Mudanca::nova(
-                TipoMudanca::AcaoDeixouDeExigir,
-                Impacto::AtendimentosNovos,
-                &alvo,
+            out.push(Change::new(
+                ChangeType::ActionNoLongerRequires,
+                Impact::NewServices,
+                &target,
                 format!(
                     "a ação `{ac}` da etapa `{et}` deixou de exigir o campo `{campo}`: nos \
                      atendimentos novos, o agente pode avançar sem ele."
@@ -566,173 +504,171 @@ fn comparar_acao(a: &Ir, b: &Ir, et_b: &Etapa, aa: &Acao, ab: &Acao, out: &mut V
     }
     if aa.actor != ab.actor {
         let texto = match ab.actor {
-            Some(ator) => format!(
+            Some(actor) => format!(
                 "a ação `{ac}` da etapa `{et}` passa a ser feita só pelo {}.",
-                ator.as_text()
+                actor.as_text()
             ),
             None => format!(
                 "a ação `{ac}` da etapa `{et}` passa a poder ser feita por qualquer ator da etapa."
             ),
         };
-        out.push(Mudanca::nova(
-            TipoMudanca::AtorDaAcaoMudou,
-            Impacto::MudaRota,
-            &alvo,
+        out.push(Change::new(
+            ChangeType::ActionActorChanged,
+            Impact::RouteChanged,
+            &target,
             texto,
         ));
     }
-    if chave_destino(&aa.goes_to) != chave_destino(&ab.goes_to) {
-        out.push(Mudanca::nova(
-            TipoMudanca::DestinoMudou,
-            Impacto::MudaRota,
-            &alvo,
+    if destination_key(&aa.goes_to) != destination_key(&ab.goes_to) {
+        out.push(Change::new(
+            ChangeType::DestinationChanged,
+            Impact::RouteChanged,
+            &target,
             format!(
                 "a ação `{ac}` da etapa `{et}` agora leva para {}, e antes levava para {}.",
-                destino_frase(b, &ab.goes_to),
-                destino_frase(a, &aa.goes_to)
+                destination_phrase(b, &ab.goes_to),
+                destination_phrase(a, &aa.goes_to)
             ),
         ));
     }
-    for efeito in sobras(&ab.effects, &aa.effects) {
-        efeito_mudou(out, Lugar::Acao(et, ac), efeito, true);
+    for effect in leftovers(&ab.effects, &aa.effects) {
+        effect_changed(out, Location::Acao(et, ac), effect, true);
     }
-    for efeito in sobras(&aa.effects, &ab.effects) {
-        efeito_mudou(out, Lugar::Acao(et, ac), efeito, false);
+    for effect in leftovers(&aa.effects, &ab.effects) {
+        effect_changed(out, Location::Acao(et, ac), effect, false);
     }
 }
 
-fn acao_nova(b: &Ir, etapa: &Etapa, acao: &Acao, out: &mut Vec<Mudanca>) {
+fn new_action(b: &Ir, etapa: &Etapa, acao: &Acao, out: &mut Vec<Change>) {
     let et = etapa.id.as_str();
     let ac = acao.id.as_str();
-    let chega = alcancada(b, et);
-    let (impacto, texto) = if chega {
+    let reaches = reachable(b, et);
+    let (impact, texto) = if reaches {
         (
-            Impacto::MudaRota,
+            Impact::RouteChanged,
             format!(
                 "a etapa `{et}` ganhou a ação `{ac}`{}, que leva para {}.",
-                entre_parenteses(&acao.label),
-                destino_frase(b, &acao.goes_to)
+                parenthesize(&acao.label),
+                destination_phrase(b, &acao.goes_to)
             ),
         )
     } else {
         (
-            Impacto::Nenhum,
+            Impact::None,
             format!(
                 "a etapa `{et}` ganhou a ação `{ac}`{}, mas a etapa não é alcançada por nenhuma \
                  ação ou decisão: nada muda no atendimento.",
-                entre_parenteses(&acao.label)
+                parenthesize(&acao.label)
             ),
         )
     };
-    out.push(Mudanca::nova(
-        TipoMudanca::AcaoNova,
-        impacto,
+    out.push(Change::new(
+        ChangeType::NewAction,
+        impact,
         &format!("etapa:{et}/acao:{ac}"),
         texto,
     ));
-    if chega {
-        for efeito in &acao.effects {
-            efeito_mudou(out, Lugar::Acao(et, ac), efeito, true);
+    if reaches {
+        for effect in &acao.effects {
+            effect_changed(out, Location::Acao(et, ac), effect, true);
         }
     }
 }
 
-fn acao_removida(a: &Ir, etapa: &Etapa, acao: &Acao, out: &mut Vec<Mudanca>) {
+fn removed_action(a: &Ir, etapa: &Etapa, acao: &Acao, out: &mut Vec<Change>) {
     let et = etapa.id.as_str();
     let ac = acao.id.as_str();
-    let chegava = alcancada(a, et);
-    let (impacto, texto) = if chegava {
+    let reached = reachable(a, et);
+    let (impact, texto) = if reached {
         (
-            Impacto::MudaRota,
+            Impact::RouteChanged,
             format!(
                 "a etapa `{et}` perdeu a ação `{ac}`{}: o agente não poderá mais usá-la.",
-                entre_parenteses(&acao.label)
+                parenthesize(&acao.label)
             ),
         )
     } else {
         (
-            Impacto::Nenhum,
+            Impact::None,
             format!(
                 "a etapa `{et}` perdeu a ação `{ac}`{}, mas a etapa não era alcançada por nenhuma \
                  ação ou decisão: nada muda no atendimento.",
-                entre_parenteses(&acao.label)
+                parenthesize(&acao.label)
             ),
         )
     };
-    out.push(Mudanca::nova(
-        TipoMudanca::AcaoRemovida,
-        impacto,
+    out.push(Change::new(
+        ChangeType::RemovedAction,
+        impact,
         &format!("etapa:{et}/acao:{ac}"),
         texto,
     ));
-    if chegava {
-        for efeito in &acao.effects {
-            efeito_mudou(out, Lugar::Acao(et, ac), efeito, false);
+    if reached {
+        for effect in &acao.effects {
+            effect_changed(out, Location::Acao(et, ac), effect, false);
         }
     }
 }
 
-// ------------------------------------------------------------------ decisões
-
-fn decisoes(a: &Ir, b: &Ir, out: &mut Vec<Mudanca>) {
-    for nova in &b.decisions {
-        match a.decisions.iter().find(|antiga| antiga.id == nova.id) {
-            Some(antiga) => comparar_decisao(a, b, antiga, nova, out),
-            None => decisao_nova(b, nova, out),
+fn decisions(a: &Ir, b: &Ir, out: &mut Vec<Change>) {
+    for new in &b.decisions {
+        match a.decisions.iter().find(|old| old.id == new.id) {
+            Some(old) => compare_decision(a, b, old, new, out),
+            None => new_decision(b, new, out),
         }
     }
-    for antiga in &a.decisions {
-        if !b.decisions.iter().any(|nova| nova.id == antiga.id) {
-            decisao_removida(a, antiga, out);
+    for old in &a.decisions {
+        if !b.decisions.iter().any(|new| new.id == old.id) {
+            removed_decision(a, old, out);
         }
     }
 }
 
-fn comparar_decisao(a: &Ir, b: &Ir, da: &Decisao, db: &Decisao, out: &mut Vec<Mudanca>) {
+fn compare_decision(a: &Ir, b: &Ir, old: &Decisao, db: &Decisao, out: &mut Vec<Change>) {
     let id = db.id.as_str();
-    let alvo = format!("decisao:{id}");
-    if da.se != db.se {
-        out.push(Mudanca::nova(
-            TipoMudanca::RegraMudou,
-            Impacto::MudaRota,
-            &alvo,
+    let target = format!("decisao:{id}");
+    if old.se != db.se {
+        out.push(Change::new(
+            ChangeType::RuleChanged,
+            Impact::RouteChanged,
+            &target,
             format!(
                 "a condição da decisão `{id}` mudou: agora é verdadeira quando {}.",
-                regra_em_texto(&db.se)
+                rule_text(&db.se)
             ),
         ));
     }
-    if chave_destino(&da.then_branch) != chave_destino(&db.then_branch) {
-        out.push(Mudanca::nova(
-            TipoMudanca::DestinoMudou,
-            Impacto::MudaRota,
-            &format!("{alvo}/ramo:entao"),
+    if destination_key(&old.then_branch) != destination_key(&db.then_branch) {
+        out.push(Change::new(
+            ChangeType::DestinationChanged,
+            Impact::RouteChanged,
+            &format!("{target}/ramo:entao"),
             format!(
                 "o ramo verdadeiro da decisão `{id}` agora leva para {}, e antes levava para {}.",
-                destino_frase(b, &db.then_branch),
-                destino_frase(a, &da.then_branch)
+                destination_phrase(b, &db.then_branch),
+                destination_phrase(a, &old.then_branch)
             ),
         ));
     }
-    if chave_destino(&da.else_branch) != chave_destino(&db.else_branch) {
-        out.push(Mudanca::nova(
-            TipoMudanca::DestinoMudou,
-            Impacto::MudaRota,
-            &format!("{alvo}/ramo:senao"),
+    if destination_key(&old.else_branch) != destination_key(&db.else_branch) {
+        out.push(Change::new(
+            ChangeType::DestinationChanged,
+            Impact::RouteChanged,
+            &format!("{target}/ramo:senao"),
             format!(
                 "o ramo falso da decisão `{id}` agora leva para {}, e antes levava para {}.",
-                destino_frase(b, &db.else_branch),
-                destino_frase(a, &da.else_branch)
+                destination_phrase(b, &db.else_branch),
+                destination_phrase(a, &old.else_branch)
             ),
         ));
     }
 }
 
-fn decisao_nova(b: &Ir, decisao: &Decisao, out: &mut Vec<Mudanca>) {
+fn new_decision(b: &Ir, decisao: &Decisao, out: &mut Vec<Change>) {
     let id = decisao.id.as_str();
-    let (impacto, texto) = if alcancada(b, id) {
+    let (impact, texto) = if reachable(b, id) {
         (
-            Impacto::MudaRota,
+            Impact::RouteChanged,
             format!(
                 "a decisão `{id}` é nova e já é destino de alguma ação ou decisão: os atendimentos \
                  novos passam por ela."
@@ -740,68 +676,66 @@ fn decisao_nova(b: &Ir, decisao: &Decisao, out: &mut Vec<Mudanca>) {
         )
     } else {
         (
-            Impacto::Nenhum,
+            Impact::None,
             format!(
                 "a decisão `{id}` é nova, mas nenhuma ação ou decisão leva a ela: nada muda no \
                  atendimento."
             ),
         )
     };
-    out.push(Mudanca::nova(
-        TipoMudanca::DecisaoNova,
-        impacto,
+    out.push(Change::new(
+        ChangeType::NewDecision,
+        impact,
         &format!("decisao:{id}"),
         texto,
     ));
 }
 
-fn decisao_removida(a: &Ir, decisao: &Decisao, out: &mut Vec<Mudanca>) {
+fn removed_decision(a: &Ir, decisao: &Decisao, out: &mut Vec<Change>) {
     let id = decisao.id.as_str();
-    let (impacto, texto) = if alcancada(a, id) {
+    let (impact, texto) = if reachable(a, id) {
         (
-            Impacto::MudaRota,
+            Impact::RouteChanged,
             format!(
                 "a decisão `{id}` foi removida: os atendimentos novos não passam mais por ela."
             ),
         )
     } else {
         (
-            Impacto::Nenhum,
+            Impact::None,
             format!(
                 "a decisão `{id}` foi removida, mas nenhuma ação ou decisão a usava: nada muda no \
                  atendimento."
             ),
         )
     };
-    out.push(Mudanca::nova(
-        TipoMudanca::DecisaoRemovida,
-        impacto,
+    out.push(Change::new(
+        ChangeType::RemovedDecision,
+        impact,
         &format!("decisao:{id}"),
         texto,
     ));
 }
 
-// ------------------------------------------------------------------ fins
-
-fn fins(a: &Ir, b: &Ir, out: &mut Vec<Mudanca>) {
-    for nova in &b.ends {
-        match a.ends.iter().find(|antigo| antigo.id == nova.id) {
-            Some(antigo) => comparar_fim(antigo, nova, out),
-            None => fim_novo(b, nova, out),
+fn ends(a: &Ir, b: &Ir, out: &mut Vec<Change>) {
+    for new in &b.ends {
+        match a.ends.iter().find(|old| old.id == new.id) {
+            Some(old) => compare_end(old, new, out),
+            None => new_end(b, new, out),
         }
     }
-    for antigo in &a.ends {
-        if !b.ends.iter().any(|novo| novo.id == antigo.id) {
-            fim_removido(a, antigo, out);
+    for old in &a.ends {
+        if !b.ends.iter().any(|new| new.id == old.id) {
+            removed_end(a, old, out);
         }
     }
 }
 
-fn comparar_fim(antigo: &Fim, novo: &Fim, out: &mut Vec<Mudanca>) {
-    let id = novo.id.as_str();
-    let alvo = format!("fim:{id}");
-    if antigo.ends_service != novo.ends_service {
-        let texto = if novo.ends_service {
+fn compare_end(old: &Fim, new: &Fim, out: &mut Vec<Change>) {
+    let id = new.id.as_str();
+    let target = format!("fim:{id}");
+    if old.ends_service != new.ends_service {
+        let texto = if new.ends_service {
             format!(
                 "o fim `{id}` agora também encerra o atendimento: a conversa e a Ficha são \
                  fechadas ao chegar nele."
@@ -809,32 +743,32 @@ fn comparar_fim(antigo: &Fim, novo: &Fim, out: &mut Vec<Mudanca>) {
         } else {
             format!("o fim `{id}` deixou de encerrar o atendimento: a conversa continua aberta.")
         };
-        out.push(Mudanca::nova(
-            TipoMudanca::FimMudou,
-            Impacto::MudaRota,
-            &alvo,
+        out.push(Change::new(
+            ChangeType::EndChanged,
+            Impact::RouteChanged,
+            &target,
             texto,
         ));
     }
-    if antigo.resultado != novo.resultado {
-        out.push(Mudanca::nova(
-            TipoMudanca::FimMudou,
-            Impacto::Nenhum,
-            &alvo,
+    if old.resultado != new.resultado {
+        out.push(Change::new(
+            ChangeType::EndChanged,
+            Impact::None,
+            &target,
             format!(
                 "o resumo do fim `{id}` mudou de {} para {}.",
-                texto_ou_vazio(antigo.resultado.as_deref()),
-                texto_ou_vazio(novo.resultado.as_deref())
+                text_or_empty(old.resultado.as_deref()),
+                text_or_empty(new.resultado.as_deref())
             ),
         ));
     }
 }
 
-fn fim_novo(b: &Ir, fim: &Fim, out: &mut Vec<Mudanca>) {
+fn new_end(b: &Ir, fim: &Fim, out: &mut Vec<Change>) {
     let id = fim.id.as_str();
-    let (impacto, texto) = if alcancada(b, id) {
+    let (impact, texto) = if reachable(b, id) {
         (
-            Impacto::MudaRota,
+            Impact::RouteChanged,
             format!(
                 "o fim `{id}` é novo e já é destino de alguma ação ou decisão: os atendimentos \
                  novos podem terminar nele."
@@ -842,183 +776,168 @@ fn fim_novo(b: &Ir, fim: &Fim, out: &mut Vec<Mudanca>) {
         )
     } else {
         (
-            Impacto::Nenhum,
+            Impact::None,
             format!(
                 "o fim `{id}` é novo, mas nenhuma ação ou decisão leva a ele: nada muda no \
                  atendimento."
             ),
         )
     };
-    out.push(Mudanca::nova(
-        TipoMudanca::FimNovo,
-        impacto,
+    out.push(Change::new(
+        ChangeType::NewEnd,
+        impact,
         &format!("fim:{id}"),
         texto,
     ));
 }
 
-fn fim_removido(a: &Ir, fim: &Fim, out: &mut Vec<Mudanca>) {
+fn removed_end(a: &Ir, fim: &Fim, out: &mut Vec<Change>) {
     let id = fim.id.as_str();
-    let (impacto, texto) = if alcancada(a, id) {
+    let (impact, texto) = if reachable(a, id) {
         (
-            Impacto::MudaRota,
+            Impact::RouteChanged,
             format!("o fim `{id}` foi removido: os atendimentos novos não terminam mais nele."),
         )
     } else {
         (
-            Impacto::Nenhum,
+            Impact::None,
             format!(
                 "o fim `{id}` foi removido, mas nenhuma ação ou decisão o usava: nada muda no \
                  atendimento."
             ),
         )
     };
-    out.push(Mudanca::nova(
-        TipoMudanca::FimRemovido,
-        impacto,
+    out.push(Change::new(
+        ChangeType::RemovedEnd,
+        impact,
         &format!("fim:{id}"),
         texto,
     ));
 }
 
-// ------------------------------------------------------------------ defs
-
-fn defs(a: &Ir, b: &Ir, out: &mut Vec<Mudanca>) {
-    for nova in &b.defs {
-        let alvo = format!("def:{}", nova.nome);
-        match a.defs.iter().find(|antiga| antiga.nome == nova.nome) {
+fn defs(a: &Ir, b: &Ir, out: &mut Vec<Change>) {
+    for new in &b.defs {
+        let target = format!("def:{}", new.nome);
+        match a.defs.iter().find(|old| old.nome == new.nome) {
             None => {
-                let usada = usada_por_decisao(b, &nova.nome);
-                let (impacto, texto) = if usada {
+                let used = used_by_decision(b, &new.nome);
+                let (impact, texto) = if used {
                     (
-                        Impacto::MudaRota,
+                        Impact::RouteChanged,
                         format!(
                             "a regra especial `{}` é nova e já é usada por decisão: a condição \
                              dessas decisões passa a usá-la.",
-                            nova.nome
+                            new.nome
                         ),
                     )
                 } else {
                     (
-                        Impacto::Nenhum,
+                        Impact::None,
                         format!(
                             "a regra especial `{}` é nova, mas nenhuma decisão a usa: nada muda \
                              no atendimento.",
-                            nova.nome
+                            new.nome
                         ),
                     )
                 };
-                out.push(Mudanca::nova(
-                    TipoMudanca::RegraMudou,
-                    impacto,
-                    &alvo,
-                    texto,
-                ));
+                out.push(Change::new(ChangeType::RuleChanged, impact, &target, texto));
             }
-            Some(antiga) if antiga.fonte != nova.fonte => {
-                let usada = usada_por_decisao(b, &nova.nome);
-                let (impacto, texto) = if usada {
+            Some(old) if old.fonte != new.fonte => {
+                let used = used_by_decision(b, &new.nome);
+                let (impact, texto) = if used {
                     (
-                        Impacto::MudaRota,
+                        Impact::RouteChanged,
                         format!(
                             "o texto da regra especial `{}` mudou: as decisões que a usam passam \
                              a decidir com a nova versão.",
-                            nova.nome
+                            new.nome
                         ),
                     )
                 } else {
                     (
-                        Impacto::Nenhum,
+                        Impact::None,
                         format!(
                             "o texto da regra especial `{}` mudou, mas nenhuma decisão a usa: \
                              nada muda no atendimento.",
-                            nova.nome
+                            new.nome
                         ),
                     )
                 };
-                out.push(Mudanca::nova(
-                    TipoMudanca::RegraMudou,
-                    impacto,
-                    &alvo,
-                    texto,
-                ));
+                out.push(Change::new(ChangeType::RuleChanged, impact, &target, texto));
             }
             Some(_) => {}
         }
     }
-    for antiga in &a.defs {
-        if !b.defs.iter().any(|nova| nova.nome == antiga.nome) {
-            let usada = usada_por_decisao(a, &antiga.nome);
-            let (impacto, texto) = if usada {
+    for old in &a.defs {
+        if !b.defs.iter().any(|new| new.nome == old.nome) {
+            let used = used_by_decision(a, &old.nome);
+            let (impact, texto) = if used {
                 (
-                    Impacto::MudaRota,
+                    Impact::RouteChanged,
                     format!(
                         "a regra especial `{}` foi removida: as decisões que a usavam deixam de \
                          ter essa condição.",
-                        antiga.nome
+                        old.nome
                     ),
                 )
             } else {
                 (
-                    Impacto::Nenhum,
+                    Impact::None,
                     format!(
                         "a regra especial `{}` foi removida; nenhuma decisão a usava.",
-                        antiga.nome
+                        old.nome
                     ),
                 )
             };
-            out.push(Mudanca::nova(
-                TipoMudanca::RegraMudou,
-                impacto,
-                &format!("def:{}", antiga.nome),
+            out.push(Change::new(
+                ChangeType::RuleChanged,
+                impact,
+                &format!("def:{}", old.nome),
                 texto,
             ));
         }
     }
 }
 
-// ------------------------------------------------------------------ efeitos
-
-/// Onde um efeito é disparado: ao entrar na etapa, ou junto de uma ação dela.
 #[derive(Clone, Copy)]
-enum Lugar<'a> {
-    Entrada(&'a str),
+enum Location<'a> {
+    Entry(&'a str),
     Acao(&'a str, &'a str),
 }
 
-fn efeitos_da_etapa(out: &mut Vec<Mudanca>, etapa: &Etapa, novo: bool) {
-    for efeito in &etapa.on_enter {
-        efeito_mudou(out, Lugar::Entrada(&etapa.id), efeito, novo);
+fn stage_effects(out: &mut Vec<Change>, etapa: &Etapa, new: bool) {
+    for effect in &etapa.on_enter {
+        effect_changed(out, Location::Entry(&etapa.id), effect, new);
     }
     for acao in &etapa.actions {
-        for efeito in &acao.effects {
-            efeito_mudou(out, Lugar::Acao(&etapa.id, &acao.id), efeito, novo);
+        for effect in &acao.effects {
+            effect_changed(out, Location::Acao(&etapa.id, &acao.id), effect, new);
         }
     }
 }
 
-fn efeito_mudou(out: &mut Vec<Mudanca>, lugar: Lugar, efeito: &Effect, novo: bool) {
-    let (tipo, verbo) = if novo {
-        (TipoMudanca::EfeitoNovo, "passa a")
+fn effect_changed(out: &mut Vec<Change>, location: Location, effect: &Effect, new: bool) {
+    let (tipo, verbo) = if new {
+        (ChangeType::NewEffect, "passa a")
     } else {
-        (TipoMudanca::EfeitoRemovido, "deixa de")
+        (ChangeType::RemovedEffect, "deixa de")
     };
-    let descricao = descrever_efeito(efeito);
-    let (alvo, texto) = match lugar {
-        Lugar::Entrada(et) => (
-            alvo_etapa(et),
+    let descricao = describe_effect(effect);
+    let (target, texto) = match location {
+        Location::Entry(et) => (
+            stage_target(et),
             format!("ao entrar na etapa `{et}`, o fluxo {verbo} {descricao}."),
         ),
-        Lugar::Acao(et, ac) => (
+        Location::Acao(et, ac) => (
             format!("etapa:{et}/acao:{ac}"),
             format!("a ação `{ac}` da etapa `{et}` {verbo} {descricao}."),
         ),
     };
-    out.push(Mudanca::nova(tipo, Impacto::DisparaEfeito, &alvo, texto));
+    out.push(Change::new(tipo, Impact::EffectTriggered, &target, texto));
 }
 
-fn descrever_efeito(efeito: &Effect) -> String {
-    match efeito {
+fn describe_effect(effect: &Effect) -> String {
+    match effect {
         Effect::MessageToCustomer { texto } => format!("enviar ao cliente: \"{texto}\""),
         Effect::NotifyWhatsApp { para, mensagem } => {
             format!("enviar à equipe, no número {para}: \"{mensagem}\"")
@@ -1029,17 +948,13 @@ fn descrever_efeito(efeito: &Effect) -> String {
     }
 }
 
-// ------------------------------------------------------------------ auxiliares
-
-/// Itens de `origem` que não têm par em `outra`, contando repetição (multiconjunto). Mantém a
-/// ordem de `origem`.
-fn sobras<'a, T: PartialEq>(origem: &'a [T], outra: &[T]) -> Vec<&'a T> {
-    let mut livres: Vec<&T> = outra.iter().collect();
+fn leftovers<'a, T: PartialEq>(source: &'a [T], other: &[T]) -> Vec<&'a T> {
+    let mut free: Vec<&T> = other.iter().collect();
     let mut sobra = Vec::new();
-    for item in origem {
-        match livres.iter().position(|livre| *livre == item) {
-            Some(posicao) => {
-                livres.swap_remove(posicao);
+    for item in source {
+        match free.iter().position(|free| *free == item) {
+            Some(position) => {
+                free.swap_remove(position);
             }
             None => sobra.push(item),
         }
@@ -1047,8 +962,7 @@ fn sobras<'a, T: PartialEq>(origem: &'a [T], outra: &[T]) -> Vec<&'a T> {
     sobra
 }
 
-/// O nó é alcançado quando é o início do fluxo ou o destino de alguma ação ou ramo de decisão.
-fn alcancada(ir: &Ir, id: &str) -> bool {
+fn reachable(ir: &Ir, id: &str) -> bool {
     ir.start == id
         || ir
             .stages
@@ -1061,17 +975,17 @@ fn alcancada(ir: &Ir, id: &str) -> bool {
             .any(|decisao| decisao.then_branch.id() == id || decisao.else_branch.id() == id)
 }
 
-fn usada_por_decisao(ir: &Ir, nome: &str) -> bool {
+fn used_by_decision(ir: &Ir, nome: &str) -> bool {
     ir.decisions
         .iter()
-        .any(|decisao| regra_chama(&decisao.se, nome))
+        .any(|decisao| rule_calls(&decisao.se, nome))
 }
 
-fn regra_chama(regra: &Rule, nome: &str) -> bool {
-    match regra {
-        Rule::Funcao { nome: chamada } => chamada == nome,
+fn rule_calls(rule: &Rule, nome: &str) -> bool {
+    match rule {
+        Rule::Funcao { nome: call } => call == nome,
         Rule::E { args } | Rule::Ou { args } | Rule::Nao { args } => {
-            args.iter().any(|filha| regra_chama(filha, nome))
+            args.iter().any(|child| rule_calls(child, nome))
         }
         Rule::Igual { .. }
         | Rule::Diferente { .. }
@@ -1082,30 +996,25 @@ fn regra_chama(regra: &Rule, nome: &str) -> bool {
     }
 }
 
-/// Chave de comparação de um destino: o tipo e o id do nó. O resumo de um fim (resultado e
-/// encerramento) não entra aqui: essa mudança é do próprio fim (`fim_mudou`).
-fn chave_destino(destino: &Destination) -> (&'static str, &str) {
-    match destino {
+fn destination_key(destination: &Destination) -> (&'static str, &str) {
+    match destination {
         Destination::Etapa { id } => ("etapa", id),
         Destination::Decisao { id } => ("decisao", id),
         Destination::Fim { id, .. } => ("fim", id),
     }
 }
 
-/// Destino em palavras, lido da revisão que contém o nó (para dar o nome da etapa).
-fn destino_frase(ir: &Ir, destino: &Destination) -> String {
-    match destino {
+fn destination_phrase(ir: &Ir, destination: &Destination) -> String {
+    match destination {
         Destination::Etapa { id } => match ir.stages.iter().find(|etapa| etapa.id == *id) {
-            Some(etapa) => format!("a etapa `{id}`{}", entre_parenteses(&etapa.nome)),
+            Some(etapa) => format!("a etapa `{id}`{}", parenthesize(&etapa.nome)),
             None => format!("a etapa `{id}`"),
         },
         Destination::Decisao { id } => format!("a decisão `{id}`"),
         Destination::Fim {
-            id,
-            ends_service: encerra_atendimento,
-            ..
+            id, ends_service, ..
         } => {
-            if *encerra_atendimento {
+            if *ends_service {
                 format!("o fim `{id}`, que encerra o atendimento")
             } else {
                 format!("o fim `{id}`")
@@ -1114,58 +1023,42 @@ fn destino_frase(ir: &Ir, destino: &Destination) -> String {
     }
 }
 
-fn regra_em_texto(regra: &Rule) -> String {
-    match regra {
-        Rule::Igual {
-            campo,
-            value: valor,
-        } => format!("`{campo}` é igual a \"{valor}\""),
-        Rule::Diferente {
-            campo,
-            value: valor,
-        } => format!("`{campo}` é diferente de \"{valor}\""),
-        Rule::Maior {
-            campo,
-            value: valor,
-        } => format!("`{campo}` é maior que {valor}"),
-        Rule::Menor {
-            campo,
-            value: valor,
-        } => format!("`{campo}` é menor que {valor}"),
-        Rule::Contem {
-            campo,
-            value: valor,
-        } => format!("`{campo}` contém \"{valor}\""),
+fn rule_text(rule: &Rule) -> String {
+    match rule {
+        Rule::Igual { campo, value } => format!("`{campo}` é igual a \"{value}\""),
+        Rule::Diferente { campo, value } => format!("`{campo}` é diferente de \"{value}\""),
+        Rule::Maior { campo, value } => format!("`{campo}` é maior que {value}"),
+        Rule::Menor { campo, value } => format!("`{campo}` é menor que {value}"),
+        Rule::Contem { campo, value } => format!("`{campo}` contém \"{value}\""),
         Rule::Vazio { campo } => format!("`{campo}` está vazio"),
-        Rule::E { args } => format!("({})", juntar(args, " e ")),
-        Rule::Ou { args } => format!("({})", juntar(args, " ou ")),
-        Rule::Nao { args } => format!("não ({})", juntar(args, " e ")),
+        Rule::E { args } => format!("({})", join(args, " e ")),
+        Rule::Ou { args } => format!("({})", join(args, " ou ")),
+        Rule::Nao { args } => format!("não ({})", join(args, " e ")),
         Rule::Funcao { nome } => format!("a regra especial `{nome}` for verdadeira"),
     }
 }
 
-fn juntar(regras: &[Rule], separador: &str) -> String {
-    regras
+fn join(rules: &[Rule], separador: &str) -> String {
+    rules
         .iter()
-        .map(regra_em_texto)
+        .map(rule_text)
         .collect::<Vec<_>>()
         .join(separador)
 }
 
-fn alvo_etapa(id: &str) -> String {
+fn stage_target(id: &str) -> String {
     format!("etapa:{id}")
 }
 
-fn rotulo_do_campo<'a>(etapa: &'a Etapa, campo: &str) -> &'a str {
+fn field_label<'a>(etapa: &'a Etapa, campo: &str) -> &'a str {
     etapa
         .campos
         .iter()
-        .find(|candidato| candidato.id == campo)
-        .map_or("", |candidato| candidato.label.as_str())
+        .find(|candidate| candidate.id == campo)
+        .map_or("", |candidate| candidate.label.as_str())
 }
 
-/// ` (texto)` quando há texto; vazio quando não há.
-fn entre_parenteses(texto: &str) -> String {
+fn parenthesize(texto: &str) -> String {
     if texto.trim().is_empty() {
         String::new()
     } else {
@@ -1173,33 +1066,33 @@ fn entre_parenteses(texto: &str) -> String {
     }
 }
 
-fn texto_ou_vazio(texto: Option<&str>) -> String {
+fn text_or_empty(texto: Option<&str>) -> String {
     match texto {
-        Some(valor) => format!("\"{valor}\""),
+        Some(value) => format!("\"{value}\""),
         None => "(vazio)".to_owned(),
     }
 }
 
-fn atores_em_texto(atores: &[ActionActor]) -> String {
-    if atores.is_empty() {
+fn actors_text(actors: &[ActionActor]) -> String {
+    if actors.is_empty() {
         return "ninguém (a etapa não define ator)".to_owned();
     }
-    atores
+    actors
         .iter()
-        .map(|ator| ator.as_text())
+        .map(|actor| actor.as_text())
         .collect::<Vec<_>>()
         .join(" ou ")
 }
 
-fn opcoes_em_texto(opcoes: &[String]) -> String {
-    if opcoes.is_empty() {
+fn options_text(options: &[String]) -> String {
+    if options.is_empty() {
         "(nenhuma)".to_owned()
     } else {
-        format!("({})", opcoes.join(", "))
+        format!("({})", options.join(", "))
     }
 }
 
-fn tipo_em_texto(tipo: FieldKind) -> &'static str {
+fn field_type_text(tipo: FieldKind) -> &'static str {
     match tipo {
         FieldKind::Text => "texto",
         FieldKind::Number => "número",

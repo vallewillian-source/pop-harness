@@ -13,13 +13,13 @@ use std::fmt;
 use std::sync::Arc;
 
 use poph_fluxos::{
-    Compiled, Departamento, Ir, Limites, RevisionKey, compile, diferenca, formatar_com,
-    resolver_departamentos, stage_block, validar,
+    Compiled, Departamento, Ir, Limites, RevisionKey, compile, diff, formatar_com,
+    resolve_departments, stage_block, validar,
 };
 
 // Tipos que a CLI precisa para mostrar o resultado. Reexportados para o `poph` não depender de
 // `poph-fluxos` diretamente.
-pub use poph_fluxos::{Diagnostic, Mudanca, Resolucao, RevisionCache};
+pub use poph_fluxos::{Change, Diagnostic, Resolution, RevisionCache};
 use poph_store::{
     FlowRevision, Fluxo, NewAuditEntry, NewFlow, Page, RevisionPublication, Store, StoreError,
 };
@@ -133,7 +133,7 @@ impl fmt::Display for FalhaFluxo {
 pub struct Validacao {
     pub ir: Option<Ir>,
     pub diagnosticos: Vec<Diagnostic>,
-    pub resolucoes: Vec<Resolucao>,
+    pub resolucoes: Vec<Resolution>,
 }
 
 impl Validacao {
@@ -163,7 +163,7 @@ pub struct CriacaoFeita {
 pub struct Comparacao {
     pub de: FlowRevision,
     pub para: FlowRevision,
-    pub mudancas: Vec<Mudanca>,
+    pub mudancas: Vec<Change>,
     pub ativas_de: u64,
     pub ativas_para: u64,
 }
@@ -234,7 +234,7 @@ impl<'a> Operacoes<'a> {
         let mut diagnosticos = compilado.diagnostics;
         let mut resolucoes = Vec::new();
         if let (Some(ir), Some(org)) = (&compilado.ir, org) {
-            let (encontradas, avisos) = resolver_departamentos(ir, &self.departamentos(org)?);
+            let (encontradas, avisos) = resolve_departments(ir, &self.departamentos(org)?);
             diagnosticos.extend(avisos);
             resolucoes = encontradas;
         }
@@ -342,7 +342,7 @@ impl<'a> Operacoes<'a> {
             return Err(FalhaFluxo::ScriptInvalido(erros_da_ir));
         }
         let (resolucoes, avisos_de_departamento) =
-            resolver_departamentos(&ir, &self.departamentos(org)?);
+            resolve_departments(&ir, &self.departamentos(org)?);
         let definicao_json = serde_json::to_string(&ir).map_err(|erro| {
             tracing::error!(erro = %erro, "a IR compilada não serializa");
             FalhaFluxo::Interno
@@ -426,7 +426,7 @@ impl<'a> Operacoes<'a> {
         let revisao_para = self.store.revisions().get(org, fluxo.id, para)?;
         let ir_de = self.ir_da_revisao(fluxo, &revisao_de)?;
         let ir_para = self.ir_da_revisao(fluxo, &revisao_para)?;
-        let mudancas = diferenca(&ir_de, &ir_para);
+        let mudancas = diff(&ir_de, &ir_para);
         let contagens = self.store.executions().active_by_revision(org, fluxo.id)?;
         let ativas = |revisao: &FlowRevision| -> u64 {
             contagens

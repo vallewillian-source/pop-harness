@@ -18,7 +18,7 @@ pub use cache::{
 };
 pub use compilador::{Compiled, Limites, LoadFailure, compile, load};
 pub use diagnostics::{Code, Diagnostic, Severity};
-pub use diff::{Impacto, Mudanca, TipoMudanca, diferenca};
+pub use diff::{Change, ChangeType, Impact, diff};
 pub use formatador::{FalhaDeFormato, LARGURA, formatar, formatar_com, imprimir};
 pub use ir::Ir;
 pub use motor::{
@@ -28,4 +28,4 @@ pub use motor::{
 };
 pub use prompt::{BLOCK_CAP, render_block, stage_block};
 pub use regras::{Dados, RuleError, RuleEvaluator, RuleLimits, evaluate, snapshot_from_json};
-pub use validador::{Departamento, MAX_NOS, Resolucao, resolver_departamentos, validar};
+pub use validador::{Departamento, MAX_NOS, Resolution, resolve_departments, validar};
