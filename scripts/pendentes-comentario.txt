@@ -31,11 +31,9 @@ M12a	26	crates/poph/src/chat.rs
 M12a	27	crates/poph/src/cluster.rs
 M12a	63	crates/poph/src/config.rs
 M12a	30	crates/poph/src/departamento.rs
-M12a	45	crates/poph/src/doctor.rs
 M12a	25	crates/poph/src/ficha.rs
 M12a	61	crates/poph/src/flow.rs
 M12a	14	crates/poph/src/jev.rs
-M12a	111	crates/poph/src/kb.rs
 M12a	19	crates/poph/src/logs.rs
 M12a	46	crates/poph/src/main.rs
 M12a	71	crates/poph/src/matrix.rs
