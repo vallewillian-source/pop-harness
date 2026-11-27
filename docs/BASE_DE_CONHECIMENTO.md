@@ -222,6 +222,10 @@ idea of untrusted content, with its own mark. Details in `docs/PRODUTOS.md`.
   item list and the write must see the same state. A duplicated id in the list is refused before any write.
 - **Reindexing compares the origin hash per item**: only a new or changed item is embedded again, and an item
   that left the list is deleted. Deletion goes in foreign-key order: FTS row, chunks, then the item row.
+- **Startup synchronises the index as a safety net.** `poph chat` synchronises the chosen agent's base and
+  product catalog before the conversation starts; `poph serve` does it for the agent of each configured Evolution
+  instance before attending. The comparison is by hash, so only changed content is embedded. This also covers a
+  base written outside the process and an index cleared by a model change.
 - **Chunks go to the model in batches of 64** (`INDEXING_BATCH`); the batch only limits transient memory.
   The vectors are handed back to each item in the same order they were requested.
 - **The cache is per loaded agent**: ids, int8 vectors and norms (one norm per chunk). The budget is

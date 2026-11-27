@@ -8,8 +8,8 @@ use serde_json::{Value, json};
 use crate::agent::{derive_slug, is_valid_slug};
 use crate::config;
 use crate::support::{
-    abrir_banco, contar_todos, describe, failure, json_de_texto, parse_status, print_json,
-    require_offline, resolve_org, status_in_portuguese, validar_config_json, validate_limit,
+    count_all, describe, failure, json_from_text, open_store, parse_status, print_json,
+    require_offline, resolve_org, status_in_portuguese, validate_config_json, validate_limit,
     validate_text,
 };
 
@@ -108,7 +108,7 @@ pub fn run(
     if let Err(error) = require_offline(offline) {
         return failure(error);
     }
-    let store = match abrir_banco(flag, environment) {
+    let store = match open_store(flag, environment) {
         Ok(store) => store,
         Err(error) => return failure(error),
     };
@@ -219,7 +219,7 @@ fn update(store: &Store, args: UpdateOrg) -> ExitCode {
     let config_json = match args
         .config_json
         .as_deref()
-        .map(validar_config_json)
+        .map(validate_config_json)
         .transpose()
     {
         Ok(config) => config,
@@ -316,15 +316,15 @@ impl Content {
 fn org_content(store: &Store, org: poph_types::OrgId) -> Result<Content, String> {
     Ok(Content {
         agents: count_agents(store, org)?,
-        categories: contar_todos(
+        categories: count_all(
             |page| store.categories().list(org, page),
             |item| item.id.as_uuid(),
         )?,
-        departments: contar_todos(
+        departments: count_all(
             |page| store.departments().list(org, page),
             |item| item.id.as_uuid(),
         )?,
-        tokens: contar_todos(
+        tokens: count_all(
             |page| store.tokens().list(org, page),
             |item| item.id.as_uuid(),
         )?,
@@ -332,7 +332,7 @@ fn org_content(store: &Store, org: poph_types::OrgId) -> Result<Content, String>
 }
 
 fn count_agents(store: &Store, org: poph_types::OrgId) -> Result<usize, String> {
-    contar_todos(
+    count_all(
         |page| store.agents().list(org, page),
         |item| item.id.as_uuid(),
     )
@@ -363,7 +363,7 @@ fn json_org(org: &Org) -> Value {
         "name": org.name,
         "slug": org.slug,
         "status": org.status.as_text(),
-        "config": json_de_texto(&org.config_json),
+        "config": json_from_text(&org.config_json),
         "version": org.version,
         "created_at": org.created_at,
         "updated_at": org.updated_at,

@@ -1,8 +1,3 @@
-//! `poph category`: categorias de produto de uma org. HR-08.
-//!
-//! Excluir categoria apaga os produtos dela e os vínculos com agentes (cascata no banco). Como a
-//! CLI ainda não tem como contar os produtos, a exclusão exige `--force` sempre.
-
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -13,188 +8,175 @@ use serde_json::{Value, json};
 
 use crate::config;
 use crate::support::{
-    abrir_com_org, describe, failure, parse_id, parse_status, print_json, status_in_portuguese,
+    describe, failure, open_with_org, parse_id, parse_status, print_json, status_in_portuguese,
     validate_limit, validate_text,
 };
 
-/// Subcomandos de `poph category` (todos exigem `--org`).
 #[derive(Debug, Subcommand)]
-pub enum AcaoCategoria {
-    /// Cria uma categoria de produto na org.
+pub enum CategoryAction {
+    #[command(about = "Cria uma categoria de produto na org")]
     Create(CriarCategoria),
-    /// Lista as categorias da org (primeira página, por id).
-    List(ListarCategorias),
-    /// Mostra uma categoria.
-    Show(ReferenciaCategoria),
-    /// Altera uma categoria com `--if-match`.
+    #[command(about = "Lista as categorias da org (primeira página, por id)")]
+    List(ListCategories),
+    #[command(about = "Mostra uma categoria")]
+    Show(CategoryReference),
+    #[command(about = "Altera uma categoria com `--if-match`")]
     Update(AtualizarCategoria),
-    /// Exclui a categoria (e os produtos dela). Exige `--force`.
-    Delete(ExcluirCategoria),
+    #[command(about = "Exclui a categoria (e os produtos dela). Exige `--force`")]
+    Delete(DeleteCategory),
 }
 
-/// `poph category create`.
 #[derive(Debug, Args)]
 pub struct CriarCategoria {
-    /// Nome (até 120 caracteres; não pode repetir na org, sem diferenciar maiúsculas).
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Nome (até 120 caracteres; não pode repetir na org, sem diferenciar maiúsculas)"
+    )]
     pub name: String,
 
-    /// Descrição curta.
-    #[arg(long, default_value = "")]
+    #[arg(long, default_value = "", help = "Descrição curta")]
     pub description: String,
 
-    /// Saída em JSON (formato estável).
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON (formato estável)")]
     pub json: bool,
 }
 
-/// `poph category list`.
 #[derive(Debug, Args)]
-pub struct ListarCategorias {
-    /// Quantas categorias trazer (1 a 200).
-    #[arg(long, default_value_t = 50)]
+pub struct ListCategories {
+    #[arg(
+        long,
+        default_value_t = 50,
+        help = "Quantas categorias trazer (1 a 200)"
+    )]
     pub limit: u32,
 
-    /// Saída em JSON (formato estável).
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON (formato estável)")]
     pub json: bool,
 }
 
-/// Referência a uma categoria pelo id (UUID v7).
 #[derive(Debug, Args)]
-pub struct ReferenciaCategoria {
-    /// Id (UUID v7) da categoria.
-    pub categoria: String,
+pub struct CategoryReference {
+    #[arg(value_name = "CATEGORIA", help = "Id (UUID v7) da categoria")]
+    pub category: String,
 
-    /// Saída em JSON (formato estável).
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON (formato estável)")]
     pub json: bool,
 }
 
-/// `poph category update`.
 #[derive(Debug, Args)]
 pub struct AtualizarCategoria {
-    /// Id (UUID v7) da categoria.
-    pub categoria: String,
+    #[arg(value_name = "CATEGORIA", help = "Id (UUID v7) da categoria")]
+    pub category: String,
 
-    /// Versão lida com `show` (`If-Match`). Obrigatória.
-    #[arg(long)]
+    #[arg(long, help = "Versão lida com `show` (`If-Match`). Obrigatória")]
     pub if_match: u64,
 
-    /// Novo nome.
-    #[arg(long)]
+    #[arg(long, help = "Novo nome")]
     pub name: Option<String>,
 
-    /// Nova descrição.
-    #[arg(long)]
+    #[arg(long, help = "Nova descrição")]
     pub description: Option<String>,
 
-    /// Nova situação: `active`, `inactive` ou `archived`.
-    #[arg(long)]
+    #[arg(long, help = "Nova situação: `active`, `inactive` ou `archived`")]
     pub status: Option<String>,
 
-    /// Saída em JSON (formato estável).
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON (formato estável)")]
     pub json: bool,
 }
 
-/// `poph category delete`.
 #[derive(Debug, Args)]
-pub struct ExcluirCategoria {
-    /// Id (UUID v7) da categoria.
-    pub categoria: String,
+pub struct DeleteCategory {
+    #[arg(value_name = "CATEGORIA", help = "Id (UUID v7) da categoria")]
+    pub category: String,
 
-    /// Confirma: os produtos da categoria saem junto.
-    #[arg(long)]
+    #[arg(long, help = "Confirma: os produtos da categoria saem junto")]
     pub force: bool,
 
-    /// Saída em JSON (formato estável).
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON (formato estável)")]
     pub json: bool,
 }
 
-/// Executa um subcomando de `poph category`.
-pub fn executar(
+pub fn run(
     flag: Option<PathBuf>,
-    ambiente: &config::Environment,
+    environment: &config::Environment,
     offline: bool,
     org: Option<&str>,
-    acao: AcaoCategoria,
+    acao: CategoryAction,
 ) -> ExitCode {
-    let (store, org) = match abrir_com_org(flag, ambiente, offline, org) {
-        Ok(par) => par,
-        Err(erro) => return failure(erro),
+    let (store, org) = match open_with_org(flag, environment, offline, org) {
+        Ok(pair) => pair,
+        Err(error) => return failure(error),
     };
     match acao {
-        AcaoCategoria::Create(args) => criar(&store, org, args),
-        AcaoCategoria::List(args) => listar(&store, org, args),
-        AcaoCategoria::Show(args) => mostrar(&store, org, args),
-        AcaoCategoria::Update(args) => atualizar(&store, org, args),
-        AcaoCategoria::Delete(args) => excluir(&store, org, args),
+        CategoryAction::Create(args) => criar(&store, org, args),
+        CategoryAction::List(args) => listar(&store, org, args),
+        CategoryAction::Show(args) => mostrar(&store, org, args),
+        CategoryAction::Update(args) => atualizar(&store, org, args),
+        CategoryAction::Delete(args) => excluir(&store, org, args),
     }
 }
 
 fn criar(store: &Store, org: OrgId, args: CriarCategoria) -> ExitCode {
     let nome = match validate_text("nome", &args.name, 120) {
         Ok(nome) => nome,
-        Err(erro) => return failure(erro),
+        Err(error) => return failure(error),
     };
-    let nova = NewCategory {
+    let new_category = NewCategory {
         name: nome,
         description: args.description.trim().to_owned(),
     };
-    match store.categories().create(org, nova) {
-        Ok(categoria) => saida(&categoria, args.json, "categoria criada"),
-        Err(erro) => failure(describe(&erro)),
+    match store.categories().create(org, new_category) {
+        Ok(category) => saida(&category, args.json, "categoria criada"),
+        Err(error) => failure(describe(&error)),
     }
 }
 
-fn listar(store: &Store, org: OrgId, args: ListarCategorias) -> ExitCode {
-    let pagina = match validate_limit(args.limit) {
-        Ok(pagina) => pagina,
-        Err(erro) => return failure(erro),
+fn listar(store: &Store, org: OrgId, args: ListCategories) -> ExitCode {
+    let page = match validate_limit(args.limit) {
+        Ok(page) => page,
+        Err(error) => return failure(error),
     };
-    match store.categories().list(org, pagina) {
-        Ok(categorias) => {
+    match store.categories().list(org, page) {
+        Ok(categories) => {
             if args.json {
-                let itens: Vec<Value> = categorias.iter().map(json_categoria).collect();
+                let items: Vec<Value> = categories.iter().map(category_json).collect();
                 print_json(&json!({
                     "versao_relatorio": 1,
                     "org_id": org.to_string(),
-                    "total": itens.len(),
-                    "categories": itens,
+                    "total": items.len(),
+                    "categories": items,
                 }));
-            } else if categorias.is_empty() {
+            } else if categories.is_empty() {
                 println!("Nenhuma categoria na org.");
             } else {
-                for categoria in &categorias {
+                for category in &categories {
                     println!(
                         "{}  {:<9} {}",
-                        categoria.id,
-                        status_in_portuguese(categoria.status),
-                        categoria.name
+                        category.id,
+                        status_in_portuguese(category.status),
+                        category.name
                     );
                 }
-                println!("\n{} categoria(s).", categorias.len());
+                println!("\n{} categoria(s).", categories.len());
             }
             ExitCode::SUCCESS
         }
-        Err(erro) => failure(describe(&erro)),
+        Err(error) => failure(describe(&error)),
     }
 }
 
-fn mostrar(store: &Store, org: OrgId, args: ReferenciaCategoria) -> ExitCode {
-    let categoria = match obter(store, org, &args.categoria) {
-        Ok(categoria) => categoria,
-        Err(erro) => return failure(erro),
+fn mostrar(store: &Store, org: OrgId, args: CategoryReference) -> ExitCode {
+    let category = match load(store, org, &args.category) {
+        Ok(category) => category,
+        Err(error) => return failure(error),
     };
-    saida(&categoria, args.json, "")
+    saida(&category, args.json, "")
 }
 
 fn atualizar(store: &Store, org: OrgId, args: AtualizarCategoria) -> ExitCode {
-    let id: ProductCategoryId = match parse_id(&args.categoria) {
+    let id: ProductCategoryId = match parse_id(&args.category) {
         Ok(id) => id,
-        Err(erro) => return failure(erro),
+        Err(error) => return failure(error),
     };
     let nome = match args
         .name
@@ -203,31 +185,31 @@ fn atualizar(store: &Store, org: OrgId, args: AtualizarCategoria) -> ExitCode {
         .transpose()
     {
         Ok(nome) => nome,
-        Err(erro) => return failure(erro),
+        Err(error) => return failure(error),
     };
     let status = match args.status.as_deref().map(parse_status).transpose() {
         Ok(status) => status,
-        Err(erro) => return failure(erro),
+        Err(error) => return failure(error),
     };
     let descricao = args.description.map(|texto| texto.trim().to_owned());
     if nome.is_none() && descricao.is_none() && status.is_none() {
         return failure("nada a alterar: informe --name, --description ou --status");
     }
-    let mudanca = CategoryChange {
+    let change = CategoryChange {
         name: nome,
         description: descricao,
         status,
     };
-    match store.categories().update(org, id, args.if_match, mudanca) {
-        Ok(categoria) => saida(&categoria, args.json, "categoria alterada"),
-        Err(erro) => failure(describe(&erro)),
+    match store.categories().update(org, id, args.if_match, change) {
+        Ok(category) => saida(&category, args.json, "categoria alterada"),
+        Err(error) => failure(describe(&error)),
     }
 }
 
-fn excluir(store: &Store, org: OrgId, args: ExcluirCategoria) -> ExitCode {
-    let id: ProductCategoryId = match parse_id(&args.categoria) {
+fn excluir(store: &Store, org: OrgId, args: DeleteCategory) -> ExitCode {
+    let id: ProductCategoryId = match parse_id(&args.category) {
         Ok(id) => id,
-        Err(erro) => return failure(erro),
+        Err(error) => return failure(error),
     };
     if !args.force {
         return failure(
@@ -235,9 +217,8 @@ fn excluir(store: &Store, org: OrgId, args: ExcluirCategoria) -> ExitCode {
              Para confirmar, repita o comando com --force",
         );
     }
-    // Confere que existe nesta org antes de apagar, para a mensagem sair certa.
-    if let Err(erro) = store.categories().get(org, id) {
-        return failure(mensagem_de_ausencia(erro, &args.categoria));
+    if let Err(error) = store.categories().get(org, id) {
+        return failure(absence_message(error, &args.category));
     }
     match store.categories().delete(org, id) {
         Ok(()) => {
@@ -253,67 +234,66 @@ fn excluir(store: &Store, org: OrgId, args: ExcluirCategoria) -> ExitCode {
             }
             ExitCode::SUCCESS
         }
-        Err(erro) => failure(describe(&erro)),
+        Err(error) => failure(describe(&error)),
     }
 }
 
-fn obter(store: &Store, org: OrgId, texto: &str) -> Result<ProductCategory, String> {
+fn load(store: &Store, org: OrgId, texto: &str) -> Result<ProductCategory, String> {
     let id: ProductCategoryId = parse_id(texto)?;
     store
         .categories()
         .get(org, id)
-        .map_err(|erro| mensagem_de_ausencia(erro, texto))
+        .map_err(|error| absence_message(error, texto))
 }
 
-fn mensagem_de_ausencia(erro: poph_store::StoreError, texto: &str) -> String {
-    if erro.is_not_found() {
+fn absence_message(error: poph_store::StoreError, texto: &str) -> String {
+    if error.is_not_found() {
         format!("não existe categoria `{texto}` nesta org")
     } else {
-        describe(&erro)
+        describe(&error)
     }
 }
 
-/// Saída de uma categoria: JSON ou texto.
-fn saida(categoria: &ProductCategory, json: bool, mensagem: &str) -> ExitCode {
+fn saida(category: &ProductCategory, json: bool, mensagem: &str) -> ExitCode {
     if json {
         print_json(&json!({
             "versao_relatorio": 1,
-            "org_id": categoria.org_id.to_string(),
-            "category": json_categoria(categoria),
+            "org_id": category.org_id.to_string(),
+            "category": category_json(category),
         }));
     } else {
         if !mensagem.is_empty() {
             println!("{mensagem}\n");
         }
-        print!("{}", texto_categoria(categoria));
+        print!("{}", category_text(category));
     }
     ExitCode::SUCCESS
 }
 
-fn json_categoria(categoria: &ProductCategory) -> Value {
+fn category_json(category: &ProductCategory) -> Value {
     json!({
-        "id": categoria.id.to_string(),
-        "org_id": categoria.org_id.to_string(),
-        "name": categoria.name,
-        "description": categoria.description,
-        "status": categoria.status.as_text(),
-        "version": categoria.version,
-        "created_at": categoria.created_at,
-        "updated_at": categoria.updated_at,
+        "id": category.id.to_string(),
+        "org_id": category.org_id.to_string(),
+        "name": category.name,
+        "description": category.description,
+        "status": category.status.as_text(),
+        "version": category.version,
+        "created_at": category.created_at,
+        "updated_at": category.updated_at,
     })
 }
 
-fn texto_categoria(categoria: &ProductCategory) -> String {
+fn category_text(category: &ProductCategory) -> String {
     format!(
         "categoria {}\n  nome: {}\n  descrição: {}\n  situação: {}\n  versão: {}\n",
-        categoria.id,
-        categoria.name,
-        if categoria.description.is_empty() {
+        category.id,
+        category.name,
+        if category.description.is_empty() {
             "-"
         } else {
-            &categoria.description
+            &category.description
         },
-        status_in_portuguese(categoria.status),
-        categoria.version
+        status_in_portuguese(category.status),
+        category.version
     )
 }

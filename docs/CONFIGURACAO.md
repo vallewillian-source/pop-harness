@@ -314,8 +314,18 @@ folder. A file that already checks out is not downloaded again.
 ## Logs
 
 - Output goes to standard error (stderr), so the `doctor` JSON stays valid on stdout.
+- `poph serve` installs the subscriber at startup: without it the WhatsApp route and the shutdown loop leave no
+  trace. The level comes from `RUST_LOG` when it is set, otherwise from `log.nivel`.
 - Turn context: `contexto_turno(org, agente, conversa, turno)` in the `poph` crate. Available from HR-13 onward.
 - Rule: no customer content and no secrets. Sensitive values use `Sensitive`, which prints as `[oculto]`.
+
+## CLI conventions
+
+- The administrative commands that work directly on the database (`org`, `token`, `category`, `department`, `kb`
+  and `file`) require `--offline`: the server-backed mode does not exist yet.
+- A business error exits with `1` and a message in Portuguese on stderr; the value of a token only appears when it
+  is created. Wrong command-line usage exits with `2` and is decided by the parser.
+- `--json` is a stable format with `versao_relatorio: 1` and never carries a secret.
 
 ## Sections documented elsewhere
 

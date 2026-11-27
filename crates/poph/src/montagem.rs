@@ -165,7 +165,7 @@ pub fn assemble(
     let provider = llm_client(&configuration.llm, keys.llm, metrics.base.clone(), "padrão")?;
     let (providers, caps) = provider_registry(configuration, environment, metrics.base, &provider)?;
 
-    let base = match crate::rag::abrir_base(configuration, Arc::clone(&store)) {
+    let base = match crate::rag::open_knowledge_base(configuration, Arc::clone(&store)) {
         Ok(base) => Some(base),
         Err(error) => {
             eprintln!("[aviso] busca na base desligada: {error}");

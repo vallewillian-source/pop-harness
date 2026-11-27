@@ -1,5 +1,3 @@
-//! `poph serve`: servidor HTTP do Harness (HR-20) e `poph openapi` (documento para o Console).
-
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -12,90 +10,83 @@ use poph_store::harness_target_version;
 use crate::assembly;
 use crate::config;
 
-/// Opções do `poph serve`.
 #[derive(Debug, Args)]
 pub struct ServeArgs {
-    /// Imprime o endereço e sai (útil para scripts de teste).
-    #[arg(long)]
-    pub somente_endereco: bool,
+    #[arg(
+        long = "somente-endereco",
+        help = "Imprime o endereço e sai (útil para scripts de teste)"
+    )]
+    pub address_only: bool,
 }
 
-/// Opções do `poph openapi`.
 #[derive(Debug, Args)]
 pub struct OpenapiArgs {
-    /// Grava o documento no arquivo (sem isso, imprime na saída padrão).
-    #[arg(long, value_name = "ARQUIVO")]
+    #[arg(
+        long,
+        value_name = "ARQUIVO",
+        help = "Grava o documento no arquivo (sem isso, imprime na saída padrão)"
+    )]
     pub out: Option<PathBuf>,
 }
 
-/// Executa `poph serve`.
-pub fn executar(
-    flag: Option<PathBuf>,
-    ambiente: &config::Environment,
-    args: ServeArgs,
-) -> ExitCode {
-    let pasta = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let arquivo = config::resolve_file(flag.as_deref(), ambiente, &pasta);
-    let configuracao = match config::load(arquivo.as_deref(), ambiente) {
+pub fn run(flag: Option<PathBuf>, environment: &config::Environment, args: ServeArgs) -> ExitCode {
+    let folder = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let file = config::resolve_file(flag.as_deref(), environment, &folder);
+    let configuracao = match config::load(file.as_deref(), environment) {
         Ok(configuracao) => configuracao,
-        Err(erro) => {
-            eprintln!("{erro}");
+        Err(error) => {
+            eprintln!("{error}");
             return ExitCode::from(1);
         }
     };
-    // Logs do servidor (HR-26f): sem o assinante, a rota do WhatsApp e o laço de saída não deixam
-    // rastro. Vai para o erro padrão; o nível vem de RUST_LOG ou de `log.nivel`.
-    if let Err(erro) = crate::logs::iniciar(
+    if let Err(error) = crate::logs::iniciar(
         &configuracao.log,
-        ambiente.get(crate::logs::VAR_RUST_LOG).map(String::as_str),
+        environment
+            .get(crate::logs::VAR_RUST_LOG)
+            .map(String::as_str),
     ) {
-        eprintln!("{erro}");
+        eprintln!("{error}");
         return ExitCode::from(1);
     }
-    if let Err(erro) = conferir_migracao(&configuracao) {
-        eprintln!("{erro}");
+    if let Err(error) = check_migration(&configuracao) {
+        eprintln!("{error}");
         return ExitCode::from(1);
     }
-    // Cluster (HR-50a): o mapa estático é lido na subida e pode ser relido por
-    // `POST /admin/v1/cluster/reload`. Segredo só do ambiente; arquivo inválido impede subir — o
-    // operador vê o problema agora, em vez de descobrir o roteamento errado no primeiro pedido.
-    let caminho_cluster = config::cluster_path(ambiente, arquivo.as_deref(), &pasta);
-    let segredo_cluster = config::cluster_secret(ambiente);
-    let cluster = match poph_server::cluster::load(&caminho_cluster, segredo_cluster.as_ref()) {
+    let cluster_path = config::cluster_path(environment, file.as_deref(), &folder);
+    let cluster_secret = config::cluster_secret(environment);
+    let cluster = match poph_server::cluster::load(&cluster_path, cluster_secret.as_ref()) {
         Ok(config) => poph_server::cluster::LiveCluster {
-            path: caminho_cluster.clone(),
+            path: cluster_path.clone(),
             config,
-            secret: segredo_cluster,
+            secret: cluster_secret,
         },
-        Err(erro) => {
-            eprintln!("cluster: {erro}");
+        Err(error) => {
+            eprintln!("cluster: {error}");
             return ExitCode::from(1);
         }
     };
     tracing::info!(
-        modo = cluster.mode(),
-        arquivo = %cluster.path.display(),
-        instancias = cluster.config.instances.len(),
-        orgs_no_mapa = cluster.config.orgs.len(),
+        mode = cluster.mode(),
+        file = %cluster.path.display(),
+        instances = cluster.config.instances.len(),
+        orgs_in_map = cluster.config.orgs.len(),
         fingerprint = %cluster.fingerprint(),
         "cluster"
     );
-    // Instâncias da Evolution (HR-26b): segredos de webhook e a chave da Evolution vêm do ambiente,
-    // nunca do arquivo. O valor de nenhum deles é impresso.
-    let segredos = config::secrets(ambiente);
-    let canais = match poph_server::evolution::channels_from_config(
+    let segredos = config::secrets(environment);
+    let channels = match poph_server::evolution::channels_from_config(
         &configuracao,
         segredos.evolution.clone(),
         &|nome: &str| {
-            ambiente
+            environment
                 .get(nome)
-                .map(|valor| valor.trim().to_owned())
-                .filter(|valor| !valor.is_empty())
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
         },
     ) {
-        Ok(canais) => canais,
-        Err(erro) => {
-            eprintln!("instâncias da Evolution: {erro}");
+        Ok(channels) => channels,
+        Err(error) => {
+            eprintln!("instâncias da Evolution: {error}");
             return ExitCode::from(1);
         }
     };
@@ -105,8 +96,8 @@ pub fn executar(
         .build()
     {
         Ok(runtime) => runtime,
-        Err(erro) => {
-            eprintln!("não consegui iniciar o runtime do servidor: {erro}");
+        Err(error) => {
+            eprintln!("não consegui iniciar o runtime do servidor: {error}");
             return ExitCode::from(1);
         }
     };
@@ -114,23 +105,24 @@ pub fn executar(
     runtime.block_on(async move {
         let store = match Store::open(&configuracao) {
             Ok(store) => Arc::new(store),
-            Err(erro) => {
-                eprintln!("não consegui abrir o banco: {erro}");
+            Err(error) => {
+                eprintln!("não consegui abrir o banco: {error}");
                 return ExitCode::from(1);
             }
         };
         let estado = match ServerState::new(Arc::clone(&store), configuracao.clone()) {
-            Ok(estado) => estado.with_evolution_channels(canais).with_cluster(cluster),
-            Err(erro) => {
-                eprintln!("{erro}");
+            Ok(estado) => estado
+                .with_evolution_channels(channels)
+                .with_cluster(cluster),
+            Err(error) => {
+                eprintln!("{error}");
                 return ExitCode::from(1);
             }
         };
-        // Turno no servidor (HR-26h): mensagem recebida vira resposta pela mesma montagem do chat.
-        let estado = match ligar_turno(estado, &configuracao, ambiente, &store).await {
+        let estado = match wire_turn(estado, &configuracao, environment, &store).await {
             Ok(estado) => estado,
-            Err(erro) => {
-                eprintln!("{erro}");
+            Err(error) => {
+                eprintln!("{error}");
                 return ExitCode::from(1);
             }
         };
@@ -138,13 +130,13 @@ pub fn executar(
             std::net::SocketAddr::new(configuracao.server.address, configuracao.server.port);
         let listener = match tokio::net::TcpListener::bind(endereco).await {
             Ok(listener) => listener,
-            Err(erro) => {
-                eprintln!("não consegui abrir {endereco}: {erro}");
+            Err(error) => {
+                eprintln!("não consegui abrir {endereco}: {error}");
                 return ExitCode::from(1);
             }
         };
 
-        if args.somente_endereco {
+        if args.address_only {
             println!("{endereco}");
         } else {
             println!("POP Harness: servidor em http://{endereco}");
@@ -161,130 +153,117 @@ pub fn executar(
         };
         match poph_server::serve_at(listener, estado, desligamento).await {
             Ok(()) => ExitCode::SUCCESS,
-            Err(erro) => {
-                eprintln!("o servidor parou com erro: {erro}");
+            Err(error) => {
+                eprintln!("o servidor parou com erro: {error}");
                 ExitCode::from(1)
             }
         }
     })
 }
 
-/// Liga o turno no servidor (HR-26h).
-///
-/// Sem a chave do provedor (`llm.chave_env`, por padrão `ANTIGRAVITY_API_KEY`), o servidor segue só
-/// recebendo: as mensagens ficam na fila e são respondidas quando ele subir com a chave. Com ela, a
-/// base e o catálogo dos agentes das instâncias configuradas são conferidos antes de atender.
-async fn ligar_turno(
+async fn wire_turn(
     estado: ServerState,
     configuracao: &poph_types::HarnessConfig,
-    ambiente: &config::Environment,
+    environment: &config::Environment,
     store: &Arc<Store>,
 ) -> Result<ServerState, String> {
-    let segredos = config::secrets(ambiente);
-    let nome_da_chave = &configuracao.llm.api_key_env;
-    let Some(chave) = config::llm_key(ambiente, nome_da_chave) else {
+    let segredos = config::secrets(environment);
+    let key_name = &configuracao.llm.api_key_env;
+    let Some(chave) = config::llm_key(environment, key_name) else {
         if !estado.evolution_channels.is_empty() {
             tracing::warn!(
                 target: "poph_server::turno",
-                %nome_da_chave,
+                %key_name,
                 "turno desligado: chave do provedor não definida. As mensagens recebidas ficam na fila e são respondidas quando o servidor subir com a chave"
             );
         }
         return Ok(estado);
     };
-    let metricas = assembly::Metrics::registered(estado.metrics.clone(), &estado.registry)?;
-    let montagem = assembly::assemble(
+    let metrics = assembly::Metrics::registered(estado.metrics.clone(), &estado.registry)?;
+    let assembly = assembly::assemble(
         configuracao,
         Arc::clone(store),
         assembly::Keys {
             llm: chave,
             jev: segredos.typesafe.clone(),
         },
-        metricas,
+        metrics,
         assembly::ProcessFlows::from_server(&estado),
-        ambiente,
+        environment,
     )?;
 
-    // Rede de segurança, como no chat: a base pode ter sido escrita fora do servidor. Sincronizar
-    // só reembeda o que mudou.
     for canal in estado.evolution_channels.iter() {
         let agente = match store.channel_integration(canal.org, canal.integration) {
             Ok(Some(integracao)) => integracao.agent_id,
             Ok(None) => continue,
-            Err(erro) => {
+            Err(error) => {
                 eprintln!(
-                    "[aviso] não consegui ler a integração de {}: {erro}",
+                    "[aviso] não consegui ler a integração de {}: {error}",
                     canal.instance
                 );
                 continue;
             }
         };
-        if let Some(base) = &montagem.base
-            && let Err(erro) = base.synchronise_agent(canal.org, agente).await
+        if let Some(base) = &assembly.base
+            && let Err(error) = base.synchronise_agent(canal.org, agente).await
         {
-            eprintln!("[aviso] não consegui sincronizar o índice da base: {erro}");
+            eprintln!("[aviso] não consegui sincronizar o índice da base: {error}");
         }
-        if let Some(catalogo) = &montagem.catalog
-            && let Err(erro) = catalogo.synchronise_agent(canal.org, agente).await
+        if let Some(catalog) = &assembly.catalog
+            && let Err(error) = catalog.synchronise_agent(canal.org, agente).await
         {
-            eprintln!("[aviso] não consegui sincronizar o índice de produtos: {erro}");
+            eprintln!("[aviso] não consegui sincronizar o índice de produtos: {error}");
         }
     }
 
-    let intervalo = std::time::Duration::from_millis(configuracao.turn.dispatch_interval_ms);
-    // HR-22: o chat de teste do Console roda o mesmo motor do turno, com observador próprio.
+    let interval = std::time::Duration::from_millis(configuracao.turn.dispatch_interval_ms);
     Ok(estado
-        .with_engine(Arc::clone(&montagem.engine))
-        .with_turn(montagem.flow, intervalo))
+        .with_engine(Arc::clone(&assembly.engine))
+        .with_turn(assembly.flow, interval))
 }
 
-/// Executa `poph openapi`.
-pub fn executar_openapi(args: OpenapiArgs) -> ExitCode {
-    let documento = poph_server::openapi();
-    let texto = match serde_json::to_string_pretty(&documento) {
-        Ok(texto) => texto,
-        Err(erro) => {
-            eprintln!("não consegui serializar o OpenAPI: {erro}");
+pub fn run_openapi(args: OpenapiArgs) -> ExitCode {
+    let document = poph_server::openapi();
+    let text = match serde_json::to_string_pretty(&document) {
+        Ok(text) => text,
+        Err(error) => {
+            eprintln!("não consegui serializar o OpenAPI: {error}");
             return ExitCode::from(1);
         }
     };
     match args.out {
-        Some(caminho) => {
-            if let Some(pasta) = caminho.parent()
-                && !pasta.as_os_str().is_empty()
-                && let Err(erro) = std::fs::create_dir_all(pasta)
+        Some(path) => {
+            if let Some(folder) = path.parent()
+                && !folder.as_os_str().is_empty()
+                && let Err(error) = std::fs::create_dir_all(folder)
             {
-                eprintln!("não consegui criar {}: {erro}", pasta.display());
+                eprintln!("não consegui criar {}: {error}", folder.display());
                 return ExitCode::from(1);
             }
-            if let Err(erro) = std::fs::write(&caminho, format!("{texto}\n")) {
-                eprintln!("não consegui gravar {}: {erro}", caminho.display());
+            if let Err(error) = std::fs::write(&path, format!("{text}\n")) {
+                eprintln!("não consegui gravar {}: {error}", path.display());
                 return ExitCode::from(1);
             }
-            println!("OpenAPI gravado em {}", caminho.display());
+            println!("OpenAPI gravado em {}", path.display());
         }
-        None => println!("{texto}"),
+        None => println!("{text}"),
     }
     ExitCode::SUCCESS
 }
 
-/// Recusa subir com banco existente que ficou para trás nas migrações.
-///
-/// Banco ausente é criado já migrado (instalação nova). Banco existente e desatualizado exige
-/// `poph migrate` — subir assim faria a API servir dados num esquema que o código não espera.
-fn conferir_migracao(configuracao: &poph_types::HarnessConfig) -> Result<(), String> {
-    let alvo = harness_target_version();
-    let caminho = configuracao.harness_db();
-    if !caminho.exists() {
+fn check_migration(configuracao: &poph_types::HarnessConfig) -> Result<(), String> {
+    let target = harness_target_version();
+    let path = configuracao.harness_db();
+    if !path.exists() {
         return Ok(());
     }
-    match poph_store::file_version(&caminho) {
-        Ok(Some(versao)) if versao < alvo => Err(format!(
-            "o banco {} está na versão {versao} e o código espera a {alvo}: rode `poph migrate` \
+    match poph_store::file_version(&path) {
+        Ok(Some(versao)) if versao < target => Err(format!(
+            "o banco {} está na versão {versao} e o código espera a {target}: rode `poph migrate` \
              com o servidor parado e suba de novo",
-            caminho.display()
+            path.display()
         )),
         Ok(_) => Ok(()),
-        Err(erro) => Err(format!("não consegui ler a versão do banco: {erro}")),
+        Err(error) => Err(format!("não consegui ler a versão do banco: {error}")),
     }
 }

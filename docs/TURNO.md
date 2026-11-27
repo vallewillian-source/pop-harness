@@ -181,6 +181,8 @@ in `Pedido` and one line in `montar_corpo`), and nothing changes for anyone who 
   The lookup is `listar_pendentes(org, 500)` per turn; with a queue longer than that, the item left over is
   dispatched again and falls into "message already answered" (turn `skipped`).
 - **`--conversa` from another agent** is refused; to switch agents, open a new conversation.
+- **Memory starts zeroed.** Each `poph chat` run without `--conversa` opens a new conversation; to continue an
+  earlier one, pass its id.
 - **Real transport** (Evolution/plugin) is phase 4. `TransporteConsole` confirms text items; `file`/`presence`
   are confirmed without printing, so they are not sent forever.
 - **`chat` does not go through the `inbox`**: it records the message and triggers the turn directly
@@ -222,6 +224,10 @@ instead of the terminal:
 Turn assembly (engine, model, base, products, Jev, transfer) is the same in both commands:
 `crates/poph/src/montagem.rs`. `chat` keeps its own metrics, outside `/metrics`; `serve` publishes its metrics
 on `/metrics`.
+
+Without the provider key (`llm.chave_env`, `ANTIGRAVITY_API_KEY` by default) the server still starts and keeps
+receiving: messages wait in the incoming queue and are answered once the server is restarted with the key. With
+the key, the base and the agent catalog of the configured instances are checked before attending.
 
 ### When it does not reply
 

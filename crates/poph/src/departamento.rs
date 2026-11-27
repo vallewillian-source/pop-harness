@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 
 use crate::config;
 use crate::support::{
-    abrir_com_org, describe, failure, parse_id, parse_status, print_json, status_in_portuguese,
+    describe, failure, open_with_org, parse_id, parse_status, print_json, status_in_portuguese,
     validate_limit, validate_text,
 };
 
@@ -106,7 +106,7 @@ pub fn executar(
     org: Option<&str>,
     acao: AcaoDepartamento,
 ) -> ExitCode {
-    let (store, org) = match abrir_com_org(flag, ambiente, offline, org) {
+    let (store, org) = match open_with_org(flag, ambiente, offline, org) {
         Ok(par) => par,
         Err(erro) => return failure(erro),
     };

@@ -1,13 +1,3 @@
-//! `poph chat <agente>`: a conversa funcionando de ponta a ponta pela CLI (HR-13, marco da fase 1).
-//!
-//! O comando abre (ou retoma) uma conversa do canal `cli`, lê a linha digitada, grava como mensagem
-//! do cliente e roda o turno do motor com **streaming**: cada pedaço de texto do modelo aparece
-//! conforme chega. Ctrl-C no meio do stream cancela o turno (o turno é gravado como falho e a
-//! entrada é concluída). `--json` troca a saída por uma linha JSON por evento.
-//!
-//! Memória zerada: cada execução sem `--conversa` abre uma conversa nova; para continuar uma
-//! anterior, passe o id dela.
-
 use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -24,89 +14,93 @@ use crate::assembly;
 use crate::config;
 use crate::support;
 
-/// Opções do `poph chat`.
 #[derive(Debug, Args)]
 pub struct ChatArgs {
-    /// Id (UUID v7) ou slug do agente que atende.
+    #[arg(
+        value_name = "AGENTE",
+        help = "Id (UUID v7) ou slug do agente que atende"
+    )]
     pub agente: String,
 
-    /// Saída em JSON: uma linha por evento (`usuario`, `inicio`, `texto`, `ferramenta`, `fim`,
-    /// `erro`).
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Saída em JSON: uma linha por evento (`usuario`, `inicio`, `texto`, `ferramenta`, `fim`, `erro`)"
+    )]
     pub json: bool,
 
-    /// Retoma uma conversa existente (id UUID v7) em vez de abrir uma nova com memória zerada.
-    #[arg(long, value_name = "CONVERSA")]
+    #[arg(
+        long = "conversa",
+        value_name = "CONVERSA",
+        help = "Retoma uma conversa existente (id UUID v7) em vez de abrir uma nova com memória zerada"
+    )]
     pub conversa: Option<String>,
 }
 
-/// Executa o `poph chat`.
-pub fn executar(
+pub fn run(
     flag: Option<PathBuf>,
-    ambiente: &config::Environment,
+    environment: &config::Environment,
     org: Option<&str>,
     args: ChatArgs,
 ) -> ExitCode {
-    match rodar(flag, ambiente, org, args) {
+    match run_chat(flag, environment, org, args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(mensagem) => support::failure(mensagem),
     }
 }
 
-fn rodar(
+fn run_chat(
     flag: Option<PathBuf>,
-    ambiente: &config::Environment,
+    environment: &config::Environment,
     org: Option<&str>,
     args: ChatArgs,
 ) -> Result<(), String> {
-    let texto_org = org.ok_or_else(|| {
+    let org_text = org.ok_or_else(|| {
         "informe --org com o id (UUID v7) ou o slug da org para abrir a conversa".to_owned()
     })?;
-    let pasta = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let arquivo = config::resolve_file(flag.as_deref(), ambiente, &pasta);
+    let folder = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let file = config::resolve_file(flag.as_deref(), environment, &folder);
     let configuracao =
-        config::load(arquivo.as_deref(), ambiente).map_err(|erro| format!("{erro}"))?;
+        config::load(file.as_deref(), environment).map_err(|error| format!("{error}"))?;
     let store = Arc::new(
-        Store::open(&configuracao).map_err(|erro| format!("não consegui abrir o banco: {erro}"))?,
+        Store::open(&configuracao)
+            .map_err(|error| format!("não consegui abrir o banco: {error}"))?,
     );
-    let org = support::resolve_org(&store, texto_org)?;
-    let agente = resolver_agente(&store, org, &args.agente)?;
-    let conversa = resolver_conversa(&store, org, &agente.id, &args)?;
+    let org = support::resolve_org(&store, org_text)?;
+    let agente = resolve_agent(&store, org, &args.agente)?;
+    let conversa = resolve_conversation(&store, org, &agente.id, &args)?;
 
-    let nome_da_chave = configuracao.llm.api_key_env.clone();
-    let chave = config::llm_key(ambiente, &nome_da_chave).ok_or_else(|| {
-        format!("defina {nome_da_chave} no ambiente desta sessão para conversar com o modelo")
+    let key_name = configuracao.llm.api_key_env.clone();
+    let chave = config::llm_key(environment, &key_name).ok_or_else(|| {
+        format!("defina {key_name} no ambiente desta sessão para conversar com o modelo")
     })?;
     let registro = Registry::new();
-    let metricas_base =
-        BaseMetrics::register(&registro).map_err(|erro| format!("métricas base: {erro}"))?;
-    // Mesma montagem do `poph serve` (HR-26h); o chat mantém as métricas dele, fora do `/metrics`.
-    let montagem = assembly::assemble(
+    let base_metrics =
+        BaseMetrics::register(&registro).map_err(|error| format!("métricas base: {error}"))?;
+    let assembly = assembly::assemble(
         &configuracao,
         Arc::clone(&store),
         assembly::Keys {
             llm: chave,
-            jev: config::secrets(ambiente).typesafe,
+            jev: config::secrets(environment).typesafe,
         },
-        assembly::Metrics::own(metricas_base),
+        assembly::Metrics::own(base_metrics),
         assembly::ProcessFlows::default(),
-        ambiente,
+        environment,
     )?;
     let assembly::Assembly {
-        engine: motor,
+        engine,
         flow: fluxo,
         base,
-        catalog: catalogo,
+        catalog,
         ..
-    } = montagem;
+    } = assembly;
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
-        .map_err(|erro| format!("não consegui iniciar o runtime: {erro}"))?;
+        .map_err(|error| format!("não consegui iniciar o runtime: {error}"))?;
 
-    // O canal do chat confirma os itens da `outbox` sem imprimir de novo: o texto já saiu no stream.
-    let transporte = TransportConsole::silencioso();
+    let transport = TransportConsole::silencioso();
     if args.json {
         println!(
             "{}",
@@ -116,7 +110,7 @@ fn rodar(
                 "agente": agente.id.to_string(),
                 "slug": agente.slug,
                 "canal": conversa.canal,
-                "modelo": modelo_do_agente(&agente, &configuracao.llm.model),
+                "modelo": agent_model(&agente, &configuracao.llm.model),
             })
         );
     } else {
@@ -126,27 +120,25 @@ fn rodar(
 
     let interativo = std::io::stdin().is_terminal();
     runtime.block_on(async {
-        // Rede de segurança: a base pode ter sido escrita fora da CLI (importador, Console) ou o
-        // índice pode ter sido limpo por troca de modelo. Sincronizar aqui só reembeda o que mudou.
         if let Some(base) = &base
-            && let Err(erro) = base.synchronise_agent(org, agente.id).await
+            && let Err(error) = base.synchronise_agent(org, agente.id).await
         {
-            eprintln!("[aviso] não consegui sincronizar o índice da base: {erro}");
+            eprintln!("[aviso] não consegui sincronizar o índice da base: {error}");
         }
-        if let Some(catalogo) = &catalogo
-            && let Err(erro) = catalogo.synchronise_agent(org, agente.id).await
+        if let Some(catalog) = &catalog
+            && let Err(error) = catalog.synchronise_agent(org, agente.id).await
         {
-            eprintln!("[aviso] não consegui sincronizar o índice de produtos: {erro}");
+            eprintln!("[aviso] não consegui sincronizar o índice de produtos: {error}");
         }
         loop {
             if interativo && !args.json {
                 print!("você> ");
                 let _ = std::io::stdout().flush();
             }
-            let Some(linha) = ler_linha().await else {
+            let Some(line) = read_line().await else {
                 break;
             };
-            let texto = linha.trim();
+            let texto = line.trim();
             if texto.is_empty() {
                 continue;
             }
@@ -170,7 +162,7 @@ fn rodar(
                         author_name: None,
                     },
                 )
-                .map_err(|erro| format!("não consegui gravar a mensagem: {erro}"))?;
+                .map_err(|error| format!("não consegui gravar a mensagem: {error}"))?;
             if args.json {
                 println!(
                     "{}",
@@ -182,66 +174,64 @@ fn rodar(
                 );
             }
 
-            let mut entrada = TurnInput::new(org, conversa.id, mensagem.id);
-            let cancelamento = Cancellation::new();
-            entrada.cancellation = cancelamento.clone();
-            let mut observador = ObservadorChat::novo(args.json);
-            let turno = motor.run(entrada, &mut observador);
+            let mut input = TurnInput::new(org, conversa.id, mensagem.id);
+            let cancellation = Cancellation::new();
+            input.cancellation = cancellation.clone();
+            let mut observer = ChatObserver::new(args.json);
+            let turno = engine.run(input, &mut observer);
             tokio::pin!(turno);
-            let resumo = loop {
+            let summary = loop {
                 tokio::select! {
                     resultado = &mut turno => break resultado,
                     _ = tokio::signal::ctrl_c() => {
                         if !args.json {
                             eprintln!("\n[cancelando o turno…]");
                         }
-                        cancelamento.cancel();
+                        cancellation.cancel();
                     }
                 }
             };
 
-            match resumo {
-                Ok(resumo) => {
+            match summary {
+                Ok(summary) => {
                     if args.json {
                         println!(
                             "{}",
                             json!({
                                 "tipo": "fim",
-                                "turno": resumo.turno.to_string(),
-                                "estado": resumo.estado.as_text(),
-                                "motivo": resumo.motivo_fim,
-                                "erro": resumo.error,
-                                "tokens_entrada": resumo.input_tokens,
-                                "tokens_saida": resumo.output_tokens,
-                                "total_ms": resumo.timings.total_ms,
-                                "primeiro_texto_ms": resumo.timings.first_text_ms,
-                                "fila_ms": resumo.timings.queue_ms,
-                                "montagem_ms": resumo.timings.assembly_ms,
+                                "turno": summary.turno.to_string(),
+                                "estado": summary.estado.as_text(),
+                                "motivo": summary.motivo_fim,
+                                "erro": summary.error,
+                                "tokens_entrada": summary.input_tokens,
+                                "tokens_saida": summary.output_tokens,
+                                "total_ms": summary.timings.total_ms,
+                                "primeiro_texto_ms": summary.timings.first_text_ms,
+                                "fila_ms": summary.timings.queue_ms,
+                                "montagem_ms": summary.timings.assembly_ms,
                             })
                         );
                     } else {
                         println!();
                     }
                 }
-                Err(erro) => {
+                Err(error) => {
                     if args.json {
-                        println!("{}", json!({"tipo": "erro", "mensagem": erro.to_string()}));
+                        println!("{}", json!({"tipo": "erro", "mensagem": error.to_string()}));
                     } else {
-                        eprintln!("\n[erro] {erro}");
+                        eprintln!("\n[erro] {error}");
                     }
                 }
             }
 
-            // Confirma a saída no canal do chat (o texto já foi impresso pelo stream).
-            // Só os itens do console: a fila da org também tem WhatsApp, que este processo não entrega (HR-26f).
-            if let Err(erro) = fluxo.send_pending_console(org, &transporte).await {
+            if let Err(error) = fluxo.send_pending_console(org, &transport).await {
                 if args.json {
                     println!(
                         "{}",
-                        json!({"tipo": "erro", "mensagem": format!("saída: {erro}")})
+                        json!({"tipo": "erro", "mensagem": format!("saída: {error}")})
                     );
                 } else {
-                    eprintln!("[aviso] a saída não foi confirmada: {erro}");
+                    eprintln!("[aviso] a saída não foi confirmada: {error}");
                 }
             }
         }
@@ -249,22 +239,21 @@ fn rodar(
     })
 }
 
-fn modelo_do_agente(agente: &poph_store::Agente, padrao: &str) -> String {
+fn agent_model(agente: &poph_store::Agente, default: &str) -> String {
     let modelo = agente.modelo.trim();
     if modelo.is_empty() {
-        padrao.to_owned()
+        default.to_owned()
     } else {
         modelo.to_owned()
     }
 }
 
-/// Lê uma linha da entrada padrão sem travar a thread do runtime.
-async fn ler_linha() -> Option<String> {
+async fn read_line() -> Option<String> {
     tokio::task::spawn_blocking(|| {
-        let mut linha = String::new();
-        match std::io::stdin().read_line(&mut linha) {
+        let mut line = String::new();
+        match std::io::stdin().read_line(&mut line) {
             Ok(0) => None,
-            Ok(_) => Some(linha),
+            Ok(_) => Some(line),
             Err(_) => None,
         }
     })
@@ -273,23 +262,21 @@ async fn ler_linha() -> Option<String> {
     .flatten()
 }
 
-/// Acha o agente pelo id (UUID v7) ou pelo slug, dentro da org.
-fn resolver_agente(store: &Store, org: OrgId, texto: &str) -> Result<poph_store::Agente, String> {
+fn resolve_agent(store: &Store, org: OrgId, texto: &str) -> Result<poph_store::Agente, String> {
     if uuid::Uuid::parse_str(texto).is_ok() {
         let id: AgentId = support::parse_id(texto)?;
         return store
             .agents()
             .get(org, id)
-            .map_err(|erro| support::describe(&erro));
+            .map_err(|error| support::describe(&error));
     }
     store
         .agents()
         .by_slug(org, texto)
-        .map_err(|erro| support::describe(&erro))
+        .map_err(|error| support::describe(&error))
 }
 
-/// Retoma a conversa pedida ou abre uma nova com memória zerada.
-fn resolver_conversa(
+fn resolve_conversation(
     store: &Store,
     org: OrgId,
     agente: &AgentId,
@@ -301,7 +288,7 @@ fn resolver_conversa(
             let conversa = store
                 .conversations()
                 .get(org, id)
-                .map_err(|erro| support::describe(&erro))?;
+                .map_err(|error| support::describe(&error))?;
             if conversa.agent_id != *agente {
                 return Err(format!(
                     "a conversa {id} é de outro agente; abra uma conversa nova ou passe o agente \
@@ -322,26 +309,25 @@ fn resolver_conversa(
                     target_department: None,
                 },
             )
-            .map_err(|erro| format!("não consegui abrir a conversa: {erro}")),
+            .map_err(|error| format!("não consegui abrir a conversa: {error}")),
     }
 }
 
-/// Observador que imprime o turno conforme ele acontece.
-struct ObservadorChat {
+struct ChatObserver {
     json: bool,
-    escreveu_texto: bool,
+    wrote_text: bool,
 }
 
-impl ObservadorChat {
-    fn novo(json: bool) -> Self {
+impl ChatObserver {
+    fn new(json: bool) -> Self {
         Self {
             json,
-            escreveu_texto: false,
+            wrote_text: false,
         }
     }
 }
 
-impl TurnObserver for ObservadorChat {
+impl TurnObserver for ChatObserver {
     fn evento(&mut self, evento: TurnEvent) {
         match evento {
             TurnEvent::Started { turno, .. } => {
@@ -349,36 +335,33 @@ impl TurnObserver for ObservadorChat {
                     println!("{}", json!({"tipo": "inicio", "turno": turno.to_string()}));
                 }
             }
-            TurnEvent::Texto(pedaco) => {
+            TurnEvent::Texto(piece) => {
                 if self.json {
-                    println!("{}", json!({"tipo": "texto", "delta": pedaco}));
+                    println!("{}", json!({"tipo": "texto", "delta": piece}));
                 } else {
-                    if !self.escreveu_texto {
+                    if !self.wrote_text {
                         println!();
-                        self.escreveu_texto = true;
+                        self.wrote_text = true;
                     }
-                    print!("{pedaco}");
+                    print!("{piece}");
                     let _ = std::io::stdout().flush();
                 }
             }
-            TurnEvent::Base { sources: fontes } => {
+            TurnEvent::Base { sources } => {
                 if self.json {
                     println!(
                         "{}",
-                        json!({"tipo": "base", "trechos": fontes.len(), "fontes": fontes})
+                        json!({"tipo": "base", "trechos": sources.len(), "fontes": sources})
                     );
-                } else if !fontes.is_empty() {
-                    eprintln!("\n[base: {}]", fontes.join("; "));
+                } else if !sources.is_empty() {
+                    eprintln!("\n[base: {}]", sources.join("; "));
                 }
             }
-            TurnEvent::Tool {
-                nome,
-                round: rodada,
-            } => {
+            TurnEvent::Tool { nome, round } => {
                 if self.json {
                     println!(
                         "{}",
-                        json!({"tipo": "ferramenta", "nome": nome, "rodada": rodada})
+                        json!({"tipo": "ferramenta", "nome": nome, "rodada": round})
                     );
                 } else {
                     eprintln!("\n[ferramenta: {nome}]");
@@ -386,8 +369,8 @@ impl TurnObserver for ObservadorChat {
             }
             TurnEvent::Handoff {
                 departamento,
-                risk_kind: tipo_risco,
-                guidance: orientacao,
+                risk_kind,
+                guidance,
             } => {
                 if self.json {
                     println!(
@@ -395,8 +378,8 @@ impl TurnObserver for ObservadorChat {
                         json!({
                             "tipo": "transferencia",
                             "departamento": departamento.map(|dep| dep.to_string()),
-                            "tipo_risco": tipo_risco,
-                            "orientacao": orientacao,
+                            "tipo_risco": risk_kind,
+                            "orientacao": guidance,
                         })
                     );
                 } else {
@@ -405,7 +388,7 @@ impl TurnObserver for ObservadorChat {
                         departamento
                             .map(|dep| format!(" · departamento {dep}"))
                             .unwrap_or_default(),
-                        if orientacao {
+                        if guidance {
                             " · com orientação ao cliente"
                         } else {
                             ""
@@ -413,7 +396,6 @@ impl TurnObserver for ObservadorChat {
                     );
                 }
             }
-            // O `fim` sai no laço principal, com tokens e tempos; aqui não há nada a imprimir.
             TurnEvent::Fim { .. } => {}
         }
     }

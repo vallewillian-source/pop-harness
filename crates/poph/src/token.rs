@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use crate::config;
 use crate::support::{
-    abrir_com_org, describe, failure, parse_id, print_json, validate_limit, validate_text,
+    describe, failure, open_with_org, parse_id, print_json, validate_limit, validate_text,
 };
 
 const PREFIX: &str = "poph_";
@@ -91,7 +91,7 @@ pub fn run(
     if let TokenAction::Global(args) = action {
         return generate_global(args);
     }
-    let (store, org) = match abrir_com_org(flag, environment, offline, org) {
+    let (store, org) = match open_with_org(flag, environment, offline, org) {
         Ok(pair) => pair,
         Err(error) => return failure(error),
     };

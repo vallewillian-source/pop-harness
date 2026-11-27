@@ -147,6 +147,10 @@ If indexing is unavailable, the write still takes effect and the CLI prints a wa
 Deletion requires `--force`. The CLI counts references before deleting so it can report how many cart
 items and carts are affected. Those items retain their stored price, and their `product_id` becomes null.
 
+`poph category` follows the same `--offline --org` rules. `poph category update` requires `--if-match`, and
+`poph category delete` **always** requires `--force`: unlike `poph product`, the CLI has no way to count the
+category's products, and the delete cascades to its products and to the agent links in the database.
+
 ## 7. What HR-19 (cart) and HR-42 (Console) consume
 
 - **HR-19:** `Produtos::ativos_por_ids` and `Produtos::obter` to check the product and the price when adding to the

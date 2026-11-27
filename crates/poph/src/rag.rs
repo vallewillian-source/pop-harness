@@ -1,8 +1,3 @@
-//! Abertura do índice de trechos e da base de conhecimento pela CLI (HR-17).
-//!
-//! O modelo de embedding é a única parte cara: `EmbedderOrt::abrir` confere os sha256 dos arquivos
-//! (bloqueante) e a sessão ONNX só nasce no primeiro uso. Quem chama isto é o `chat` e o `kb`.
-
 use std::sync::Arc;
 
 use poph_agent::{KnowledgeBase, ProductCatalog};
@@ -10,68 +5,64 @@ use poph_rag::{Embedder, Index, IndexConfig, ModelConfig, OrtEmbedder, QueueConf
 use poph_store::Store;
 use poph_types::HarnessConfig;
 
-/// Abre o índice de trechos sobre o `rag.db` do store.
-pub fn abrir_indice(config: &HarnessConfig, store: &Arc<Store>) -> Result<Index, String> {
+pub fn open_index(config: &HarnessConfig, store: &Arc<Store>) -> Result<Index, String> {
     let modelo = ModelConfig {
         diretorio: config.models(),
         ..ModelConfig::default()
     };
-    let embedder = OrtEmbedder::open_model(&modelo, None).map_err(|erro| {
+    let embedder = OrtEmbedder::open_model(&modelo, None).map_err(|error| {
         format!(
-            "modelo de embedding indisponível em {} ({erro}); rode `poph model install`",
+            "modelo de embedding indisponível em {} ({error}); rode `poph model install`",
             modelo.diretorio.display()
         )
     })?;
     let embedder: Arc<dyn Embedder> = Arc::new(embedder);
-    let (indice, abertura) = Index::open(store.rag_path(), embedder, IndexConfig::default())
-        .map_err(|erro| format!("não consegui abrir o índice: {erro}"))?;
-    if abertura.cleaned_by_divergence {
+    let (index, opening) = Index::open(store.rag_path(), embedder, IndexConfig::default())
+        .map_err(|error| format!("não consegui abrir o índice: {error}"))?;
+    if opening.cleaned_by_divergence {
         eprintln!(
             "[aviso] o índice foi limpo: os vetores eram de outro modelo ou de outro divisor de \
              trechos. Rode `poph kb reindex` para reindexar."
         );
     }
-    Ok(indice)
+    Ok(index)
 }
 
-/// Abre a base de conhecimento (store + índice) pronta para buscar e sincronizar.
-pub fn abrir_base(config: &HarnessConfig, store: Arc<Store>) -> Result<Arc<KnowledgeBase>, String> {
-    let indice = abrir_indice(config, &store)?;
-    Ok(KnowledgeBase::new(store, Arc::new(indice)))
+pub fn open_knowledge_base(
+    config: &HarnessConfig,
+    store: Arc<Store>,
+) -> Result<Arc<KnowledgeBase>, String> {
+    let index = open_index(config, &store)?;
+    Ok(KnowledgeBase::new(store, Arc::new(index)))
 }
 
-/// Abre o catálogo de produtos (store + o mesmo índice de embedding da base).
 pub fn open_catalog(
     config: &HarnessConfig,
     store: Arc<Store>,
 ) -> Result<Arc<ProductCatalog>, String> {
-    let indice = abrir_indice(config, &store)?;
-    Ok(ProductCatalog::new(store, Arc::new(indice)))
+    let index = open_index(config, &store)?;
+    Ok(ProductCatalog::new(store, Arc::new(index)))
 }
 
-/// Subcomandos de `poph rag` (o índice da busca semântica).
 #[derive(Debug, clap::Subcommand)]
-pub enum AcaoRag {
-    /// Deixa o índice igual à base ativa do(s) agente(s). Mesmo comando do `poph kb reindex`.
+pub enum RagAction {
+    #[command(
+        about = "Deixa o índice igual à base ativa do(s) agente(s). Mesmo comando do `poph kb reindex`"
+    )]
     Reindex(crate::kb::ReindexArgs),
 }
 
-/// Executa um subcomando de `poph rag`.
-///
-/// `poph rag reindex` é o nome que o PRD usa para a reindexação em lote (HR-17). A lógica mora no
-/// `poph kb`, porque é lá que a base é mantida: este comando só encaminha, para não existirem duas
-/// implementações do mesmo índice.
-pub fn executar(
+pub fn run(
     flag: Option<std::path::PathBuf>,
-    ambiente: &crate::config::Environment,
+    environment: &crate::config::Environment,
     offline: bool,
     org: Option<&str>,
-    acao: AcaoRag,
+    acao: RagAction,
 ) -> std::process::ExitCode {
     match acao {
-        AcaoRag::Reindex(args) => crate::kb::run(
+        RagAction::Reindex(args) => crate::kb::run(
             flag,
-            ambiente,
+            environment,
             offline,
             org,
             crate::kb::KbAction::Reindex(args),
@@ -79,12 +70,6 @@ pub fn executar(
     }
 }
 
-/// Abre a base de conhecimento para reindexação, com o embedding passando pela fila da HR-15.
-///
-/// A diferença para [`abrir_base`]: o índice que a reindexação usa embrulha o modelo na
-/// [`poph_rag::EmbedderDaFila`], então cada trecho entra na vaga da org (limite de pedidos
-/// simultâneos e rodízio entre orgs). Numa reindexação grande, uma org não ocupa o modelo de todas
-/// as outras. A busca de uma consulta continua indo direto ao modelo ([`abrir_base`]).
 pub fn open_queued_knowledge_base(
     config: &HarnessConfig,
     store: Arc<Store>,
@@ -94,37 +79,40 @@ pub fn open_queued_knowledge_base(
         diretorio: config.models(),
         ..ModelConfig::default()
     };
-    let base = OrtEmbedder::open_model(&modelo, None).map_err(|erro| {
+    let base = OrtEmbedder::open_model(&modelo, None).map_err(|error| {
         format!(
-            "modelo de embedding indisponível em {} ({erro}); rode `poph model install`",
+            "modelo de embedding indisponível em {} ({error}); rode `poph model install`",
             modelo.diretorio.display()
         )
     })?;
-    let identidade = base.identity().clone();
+    let identity = base.identity().clone();
     let embedder: Arc<dyn Embedder> = Arc::new(base);
 
     let runtime = Arc::new(
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
-            .map_err(|erro| format!("não consegui iniciar o runtime da fila: {erro}"))?,
+            .map_err(|error| format!("não consegui iniciar o runtime da fila: {error}"))?,
     );
-    let fila = {
+    let queue = {
         let _guard = runtime.enter();
         Arc::new(
             poph_rag::EmbeddingQueue::start(Arc::clone(&embedder), QueueConfig::default(), None)
-                .map_err(|erro| format!("não consegui iniciar a fila de embedding: {erro}"))?,
+                .map_err(|error| format!("não consegui iniciar a fila de embedding: {error}"))?,
         )
     };
-    let da_org = poph_rag::QueuedEmbedder::with_runtime(fila, org, identidade, runtime);
-    let (indice, abertura) =
-        Index::open(store.rag_path(), Arc::new(da_org), IndexConfig::default())
-            .map_err(|erro| format!("não consegui abrir o índice: {erro}"))?;
-    if abertura.cleaned_by_divergence {
+    let org_embedder = poph_rag::QueuedEmbedder::with_runtime(queue, org, identity, runtime);
+    let (index, opening) = Index::open(
+        store.rag_path(),
+        Arc::new(org_embedder),
+        IndexConfig::default(),
+    )
+    .map_err(|error| format!("não consegui abrir o índice: {error}"))?;
+    if opening.cleaned_by_divergence {
         eprintln!(
             "[aviso] o índice foi limpo: os vetores eram de outro modelo ou de outro divisor de \
              trechos. Rode `poph kb reindex` para reindexar."
         );
     }
-    Ok(KnowledgeBase::new(store, Arc::new(indice)))
+    Ok(KnowledgeBase::new(store, Arc::new(index)))
 }
