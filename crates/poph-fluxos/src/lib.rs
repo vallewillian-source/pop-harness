@@ -1,13 +1,12 @@
-
 use blake3 as _;
 
 pub mod cache;
 pub mod compilador;
-pub mod diagnostico;
+pub mod diagnostics;
 pub mod diff;
 pub mod formatador;
 pub mod ir;
-pub mod linguagem;
+pub mod language;
 pub mod motor;
 pub mod prompt;
 pub mod regras;
@@ -18,7 +17,7 @@ pub use cache::{
     Metricas, TETO_PADRAO_MB, peso_da_ir, sha256_da_fonte,
 };
 pub use compilador::{Compilado, FalhaCarregamento, Limites, carregar, compilar};
-pub use diagnostico::{Code, Diagnostic, Severity};
+pub use diagnostics::{Code, Diagnostic, Severity};
 pub use diff::{Impacto, Mudanca, TipoMudanca, diferenca};
 pub use formatador::{FalhaDeFormato, LARGURA, formatar, formatar_com, imprimir};
 pub use ir::Ir;

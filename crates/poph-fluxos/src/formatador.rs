@@ -62,9 +62,9 @@ use poph_types::ActionActor;
 use starlark::syntax::ast::{Argument, AstLiteral, AstNoPayload, AstStmt, CallArgsP, Expr, Stmt};
 
 use crate::compilador::{Limites, compilar};
-use crate::diagnostico::Diagnostic;
+use crate::diagnostics::Diagnostic;
 use crate::ir::{Acao, Campo, Decisao, Destination, Effect, Etapa, Gatilho, Ir, Rule};
-use crate::linguagem::analisa;
+use crate::language::parse_ast;
 
 /// Largura máxima, em colunas, de uma linha da forma canônica.
 ///
@@ -212,7 +212,7 @@ fn bloco(chave: Chave, texto: String, comentarios: &BTreeMap<Chave, Vec<String>>
 /// Texto que não parseia devolve mapa vazio: nesse caso `formatar` já parou antes.
 fn comentarios(fonte: &str) -> BTreeMap<Chave, Vec<String>> {
     let mut mapa = BTreeMap::new();
-    let Ok(modulo) = analisa(fonte, "fluxo.star") else {
+    let Ok(modulo) = parse_ast(fonte, "fluxo.star") else {
         return mapa;
     };
     let Stmt::Statements(itens) = &modulo.statement().node else {
@@ -545,11 +545,26 @@ fn valor_da_decisao(decisao: &Decisao) -> Valor {
 
 fn valor_da_regra(regra: &Rule) -> Valor {
     match regra {
-        Rule::Igual { campo, value: valor } => dois_textos("igual", campo, valor),
-        Rule::Diferente { campo, value: valor } => dois_textos("diferente", campo, valor),
-        Rule::Maior { campo, value: valor } => dois_textos("maior", campo, valor),
-        Rule::Menor { campo, value: valor } => dois_textos("menor", campo, valor),
-        Rule::Contem { campo, value: valor } => dois_textos("contem", campo, valor),
+        Rule::Igual {
+            campo,
+            value: valor,
+        } => dois_textos("igual", campo, valor),
+        Rule::Diferente {
+            campo,
+            value: valor,
+        } => dois_textos("diferente", campo, valor),
+        Rule::Maior {
+            campo,
+            value: valor,
+        } => dois_textos("maior", campo, valor),
+        Rule::Menor {
+            campo,
+            value: valor,
+        } => dois_textos("menor", campo, valor),
+        Rule::Contem {
+            campo,
+            value: valor,
+        } => dois_textos("contem", campo, valor),
         Rule::Vazio { campo } => chamada("vazio", vec![posicional(literal(campo))]),
         Rule::E { args } => combinador("e", args),
         Rule::Ou { args } => combinador("ou", args),
@@ -759,7 +774,7 @@ mod testes {
     #[test]
     fn a_chave_da_declaracao_le_o_id_do_argumento() {
         let fonte = "fluxo(id = \"x\")\netapa(id = \"passo\", nome = \"P\")\ndecisao(id = \"d\", se = vazio(\"a\"), entao = \"passo\", senao = \"passo\")\ndef regra(dados):\n    return True\n";
-        let modulo = analisa(fonte, "fluxo.star").expect("parseia");
+        let modulo = parse_ast(fonte, "fluxo.star").expect("parseia");
         let Stmt::Statements(itens) = &modulo.statement().node else {
             panic!("o topo é uma lista de declarações");
         };

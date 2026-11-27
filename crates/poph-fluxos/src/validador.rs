@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 
 use poph_types::FieldKind;
 
-use crate::diagnostico::{Code, Diagnostic};
+use crate::diagnostics::{Code, Diagnostic};
 use crate::ir::{Destination, Effect, Etapa, Ir, Rule};
 
 /// Teto de nós (etapas + decisões + fins), `FLUXOS_LINGUAGEM.md` §3.4 — o mesmo do compilador.
@@ -239,12 +239,7 @@ impl<'a> Validador<'a> {
             .push(Diagnostic::error_at(codigo, mensagem, caminho));
     }
 
-    fn aviso_no(
-        &mut self,
-        codigo: Code,
-        mensagem: impl Into<String>,
-        caminho: impl Into<String>,
-    ) {
+    fn aviso_no(&mut self, codigo: Code, mensagem: impl Into<String>, caminho: impl Into<String>) {
         self.diagnosticos
             .push(Diagnostic::warning_at(codigo, mensagem, caminho));
     }
@@ -403,7 +398,8 @@ impl<'a> Validador<'a> {
             if let Some(ator) = acao.actor
                 && !etapa.action_actors.contains(&ator)
             {
-                let permitidos: Vec<&str> = etapa.action_actors.iter().map(|a| a.as_text()).collect();
+                let permitidos: Vec<&str> =
+                    etapa.action_actors.iter().map(|a| a.as_text()).collect();
                 self.erro_no(
                     Code::InvalidRuleOrActor,
                     format!(
@@ -551,21 +547,26 @@ impl<'a> Validador<'a> {
 
     fn confere_regra(&mut self, regra: &'a Rule, caminho: &str, onde: &str) {
         match regra {
-            Rule::Igual { campo, value: valor } => {
-                self.confere_folha(campo, Some(valor), "igual", caminho, onde)
-            }
-            Rule::Diferente { campo, value: valor } => {
-                self.confere_folha(campo, Some(valor), "diferente", caminho, onde)
-            }
-            Rule::Maior { campo, value: valor } => {
-                self.confere_folha(campo, Some(valor), "maior", caminho, onde)
-            }
-            Rule::Menor { campo, value: valor } => {
-                self.confere_folha(campo, Some(valor), "menor", caminho, onde)
-            }
-            Rule::Contem { campo, value: valor } => {
-                self.confere_folha(campo, Some(valor), "contem", caminho, onde)
-            }
+            Rule::Igual {
+                campo,
+                value: valor,
+            } => self.confere_folha(campo, Some(valor), "igual", caminho, onde),
+            Rule::Diferente {
+                campo,
+                value: valor,
+            } => self.confere_folha(campo, Some(valor), "diferente", caminho, onde),
+            Rule::Maior {
+                campo,
+                value: valor,
+            } => self.confere_folha(campo, Some(valor), "maior", caminho, onde),
+            Rule::Menor {
+                campo,
+                value: valor,
+            } => self.confere_folha(campo, Some(valor), "menor", caminho, onde),
+            Rule::Contem {
+                campo,
+                value: valor,
+            } => self.confere_folha(campo, Some(valor), "contem", caminho, onde),
             Rule::Vazio { campo } => self.confere_folha(campo, None, "vazio", caminho, onde),
             Rule::Funcao { nome } => {
                 self.usadas.insert(nome.as_str());
@@ -1000,11 +1001,26 @@ impl<'a> Validador<'a> {
 /// Chave de comparação de uma folha de combinador: campo, valor e o nome do combinador.
 fn chave_da_folha(regra: &Rule) -> Option<(&str, Option<&str>, &'static str)> {
     match regra {
-        Rule::Igual { campo, value: valor } => Some((campo, Some(valor), "igual")),
-        Rule::Diferente { campo, value: valor } => Some((campo, Some(valor), "diferente")),
-        Rule::Maior { campo, value: valor } => Some((campo, Some(valor), "maior")),
-        Rule::Menor { campo, value: valor } => Some((campo, Some(valor), "menor")),
-        Rule::Contem { campo, value: valor } => Some((campo, Some(valor), "contem")),
+        Rule::Igual {
+            campo,
+            value: valor,
+        } => Some((campo, Some(valor), "igual")),
+        Rule::Diferente {
+            campo,
+            value: valor,
+        } => Some((campo, Some(valor), "diferente")),
+        Rule::Maior {
+            campo,
+            value: valor,
+        } => Some((campo, Some(valor), "maior")),
+        Rule::Menor {
+            campo,
+            value: valor,
+        } => Some((campo, Some(valor), "menor")),
+        Rule::Contem {
+            campo,
+            value: valor,
+        } => Some((campo, Some(valor), "contem")),
         Rule::Vazio { campo } => Some((campo, None, "vazio")),
         Rule::E { .. } | Rule::Ou { .. } | Rule::Nao { .. } | Rule::Funcao { .. } => None,
     }

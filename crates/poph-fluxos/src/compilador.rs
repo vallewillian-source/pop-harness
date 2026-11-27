@@ -20,9 +20,9 @@ pub(crate) mod forma;
 
 use poph_types::config::FlowsConfig;
 
-use crate::diagnostico::{Code, Diagnostic};
+use crate::diagnostics::{Code, Diagnostic};
 use crate::ir::Ir;
-use crate::linguagem::{LimitesStarlark, analisa, carregar_modulo};
+use crate::language::{StarlarkLimits, load_module, parse_ast};
 
 /// Teto padrão de tamanho da fonte: 32 KB (32.768 bytes), `FLUXOS_LINGUAGEM.md` §3.4 e decisão D1.
 /// É o padrão de `fluxos.max_fonte_bytes`; o PRD §9 ainda traz 65536 (pendência P14).
@@ -84,12 +84,12 @@ impl Limites {
         }
     }
 
-    fn starlark(&self) -> LimitesStarlark {
-        LimitesStarlark {
+    fn starlark(&self) -> StarlarkLimits {
+        StarlarkLimits {
             max_ticks: self.max_ticks,
             max_heap_bytes: self.max_heap_bytes,
             max_callstack: self.max_callstack,
-            prazo: self.prazo_de_carga,
+            deadline: self.prazo_de_carga,
         }
     }
 }
@@ -180,7 +180,7 @@ pub fn compilar(fonte: &str, limites: &Limites) -> Compilado {
         };
     }
 
-    let modulo = match analisa(fonte, "fluxo.star") {
+    let modulo = match parse_ast(fonte, "fluxo.star") {
         Ok(modulo) => modulo,
         Err(erro) => {
             diagnosticos.push(diagnostico_do_parse(&erro));
@@ -217,7 +217,7 @@ pub fn compilar(fonte: &str, limites: &Limites) -> Compilado {
     // faz na execução). Aqui os limites estão ligados; sem erro de forma, o único erro possível é
     // limite estourado, que vira `FLX04`.
     if ir.is_some()
-        && let Err(erro) = carregar_modulo(fonte, "fluxo.star", &limites.starlark())
+        && let Err(erro) = load_module(fonte, "fluxo.star", &limites.starlark())
     {
         diagnosticos.push(diagnostico_da_carga(&erro));
         return Compilado {
@@ -325,10 +325,7 @@ fn diagnostico_do_parse(erro: &starlark::Error) -> Diagnostic {
         // A primeira linha do erro do parser já diz o que ele esperava; o resto é o desenho do
         // trecho, que não cabe numa mensagem de API.
         let resumo = texto.lines().next().unwrap_or(&texto).trim().to_owned();
-        (
-            Code::Syntax,
-            format!("Erro de sintaxe no script: {resumo}"),
-        )
+        (Code::Syntax, format!("Erro de sintaxe no script: {resumo}"))
     };
     Diagnostic::error(codigo, mensagem, linha, coluna)
 }

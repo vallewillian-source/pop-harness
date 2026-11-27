@@ -1,4 +1,3 @@
-
 use std::time::{Duration, Instant};
 
 use starlark::environment::{FrozenModule, Globals, GlobalsBuilder, LibraryExtension, Module};
@@ -8,13 +7,13 @@ use starlark::values::Value;
 use starlark::values::none::NoneType;
 use starlark::values::tuple::UnpackTuple;
 
-pub const DECLARACOES: &[&str] = &["fluxo", "etapa", "decisao"];
+pub const DECLARATIONS: &[&str] = &["fluxo", "etapa", "decisao"];
 
-pub const VALORES: &[&str] = &["gatilho", "campo", "acao", "fim", "funcao"];
+pub const VALUES: &[&str] = &["gatilho", "campo", "acao", "fim", "funcao"];
 
-pub const EFEITOS: &[&str] = &["mensagem_ao_cliente", "notificar_whatsapp", "encaminhar"];
+pub const EFFECTS: &[&str] = &["mensagem_ao_cliente", "notificar_whatsapp", "encaminhar"];
 
-pub const COMBINADORES: &[&str] = &[
+pub const COMBINATORS: &[&str] = &[
     "igual",
     "diferente",
     "maior",
@@ -26,9 +25,9 @@ pub const COMBINADORES: &[&str] = &[
     "nao",
 ];
 
-pub const CONSTANTES: &[&str] = &["True", "False", "None"];
+pub const CONSTANTS: &[&str] = &["True", "False", "None"];
 
-pub const FUNCOES_PURAS: &[&str] = &[
+pub const PURE_FUNCTIONS: &[&str] = &[
     "abs",
     "all",
     "any",
@@ -49,27 +48,27 @@ pub const FUNCOES_PURAS: &[&str] = &[
     "zip",
 ];
 
-pub fn nomes_permitidos() -> Vec<&'static str> {
-    let mut nomes = Vec::new();
-    nomes.extend_from_slice(DECLARACOES);
-    nomes.extend_from_slice(VALORES);
-    nomes.extend_from_slice(EFEITOS);
-    nomes.extend_from_slice(COMBINADORES);
-    nomes.extend_from_slice(CONSTANTES);
-    nomes.extend_from_slice(FUNCOES_PURAS);
-    nomes
+pub fn allowed_names() -> Vec<&'static str> {
+    let mut names = Vec::new();
+    names.extend_from_slice(DECLARATIONS);
+    names.extend_from_slice(VALUES);
+    names.extend_from_slice(EFFECTS);
+    names.extend_from_slice(COMBINATORS);
+    names.extend_from_slice(CONSTANTS);
+    names.extend_from_slice(PURE_FUNCTIONS);
+    names
 }
 
-pub fn nome_permitido(nome: &str) -> bool {
-    DECLARACOES.contains(&nome)
-        || VALORES.contains(&nome)
-        || EFEITOS.contains(&nome)
-        || COMBINADORES.contains(&nome)
-        || CONSTANTES.contains(&nome)
-        || FUNCOES_PURAS.contains(&nome)
+pub fn is_allowed_name(nome: &str) -> bool {
+    DECLARATIONS.contains(&nome)
+        || VALUES.contains(&nome)
+        || EFFECTS.contains(&nome)
+        || COMBINATORS.contains(&nome)
+        || CONSTANTS.contains(&nome)
+        || PURE_FUNCTIONS.contains(&nome)
 }
 
-pub fn dialeto() -> Dialect {
+pub fn dialect() -> Dialect {
     Dialect {
         enable_def: true,
         enable_lambda: false,
@@ -85,7 +84,7 @@ pub fn dialeto() -> Dialect {
 }
 
 #[starlark::starlark_module]
-fn declaracoes(builder: &mut GlobalsBuilder) {
+fn declarations(builder: &mut GlobalsBuilder) {
     fn fluxo<'v>(#[starlark(kwargs)] _kwargs: Value<'v>) -> starlark::Result<NoneType> {
         Ok(NoneType)
     }
@@ -104,7 +103,7 @@ fn declaracoes(builder: &mut GlobalsBuilder) {
 
     fn campo<'v>(
         _id: &str,
-        _rotulo: &str,
+        _label: &str,
         #[starlark(kwargs)] _kwargs: Value<'v>,
     ) -> starlark::Result<NoneType> {
         Ok(NoneType)
@@ -112,7 +111,7 @@ fn declaracoes(builder: &mut GlobalsBuilder) {
 
     fn acao<'v>(
         _id: &str,
-        _rotulo: &str,
+        _label: &str,
         #[starlark(kwargs)] _kwargs: Value<'v>,
     ) -> starlark::Result<NoneType> {
         Ok(NoneType)
@@ -122,11 +121,11 @@ fn declaracoes(builder: &mut GlobalsBuilder) {
         Ok(NoneType)
     }
 
-    fn funcao(_nome: &str) -> starlark::Result<NoneType> {
+    fn funcao(_name: &str) -> starlark::Result<NoneType> {
         Ok(NoneType)
     }
 
-    fn mensagem_ao_cliente(_texto: &str) -> starlark::Result<NoneType> {
+    fn mensagem_ao_cliente(_text: &str) -> starlark::Result<NoneType> {
         Ok(NoneType)
     }
 
@@ -136,31 +135,31 @@ fn declaracoes(builder: &mut GlobalsBuilder) {
         Ok(NoneType)
     }
 
-    fn encaminhar(_departamento: &str) -> starlark::Result<NoneType> {
+    fn encaminhar(_department: &str) -> starlark::Result<NoneType> {
         Ok(NoneType)
     }
 
-    fn igual(_campo: &str, _valor: &str) -> starlark::Result<NoneType> {
+    fn igual(_field: &str, _value: &str) -> starlark::Result<NoneType> {
         Ok(NoneType)
     }
 
-    fn diferente(_campo: &str, _valor: &str) -> starlark::Result<NoneType> {
+    fn diferente(_field: &str, _value: &str) -> starlark::Result<NoneType> {
         Ok(NoneType)
     }
 
-    fn maior(_campo: &str, _valor: &str) -> starlark::Result<NoneType> {
+    fn maior(_field: &str, _value: &str) -> starlark::Result<NoneType> {
         Ok(NoneType)
     }
 
-    fn menor(_campo: &str, _valor: &str) -> starlark::Result<NoneType> {
+    fn menor(_field: &str, _value: &str) -> starlark::Result<NoneType> {
         Ok(NoneType)
     }
 
-    fn contem(_campo: &str, _valor: &str) -> starlark::Result<NoneType> {
+    fn contem(_field: &str, _value: &str) -> starlark::Result<NoneType> {
         Ok(NoneType)
     }
 
-    fn vazio(_campo: &str) -> starlark::Result<NoneType> {
+    fn vazio(_field: &str) -> starlark::Result<NoneType> {
         Ok(NoneType)
     }
 
@@ -177,35 +176,35 @@ fn declaracoes(builder: &mut GlobalsBuilder) {
     }
 }
 
-pub fn globais() -> Globals {
+pub fn environment() -> Globals {
     GlobalsBuilder::extended_by(&[LibraryExtension::StructType])
-        .with(declaracoes)
+        .with(declarations)
         .build()
 }
 
-pub struct Prazos {
-    pub ate: Instant,
+pub struct Deadlines {
+    pub until: Instant,
 }
 
-pub fn analisa(fonte: &str, nome: &str) -> Result<AstModule, starlark::Error> {
-    AstModule::parse(nome, fonte.to_owned(), &dialeto())
+pub fn parse_ast(fonte: &str, nome: &str) -> Result<AstModule, starlark::Error> {
+    AstModule::parse(nome, fonte.to_owned(), &dialect())
 }
 
-pub struct LimitesStarlark {
+pub struct StarlarkLimits {
     pub max_ticks: u64,
     pub max_heap_bytes: usize,
     pub max_callstack: usize,
-    pub prazo: Duration,
+    pub deadline: Duration,
 }
 
-pub fn carregar_modulo(
+pub fn load_module(
     fonte: &str,
     nome: &str,
-    limites: &LimitesStarlark,
+    limites: &StarlarkLimits,
 ) -> Result<FrozenModule, starlark::Error> {
-    let ast = analisa(fonte, nome)?;
-    let globais = globais();
-    let prazo = Instant::now() + limites.prazo;
+    let ast = parse_ast(fonte, nome)?;
+    let environment = environment();
+    let deadline = Instant::now() + limites.deadline;
     let (max_ticks, max_heap, max_callstack) = (
         limites.max_ticks,
         limites.max_heap_bytes,
@@ -219,20 +218,20 @@ pub fn carregar_modulo(
             .map_err(starlark::Error::new_other)?;
         eval.set_max_callstack_size(max_callstack)
             .map_err(starlark::Error::new_other)?;
-        eval.set_check_cancelled(Box::new(move || Instant::now() > prazo));
-        eval.eval_module(ast, &globais)?;
+        eval.set_check_cancelled(Box::new(move || Instant::now() > deadline));
+        eval.eval_module(ast, &environment)?;
         drop(eval);
         module.freeze().map_err(starlark::Error::new_other)
     })
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use super::*;
 
     #[test]
-    fn a_lista_fechada_e_exatamente_a_do_documento() {
-        let esperado = [
+    fn closed_list_is_exactly_the_document_one() {
+        let expected = [
             "fluxo",
             "etapa",
             "decisao",
@@ -275,17 +274,17 @@ mod testes {
             "tuple",
             "zip",
         ];
-        assert_eq!(nomes_permitidos(), esperado.to_vec());
-        assert_eq!(nomes_permitidos().len(), 41);
+        assert_eq!(allowed_names(), expected.to_vec());
+        assert_eq!(allowed_names().len(), 41);
         for nome in [
             "time", "open", "random", "os", "socket", "print", "load", "eval", "fail",
         ] {
-            assert!(!nome_permitido(nome), "{nome} não pode existir no dialeto");
+            assert!(!is_allowed_name(nome), "{nome} não pode existir no dialeto");
         }
     }
 
     #[test]
-    fn o_dialeto_recusa_o_que_o_parser_ja_recusa() {
+    fn dialect_refuses_what_the_parser_already_refuses() {
         for fonte in [
             "load(\"x.star\", \"y\")\n",
             "for x in [1]:\n    pass\n",
@@ -295,10 +294,10 @@ mod testes {
             "def gira(dados):\n    while True: pass\n",
         ] {
             assert!(
-                analisa(fonte, "t.star").is_err(),
+                parse_ast(fonte, "t.star").is_err(),
                 "o dialeto tinha de recusar: {fonte:?}"
             );
         }
-        assert!(analisa("x = 1\n", "t.star").is_ok());
+        assert!(parse_ast("x = 1\n", "t.star").is_ok());
     }
 }

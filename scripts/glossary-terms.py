@@ -664,20 +664,37 @@ def read_mapping():
     return mapping, duplicated
 
 
+LEGACY_FLOW_CONSTANTS = {
+    "DECLARATIONS": "DECLARACOES",
+    "VALUES": "VALORES",
+    "EFFECTS": "EFEITOS",
+    "COMBINATORS": "COMBINADORES",
+    "CONSTANTS": "CONSTANTES",
+    "PURE_FUNCTIONS": "FUNCOES_PURAS",
+}
+
+
 def flow_language_names():
-    source = (ROOT / "crates" / "poph-fluxos" / "src" / "linguagem.rs").read_text(encoding="utf-8")
+    source = (ROOT / "crates" / "poph-fluxos" / "src" / "language.rs")
+    if not source.is_file():
+        source = ROOT / "crates" / "poph-fluxos" / "src" / "linguagem.rs"
+    source = source.read_text(encoding="utf-8")
     names = []
     for constant in (
-        "DECLARACOES",
-        "VALORES",
-        "EFEITOS",
-        "COMBINADORES",
-        "CONSTANTES",
-        "FUNCOES_PURAS",
+        "DECLARATIONS",
+        "VALUES",
+        "EFFECTS",
+        "COMBINATORS",
+        "CONSTANTS",
+        "PURE_FUNCTIONS",
     ):
         found = re.search(rf"pub const {constant}: &\[&str\] = &\[(.*?)\];", source, re.S)
         if found is None:
-            raise SystemExit(f"linguagem.rs: constant {constant} not found")
+            legacy = LEGACY_FLOW_CONSTANTS.get(constant)
+            if legacy is not None:
+                found = re.search(rf"pub const {legacy}: &\[&str\] = &\[(.*?)\];", source, re.S)
+        if found is None:
+            raise SystemExit(f"language.rs: constant {constant} not found")
         names.extend(re.findall(r'"([^"]+)"', found.group(1)))
     return names
 

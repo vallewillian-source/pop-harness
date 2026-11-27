@@ -26,7 +26,12 @@ fn campo(id: &str, tipo: FieldKind, obrigatorio: bool) -> Campo {
     }
 }
 
-fn acao_para(id: &str, ator: Option<ActionActor>, destino: Destination, efeitos: Vec<Effect>) -> Acao {
+fn acao_para(
+    id: &str,
+    ator: Option<ActionActor>,
+    destino: Destination,
+    efeitos: Vec<Effect>,
+) -> Acao {
     Acao {
         id: id.to_owned(),
         label: id.to_uppercase(),

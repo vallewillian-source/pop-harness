@@ -1,4 +1,3 @@
-
 use std::fmt;
 use std::str::FromStr;
 
@@ -98,7 +97,7 @@ impl Code {
         Self::ALL
             .iter()
             .copied()
-            .filter(|codigo| *codigo != Self::UnknownDepartment)
+            .filter(|code| *code != Self::UnknownDepartment)
     }
 
     pub fn as_text(self) -> &'static str {
@@ -148,10 +147,7 @@ impl Code {
     }
 
     pub fn from_text(texto: &str) -> Option<Self> {
-        Self::ALL
-            .iter()
-            .copied()
-            .find(|c| c.as_text() == texto)
+        Self::ALL.iter().copied().find(|c| c.as_text() == texto)
     }
 }
 
@@ -224,55 +220,57 @@ pub struct Diagnostic {
 }
 
 impl Diagnostic {
-    pub fn error(code: Code, mensagem: impl Into<String>, linha: u32, coluna: u32) -> Self {
+    pub fn error(
+        code: Code,
+        mensagem: impl Into<String>,
+        line_number: u32,
+        column_number: u32,
+    ) -> Self {
         Self {
             code,
             severity: Severity::Error,
             mensagem: mensagem.into(),
-            line: Some(linha),
-            column: Some(coluna),
+            line: Some(line_number),
+            column: Some(column_number),
             path: None,
         }
     }
 
-    pub fn warning(code: Code, mensagem: impl Into<String>, linha: u32, coluna: u32) -> Self {
+    pub fn warning(
+        code: Code,
+        mensagem: impl Into<String>,
+        line_number: u32,
+        column_number: u32,
+    ) -> Self {
         Self {
             code,
             severity: Severity::Warning,
             mensagem: mensagem.into(),
-            line: Some(linha),
-            column: Some(coluna),
+            line: Some(line_number),
+            column: Some(column_number),
             path: None,
         }
     }
 
-    pub fn error_at(
-        code: Code,
-        mensagem: impl Into<String>,
-        caminho: impl Into<String>,
-    ) -> Self {
+    pub fn error_at(code: Code, mensagem: impl Into<String>, node: impl Into<String>) -> Self {
         Self {
             code,
             severity: Severity::Error,
             mensagem: mensagem.into(),
             line: None,
             column: None,
-            path: Some(caminho.into()),
+            path: Some(node.into()),
         }
     }
 
-    pub fn warning_at(
-        code: Code,
-        mensagem: impl Into<String>,
-        caminho: impl Into<String>,
-    ) -> Self {
+    pub fn warning_at(code: Code, mensagem: impl Into<String>, node: impl Into<String>) -> Self {
         Self {
             code,
             severity: Severity::Warning,
             mensagem: mensagem.into(),
             line: None,
             column: None,
-            path: Some(caminho.into()),
+            path: Some(node.into()),
         }
     }
 
@@ -296,15 +294,15 @@ impl Diagnostic {
 impl fmt::Display for Diagnostic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match (&self.path, self.line, self.column) {
-            (Some(caminho), _, _) => write!(
+            (Some(node), _, _) => write!(
                 f,
                 "{}: {}: {} (no nó {})",
-                self.severity, self.code, self.mensagem, caminho
+                self.severity, self.code, self.mensagem, node
             ),
-            (None, Some(linha), Some(coluna)) => write!(
+            (None, Some(line_number), Some(column_number)) => write!(
                 f,
                 "{}: {}: {} (linha {}, coluna {})",
-                self.severity, self.code, self.mensagem, linha, coluna
+                self.severity, self.code, self.mensagem, line_number, column_number
             ),
             _ => write!(f, "{}: {}: {}", self.severity, self.code, self.mensagem),
         }
@@ -324,16 +322,16 @@ mod tests {
 
     #[test]
     fn each_code_round_trips_through_text_and_refuses_unknown() {
-        for codigo in Code::ALL {
-            let texto = codigo.as_text();
+        for code in Code::ALL {
+            let texto = code.as_text();
             assert_eq!(
                 Code::from_text(texto),
-                Some(*codigo),
+                Some(*code),
                 "ida e volta de {texto}"
             );
-            assert_eq!(Code::from_str(texto), Ok(*codigo));
-            assert_eq!(codigo.to_string(), texto);
-            let json = serde_json::to_string(codigo).unwrap();
+            assert_eq!(Code::from_str(texto), Ok(*code));
+            assert_eq!(code.to_string(), texto);
+            let json = serde_json::to_string(code).unwrap();
             assert_eq!(json, format!("\"{texto}\""));
         }
         assert_eq!(Code::from_text("FLX99"), None);
@@ -351,12 +349,7 @@ mod tests {
 
     #[test]
     fn diagnostic_shows_severity_code_and_position() {
-        let d = Diagnostic::error(
-            Code::UnknownArgument,
-            "`obligatorio` não existe",
-            3,
-            7,
-        );
+        let d = Diagnostic::error(Code::UnknownArgument, "`obligatorio` não existe", 3, 7);
         assert_eq!(
             d.to_string(),
             "erro: FLX12: `obligatorio` não existe (linha 3, coluna 7)"
@@ -384,8 +377,8 @@ mod tests {
         let json = serde_json::to_string(&d).unwrap();
         assert!(!json.contains("linha"), "{json}");
         assert!(json.contains("\"caminho\""), "{json}");
-        let voltou: Diagnostic = serde_json::from_str(&json).unwrap();
-        assert_eq!(voltou, d);
+        let round_tripped: Diagnostic = serde_json::from_str(&json).unwrap();
+        assert_eq!(round_tripped, d);
     }
 
     #[test]

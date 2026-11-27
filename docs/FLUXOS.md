@@ -174,6 +174,41 @@ O passo a passo para descobrir o motivo está em [RUNBOOKS.md](RUNBOOKS.md), na 
 | Contadores das execuções | `poph-server/tests/fluxos_contadores.rs` (7 testes) e o caso de contadores em `fluxos_e2e.rs` |
 | Desempenho | seção [Medidas](#medidas) abaixo |
 
+## 8. Crate layout
+
+`poph-fluxos` is pure: no I/O, no database, no network. It depends on `poph-types` and the script
+library (Starlark) only, and imports no other workspace crate.
+
+| Module | Responsibility |
+|---|---|
+| `compilador` | script → IR, with shape diagnostics. |
+| `validador` | semantic diagnostics over the IR and department resolution. |
+| `regras` | combinators and advanced functions (`def`), with tick, heap and deadline caps. |
+| `motor` | one run of an execution: start, record fields, run an action, advance, resolve decisions, reach the end, abandon and produce effects. |
+| `prompt` | the step block of the prompt and its rendering. |
+| `diff` | difference between revisions in plain language. |
+| `formatador` | canonical form of the script (script ⇄ structure). |
+| `cache` | cache of compiled revisions (LRU with an MB cap, single-flight and fail-closed). |
+| `ir`, `language`, `diagnostics` | the compiled structure, the dialect and the closed diagnostic list. |
+
+The IR schema rules (every field always present, declaration order, additive changes only) are in
+[FLUXOS_LINGUAGEM.md](FLUXOS_LINGUAGEM.md) §8; the closed diagnostic list, the two directions
+(line/column over the text, node path over the IR) and the rule that only an error blocks a
+publication are in §10.
+
+**Load path.** A script is loaded as parse → evaluation with limits → freeze. The engine uses it to
+have the module with the `def`s loaded; the compiler uses the same path as the last barrier, so with
+a script of valid shape the load can only fail on a limit (§3.4).
+
+**Declaration functions do nothing.** The functions registered in the Starlark module return `None`:
+the compiler builds the IR from the syntax tree (that is what gives line and column for each
+diagnostic) and the engine only needs the frozen module to evaluate the `def`s.
+
+**Why `blake3` is a dependency.** It comes with Starlark and has no direct use in this crate: the
+cache key uses `sha2`, the same `sha256` as `fluxo_revisoes.fonte_sha256`. `use blake3 as _;` only
+marks the dependency as used, because the Rust `unused_dependencies` lint breaks clippy with
+`-D warnings`.
+
 ## Medidas
 
 **Máquina:** Fedora 44, x86_64, AMD Ryzen 5 5600GT (6 núcleos, 12 threads), 32 GB de RAM.

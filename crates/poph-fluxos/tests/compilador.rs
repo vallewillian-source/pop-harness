@@ -816,9 +816,7 @@ fn carregar_recusa_texto_que_nao_compila() {
     match carregar(&ir, &quebrado, &limites()) {
         Err(FalhaCarregamento::Forma(diagnosticos)) => {
             assert!(
-                diagnosticos
-                    .iter()
-                    .any(|d| d.code == Code::MissingArgument),
+                diagnosticos.iter().any(|d| d.code == Code::MissingArgument),
                 "esperava FLX11: {diagnosticos:?}"
             );
             assert_eq!(
@@ -837,6 +835,7 @@ fn a_ir_ignora_campo_desconhecido_na_leitura() {
     let ir = compila(&fonte).ir.expect("IR");
     let mut json: serde_json::Value = serde_json::from_str(&ir.to_json()).expect("JSON");
     json["campo_do_futuro"] = serde_json::json!({"qualquer": "coisa"});
-    let lida = poph_fluxos::Ir::from_json(&json.to_string()).expect("campo desconhecido é ignorado");
+    let lida =
+        poph_fluxos::Ir::from_json(&json.to_string()).expect("campo desconhecido é ignorado");
     assert_eq!(lida, ir);
 }

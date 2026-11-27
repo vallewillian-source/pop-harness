@@ -1,4 +1,3 @@
-
 use serde::{Deserialize, Serialize};
 
 use poph_types::{ActionActor, FieldKind};

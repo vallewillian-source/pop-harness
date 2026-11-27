@@ -7,7 +7,7 @@
 //! Nada aqui executa o script. Não há chamada ao interpretador nem alocação guiada por dado do
 //! autor: `"x" * 1000000000` no topo do arquivo é erro de forma em microssegundos, não um pico de
 //! 2 GB. A única avaliação de Starlark do compilador é a carga do módulo
-//! ([`crate::linguagem::carregar_modulo`]), que roda **depois** de a forma estar válida e com os
+//! ([`crate::language::load_module`]), que roda **depois** de a forma estar válida e com os
 //! limites ligados.
 //!
 //! Duas passagens, de propósito:
@@ -30,12 +30,12 @@ use starlark::syntax::ast::{
     Clause, DefP, Expr, Parameter, Stmt,
 };
 
-use crate::diagnostico::{Code, Diagnostic};
+use crate::diagnostics::{Code, Diagnostic};
 use crate::ir::{
     Acao, Campo, Decisao, Def, Destination, Effect, Etapa, Fim, Fluxo, Gatilho, Ir, Rule,
     SCHEMA_VERSAO,
 };
-use crate::linguagem::nome_permitido;
+use crate::language::is_allowed_name;
 
 /// Argumentos de uma chamada do script.
 type ArgsAst<'a> = &'a CallArgsP<AstNoPayload>;
@@ -1117,11 +1117,26 @@ impl<'a> Forma<'a> {
                     return RegraBruta::Invalida;
                 };
                 let regra = match nome.as_str() {
-                    "igual" => Rule::Igual { campo, value: valor },
-                    "diferente" => Rule::Diferente { campo, value: valor },
-                    "maior" => Rule::Maior { campo, value: valor },
-                    "menor" => Rule::Menor { campo, value: valor },
-                    _ => Rule::Contem { campo, value: valor },
+                    "igual" => Rule::Igual {
+                        campo,
+                        value: valor,
+                    },
+                    "diferente" => Rule::Diferente {
+                        campo,
+                        value: valor,
+                    },
+                    "maior" => Rule::Maior {
+                        campo,
+                        value: valor,
+                    },
+                    "menor" => Rule::Menor {
+                        campo,
+                        value: valor,
+                    },
+                    _ => Rule::Contem {
+                        campo,
+                        value: valor,
+                    },
                 };
                 RegraBruta::Folha {
                     regra,
@@ -1296,7 +1311,7 @@ impl<'a> Forma<'a> {
 
     fn coleta_def(&mut self, def: &'a DefP<AstNoPayload>, item: &'a AstStmt, pos: Pos) {
         let nome = def.name.node.ident.clone();
-        if nome_permitido(&nome) {
+        if is_allowed_name(&nome) {
             self.erro(
                 Code::InvalidDef,
                 format!("`{nome}` é nome reservado da linguagem de fluxos; escolha outro nome para a função de regra."),
@@ -1691,7 +1706,8 @@ impl<'a> Forma<'a> {
         }
         match regra {
             Rule::Igual { value: valor, .. } | Rule::Diferente { value: valor, .. } => {
-                if !campo_info.options.is_empty() && !campo_info.options.iter().any(|o| o == valor) {
+                if !campo_info.options.is_empty() && !campo_info.options.iter().any(|o| o == valor)
+                {
                     self.aviso(
                         Code::OutsideOptions,
                         format!(
@@ -2173,7 +2189,7 @@ impl<'a> Forma<'a> {
 
     fn confere_nome(&mut self, ident: &'a AstIdent, locais: &BTreeSet<String>) {
         let nome = ident.node.ident.as_str();
-        if nome_permitido(nome) || locais.contains(nome) {
+        if is_allowed_name(nome) || locais.contains(nome) {
             return;
         }
         let pos = self.pos(ident.span);
@@ -2307,11 +2323,26 @@ fn clone_bruto(bruto: &DestinoBruto) -> DestinoBruto {
 
 fn folha_chave(regra: &Rule) -> (Option<&str>, Option<&str>, &'static str) {
     match regra {
-        Rule::Igual { campo, value: valor } => (Some(campo), Some(valor), "igual"),
-        Rule::Diferente { campo, value: valor } => (Some(campo), Some(valor), "diferente"),
-        Rule::Maior { campo, value: valor } => (Some(campo), Some(valor), "maior"),
-        Rule::Menor { campo, value: valor } => (Some(campo), Some(valor), "menor"),
-        Rule::Contem { campo, value: valor } => (Some(campo), Some(valor), "contem"),
+        Rule::Igual {
+            campo,
+            value: valor,
+        } => (Some(campo), Some(valor), "igual"),
+        Rule::Diferente {
+            campo,
+            value: valor,
+        } => (Some(campo), Some(valor), "diferente"),
+        Rule::Maior {
+            campo,
+            value: valor,
+        } => (Some(campo), Some(valor), "maior"),
+        Rule::Menor {
+            campo,
+            value: valor,
+        } => (Some(campo), Some(valor), "menor"),
+        Rule::Contem {
+            campo,
+            value: valor,
+        } => (Some(campo), Some(valor), "contem"),
         Rule::Vazio { campo } => (Some(campo), None, "vazio"),
         _ => (None, None, ""),
     }

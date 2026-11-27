@@ -305,7 +305,11 @@ fn publicar(sessao: &Sessao, org: Option<&str>, args: PublicarArgs) -> Result<Ex
     let compilado = ops.compilar(&fonte);
     if compilado.tem_erro() {
         imprimir_diagnosticos(&compilado.diagnosticos);
-        let erros = compilado.diagnosticos.iter().filter(|d| d.is_error()).count();
+        let erros = compilado
+            .diagnosticos
+            .iter()
+            .filter(|d| d.is_error())
+            .count();
         return Err(format!(
             "o script não passa na validação: {erros} erro(s) a corrigir; nada foi gravado"
         ));

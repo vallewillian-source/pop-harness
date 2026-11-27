@@ -1116,11 +1116,26 @@ fn destino_frase(ir: &Ir, destino: &Destination) -> String {
 
 fn regra_em_texto(regra: &Rule) -> String {
     match regra {
-        Rule::Igual { campo, value: valor } => format!("`{campo}` é igual a \"{valor}\""),
-        Rule::Diferente { campo, value: valor } => format!("`{campo}` é diferente de \"{valor}\""),
-        Rule::Maior { campo, value: valor } => format!("`{campo}` é maior que {valor}"),
-        Rule::Menor { campo, value: valor } => format!("`{campo}` é menor que {valor}"),
-        Rule::Contem { campo, value: valor } => format!("`{campo}` contém \"{valor}\""),
+        Rule::Igual {
+            campo,
+            value: valor,
+        } => format!("`{campo}` é igual a \"{valor}\""),
+        Rule::Diferente {
+            campo,
+            value: valor,
+        } => format!("`{campo}` é diferente de \"{valor}\""),
+        Rule::Maior {
+            campo,
+            value: valor,
+        } => format!("`{campo}` é maior que {valor}"),
+        Rule::Menor {
+            campo,
+            value: valor,
+        } => format!("`{campo}` é menor que {valor}"),
+        Rule::Contem {
+            campo,
+            value: valor,
+        } => format!("`{campo}` contém \"{valor}\""),
         Rule::Vazio { campo } => format!("`{campo}` está vazio"),
         Rule::E { args } => format!("({})", juntar(args, " e ")),
         Rule::Ou { args } => format!("({})", juntar(args, " ou ")),

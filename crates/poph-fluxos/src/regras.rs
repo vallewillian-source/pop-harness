@@ -59,7 +59,7 @@ use poph_types::config::FlowsConfig;
 
 use crate::compilador::Limites;
 use crate::ir::Rule;
-use crate::linguagem::{LimitesStarlark, carregar_modulo};
+use crate::language::{StarlarkLimits, load_module};
 
 /// Erro de avaliação de regra.
 ///
@@ -177,11 +177,11 @@ impl Avaliador {
         carga: &Limites,
         limites: LimitesRegra,
     ) -> Result<Self, ErroRegra> {
-        let starlark = LimitesStarlark {
+        let starlark = StarlarkLimits {
             max_ticks: carga.max_ticks,
             max_heap_bytes: carga.max_heap_bytes,
             max_callstack: carga.max_callstack,
-            prazo: carga.prazo_de_carga,
+            deadline: carga.prazo_de_carga,
         };
         let modulo = carregar_com_prazo(fonte, starlark)?;
         Ok(Self {
@@ -215,21 +215,36 @@ impl Avaliador {
             )));
         }
         match regra {
-            Rule::Igual { campo, value: valor } => Ok(igual(valor_do_campo(dados, campo)?, valor)),
-            Rule::Diferente { campo, value: valor } => Ok(!igual(valor_do_campo(dados, campo)?, valor)),
-            Rule::Maior { campo, value: valor } => comparar(
+            Rule::Igual {
+                campo,
+                value: valor,
+            } => Ok(igual(valor_do_campo(dados, campo)?, valor)),
+            Rule::Diferente {
+                campo,
+                value: valor,
+            } => Ok(!igual(valor_do_campo(dados, campo)?, valor)),
+            Rule::Maior {
+                campo,
+                value: valor,
+            } => comparar(
                 valor_do_campo(dados, campo)?,
                 valor,
                 campo,
                 std::cmp::Ordering::Greater,
             ),
-            Rule::Menor { campo, value: valor } => comparar(
+            Rule::Menor {
+                campo,
+                value: valor,
+            } => comparar(
                 valor_do_campo(dados, campo)?,
                 valor,
                 campo,
                 std::cmp::Ordering::Less,
             ),
-            Rule::Contem { campo, value: valor } => Ok(contem(valor_do_campo(dados, campo)?, valor)),
+            Rule::Contem {
+                campo,
+                value: valor,
+            } => Ok(contem(valor_do_campo(dados, campo)?, valor)),
             Rule::Vazio { campo } => Ok(vazio(valor_do_campo(dados, campo)?)),
             Rule::E { args } => {
                 for arg in args {
@@ -318,15 +333,15 @@ impl Avaliador {
 /// depois de segundos (medido: ~4 s para 10⁸, ~35 s para 10⁹). Por isso a carga roda em thread
 /// separada: o chamador recebe `RegraLimite` no prazo combinado, e a thread abandonada termina
 /// sozinha. Sem isso, uma revisão publicada assim travaria o turno do atendimento.
-fn carregar_com_prazo(fonte: &str, limites: LimitesStarlark) -> Result<FrozenModule, ErroRegra> {
-    let prazo = limites.prazo;
+fn carregar_com_prazo(fonte: &str, limites: StarlarkLimits) -> Result<FrozenModule, ErroRegra> {
+    let prazo = limites.deadline;
     let (envio, recepcao) = mpsc::channel();
     let fonte = fonte.to_owned();
     std::thread::Builder::new()
         .name("fluxo-carga".to_owned())
         .spawn(move || {
             // Se o chamador já desistiu, o envio falha e não é erro.
-            let _ = envio.send(carregar_modulo(&fonte, "fluxo", &limites));
+            let _ = envio.send(load_module(&fonte, "fluxo", &limites));
         })
         .map_err(|erro| limite(format!("não foi possível abrir a thread da carga: {erro}")))?;
 
