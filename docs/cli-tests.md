@@ -107,3 +107,97 @@ Helpers: the scenario without the embedding model runs the commands and leaves t
 - `remote_check_approves_equal_map_across_instances` (HR-50b-2): the fake server answers a single JSON response per connection on a fake `/healthz` and returns the address; the listener is already open so the address enters the map **before** the test computes the fingerprint, because the URL is part of the canonical text. The fingerprint is computed before the fake server answers, and the fake server stays up until the end of the test process (it is not joined to the thread).
 - `remote_check_fails_divergent_map_and_instance_down`: a divergent map on one side and the other side down exits 1 and points at both; the port nobody listens on is opened and closed immediately. In JSON: `ok: false`, one remote problem per instance and no secret.
 - `remote_check_without_cluster_consults_nothing`: nothing to consult, exits 0 and says so.
+
+## `cli_flow.rs`
+
+End to end for `poph flow` and `poph ficha` (FX-31): a real process and a real database in a temporary directory. The scripts and the publication rules are tested in the API (`crates/poph-server/tests/fluxos_api.rs`); here the command line is checked: exit codes, the shape of `--json`, the error messages and the effect on the database, read by the repository itself. The data is fictional.
+
+Fixtures: `SCRIPT_V1` is the same script the API uses, with the `confirmacao` step as the starting point of revision 2; `SCRIPT_V2` carries another instruction in `confirmacao`, so revision 2 changes one sentence; `BROKEN_SCRIPT` has a syntax error on line 3 (the `nome` value does not exist).
+
+Helpers: the scenario is a temporary directory with the data directory, and the database is born on the first CLI run; `poph` runs with a clean environment, an isolated current directory and the test data directory; `write_file` writes a file into the test directory and returns the path; `create_org` and `create_agent` create through the CLI and return the id; `store` opens the test database directly through the repository (the CLI already migrated it); `keys` lists the top-level keys of a JSON object in order, to prove the shape does not change; `publish_ok` publishes a script in a new file and checks it worked (creation, revision 1); `fluxo_id` reads the id of the `agendar_visita` flow of the org from the repository.
+
+- `validate_good_script_exits_zero_and_json_has_stable_shape`.
+- `validate_bad_script_exits_one_and_points_at_line_and_column`.
+- `publish_lists_and_shows_the_flow`.
+- `publish_new_revision_requires_version_and_leaves_revision_1_untouched`: without `--if-match` the publication of an existing flow does not happen; an old version is a conflict and nothing is written; the right version produces revision 2. The draft becomes the published text, so `mostrar` cannot bring old text, and revision 1 keeps the text byte for byte as published.
+- `publish_invalid_script_writes_nothing`.
+- `format_is_idempotent_and_writes_to_the_same_file`: the script enters in compact form, which is not the canonical one, so without writing the file stays as it is and the test fails; writing puts exactly the canonical form in the file, and formatting the canonical form again changes nothing.
+- `format_script_that_does_not_compile_exits_one`: a bad script is not written.
+- `diff_shows_what_changed_and_the_cases_in_each_revision`.
+- `release_and_withdraw_change_agent_permission`.
+- `exit_codes_for_usage_and_error`: without `--org` on a command that reads org data it is a business error, code 1; a file that does not exist and a status outside the vocabulary also exit 1; a nonexistent subcommand is wrong usage, code 2 (clap decides).
+- `list_empty_cases_and_show_missing_case`.
+- `case_with_filter_and_detail_appear_in_the_cli`.
+
+## `cli_jev.rs`
+
+End to end for `poph jev eval` (HR-28): a real process against a fake local Jev on an ephemeral port, with no external network and no real key. What is checked here is the command line — exit codes, the printed report, a stable JSON and the refusal when the key is missing.
+
+Helper: `jev_server` starts a fake Jev that always answers the given choice and confidence, with an optional `usage`.
+
+- `measures_the_dataset_and_prints_accuracy_abstention_and_latency`.
+- `json_report_is_stable`.
+- `without_key_refuses_and_says_what_is_missing`.
+- `unknown_gate_and_missing_file_fail_with_a_message`.
+- `help_lists_the_subcommand`.
+- `abstention_shows_choice_and_reason`: acceptance of the calibration — with an answer below the threshold (confidence 0.50 against the G1 threshold 0.70) the report shows the model choice, the confidence and the reason for the fallback, in the text and in the JSON.
+- `without_usage_says_not_reported`: with no `usage` in the response body the report says "not reported" instead of inventing a number.
+
+## `cli_kb.rs`
+
+End to end for `poph kb` (HR-17): a real process, a real database and a real index. The index needs the embedding model, so the scenario points the model folder at the repository one (symlink in `dados/modelos`); without the installed model the tests are skipped, like the `poph-rag` ones.
+
+- `cli_kb_creates_indexes_searches_edits_and_deletes`.
+- `cli_kb_refuses_item_above_one_thousand_characters`.
+- `repo_models_dir_exists`: guarantees the scenario symlink points at an existing folder (environment diagnosis).
+- `cli_rag_reindex_is_idempotent`: `poph rag reindex` (the name the PRD uses) really reindexes and is idempotent — running again without a change generates no embedding; a lost index is rebuilt from scratch.
+
+## `cli_matrix.rs`
+
+End to end for `poph matrix registro`: a real process, a controlled environment. What must be proven (MX-21): the file comes out with mode 0600, it does not overwrite without `--forcar`, a missing token names the variable, no token appears on stdout or stderr, and `--verificar` accepts what this command generated and refuses (naming the field) what diverges from the configuration.
+
+Helpers: `config` writes the minimal configuration with the `[matrix]` section on and valid; `environment` is the clean environment with only what the command needs.
+
+- `generates_with_0600_without_token_in_output_and_verify_accepts_it`.
+- `refuses_overwrite_without_force_and_overwrites_with_force`.
+- `missing_token_names_the_variable_without_showing_the_other`.
+- `without_url_the_error_explains_what_is_missing`.
+- `url_from_environment_variable_works`.
+- `verify_refuses_swapped_url_naming_the_field`.
+- `verify_refuses_swapped_prefix_naming_the_namespaces`.
+- `verify_refuses_token_different_from_environment_without_showing_value`.
+- `without_matrix_section_the_error_says_what_is_missing`.
+- `verify_missing_file_does_not_pass_in_silence`.
+- `output_and_verify_together_are_refused`.
+
+## `cli_matrix_module.rs`
+
+End to end for `poph matrix estado|ligar|desligar|espaco` (MX-23): a real process, a real database and, in the space tests, a **fake Synapse** up on an ephemeral port. It proves:
+
+- `estado`, `ligar` and `desligar` show and write the same as the API (MX-22): the backfill cutoff is written on the first turn-on, repeating does not move the cutoff and turning off preserves it;
+- `espaco --departamento` creates the space once (repeating does not create a second), `espaco` lists, and `espaco desligar` removes the row without deleting anything in Synapse;
+- a nonexistent org, use without `--offline`/`--org`, the module off, a missing token and a department from another org give a clear error, with no token value in the output;
+- no output carries the token values (the canary values).
+
+The version check (`412`, exit code 3) is proven by a unit test in `matrix_admin.rs`, because the CLI is what reads the version and writes, and no external process can change the row mid-way.
+
+The fake Synapse block is a copy of the routes of `crates/poph-server/tests/matrix_api.rs`: each test file is a crate, and a `poph-server` test cannot be imported here. It runs on an ephemeral port in its own thread with its own runtime, because the test is synchronous (it runs `poph` as a process, and the process talks to the real Synapse over HTTP).
+
+Helpers: `Scenario` is a test directory with its own `poph.toml` and database, and `homeserver` points at the fake Synapse (or at a dead address when the test does not talk to it); `create_org` and `create_department` create through the CLI and return the id; `without_tokens` proves no token value appears in the output; `spaces_in_synapse` counts the spaces (`m.space`) the fake Synapse holds; `query_argument` is the minimal percent-encoding of a user id in the `user_id` parameter.
+
+- `state_turn_on_and_off_through_the_cli_preserve_the_cutoff`.
+- `org_and_usage_without_the_flags_give_a_clear_error`.
+- `space_creates_once_lists_and_turns_off_without_deleting_in_element`.
+- `space_without_tokens_names_the_variable_and_writes_nothing`.
+- `space_with_module_off_refuses_with_the_instruction`.
+- `department_space_from_another_org_does_not_exist_for_this_org`.
+- `space_refuses_combinations_and_invalid_space`.
+
+## `cli_product.rs`
+
+End to end for `poph product` (HR-18): a real process, a real database and a real index. The index needs the embedding model, so the scenario points the model folder at the repository one (symlink in `dados/modelos`); without the installed model the tests are skipped, like the `poph-rag` and `poph kb` ones.
+
+`Scenario::new` returns `None` when the model is not installed (the test is skipped). Notes kept from the tests: the write reindexes the org agent; an old `If-Match` is refused; without `--force` the deletion does not happen; a negative price is refused with a clear error and nothing is written; a nonexistent category is refused.
+
+- `cli_product_creates_shows_updates_and_deletes`.
+- `cli_product_reindexes_and_respects_the_price_limit`.

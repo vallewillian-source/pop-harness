@@ -43,5 +43,5 @@ workspace = true
 rusqlite.workspace = true
 # `tests/token_api.rs`: cliente HTTP para provar o token criado pela CLI autenticando na API.
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
-# `tests/cli_matrix_modulo.rs`: Synapse falso no ar para a CLI do módulo Matrix (MX-23).
+# `tests/cli_matrix_module.rs`: Synapse falso no ar para a CLI do módulo Matrix (MX-23).
 axum = { version = "0.8", features = ["macros"] }

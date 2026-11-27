@@ -1,9 +1,3 @@
-//! Testes de ponta a ponta de `poph jev eval` (HR-28).
-//!
-//! Processo de verdade contra um Jev falso local (porta efêmera): sem rede externa e sem chave real.
-//! O que se confere aqui é a linha de comando — códigos de saída, relatório impresso, JSON estável e
-//! a recusa quando falta a chave.
-
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -12,136 +6,132 @@ use std::process::{Command, Output};
 
 const CHAVE: &str = "chave-de-teste-nao-vaza";
 
-/// Sobe um Jev falso que sempre responde a escolha e a confiança dadas, com `usage` opcional.
-fn servidor_jev(escolha: &'static str, confianca: f64, uso: Option<(u64, u64)>) -> u16 {
-    let lista = TcpListener::bind("127.0.0.1:0").expect("porta efêmera");
-    let porta = lista.local_addr().expect("endereço").port();
+fn jev_server(choice: &'static str, confidence: f64, usage: Option<(u64, u64)>) -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("porta efêmera");
+    let porta = listener.local_addr().expect("endereço").port();
     std::thread::spawn(move || {
-        for fluxo in lista.incoming().flatten() {
-            let _ = atender(&fluxo, escolha, confianca, uso);
+        for fluxo in listener.incoming().flatten() {
+            let _ = handle(&fluxo, choice, confidence, usage);
         }
     });
     porta
 }
 
-fn atender(
+fn handle(
     fluxo: &TcpStream,
-    escolha: &str,
-    confianca: f64,
-    uso: Option<(u64, u64)>,
+    choice: &str,
+    confidence: f64,
+    usage: Option<(u64, u64)>,
 ) -> std::io::Result<()> {
-    let mut leitor = BufReader::new(fluxo);
-    let mut cabecalhos = String::new();
+    let mut reader = BufReader::new(fluxo);
+    let mut headers = String::new();
     loop {
-        let mut linha = String::new();
-        if leitor.read_line(&mut linha)? == 0 {
+        let mut line = String::new();
+        if reader.read_line(&mut line)? == 0 {
             return Ok(());
         }
-        if linha == "\r\n" || linha == "\n" {
+        if line == "\r\n" || line == "\n" {
             break;
         }
-        cabecalhos.push_str(&linha);
+        headers.push_str(&line);
     }
-    let tamanho = cabecalhos
+    let length = headers
         .lines()
-        .find_map(|linha| {
-            linha
-                .to_ascii_lowercase()
+        .find_map(|line| {
+            line.to_ascii_lowercase()
                 .strip_prefix("content-length:")
-                .map(|valor| valor.trim().parse::<usize>().unwrap_or(0))
+                .map(|value| value.trim().parse::<usize>().unwrap_or(0))
         })
         .unwrap_or(0);
-    let mut corpo = vec![0_u8; tamanho];
-    leitor.read_exact(&mut corpo)?;
+    let mut body = vec![0_u8; length];
+    reader.read_exact(&mut body)?;
 
-    let mut corpo = serde_json::json!({
+    let mut payload = serde_json::json!({
         "answers": {
             "g1_transferir": {
                 "type": "choice",
-                "choice": escolha,
-                "probabilities": {escolha: confianca},
-                "confidence": confianca
+                "choice": choice,
+                "probabilities": {choice: confidence},
+                "confidence": confidence
             }
         }
     });
-    if let Some((entrada, saida)) = uso {
-        corpo["usage"] = serde_json::json!({
-            "input_tokens": entrada,
+    if let Some((input, saida)) = usage {
+        payload["usage"] = serde_json::json!({
+            "input_tokens": input,
             "output_tokens": saida,
-            "total_tokens": entrada + saida
+            "total_tokens": input + saida
         });
     }
-    let json = corpo.to_string();
-    let resposta = format!(
+    let json = payload.to_string();
+    let response = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{json}",
         json.len()
     );
     let mut fluxo = fluxo;
-    fluxo.write_all(resposta.as_bytes())?;
+    fluxo.write_all(response.as_bytes())?;
     fluxo.flush()
 }
 
-struct Cenario {
-    pasta: PathBuf,
+struct Scenario {
+    dir: PathBuf,
     porta: u16,
 }
 
-impl Cenario {
-    fn novo(rotulo: &str, escolha: &'static str) -> Self {
-        Self::detalhado(rotulo, escolha, 0.93, Some((30, 4)))
+impl Scenario {
+    fn new(label: &str, choice: &'static str) -> Self {
+        Self::detailed(label, choice, 0.93, Some((30, 4)))
     }
 
-    /// Cenário com a confiança da resposta e o `usage` do lote escolhidos pelo teste.
-    fn detalhado(
-        rotulo: &str,
-        escolha: &'static str,
-        confianca: f64,
-        uso: Option<(u64, u64)>,
+    fn detailed(
+        label: &str,
+        choice: &'static str,
+        confidence: f64,
+        usage: Option<(u64, u64)>,
     ) -> Self {
-        let pasta =
-            std::env::temp_dir().join(format!("poph-cli-jev-{rotulo}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&pasta);
-        fs::create_dir_all(pasta.join("dados")).expect("pasta de dados");
-        let porta = servidor_jev(escolha, confianca, uso);
+        let dir = std::env::temp_dir().join(format!("poph-cli-jev-{label}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("dados")).expect("pasta de dados");
+        let porta = jev_server(choice, confidence, usage);
         let config = format!(
             "[dados]\ndiretorio = \"{}\"\n\n[jev]\nativo = true\nurl_base = \"http://127.0.0.1:{porta}\"\n",
-            pasta.join("dados").display()
+            dir.join("dados").display()
         );
-        fs::write(pasta.join("poph.toml"), config).expect("configuração");
-        Self { pasta, porta }
+        fs::write(dir.join("poph.toml"), config).expect("configuração");
+        Self { dir, porta }
     }
 
-    fn escrever_conjunto(&self, conteudo: &str) -> PathBuf {
-        let caminho = self.pasta.join("g1.jsonl");
-        fs::write(&caminho, conteudo).expect("conjunto");
-        caminho
+    fn write_dataset(&self, content: &str) -> PathBuf {
+        let path = self.dir.join("g1.jsonl");
+        fs::write(&path, content).expect("conjunto");
+        path
     }
 
-    fn poph(&self, args: &[&str], com_chave: bool) -> Output {
-        let mut comando = Command::new(env!("CARGO_BIN_EXE_poph"));
-        comando
+    fn poph(&self, args: &[&str], with_key: bool) -> Output {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_poph"));
+        command
             .args(args)
-            .current_dir(&self.pasta)
+            .current_dir(&self.dir)
             .env_clear()
-            .env("POPH_CONFIG", self.pasta.join("poph.toml"));
-        if com_chave {
-            comando.env("TYPESAFE_API_KEY", CHAVE);
+            .env("POPH_CONFIG", self.dir.join("poph.toml"));
+        if with_key {
+            command.env("TYPESAFE_API_KEY", CHAVE);
         }
-        comando.output().expect("executa o poph")
+        command.output().expect("executa o poph")
     }
 
-    fn url_do_jev(&self) -> String {
+    fn jev_url(&self) -> String {
         format!("http://127.0.0.1:{}", self.porta)
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.pasta);
+        let _ = fs::remove_dir_all(&self.dir);
     }
 }
 
-fn codigo(saida: &Output) -> i32 {
+fn exit_code(saida: &Output) -> i32 {
     saida.status.code().unwrap_or(-1)
 }
 
@@ -149,59 +139,59 @@ fn texto(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
-const CONJUNTO: &str = "\
+const DATASET: &str = "\
 {\"estado\": {\"canal\": \"cli\", \"mensagens\": [{\"papel\": \"cliente\", \"texto\": \"quero falar com um atendente\"}], \"transferencia_habilitada\": true}, \"esperado\": \"transferir_agora\"}
 {\"estado\": {\"canal\": \"cli\", \"mensagens\": [{\"papel\": \"cliente\", \"texto\": \"qual o prazo?\"}], \"transferencia_habilitada\": true}, \"esperado\": \"continuar_agente\"}
 ";
 
 #[test]
-fn mede_o_conjunto_e_imprime_acerto_abstencao_e_latencia() {
-    let cenario = Cenario::novo("mede", "transferir_agora");
-    let arquivo = cenario.escrever_conjunto(CONJUNTO);
+fn measures_the_dataset_and_prints_accuracy_abstention_and_latency() {
+    let scenario = Scenario::new("mede", "transferir_agora");
+    let file = scenario.write_dataset(DATASET);
 
-    let saida = cenario.poph(
-        &["jev", "eval", "g1", arquivo.to_str().expect("caminho")],
+    let saida = scenario.poph(
+        &["jev", "eval", "g1", file.to_str().expect("caminho")],
         true,
     );
 
-    assert_eq!(codigo(&saida), 0, "stderr: {}", texto(&saida.stderr));
-    let impresso = texto(&saida.stdout);
-    assert!(impresso.contains("Jev · g1"), "saída: {impresso}");
-    assert!(impresso.contains("casos: 2"), "saída: {impresso}");
-    assert!(impresso.contains("acerto: 1/2"), "saída: {impresso}");
-    assert!(impresso.contains("erros: 1"), "saída: {impresso}");
-    assert!(impresso.contains("latência:"), "saída: {impresso}");
-    assert!(!impresso.contains(CHAVE), "a chave não pode aparecer");
-    let _ = cenario.url_do_jev();
+    assert_eq!(exit_code(&saida), 0, "stderr: {}", texto(&saida.stderr));
+    let printed = texto(&saida.stdout);
+    assert!(printed.contains("Jev · g1"), "saída: {printed}");
+    assert!(printed.contains("casos: 2"), "saída: {printed}");
+    assert!(printed.contains("acerto: 1/2"), "saída: {printed}");
+    assert!(printed.contains("erros: 1"), "saída: {printed}");
+    assert!(printed.contains("latência:"), "saída: {printed}");
+    assert!(!printed.contains(CHAVE), "a chave não pode aparecer");
+    let _ = scenario.jev_url();
 }
 
 #[test]
-fn relatorio_em_json_e_estavel() {
-    let cenario = Cenario::novo("json", "transferir_agora");
-    let arquivo = cenario.escrever_conjunto(CONJUNTO);
+fn json_report_is_stable() {
+    let scenario = Scenario::new("json", "transferir_agora");
+    let file = scenario.write_dataset(DATASET);
 
-    let saida = cenario.poph(
+    let saida = scenario.poph(
         &[
             "jev",
             "eval",
             "g1",
-            arquivo.to_str().expect("caminho"),
+            file.to_str().expect("caminho"),
             "--json",
         ],
         true,
     );
 
-    assert_eq!(codigo(&saida), 0, "stderr: {}", texto(&saida.stderr));
-    let valor: serde_json::Value =
+    assert_eq!(exit_code(&saida), 0, "stderr: {}", texto(&saida.stderr));
+    let value: serde_json::Value =
         serde_json::from_str(&texto(&saida.stdout)).expect("saída é JSON");
-    assert_eq!(valor["versao_relatorio"], 1);
-    assert_eq!(valor["relatorio"]["gate"], "g1");
-    assert_eq!(valor["relatorio"]["casos"], 2);
-    assert_eq!(valor["relatorio"]["acertos"], 1);
-    assert_eq!(valor["relatorio"]["erros"], 1);
-    assert_eq!(valor["relatorio"]["abstencoes"], 0);
+    assert_eq!(value["versao_relatorio"], 1);
+    assert_eq!(value["relatorio"]["gate"], "g1");
+    assert_eq!(value["relatorio"]["casos"], 2);
+    assert_eq!(value["relatorio"]["acertos"], 1);
+    assert_eq!(value["relatorio"]["erros"], 1);
+    assert_eq!(value["relatorio"]["abstencoes"], 0);
     assert!(
-        valor["relatorio"]["detalhes"]
+        value["relatorio"]["detalhes"]
             .as_array()
             .is_some_and(|d| d.len() == 2)
     );
@@ -209,16 +199,16 @@ fn relatorio_em_json_e_estavel() {
 }
 
 #[test]
-fn sem_chave_recusa_e_diz_o_que_falta() {
-    let cenario = Cenario::novo("sem-chave", "transferir_agora");
-    let arquivo = cenario.escrever_conjunto(CONJUNTO);
+fn without_key_refuses_and_says_what_is_missing() {
+    let scenario = Scenario::new("sem-chave", "transferir_agora");
+    let file = scenario.write_dataset(DATASET);
 
-    let saida = cenario.poph(
-        &["jev", "eval", "g1", arquivo.to_str().expect("caminho")],
+    let saida = scenario.poph(
+        &["jev", "eval", "g1", file.to_str().expect("caminho")],
         false,
     );
 
-    assert_eq!(codigo(&saida), 1);
+    assert_eq!(exit_code(&saida), 1);
     assert!(
         texto(&saida.stderr).contains("TYPESAFE_API_KEY"),
         "stderr: {}",
@@ -227,139 +217,135 @@ fn sem_chave_recusa_e_diz_o_que_falta() {
 }
 
 #[test]
-fn gate_desconhecido_e_arquivo_ausente_falham_com_mensagem() {
-    let cenario = Cenario::novo("erros", "transferir_agora");
-    let arquivo = cenario.escrever_conjunto(CONJUNTO);
+fn unknown_gate_and_missing_file_fail_with_a_message() {
+    let scenario = Scenario::new("erros", "transferir_agora");
+    let file = scenario.write_dataset(DATASET);
 
-    let gate = cenario.poph(
-        &["jev", "eval", "g10", arquivo.to_str().expect("caminho")],
+    let gate = scenario.poph(
+        &["jev", "eval", "g10", file.to_str().expect("caminho")],
         true,
     );
-    assert_eq!(codigo(&gate), 1);
+    assert_eq!(exit_code(&gate), 1);
     assert!(texto(&gate.stderr).contains("desconhecido"));
 
-    let ausente = cenario.poph(
+    let missing = scenario.poph(
         &["jev", "eval", "g1", "/caminho/que/nao/existe.jsonl"],
         true,
     );
-    assert_eq!(codigo(&ausente), 1);
-    assert!(texto(&ausente.stderr).contains("não consegui ler"));
+    assert_eq!(exit_code(&missing), 1);
+    assert!(texto(&missing.stderr).contains("não consegui ler"));
 
-    let json_ruim = cenario.escrever_conjunto("{ isto não é json }\n");
-    let ruim = cenario.poph(
-        &["jev", "eval", "g1", json_ruim.to_str().expect("caminho")],
+    let bad_json = scenario.write_dataset("{ isto não é json }\n");
+    let bad = scenario.poph(
+        &["jev", "eval", "g1", bad_json.to_str().expect("caminho")],
         true,
     );
-    assert_eq!(codigo(&ruim), 1);
-    assert!(texto(&ruim.stderr).contains("caso inválido"));
+    assert_eq!(exit_code(&bad), 1);
+    assert!(texto(&bad.stderr).contains("caso inválido"));
 }
 
 #[test]
-fn ajuda_lista_o_subcomando() {
-    let cenario = Cenario::novo("ajuda", "transferir_agora");
-    let saida = cenario.poph(&["--help"], false);
-    let impresso = texto(&saida.stdout);
-    assert!(impresso.contains("jev"), "saída: {impresso}");
-    assert!(Path::new(&cenario.pasta.join("poph.toml")).exists());
+fn help_lists_the_subcommand() {
+    let scenario = Scenario::new("ajuda", "transferir_agora");
+    let saida = scenario.poph(&["--help"], false);
+    let printed = texto(&saida.stdout);
+    assert!(printed.contains("jev"), "saída: {printed}");
+    assert!(Path::new(&scenario.dir.join("poph.toml")).exists());
 }
 
-/// Aceite da calibração: com resposta abaixo do limiar, o relatório mostra a escolha do modelo, a
-/// confiança e o motivo do fallback — no texto e no JSON.
 #[test]
-fn abstencao_mostra_escolha_e_motivo() {
-    // Confiança 0,50 contra o limiar 0,70 do G1: a resposta existe e é recusada.
-    let cenario = Cenario::detalhado("abstencao", "transferir_agora", 0.5, Some((30, 4)));
-    let arquivo = cenario.escrever_conjunto(CONJUNTO);
+fn abstention_shows_choice_and_reason() {
+    let scenario = Scenario::detailed("abstencao", "transferir_agora", 0.5, Some((30, 4)));
+    let file = scenario.write_dataset(DATASET);
 
-    let saida = cenario.poph(
-        &["jev", "eval", "g1", arquivo.to_str().expect("caminho")],
+    let saida = scenario.poph(
+        &["jev", "eval", "g1", file.to_str().expect("caminho")],
         true,
     );
-    assert_eq!(codigo(&saida), 0, "stderr: {}", texto(&saida.stderr));
-    let impresso = texto(&saida.stdout);
-    assert!(impresso.contains("detalhe por caso"), "saída: {impresso}");
+    assert_eq!(exit_code(&saida), 0, "stderr: {}", texto(&saida.stderr));
+    let printed = texto(&saida.stdout);
+    assert!(printed.contains("detalhe por caso"), "saída: {printed}");
     assert!(
-        impresso.contains("jev transferir_agora"),
-        "a escolha do modelo aparece no fallback: {impresso}"
+        printed.contains("jev transferir_agora"),
+        "a escolha do modelo aparece no fallback: {printed}"
     );
     assert!(
-        impresso.contains("motivo: confiança 0.50 abaixo do limiar 0.70"),
-        "saída: {impresso}"
+        printed.contains("motivo: confiança 0.50 abaixo do limiar 0.70"),
+        "saída: {printed}"
     );
     assert!(
-        impresso.contains("tokens: entrada 60 · saída 8 · total 68"),
-        "usage somado das duas chamadas: {impresso}"
+        printed.contains("tokens: entrada 60 · saída 8 · total 68"),
+        "usage somado das duas chamadas: {printed}"
     );
 
-    let saida = cenario.poph(
+    let saida = scenario.poph(
         &[
             "jev",
             "eval",
             "g1",
-            arquivo.to_str().expect("caminho"),
+            file.to_str().expect("caminho"),
             "--json",
         ],
         true,
     );
-    assert_eq!(codigo(&saida), 0, "stderr: {}", texto(&saida.stderr));
-    let valor: serde_json::Value =
+    assert_eq!(exit_code(&saida), 0, "stderr: {}", texto(&saida.stderr));
+    let value: serde_json::Value =
         serde_json::from_str(&texto(&saida.stdout)).expect("saída é JSON");
-    assert_eq!(valor["versao_relatorio"], 1);
-    assert_eq!(valor["relatorio"]["abstencoes"], 2);
-    assert_eq!(valor["relatorio"]["erros"], 0);
+    assert_eq!(value["versao_relatorio"], 1);
+    assert_eq!(value["relatorio"]["abstencoes"], 2);
+    assert_eq!(value["relatorio"]["erros"], 0);
     assert_eq!(
-        valor["relatorio"]["detalhes"][0]["escolha"],
+        value["relatorio"]["detalhes"][0]["escolha"],
         "transferir_agora"
     );
     assert_eq!(
-        valor["relatorio"]["detalhes"][0]["obtido"],
+        value["relatorio"]["detalhes"][0]["obtido"],
         serde_json::Value::Null
     );
     assert!(
-        valor["relatorio"]["detalhes"][0]["motivo"]
+        value["relatorio"]["detalhes"][0]["motivo"]
             .as_str()
             .unwrap_or_default()
             .contains("abaixo do limiar")
     );
-    assert_eq!(valor["relatorio"]["usage"]["entrada"], 60);
-    assert_eq!(valor["relatorio"]["usage"]["saida"], 8);
-    assert_eq!(valor["relatorio"]["usage"]["total"], 68);
-    assert_eq!(valor["relatorio"]["usage"]["informado"], true);
+    assert_eq!(value["relatorio"]["usage"]["entrada"], 60);
+    assert_eq!(value["relatorio"]["usage"]["saida"], 8);
+    assert_eq!(value["relatorio"]["usage"]["total"], 68);
+    assert_eq!(value["relatorio"]["usage"]["informado"], true);
     assert!(!texto(&saida.stdout).contains(CHAVE));
 }
 
-/// Sem `usage` no corpo da resposta, o relatório diz "não informado" em vez de inventar número.
 #[test]
-fn sem_usage_diz_nao_informado() {
-    let cenario = Cenario::detalhado("sem-usage", "continuar_agente", 0.9, None);
-    let arquivo = cenario.escrever_conjunto(CONJUNTO);
+fn without_usage_says_not_reported() {
+    let scenario = Scenario::detailed("sem-usage", "continuar_agente", 0.9, None);
+    let file = scenario.write_dataset(DATASET);
 
-    let saida = cenario.poph(
-        &["jev", "eval", "g1", arquivo.to_str().expect("caminho")],
+    let saida = scenario.poph(
+        &["jev", "eval", "g1", file.to_str().expect("caminho")],
         true,
     );
-    assert_eq!(codigo(&saida), 0, "stderr: {}", texto(&saida.stderr));
+    assert_eq!(exit_code(&saida), 0, "stderr: {}", texto(&saida.stderr));
     assert!(
         texto(&saida.stdout).contains("tokens: não informado"),
         "saída: {}",
         texto(&saida.stdout)
     );
 
-    let saida = cenario.poph(
+    let saida = scenario.poph(
         &[
             "jev",
             "eval",
             "g1",
-            arquivo.to_str().expect("caminho"),
+            file.to_str().expect("caminho"),
             "--json",
         ],
         true,
     );
-    let valor: serde_json::Value =
+    let value: serde_json::Value =
         serde_json::from_str(&texto(&saida.stdout)).expect("saída é JSON");
-    assert_eq!(valor["relatorio"]["usage"]["informado"], false);
+    assert_eq!(value["relatorio"]["usage"]["informado"], false);
     assert_eq!(
-        valor["relatorio"]["usage"]["entrada"],
+        value["relatorio"]["usage"]["entrada"],
         serde_json::Value::Null
     );
 }

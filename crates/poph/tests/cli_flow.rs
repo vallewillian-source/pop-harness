@@ -1,10 +1,3 @@
-//! Testes de ponta a ponta de `poph flow` e `poph ficha` (FX-31).
-//!
-//! Processo de verdade e banco de verdade numa pasta temporária. Os scripts e as regras de publicação
-//! são testados na API (`crates/poph-server/tests/fluxos_api.rs`); aqui se confere a linha de comando:
-//! códigos de saída, forma do `--json`, mensagens de erro e o efeito no banco, lido pelo próprio
-//! repositório. Os dados são fictícios.
-
 use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Output};
@@ -13,7 +6,6 @@ use poph_store::{NewRecord, Store};
 use poph_types::{AgentId, FlowId, OrgId};
 use serde_json::Value;
 
-/// Script válido: o mesmo da API, com a etapa `confirmacao` como ponto de partida da revisão 2.
 const SCRIPT_V1: &str = r#"fluxo(
     id = "agendar_visita",
     nome = "Agendar visita",
@@ -50,7 +42,6 @@ etapa(
 )
 "#;
 
-/// A mesma coisa com outra instrução na etapa `confirmacao`: a revisão 2 muda uma frase.
 const SCRIPT_V2: &str = r#"fluxo(id = "agendar_visita", nome = "Agendar visita", descricao = "Marca uma visita técnica no endereço do cliente.", inicio = "coleta", gatilho = gatilho(quando = "O cliente quer marcar, remarcar ou cancelar uma visita técnica.", nao_quando = "Só quer saber preço ou prazo, sem pedir visita.", exemplos = ["queria agendar uma visita", "pode vir aqui amanhã?"]))
 
 etapa(id = "coleta", nome = "Coletar dados", instrucao = "Pergunte o endereço e o período preferido. Uma pergunta por vez.", campos = [campo("endereco", "Endereço completo", tipo = "texto", obrigatorio = True), campo("periodo", "Período", tipo = "opcao", opcoes = ["manhã", "tarde"], obrigatorio = True)], acoes = [acao("confirmar", "Dados completos", exige = ["endereco", "periodo"], vai_para = "confirmacao"), acao("desistir", "Cliente desistiu", vai_para = fim("desistencia", resultado = "Cliente desistiu"))])
@@ -58,47 +49,42 @@ etapa(id = "coleta", nome = "Coletar dados", instrucao = "Pergunte o endereço e
 etapa(id = "confirmacao", nome = "Confirmar visita", instrucao = "Confirme o horário e o endereço com o cliente antes de fechar.", acoes = [acao("ok", "Visita combinada", vai_para = fim("concluida", resultado = "Visita agendada"))])
 "#;
 
-/// Script com erro de sintaxe na linha 3 (o valor do `nome` não existe).
-const SCRIPT_COM_ERRO: &str = "fluxo(\n    id = \"quebrado\",\n    nome = ,\n)\n";
+const BROKEN_SCRIPT: &str = "fluxo(\n    id = \"quebrado\",\n    nome = ,\n)\n";
 
-/// Pasta temporária com a pasta de dados. O banco nasce na primeira execução da CLI.
-struct Cenario {
-    pasta: PathBuf,
+struct Scenario {
+    dir: PathBuf,
 }
 
-impl Cenario {
-    fn novo(rotulo: &str) -> Self {
-        let pasta =
-            std::env::temp_dir().join(format!("poph-cli-flow-{rotulo}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&pasta);
-        fs::create_dir_all(pasta.join("dados")).expect("cria a pasta de dados");
-        Self { pasta }
+impl Scenario {
+    fn new(label: &str) -> Self {
+        let dir =
+            std::env::temp_dir().join(format!("poph-cli-flow-{label}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("dados")).expect("cria a pasta de dados");
+        Self { dir }
     }
 
     fn dados(&self) -> PathBuf {
-        self.pasta.join("dados")
+        self.dir.join("dados")
     }
 
-    /// Roda `poph` com ambiente limpo, pasta atual isolada e a pasta de dados do teste.
     fn poph(&self, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_poph"))
             .args(args)
-            .current_dir(&self.pasta)
+            .current_dir(&self.dir)
             .env_clear()
             .env("POPH_DADOS_DIRETORIO", self.dados())
             .output()
             .expect("executa o poph")
     }
 
-    /// Grava um arquivo na pasta do teste e devolve o caminho.
-    fn arquivo(&self, nome: &str, conteudo: &str) -> PathBuf {
-        let caminho = self.pasta.join(nome);
-        fs::write(&caminho, conteudo).expect("grava o arquivo do teste");
-        caminho
+    fn write_file(&self, nome: &str, content: &str) -> PathBuf {
+        let path = self.dir.join(nome);
+        fs::write(&path, content).expect("grava o arquivo do teste");
+        path
     }
 
-    /// Cria uma org pela CLI e devolve o id.
-    fn criar_org(&self, slug: &str) -> String {
+    fn create_org(&self, slug: &str) -> String {
         let saida = self.poph(&[
             "--offline",
             "org",
@@ -109,24 +95,22 @@ impl Cenario {
             slug,
             "--json",
         ]);
-        assert_eq!(codigo(&saida), 0, "{}", texto(&saida.stderr));
+        assert_eq!(exit_code(&saida), 0, "{}", texto(&saida.stderr));
         json(&saida)["org"]["id"]
             .as_str()
             .expect("id da org")
             .to_owned()
     }
 
-    /// Cria um agente pela CLI e devolve o id.
-    fn criar_agente(&self, org: &str, nome: &str) -> String {
+    fn create_agent(&self, org: &str, nome: &str) -> String {
         let saida = self.poph(&["--org", org, "agent", "create", "--name", nome, "--json"]);
-        assert_eq!(codigo(&saida), 0, "{}", texto(&saida.stderr));
+        assert_eq!(exit_code(&saida), 0, "{}", texto(&saida.stderr));
         json(&saida)["agent"]["id"]
             .as_str()
             .expect("id do agente")
             .to_owned()
     }
 
-    /// Abre o banco do teste direto pelo repositório (a CLI já o migrou).
     fn store(&self) -> Store {
         Store::open_at(
             &self.dados().join("harness.db"),
@@ -136,13 +120,13 @@ impl Cenario {
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.pasta);
+        let _ = fs::remove_dir_all(&self.dir);
     }
 }
 
-fn codigo(saida: &Output) -> i32 {
+fn exit_code(saida: &Output) -> i32 {
     saida.status.code().unwrap_or(-1)
 }
 
@@ -152,55 +136,53 @@ fn texto(bytes: &[u8]) -> String {
 
 fn json(saida: &Output) -> Value {
     serde_json::from_str(&texto(&saida.stdout))
-        .unwrap_or_else(|erro| panic!("saída não é JSON ({erro}): {}", texto(&saida.stdout)))
+        .unwrap_or_else(|error| panic!("saída não é JSON ({error}): {}", texto(&saida.stdout)))
 }
 
-/// Chaves de primeiro nível de um objeto JSON, em ordem. Serve para provar que a forma não muda.
-fn chaves(valor: &Value) -> Vec<String> {
-    let mut nomes: Vec<String> = valor
+fn keys(value: &Value) -> Vec<String> {
+    let mut names: Vec<String> = value
         .as_object()
         .expect("objeto JSON")
         .keys()
         .cloned()
         .collect();
-    nomes.sort();
-    nomes
+    names.sort();
+    names
 }
 
-fn org_id(texto_org: &str) -> OrgId {
-    texto_org.parse().expect("id de org")
+fn org_id(org_text: &str) -> OrgId {
+    org_text.parse().expect("id de org")
 }
 
-/// Publica um script num arquivo novo e confere que deu certo (criação, revisão 1).
-fn publicar_ok(cenario: &Cenario, org: &str, nome: &str, script: &str) {
-    let arquivo = cenario.arquivo(nome, script);
-    let saida = cenario.poph(&[
+fn publish_ok(scenario: &Scenario, org: &str, nome: &str, script: &str) {
+    let file = scenario.write_file(nome, script);
+    let saida = scenario.poph(&[
         "--org",
         org,
         "flow",
         "publicar",
-        arquivo.to_str().expect("caminho"),
+        file.to_str().expect("caminho"),
     ]);
-    assert_eq!(codigo(&saida), 0, "{}", texto(&saida.stderr));
+    assert_eq!(exit_code(&saida), 0, "{}", texto(&saida.stderr));
 }
 
 #[test]
-fn validar_script_bom_sai_com_0_e_o_json_tem_forma_estavel() {
-    let cenario = Cenario::novo("validar-bom");
-    let arquivo = cenario.arquivo("bom.fluxo", SCRIPT_V1);
-    let caminho = arquivo.to_str().expect("caminho");
+fn validate_good_script_exits_zero_and_json_has_stable_shape() {
+    let scenario = Scenario::new("validar-bom");
+    let file = scenario.write_file("bom.fluxo", SCRIPT_V1);
+    let path = file.to_str().expect("caminho");
 
-    let primeira = cenario.poph(&["flow", "validar", caminho, "--json"]);
-    let segunda = cenario.poph(&["flow", "validar", caminho, "--json"]);
+    let first = scenario.poph(&["flow", "validar", path, "--json"]);
+    let second = scenario.poph(&["flow", "validar", path, "--json"]);
 
-    assert_eq!(codigo(&primeira), 0, "{}", texto(&primeira.stderr));
-    let valor = json(&primeira);
-    assert_eq!(valor["valid"], true);
-    assert_eq!(valor["versao_relatorio"], 1);
-    assert!(valor["ir"].is_object(), "a IR sai no JSON");
-    assert_eq!(valor["diagnostics"].as_array().expect("lista").len(), 0);
+    assert_eq!(exit_code(&first), 0, "{}", texto(&first.stderr));
+    let value = json(&first);
+    assert_eq!(value["valid"], true);
+    assert_eq!(value["versao_relatorio"], 1);
+    assert!(value["ir"].is_object(), "a IR sai no JSON");
+    assert_eq!(value["diagnostics"].as_array().expect("lista").len(), 0);
     assert_eq!(
-        chaves(&valor),
+        keys(&value),
         [
             "diagnostics",
             "ir",
@@ -209,210 +191,201 @@ fn validar_script_bom_sai_com_0_e_o_json_tem_forma_estavel() {
             "versao_relatorio"
         ]
     );
-    assert_eq!(chaves(&json(&primeira)), chaves(&json(&segunda)));
+    assert_eq!(keys(&json(&first)), keys(&json(&second)));
 }
 
 #[test]
-fn validar_script_ruim_sai_com_1_e_aponta_linha_e_coluna() {
-    let cenario = Cenario::novo("validar-ruim");
-    let arquivo = cenario.arquivo("ruim.fluxo", SCRIPT_COM_ERRO);
-    let caminho = arquivo.to_str().expect("caminho");
+fn validate_bad_script_exits_one_and_points_at_line_and_column() {
+    let scenario = Scenario::new("validar-ruim");
+    let file = scenario.write_file("ruim.fluxo", BROKEN_SCRIPT);
+    let path = file.to_str().expect("caminho");
 
-    let texto_saida = cenario.poph(&["flow", "validar", caminho]);
-    assert_eq!(codigo(&texto_saida), 1);
-    let saida = texto(&texto_saida.stdout);
+    let text_output = scenario.poph(&["flow", "validar", path]);
+    assert_eq!(exit_code(&text_output), 1);
+    let saida = texto(&text_output.stdout);
     assert!(saida.contains("script inválido"), "{saida}");
     assert!(saida.contains("linha 3, coluna"), "{saida}");
 
-    let em_json = cenario.poph(&["flow", "validar", caminho, "--json"]);
-    assert_eq!(codigo(&em_json), 1);
-    let valor = json(&em_json);
-    assert_eq!(valor["valid"], false);
-    let primeiro = &valor["diagnostics"][0];
-    assert_eq!(primeiro["linha"], 3);
-    assert!(primeiro["coluna"].as_u64().is_some(), "coluna presente");
-    assert_eq!(primeiro["severidade"], "erro");
+    let as_json = scenario.poph(&["flow", "validar", path, "--json"]);
+    assert_eq!(exit_code(&as_json), 1);
+    let value = json(&as_json);
+    assert_eq!(value["valid"], false);
+    let first = &value["diagnostics"][0];
+    assert_eq!(first["linha"], 3);
+    assert!(first["coluna"].as_u64().is_some(), "coluna presente");
+    assert_eq!(first["severidade"], "erro");
 }
 
 #[test]
-fn publicar_lista_e_mostra_o_fluxo() {
-    let cenario = Cenario::novo("publicar-listar");
-    let org = cenario.criar_org("clinica-sul");
-    publicar_ok(&cenario, &org, "v1.fluxo", SCRIPT_V1);
+fn publish_lists_and_shows_the_flow() {
+    let scenario = Scenario::new("publicar-listar");
+    let org = scenario.create_org("clinica-sul");
+    publish_ok(&scenario, &org, "v1.fluxo", SCRIPT_V1);
 
-    let lista = cenario.poph(&["--org", &org, "flow", "listar", "--json"]);
-    assert_eq!(codigo(&lista), 0, "{}", texto(&lista.stderr));
-    let itens = json(&lista)["items"].as_array().expect("itens").clone();
-    assert_eq!(itens.len(), 1);
-    assert_eq!(itens[0]["slug"], "agendar_visita");
-    assert_eq!(itens[0]["current_revision"], 1);
+    let listing = scenario.poph(&["--org", &org, "flow", "listar", "--json"]);
+    assert_eq!(exit_code(&listing), 0, "{}", texto(&listing.stderr));
+    let items = json(&listing)["items"].as_array().expect("itens").clone();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["slug"], "agendar_visita");
+    assert_eq!(items[0]["current_revision"], 1);
 
-    let mostra = cenario.poph(&["--org", &org, "flow", "mostrar", "agendar_visita", "--json"]);
-    assert_eq!(codigo(&mostra), 0, "{}", texto(&mostra.stderr));
-    let valor = json(&mostra);
-    assert_eq!(valor["revision"]["number"], 1);
-    assert_eq!(valor["draft_source"], SCRIPT_V1);
+    let shown = scenario.poph(&["--org", &org, "flow", "mostrar", "agendar_visita", "--json"]);
+    assert_eq!(exit_code(&shown), 0, "{}", texto(&shown.stderr));
+    let value = json(&shown);
+    assert_eq!(value["revision"]["number"], 1);
+    assert_eq!(value["draft_source"], SCRIPT_V1);
 }
 
 #[test]
-fn publicar_revisao_nova_exige_versao_e_deixa_a_revisao_1_intacta() {
-    let cenario = Cenario::novo("revisao-2");
-    let org = cenario.criar_org("clinica-norte");
-    publicar_ok(&cenario, &org, "v1.fluxo", SCRIPT_V1);
-    let mostra = cenario.poph(&["--org", &org, "flow", "mostrar", "agendar_visita", "--json"]);
-    let versao = json(&mostra)["version"].as_u64().expect("versão do fluxo");
-    let arquivo_v2 = cenario.arquivo("v2.fluxo", SCRIPT_V2);
-    let caminho_v2 = arquivo_v2.to_str().expect("caminho");
+fn publish_new_revision_requires_version_and_leaves_revision_1_untouched() {
+    let scenario = Scenario::new("revisao-2");
+    let org = scenario.create_org("clinica-norte");
+    publish_ok(&scenario, &org, "v1.fluxo", SCRIPT_V1);
+    let shown = scenario.poph(&["--org", &org, "flow", "mostrar", "agendar_visita", "--json"]);
+    let versao = json(&shown)["version"].as_u64().expect("versão do fluxo");
+    let v2_file = scenario.write_file("v2.fluxo", SCRIPT_V2);
+    let v2_path = v2_file.to_str().expect("caminho");
 
-    // Sem --if-match, a publicação de um fluxo existente não acontece.
-    let sem = cenario.poph(&["--org", &org, "flow", "publicar", caminho_v2]);
-    assert_eq!(codigo(&sem), 1);
+    let without_if_match = scenario.poph(&["--org", &org, "flow", "publicar", v2_path]);
+    assert_eq!(exit_code(&without_if_match), 1);
     assert!(
-        texto(&sem.stderr).contains("--if-match"),
+        texto(&without_if_match.stderr).contains("--if-match"),
         "{}",
-        texto(&sem.stderr)
+        texto(&without_if_match.stderr)
     );
 
-    // Versão velha: conflito, nada gravado.
-    let velha = cenario.poph(&[
+    let stale = scenario.poph(&[
         "--org",
         &org,
         "flow",
         "publicar",
-        caminho_v2,
+        v2_path,
         "--if-match",
         &(versao + 7).to_string(),
     ]);
-    assert_eq!(codigo(&velha), 1);
+    assert_eq!(exit_code(&stale), 1);
     assert!(
-        texto(&velha.stderr).contains("não confere"),
+        texto(&stale.stderr).contains("não confere"),
         "{}",
-        texto(&velha.stderr)
+        texto(&stale.stderr)
     );
 
-    // Versão certa: revisão 2.
-    let certa = cenario.poph(&[
+    let right = scenario.poph(&[
         "--org",
         &org,
         "flow",
         "publicar",
-        caminho_v2,
+        v2_path,
         "--if-match",
         &versao.to_string(),
     ]);
-    assert_eq!(codigo(&certa), 0, "{}", texto(&certa.stderr));
+    assert_eq!(exit_code(&right), 0, "{}", texto(&right.stderr));
     assert!(
-        texto(&certa.stdout).contains("revisão 2"),
+        texto(&right.stdout).contains("revisão 2"),
         "{}",
-        texto(&certa.stdout)
+        texto(&right.stdout)
     );
 
-    // O rascunho passa a ser o texto publicado: `mostrar` não pode trazer um texto antigo.
-    let depois = cenario.poph(&["--org", &org, "flow", "mostrar", "agendar_visita", "--json"]);
-    assert_eq!(json(&depois)["draft_source"], SCRIPT_V2);
+    let afterwards = scenario.poph(&["--org", &org, "flow", "mostrar", "agendar_visita", "--json"]);
+    assert_eq!(json(&afterwards)["draft_source"], SCRIPT_V2);
 
-    // A revisão 1 continua com o texto byte a byte que foi publicado.
-    let store = cenario.store();
-    let fluxo = fluxo_id(&cenario, &org);
-    let revisao_1 = store
+    let store = scenario.store();
+    let fluxo = fluxo_id(&scenario, &org);
+    let revision_1 = store
         .revisions()
         .get(org_id(&org), fluxo, 1)
         .expect("revisão 1");
-    assert_eq!(revisao_1.fonte, SCRIPT_V1);
-    let revisao_2 = store
+    assert_eq!(revision_1.fonte, SCRIPT_V1);
+    let revision_2 = store
         .revisions()
         .get(org_id(&org), fluxo, 2)
         .expect("revisão 2");
-    assert_eq!(revisao_2.fonte, SCRIPT_V2);
+    assert_eq!(revision_2.fonte, SCRIPT_V2);
 }
 
 #[test]
-fn publicar_script_invalido_nao_grava_nada() {
-    let cenario = Cenario::novo("publicar-invalido");
-    let org = cenario.criar_org("clinica-oeste");
-    let ruim = cenario.arquivo("ruim.fluxo", SCRIPT_COM_ERRO);
+fn publish_invalid_script_writes_nothing() {
+    let scenario = Scenario::new("publicar-invalido");
+    let org = scenario.create_org("clinica-oeste");
+    let bad = scenario.write_file("ruim.fluxo", BROKEN_SCRIPT);
 
-    let saida = cenario.poph(&[
+    let saida = scenario.poph(&[
         "--org",
         &org,
         "flow",
         "publicar",
-        ruim.to_str().expect("caminho"),
+        bad.to_str().expect("caminho"),
     ]);
-    assert_eq!(codigo(&saida), 1);
+    assert_eq!(exit_code(&saida), 1);
     assert!(
         texto(&saida.stderr).contains("nada foi gravado"),
         "{}",
         texto(&saida.stderr)
     );
 
-    let lista = cenario.poph(&["--org", &org, "flow", "listar", "--json"]);
-    assert_eq!(json(&lista)["items"].as_array().expect("itens").len(), 0);
+    let listing = scenario.poph(&["--org", &org, "flow", "listar", "--json"]);
+    assert_eq!(json(&listing)["items"].as_array().expect("itens").len(), 0);
 }
 
 #[test]
-fn formatar_e_idempotente_e_escreve_no_proprio_arquivo() {
-    let cenario = Cenario::novo("formatar");
-    // O script entra na forma compacta, que não é a canônica: sem a gravação, o arquivo fica como
-    // está e o teste cai.
-    let arquivo = cenario.arquivo("feio.fluxo", SCRIPT_V2);
-    let caminho = arquivo.to_str().expect("caminho");
+fn format_is_idempotent_and_writes_to_the_same_file() {
+    let scenario = Scenario::new("formatar");
+    let file = scenario.write_file("feio.fluxo", SCRIPT_V2);
+    let path = file.to_str().expect("caminho");
     assert_ne!(
-        fs::read_to_string(&arquivo).expect("lê o arquivo"),
+        fs::read_to_string(&file).expect("lê o arquivo"),
         SCRIPT_V1,
         "a entrada do teste precisa estar fora da forma canônica"
     );
 
-    let primeira = cenario.poph(&["flow", "formatar", caminho]);
-    assert_eq!(codigo(&primeira), 0, "{}", texto(&primeira.stderr));
-    let forma_canonica = texto(&primeira.stdout);
-    assert!(!forma_canonica.is_empty());
+    let first = scenario.poph(&["flow", "formatar", path]);
+    assert_eq!(exit_code(&first), 0, "{}", texto(&first.stderr));
+    let canonical_form = texto(&first.stdout);
+    assert!(!canonical_form.is_empty());
     assert_ne!(
-        fs::read_to_string(&arquivo).expect("lê o arquivo"),
-        forma_canonica,
+        fs::read_to_string(&file).expect("lê o arquivo"),
+        canonical_form,
         "formatar sem --escrever não pode tocar no arquivo"
     );
 
-    // Grava no arquivo: o conteúdo gravado é exatamente a forma canônica.
-    let gravada = cenario.poph(&["flow", "formatar", caminho, "--escrever"]);
-    assert_eq!(codigo(&gravada), 0, "{}", texto(&gravada.stderr));
+    let written = scenario.poph(&["flow", "formatar", path, "--escrever"]);
+    assert_eq!(exit_code(&written), 0, "{}", texto(&written.stderr));
     assert_eq!(
-        fs::read_to_string(&arquivo).expect("lê o arquivo"),
-        forma_canonica
+        fs::read_to_string(&file).expect("lê o arquivo"),
+        canonical_form
     );
 
-    // Formatar a forma canônica de novo não muda nada.
-    let de_novo = cenario.poph(&["flow", "formatar", caminho]);
-    assert_eq!(texto(&de_novo.stdout), forma_canonica);
+    let again = scenario.poph(&["flow", "formatar", path]);
+    assert_eq!(texto(&again.stdout), canonical_form);
 }
 
 #[test]
-fn formatar_script_que_nao_compila_sai_com_1() {
-    let cenario = Cenario::novo("formatar-ruim");
-    let arquivo = cenario.arquivo("ruim.fluxo", SCRIPT_COM_ERRO);
-    let antes = fs::read_to_string(&arquivo).expect("lê");
+fn format_script_that_does_not_compile_exits_one() {
+    let scenario = Scenario::new("formatar-ruim");
+    let file = scenario.write_file("ruim.fluxo", BROKEN_SCRIPT);
+    let before = fs::read_to_string(&file).expect("lê");
 
-    let saida = cenario.poph(&[
+    let saida = scenario.poph(&[
         "flow",
         "formatar",
-        arquivo.to_str().expect("caminho"),
+        file.to_str().expect("caminho"),
         "--escrever",
     ]);
 
-    assert_eq!(codigo(&saida), 1);
+    assert_eq!(exit_code(&saida), 1);
     assert_eq!(
-        fs::read_to_string(&arquivo).expect("lê"),
-        antes,
+        fs::read_to_string(&file).expect("lê"),
+        before,
         "não grava script ruim"
     );
 }
 
 #[test]
-fn diff_mostra_o_que_mudou_e_os_atendimentos_em_cada_revisao() {
-    let cenario = Cenario::novo("diff");
-    let org = cenario.criar_org("clinica-leste");
-    publicar_ok(&cenario, &org, "v1.fluxo", SCRIPT_V1);
-    let versao = json(&cenario.poph(&[
+fn diff_shows_what_changed_and_the_cases_in_each_revision() {
+    let scenario = Scenario::new("diff");
+    let org = scenario.create_org("clinica-leste");
+    publish_ok(&scenario, &org, "v1.fluxo", SCRIPT_V1);
+    let versao = json(&scenario.poph(&[
         "--org",
         &org,
         "flow",
@@ -422,8 +395,8 @@ fn diff_mostra_o_que_mudou_e_os_atendimentos_em_cada_revisao() {
     ]))["version"]
         .as_u64()
         .expect("versão");
-    let v2 = cenario.arquivo("v2.fluxo", SCRIPT_V2);
-    let publicada = cenario.poph(&[
+    let v2 = scenario.write_file("v2.fluxo", SCRIPT_V2);
+    let published = scenario.poph(&[
         "--org",
         &org,
         "flow",
@@ -432,30 +405,30 @@ fn diff_mostra_o_que_mudou_e_os_atendimentos_em_cada_revisao() {
         "--if-match",
         &versao.to_string(),
     ]);
-    assert_eq!(codigo(&publicada), 0, "{}", texto(&publicada.stderr));
+    assert_eq!(exit_code(&published), 0, "{}", texto(&published.stderr));
 
-    let saida = cenario.poph(&["--org", &org, "flow", "diff", "agendar_visita", "--json"]);
-    assert_eq!(codigo(&saida), 0, "{}", texto(&saida.stderr));
-    let valor = json(&saida);
-    assert_eq!(valor["from"]["revision"], 1);
-    assert_eq!(valor["to"]["revision"], 2);
-    assert_eq!(valor["from"]["active_runs"], 0);
-    assert_eq!(valor["to"]["active_runs"], 0);
-    let mudancas = valor["changes"].as_array().expect("mudanças");
-    assert!(!mudancas.is_empty(), "a instrução mudou");
+    let saida = scenario.poph(&["--org", &org, "flow", "diff", "agendar_visita", "--json"]);
+    assert_eq!(exit_code(&saida), 0, "{}", texto(&saida.stderr));
+    let value = json(&saida);
+    assert_eq!(value["from"]["revision"], 1);
+    assert_eq!(value["to"]["revision"], 2);
+    assert_eq!(value["from"]["active_runs"], 0);
+    assert_eq!(value["to"]["active_runs"], 0);
+    let changes = value["changes"].as_array().expect("mudanças");
+    assert!(!changes.is_empty(), "a instrução mudou");
 
-    let de_texto = cenario.poph(&["--org", &org, "flow", "diff", "agendar_visita"]);
-    assert!(texto(&de_texto.stdout).contains("revisão 1 → revisão 2"));
+    let text_mode = scenario.poph(&["--org", &org, "flow", "diff", "agendar_visita"]);
+    assert!(texto(&text_mode.stdout).contains("revisão 1 → revisão 2"));
 }
 
 #[test]
-fn liberar_e_retirar_mudam_a_permissao_do_agente() {
-    let cenario = Cenario::novo("permissao");
-    let org = cenario.criar_org("clinica-centro");
-    publicar_ok(&cenario, &org, "v1.fluxo", SCRIPT_V1);
-    let agente = cenario.criar_agente(&org, "Ana Atendente");
+fn release_and_withdraw_change_agent_permission() {
+    let scenario = Scenario::new("permissao");
+    let org = scenario.create_org("clinica-centro");
+    publish_ok(&scenario, &org, "v1.fluxo", SCRIPT_V1);
+    let agente = scenario.create_agent(&org, "Ana Atendente");
 
-    let liberar = cenario.poph(&[
+    let liberar = scenario.poph(&[
         "--org",
         &org,
         "flow",
@@ -464,15 +437,15 @@ fn liberar_e_retirar_mudam_a_permissao_do_agente() {
         "--fluxo",
         "agendar_visita",
     ]);
-    assert_eq!(codigo(&liberar), 0, "{}", texto(&liberar.stderr));
-    let liberados = cenario
+    assert_eq!(exit_code(&liberar), 0, "{}", texto(&liberar.stderr));
+    let released = scenario
         .store()
         .flows()
         .list_from_agent(org_id(&org), agente.parse::<AgentId>().expect("id"))
         .expect("lista");
-    assert_eq!(liberados.len(), 1);
+    assert_eq!(released.len(), 1);
 
-    let retirar = cenario.poph(&[
+    let retirar = scenario.poph(&[
         "--org",
         &org,
         "flow",
@@ -481,15 +454,15 @@ fn liberar_e_retirar_mudam_a_permissao_do_agente() {
         "--fluxo",
         "agendar_visita",
     ]);
-    assert_eq!(codigo(&retirar), 0, "{}", texto(&retirar.stderr));
-    let depois = cenario
+    assert_eq!(exit_code(&retirar), 0, "{}", texto(&retirar.stderr));
+    let afterwards = scenario
         .store()
         .flows()
         .list_from_agent(org_id(&org), agente.parse::<AgentId>().expect("id"))
         .expect("lista");
-    assert!(depois.is_empty());
+    assert!(afterwards.is_empty());
 
-    let inexistente = cenario.poph(&[
+    let missing = scenario.poph(&[
         "--org",
         &org,
         "flow",
@@ -498,61 +471,57 @@ fn liberar_e_retirar_mudam_a_permissao_do_agente() {
         "--fluxo",
         "agendar_visita",
     ]);
-    assert_eq!(codigo(&inexistente), 1);
-    assert!(texto(&inexistente.stderr).contains("não existe agente"));
+    assert_eq!(exit_code(&missing), 1);
+    assert!(texto(&missing.stderr).contains("não existe agente"));
 }
 
 #[test]
-fn codigos_de_saida_de_uso_e_de_erro() {
-    let cenario = Cenario::novo("codigos");
-    let org = cenario.criar_org("clinica-sul-2");
+fn exit_codes_for_usage_and_error() {
+    let scenario = Scenario::new("codigos");
+    let org = scenario.create_org("clinica-sul-2");
 
-    // Sem --org num comando que lê dados da org: erro de negócio, código 1.
-    let sem_org = cenario.poph(&["flow", "listar"]);
-    assert_eq!(codigo(&sem_org), 1);
-    assert!(texto(&sem_org.stderr).contains("--org"));
+    let without_org = scenario.poph(&["flow", "listar"]);
+    assert_eq!(exit_code(&without_org), 1);
+    assert!(texto(&without_org.stderr).contains("--org"));
 
-    // Arquivo que não existe.
-    let sem_arquivo = cenario.poph(&["flow", "validar", "nao-existe.fluxo"]);
-    assert_eq!(codigo(&sem_arquivo), 1);
+    let without_file = scenario.poph(&["flow", "validar", "nao-existe.fluxo"]);
+    assert_eq!(exit_code(&without_file), 1);
 
-    // Situação fora do vocabulário.
-    let status_ruim = cenario.poph(&["--org", &org, "flow", "listar", "--status", "ligado"]);
-    assert_eq!(codigo(&status_ruim), 1);
+    let bad_status = scenario.poph(&["--org", &org, "flow", "listar", "--status", "ligado"]);
+    assert_eq!(exit_code(&bad_status), 1);
 
-    // Subcomando inexistente é uso incorreto: código 2 (o clap decide).
-    let uso = cenario.poph(&["flow", "apagar-tudo"]);
-    assert_eq!(codigo(&uso), 2);
+    let usage = scenario.poph(&["flow", "apagar-tudo"]);
+    assert_eq!(exit_code(&usage), 2);
 }
 
 #[test]
-fn listar_fichas_vazio_e_mostrar_ficha_inexistente() {
-    let cenario = Cenario::novo("ficha-vazia");
-    let org = cenario.criar_org("clinica-ficha");
+fn list_empty_cases_and_show_missing_case() {
+    let scenario = Scenario::new("ficha-vazia");
+    let org = scenario.create_org("clinica-ficha");
 
-    let lista = cenario.poph(&["--org", &org, "ficha", "listar", "--json"]);
-    assert_eq!(codigo(&lista), 0, "{}", texto(&lista.stderr));
-    let valor = json(&lista);
-    assert_eq!(valor["items"].as_array().expect("itens").len(), 0);
-    assert_eq!(valor["versao_relatorio"], 1);
+    let listing = scenario.poph(&["--org", &org, "ficha", "listar", "--json"]);
+    assert_eq!(exit_code(&listing), 0, "{}", texto(&listing.stderr));
+    let value = json(&listing);
+    assert_eq!(value["items"].as_array().expect("itens").len(), 0);
+    assert_eq!(value["versao_relatorio"], 1);
 
-    let inexistente = cenario.poph(&[
+    let missing = scenario.poph(&[
         "--org",
         &org,
         "ficha",
         "mostrar",
         &uuid::Uuid::now_v7().to_string(),
     ]);
-    assert_eq!(codigo(&inexistente), 1);
-    assert!(texto(&inexistente.stderr).contains("não existe Ficha"));
+    assert_eq!(exit_code(&missing), 1);
+    assert!(texto(&missing.stderr).contains("não existe Ficha"));
 }
 
 #[test]
-fn ficha_com_filtro_e_detalhe_aparecem_na_cli() {
-    let cenario = Cenario::novo("ficha-dados");
-    let org = cenario.criar_org("clinica-ficha-2");
-    let agente = cenario.criar_agente(&org, "Bia Atendente");
-    let ficha = cenario
+fn case_with_filter_and_detail_appear_in_the_cli() {
+    let scenario = Scenario::new("ficha-dados");
+    let org = scenario.create_org("clinica-ficha-2");
+    let agente = scenario.create_agent(&org, "Bia Atendente");
+    let ficha = scenario
         .store()
         .cases()
         .create(
@@ -567,26 +536,32 @@ fn ficha_com_filtro_e_detalhe_aparecem_na_cli() {
         .expect("cria a Ficha")
         .id;
 
-    let abertas = cenario.poph(&[
+    let open_cases = scenario.poph(&[
         "--org", &org, "ficha", "listar", "--status", "open", "--json",
     ]);
-    assert_eq!(json(&abertas)["items"].as_array().expect("itens").len(), 1);
-
-    let fechadas = cenario.poph(&[
-        "--org", &org, "ficha", "listar", "--status", "closed", "--json",
-    ]);
-    assert_eq!(json(&fechadas)["items"].as_array().expect("itens").len(), 0);
-
-    let por_agente = cenario.poph(&[
-        "--org", &org, "ficha", "listar", "--agente", &agente, "--json",
-    ]);
-    assert_eq!(codigo(&por_agente), 0, "{}", texto(&por_agente.stderr));
     assert_eq!(
-        json(&por_agente)["items"].as_array().expect("itens").len(),
+        json(&open_cases)["items"].as_array().expect("itens").len(),
         1
     );
 
-    let detalhe = cenario.poph(&[
+    let closed_cases = scenario.poph(&[
+        "--org", &org, "ficha", "listar", "--status", "closed", "--json",
+    ]);
+    assert_eq!(
+        json(&closed_cases)["items"]
+            .as_array()
+            .expect("itens")
+            .len(),
+        0
+    );
+
+    let by_agent = scenario.poph(&[
+        "--org", &org, "ficha", "listar", "--agente", &agente, "--json",
+    ]);
+    assert_eq!(exit_code(&by_agent), 0, "{}", texto(&by_agent.stderr));
+    assert_eq!(json(&by_agent)["items"].as_array().expect("itens").len(), 1);
+
+    let detail = scenario.poph(&[
         "--org",
         &org,
         "ficha",
@@ -594,17 +569,16 @@ fn ficha_com_filtro_e_detalhe_aparecem_na_cli() {
         &ficha.to_string(),
         "--json",
     ]);
-    assert_eq!(codigo(&detalhe), 0, "{}", texto(&detalhe.stderr));
-    let valor = json(&detalhe);
-    assert_eq!(valor["id"], ficha.to_string());
-    assert_eq!(valor["status"], "open");
-    assert!(valor["execucoes"].is_array());
-    assert!(valor["permissoes"]["fluxos_liberados_ao_agente"].is_array());
+    assert_eq!(exit_code(&detail), 0, "{}", texto(&detail.stderr));
+    let value = json(&detail);
+    assert_eq!(value["id"], ficha.to_string());
+    assert_eq!(value["status"], "open");
+    assert!(value["execucoes"].is_array());
+    assert!(value["permissoes"]["fluxos_liberados_ao_agente"].is_array());
 }
 
-/// Id do fluxo `agendar_visita` da org, lido pelo repositório.
-fn fluxo_id(cenario: &Cenario, org: &str) -> FlowId {
-    let fluxo = cenario
+fn fluxo_id(scenario: &Scenario, org: &str) -> FlowId {
+    let fluxo = scenario
         .store()
         .flows()
         .by_slug(org_id(org), "agendar_visita")

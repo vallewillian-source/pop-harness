@@ -1,9 +1,3 @@
-//! Testes de ponta a ponta de `poph kb` (HR-17): processo de verdade, banco e índice de verdade.
-//!
-//! O índice exige o modelo de embedding, então o cenário aponta a pasta de modelos para a do
-//! repositório (symlink em `dados/modelos`). Sem o modelo instalado, os testes são pulados — como
-//! os do `poph-rag`.
-
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -11,44 +5,42 @@ use std::process::{Command, Output};
 use poph_store::{NewOrg, Store};
 use serde_json::Value;
 
-const SENTINELA_CIFRA: &str = "SENTINELA-CIFRA-hr17";
-const SENTINELA_LLM: &str = "SENTINELA-LLM-hr17";
+const CIPHER_SENTINEL: &str = "SENTINELA-CIFRA-hr17";
+const LLM_SENTINEL: &str = "SENTINELA-LLM-hr17";
 
-fn pasta_modelos_repo() -> PathBuf {
+fn repo_models_dir() -> PathBuf {
     PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../data/modelos"))
 }
 
-struct Cenario {
-    pasta: PathBuf,
+struct Scenario {
+    dir: PathBuf,
     slug: String,
 }
 
-impl Cenario {
-    /// `None` quando o modelo não está instalado (teste pulado).
-    fn novo(rotulo: &str) -> Option<Self> {
-        let modelos = pasta_modelos_repo();
-        if !modelos.join("model_int8.onnx").is_file() || !modelos.join("tokenizer.json").is_file() {
-            eprintln!("PULADO ({rotulo}): modelo não instalado; rode `poph model install`");
+impl Scenario {
+    fn new(label: &str) -> Option<Self> {
+        let models = repo_models_dir();
+        if !models.join("model_int8.onnx").is_file() || !models.join("tokenizer.json").is_file() {
+            eprintln!("PULADO ({label}): modelo não instalado; rode `poph model install`");
             return None;
         }
-        let pasta =
-            std::env::temp_dir().join(format!("poph-cli-kb-{rotulo}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&pasta);
-        fs::create_dir_all(pasta.join("dados")).expect("cria a pasta de dados");
+        let dir = std::env::temp_dir().join(format!("poph-cli-kb-{label}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("dados")).expect("cria a pasta de dados");
         #[cfg(unix)]
-        std::os::unix::fs::symlink(&modelos, pasta.join("dados").join("modelos"))
+        std::os::unix::fs::symlink(&models, dir.join("dados").join("modelos"))
             .expect("liga a pasta de modelos");
-        let slug = format!("org-{rotulo}");
+        let slug = format!("org-{label}");
         {
             let store = Store::open_at(
-                &pasta.join("dados").join("harness.db"),
-                &pasta.join("dados").join("rag.db"),
+                &dir.join("dados").join("harness.db"),
+                &dir.join("dados").join("rag.db"),
             )
             .expect("abre o banco");
             store
                 .orgs()
                 .create(NewOrg {
-                    name: format!("Org {rotulo}"),
+                    name: format!("Org {label}"),
                     slug: slug.clone(),
                     config_json: "{}".to_owned(),
                 })
@@ -65,19 +57,19 @@ impl Cenario {
                 )
                 .expect("cria o agente");
         }
-        Some(Self { pasta, slug })
+        Some(Self { dir, slug })
     }
 
     fn poph(&self, args: &[&str]) -> Output {
-        let mut comando = Command::new(env!("CARGO_BIN_EXE_poph"));
-        comando
+        let mut command = Command::new(env!("CARGO_BIN_EXE_poph"));
+        command
             .args(args)
-            .current_dir(&self.pasta)
+            .current_dir(&self.dir)
             .env_clear()
-            .env("POPH_DADOS_DIRETORIO", self.pasta.join("dados"))
-            .env("POPH_CHAVE_CIFRA", SENTINELA_CIFRA)
-            .env("ANTIGRAVITY_API_KEY", SENTINELA_LLM);
-        comando.output().expect("executa o poph")
+            .env("POPH_DADOS_DIRETORIO", self.dir.join("dados"))
+            .env("POPH_CHAVE_CIFRA", CIPHER_SENTINEL)
+            .env("ANTIGRAVITY_API_KEY", LLM_SENTINEL);
+        command.output().expect("executa o poph")
     }
 
     fn ok(&self, args: &[&str]) -> Value {
@@ -89,27 +81,27 @@ impl Cenario {
             String::from_utf8_lossy(&saida.stderr)
         );
         let texto = String::from_utf8_lossy(&saida.stdout);
-        assert!(!texto.contains(SENTINELA_CIFRA) && !texto.contains(SENTINELA_LLM));
-        serde_json::from_str(&texto).unwrap_or_else(|erro| {
-            panic!("saída não é JSON ({erro}): {texto}");
+        assert!(!texto.contains(CIPHER_SENTINEL) && !texto.contains(LLM_SENTINEL));
+        serde_json::from_str(&texto).unwrap_or_else(|error| {
+            panic!("saída não é JSON ({error}): {texto}");
         })
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.pasta);
+        let _ = fs::remove_dir_all(&self.dir);
     }
 }
 
 #[test]
-fn cli_kb_cria_indexa_busca_edita_e_apaga() {
-    let Some(cenario) = Cenario::novo("ciclo") else {
+fn cli_kb_creates_indexes_searches_edits_and_deletes() {
+    let Some(scenario) = Scenario::new("ciclo") else {
         return;
     };
-    let org = cenario.slug.clone();
+    let org = scenario.slug.clone();
 
-    let grupo = cenario.ok(&[
+    let group = scenario.ok(&[
         "--offline",
         "--org",
         &org,
@@ -120,12 +112,12 @@ fn cli_kb_cria_indexa_busca_edita_e_apaga() {
         "Políticas",
         "--json",
     ]);
-    let grupo_id = grupo["group"]["id"]
+    let group_id = group["group"]["id"]
         .as_str()
         .expect("id do grupo")
         .to_owned();
 
-    let item = cenario.ok(&[
+    let item = scenario.ok(&[
         "--offline",
         "--org",
         &org,
@@ -133,7 +125,7 @@ fn cli_kb_cria_indexa_busca_edita_e_apaga() {
         "item",
         "create",
         "--group",
-        &grupo_id,
+        &group_id,
         "--title",
         "Prazo de agendamento",
         "--content",
@@ -142,20 +134,19 @@ fn cli_kb_cria_indexa_busca_edita_e_apaga() {
     ]);
     let item_id = item["item"]["id"].as_str().expect("id do item").to_owned();
 
-    cenario.ok(&[
+    scenario.ok(&[
         "--offline",
         "--org",
         &org,
         "kb",
         "link",
-        &grupo_id,
+        &group_id,
         "--agent",
         "bia",
         "--json",
     ]);
 
-    // O índice acompanhou o vínculo.
-    let lista = cenario.ok(&[
+    let listing = scenario.ok(&[
         "--offline",
         "--org",
         &org,
@@ -163,12 +154,12 @@ fn cli_kb_cria_indexa_busca_edita_e_apaga() {
         "item",
         "list",
         "--group",
-        &grupo_id,
+        &group_id,
         "--json",
     ]);
-    assert_eq!(lista["items"][0]["index"], "indexado", "{lista}");
+    assert_eq!(listing["items"][0]["index"], "indexado", "{listing}");
 
-    let achados = cenario.ok(&[
+    let found = scenario.ok(&[
         "--offline",
         "--org",
         &org,
@@ -179,13 +170,12 @@ fn cli_kb_cria_indexa_busca_edita_e_apaga() {
         "bia",
         "--json",
     ]);
-    assert_eq!(achados["total"], 1, "{achados}");
-    assert_eq!(achados["chunks"][0]["titulo"], "Prazo de agendamento");
-    assert_eq!(achados["chunks"][0]["grupo"], "Políticas");
+    assert_eq!(found["total"], 1, "{found}");
+    assert_eq!(found["chunks"][0]["titulo"], "Prazo de agendamento");
+    assert_eq!(found["chunks"][0]["grupo"], "Políticas");
 
-    // Editar o conteúdo: o índice acompanha na hora.
     let versao = item["item"]["version"].as_u64().expect("versão");
-    let editado = cenario.ok(&[
+    let edited = scenario.ok(&[
         "--offline",
         "--org",
         &org,
@@ -199,8 +189,8 @@ fn cli_kb_cria_indexa_busca_edita_e_apaga() {
         "O agendamento agora é imediato pelo aplicativo.",
         "--json",
     ]);
-    assert_eq!(editado["item"]["index"], "indexado", "{editado}");
-    let novo = cenario.ok(&[
+    assert_eq!(edited["item"]["index"], "indexado", "{edited}");
+    let searched = scenario.ok(&[
         "--offline",
         "--org",
         &org,
@@ -211,10 +201,9 @@ fn cli_kb_cria_indexa_busca_edita_e_apaga() {
         "bia",
         "--json",
     ]);
-    assert_eq!(novo["chunks"][0]["titulo"], "Prazo de agendamento");
+    assert_eq!(searched["chunks"][0]["titulo"], "Prazo de agendamento");
 
-    // Apagar: sai do índice.
-    cenario.ok(&[
+    scenario.ok(&[
         "--offline",
         "--org",
         &org,
@@ -224,7 +213,7 @@ fn cli_kb_cria_indexa_busca_edita_e_apaga() {
         &item_id,
         "--json",
     ]);
-    let depois = cenario.ok(&[
+    let afterwards = scenario.ok(&[
         "--offline",
         "--org",
         &org,
@@ -235,16 +224,16 @@ fn cli_kb_cria_indexa_busca_edita_e_apaga() {
         "bia",
         "--json",
     ]);
-    assert_eq!(depois["total"], 0, "{depois}");
+    assert_eq!(afterwards["total"], 0, "{afterwards}");
 }
 
 #[test]
-fn cli_kb_recusa_item_acima_de_mil_caracteres() {
-    let Some(cenario) = Cenario::novo("limite") else {
+fn cli_kb_refuses_item_above_one_thousand_characters() {
+    let Some(scenario) = Scenario::new("limite") else {
         return;
     };
-    let org = cenario.slug.clone();
-    let grupo = cenario.ok(&[
+    let org = scenario.slug.clone();
+    let group = scenario.ok(&[
         "--offline",
         "--org",
         &org,
@@ -255,9 +244,9 @@ fn cli_kb_recusa_item_acima_de_mil_caracteres() {
         "G",
         "--json",
     ]);
-    let grupo_id = grupo["group"]["id"].as_str().expect("id").to_owned();
-    let grande = "a".repeat(1001);
-    let saida = cenario.poph(&[
+    let group_id = group["group"]["id"].as_str().expect("id").to_owned();
+    let large = "a".repeat(1001);
+    let saida = scenario.poph(&[
         "--offline",
         "--org",
         &org,
@@ -265,38 +254,35 @@ fn cli_kb_recusa_item_acima_de_mil_caracteres() {
         "item",
         "create",
         "--group",
-        &grupo_id,
+        &group_id,
         "--title",
         "Grande",
         "--content",
-        &grande,
+        &large,
     ]);
     assert!(!saida.status.success(), "1001 caracteres precisam falhar");
-    let erro = String::from_utf8_lossy(&saida.stderr);
+    let error = String::from_utf8_lossy(&saida.stderr);
     assert!(
-        erro.contains("1000") && erro.contains("1001"),
-        "o erro precisa dizer o limite: {erro}"
+        error.contains("1000") && error.contains("1001"),
+        "o erro precisa dizer o limite: {error}"
     );
 }
 
-/// Garante que o symlink do cenário aponta para uma pasta existente (diagnóstico de ambiente).
 #[test]
-fn pasta_de_modelos_do_repositorio_existe() {
-    let modelos: &Path = &pasta_modelos_repo();
-    if !modelos.is_dir() {
-        eprintln!("modelo não instalado em {}", modelos.display());
+fn repo_models_dir_exists() {
+    let models: &Path = &repo_models_dir();
+    if !models.is_dir() {
+        eprintln!("modelo não instalado em {}", models.display());
     }
 }
 
-/// `poph rag reindex` (o nome que o PRD usa) reindexa de verdade e é idempotente: rodar de novo sem
-/// mudança não gera embedding.
 #[test]
-fn cli_rag_reindex_e_idempotente() {
-    let Some(cenario) = Cenario::novo("reindex") else {
+fn cli_rag_reindex_is_idempotent() {
+    let Some(scenario) = Scenario::new("reindex") else {
         return;
     };
-    let org = cenario.slug.clone();
-    let grupo = cenario.ok(&[
+    let org = scenario.slug.clone();
+    let group = scenario.ok(&[
         "--offline",
         "--org",
         &org,
@@ -307,8 +293,8 @@ fn cli_rag_reindex_e_idempotente() {
         "Prazo",
         "--json",
     ]);
-    let grupo_id = grupo["group"]["id"].as_str().expect("grupo").to_owned();
-    cenario.ok(&[
+    let group_id = group["group"]["id"].as_str().expect("grupo").to_owned();
+    scenario.ok(&[
         "--offline",
         "--org",
         &org,
@@ -316,57 +302,48 @@ fn cli_rag_reindex_e_idempotente() {
         "item",
         "create",
         "--group",
-        &grupo_id,
+        &group_id,
         "--title",
         "Prazo de agendamento",
         "--content",
         "O prazo para agendar a dedetização é de 48 horas úteis.",
         "--json",
     ]);
-    cenario.ok(&[
+    scenario.ok(&[
         "--offline",
         "--org",
         &org,
         "kb",
         "link",
-        &grupo_id,
+        &group_id,
         "--agent",
         "bia",
         "--json",
     ]);
 
-    // Nada mudou: reindexar não gera embedding.
-    let parado = cenario.ok(&["--offline", "--org", &org, "rag", "reindex", "--json"]);
-    assert_eq!(parado["agents"][0]["indexed"]["embeddings"], 0, "{parado}");
-    assert_eq!(
-        parado["agents"][0]["indexed"]["items_unchanged"], 1,
-        "{parado}"
-    );
+    let idle = scenario.ok(&["--offline", "--org", &org, "rag", "reindex", "--json"]);
+    assert_eq!(idle["agents"][0]["indexed"]["embeddings"], 0, "{idle}");
+    assert_eq!(idle["agents"][0]["indexed"]["items_unchanged"], 1, "{idle}");
 
-    // Índice perdido: a reindexação reconstrói tudo.
-    for sufixo in ["rag.db", "rag.db-wal", "rag.db-shm"] {
-        let _ = fs::remove_file(cenario.pasta.join("dados").join(sufixo));
+    for suffix in ["rag.db", "rag.db-wal", "rag.db-shm"] {
+        let _ = fs::remove_file(scenario.dir.join("dados").join(suffix));
     }
-    let reconstruido = cenario.ok(&["--offline", "--org", &org, "rag", "reindex", "--json"]);
-    assert_eq!(
-        reconstruido["agents"][0]["indexed"]["items_new"], 1,
-        "{reconstruido}"
-    );
+    let rebuilt = scenario.ok(&["--offline", "--org", &org, "rag", "reindex", "--json"]);
+    assert_eq!(rebuilt["agents"][0]["indexed"]["items_new"], 1, "{rebuilt}");
     assert!(
-        reconstruido["agents"][0]["indexed"]["embeddings"]
+        rebuilt["agents"][0]["indexed"]["embeddings"]
             .as_u64()
             .expect("embeddings")
             >= 1,
-        "{reconstruido}"
+        "{rebuilt}"
     );
 
-    // E de novo sem mudança: zero embedding, mesmo conteúdo.
-    let repetido = cenario.ok(&["--offline", "--org", &org, "rag", "reindex", "--json"]);
+    let repeated = scenario.ok(&["--offline", "--org", &org, "rag", "reindex", "--json"]);
     assert_eq!(
-        repetido["agents"][0]["indexed"]["embeddings"], 0,
-        "{repetido}"
+        repeated["agents"][0]["indexed"]["embeddings"], 0,
+        "{repeated}"
     );
-    let achados = cenario.ok(&[
+    let found = scenario.ok(&[
         "--offline",
         "--org",
         &org,
@@ -378,7 +355,7 @@ fn cli_rag_reindex_e_idempotente() {
         "--json",
     ]);
     assert_eq!(
-        achados["chunks"][0]["titulo"], "Prazo de agendamento",
-        "{achados}"
+        found["chunks"][0]["titulo"], "Prazo de agendamento",
+        "{found}"
     );
 }
