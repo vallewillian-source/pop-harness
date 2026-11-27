@@ -1643,7 +1643,7 @@ python3 scripts/jev-report.py /tmp/g1-real.json --conjunto tests/jev/g1.jsonl
 
 - `poph chat`: monta o Jev quando `[jev].ativo` e `TYPESAFE_API_KEY` existem; sem um dos dois,
   avisa e segue sem Jev. A orientação da transferência vem de `[handoff]` (`Motor::com_handoff`).
-- `poph serve`: monta o Jev pela mesma montagem do `chat` (`crates/poph/src/montagem.rs`); o G3, o
+- `poph serve`: monta o Jev pela mesma montagem do `chat` (`crates/poph/src/assembly.rs`); o G3, o
   G5, o G8 e o G9 já vêm ligados pelo padrão (desde 20/11/2026; o G9 com a `[fluxos]`); para desligar,
   `[jev].gates.g3 = false`,
   `[jev].gates.g5 = false` e/ou `[jev].gates.g8 = false`. O G6 está medido e **desligado**; para

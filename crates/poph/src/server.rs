@@ -66,6 +66,7 @@ pub fn run(flag: Option<PathBuf>, environment: &config::Environment, args: Serve
         }
     };
     tracing::info!(
+        target: "poph::servidor",
         mode = cluster.mode(),
         file = %cluster.path.display(),
         instances = cluster.config.instances.len(),
@@ -145,7 +146,7 @@ pub fn run(flag: Option<PathBuf>, environment: &config::Environment, args: Serve
             println!("  Métricas: /metrics");
             println!("\nCtrl-C encerra.");
         }
-        tracing::info!(%endereco, "servidor no ar");
+        tracing::info!(target: "poph::servidor", %endereco, "servidor no ar");
 
         let desligamento = async {
             let _ = tokio::signal::ctrl_c().await;

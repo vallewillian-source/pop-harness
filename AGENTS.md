@@ -102,7 +102,7 @@ Names and dependencies come from `cargo metadata` for this workspace, not from m
 | `poph-agent` | Hot state: agent configuration cache, per-conversation actor, turn (`turno/`), context window, summary, limits, knowledge base, products, cart | `poph-core`, `poph-files`, `poph-jev`, `poph-rag`, `poph-store`, `poph-types` |
 | `poph-retention` | Per-org retention sweep, orphan blobs, dry run (`--dry-run`), audit | `poph-store`, `poph-types` |
 | `poph-server` | Admin API (axum), authentication, OpenAPI, embedded Console, cluster, turn input and output, WhatsApp, encryption, the Matrix Application Service receiver (`api/matrix_as.rs`), delivery of the agent's reply to the customer (`matrix_response.rs`, using the atomic operation in `poph-store`), the room notice when that reply fails for good (`matrix_failure_notice.rs`) and the module's composition root (`matrix_beginning.rs`: turns it on, degrades without taking the server down, honours `matrix_orgs` on every cycle and stops in order) | `poph-agent`, `poph-evolution`, `poph-files`, `poph-matrix`, `poph-plugins`, `poph-rag`, `poph-store`, `poph-types`. `poph-core` only in tests |
-| `poph` | The single binary: CLI (clap) and `serve`. One module per command group (`org.rs`, `agente.rs`, `cluster.rs`, `servidor.rs`...) | almost all of the above |
+| `poph` | The single binary: CLI (clap) and `serve`. One module per command group (`org.rs`, `agente.rs`, `cluster.rs`, `server.rs`...) | almost all of the above |
 | `poph-plugin-eco` | Example plugin (reversed text) and template for new plugins | `poph-types`. Only in tests: `poph-agent`, `poph-plugins`, `poph-store` |
 
 ### Who may import what

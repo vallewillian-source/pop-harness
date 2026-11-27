@@ -1,15 +1,13 @@
 mod agent;
-#[path = "montagem.rs"]
 mod assembly;
 mod backup;
-mod categoria;
+mod case;
+mod category;
 mod chat;
 mod cluster;
 mod config;
-mod departamento;
+mod department;
 mod doctor;
-mod ficha;
-#[path = "arquivo.rs"]
 mod file;
 mod flow;
 mod jev;
@@ -22,7 +20,7 @@ mod org;
 mod product;
 mod rag;
 mod retention;
-mod servidor;
+mod server;
 mod support;
 mod token;
 
@@ -106,9 +104,9 @@ enum Command {
         subcommand,
         about = "Gerencia as categorias de produto de uma org (`--org`)"
     )]
-    Category(categoria::CategoryAction),
+    Category(category::CategoryAction),
     #[command(subcommand, about = "Gerencia os departamentos de uma org (`--org`)")]
-    Department(departamento::DepartmentAction),
+    Department(department::DepartmentAction),
     #[command(
         subcommand,
         about = "Base de conhecimento: grupos, itens, vínculo com agentes e índice (HR-17)"
@@ -145,7 +143,7 @@ enum Command {
         subcommand,
         about = "Fichas da org (um atendimento por Ficha): listar e mostrar, com as execuções de fluxo"
     )]
-    Ficha(ficha::CaseAction),
+    Ficha(case::CaseAction),
     #[command(
         subcommand,
         about = "Retenção do histórico: apaga o que venceu (`run`) e mostra a configuração (`show`)"
@@ -167,9 +165,9 @@ enum Command {
     )]
     Matrix(matrix::MatrixAction),
     #[command(about = "Sobe o servidor HTTP (API administrativa, `/healthz` e `/metrics`)")]
-    Serve(servidor::ServeArgs),
+    Serve(server::ServeArgs),
     #[command(about = "Imprime o documento OpenAPI (base do cliente TypeScript do Console)")]
-    Openapi(servidor::OpenapiArgs),
+    Openapi(server::OpenapiArgs),
 }
 
 #[derive(Debug, Args)]
@@ -213,14 +211,14 @@ fn main() -> ExitCode {
             cli.org.as_deref(),
             acao,
         ),
-        Command::Category(acao) => categoria::run(
+        Command::Category(acao) => category::run(
             cli.config,
             &environment,
             cli.offline,
             cli.org.as_deref(),
             acao,
         ),
-        Command::Department(acao) => departamento::run(
+        Command::Department(acao) => department::run(
             cli.config,
             &environment,
             cli.offline,
@@ -229,7 +227,7 @@ fn main() -> ExitCode {
         ),
         Command::Jev(action) => jev::run(cli.config, &environment, action),
         Command::Flow(acao) => flow::run(cli.config, &environment, cli.org.as_deref(), acao),
-        Command::Ficha(acao) => ficha::run(cli.config, &environment, cli.org.as_deref(), acao),
+        Command::Ficha(acao) => case::run(cli.config, &environment, cli.org.as_deref(), acao),
         Command::Retention(action) => {
             retention::run(cli.config, &environment, cli.org.as_deref(), action)
         }
@@ -271,8 +269,8 @@ fn main() -> ExitCode {
             acao,
         ),
         Command::Chat(args) => chat::run(cli.config, &environment, cli.org.as_deref(), args),
-        Command::Serve(args) => servidor::run(cli.config, &environment, args),
-        Command::Openapi(args) => servidor::run_openapi(args),
+        Command::Serve(args) => server::run(cli.config, &environment, args),
+        Command::Openapi(args) => server::run_openapi(args),
     }
 }
 
