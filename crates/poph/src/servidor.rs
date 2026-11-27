@@ -9,8 +9,8 @@ use poph_server::ServerState;
 use poph_store::Store;
 use poph_store::harness_target_version;
 
+use crate::assembly;
 use crate::config;
-use crate::montagem;
 
 /// Opções do `poph serve`.
 #[derive(Debug, Args)]
@@ -192,16 +192,16 @@ async fn ligar_turno(
         }
         return Ok(estado);
     };
-    let metricas = montagem::Metrics::registered(estado.metrics.clone(), &estado.registry)?;
-    let montagem = montagem::assemble(
+    let metricas = assembly::Metrics::registered(estado.metrics.clone(), &estado.registry)?;
+    let montagem = assembly::assemble(
         configuracao,
         Arc::clone(store),
-        montagem::Keys {
+        assembly::Keys {
             llm: chave,
             jev: segredos.typesafe.clone(),
         },
         metricas,
-        montagem::ProcessFlows::from_server(&estado),
+        assembly::ProcessFlows::from_server(&estado),
         ambiente,
     )?;
 

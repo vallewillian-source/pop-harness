@@ -20,8 +20,8 @@ use poph_store::{Conversa, Direction, NewConversation, NewMessage, Role, Store};
 use poph_types::{AgentId, BaseMetrics, ConversationId, OrgId, Registry};
 use serde_json::json;
 
+use crate::assembly;
 use crate::config;
-use crate::montagem;
 use crate::support;
 
 /// Opções do `poph chat`.
@@ -81,18 +81,18 @@ fn rodar(
     let metricas_base =
         BaseMetrics::register(&registro).map_err(|erro| format!("métricas base: {erro}"))?;
     // Mesma montagem do `poph serve` (HR-26h); o chat mantém as métricas dele, fora do `/metrics`.
-    let montagem = montagem::assemble(
+    let montagem = assembly::assemble(
         &configuracao,
         Arc::clone(&store),
-        montagem::Keys {
+        assembly::Keys {
             llm: chave,
             jev: config::secrets(ambiente).typesafe,
         },
-        montagem::Metrics::own(metricas_base),
-        montagem::ProcessFlows::default(),
+        assembly::Metrics::own(metricas_base),
+        assembly::ProcessFlows::default(),
         ambiente,
     )?;
-    let montagem::Assembly {
+    let assembly::Assembly {
         engine: motor,
         flow: fluxo,
         base,

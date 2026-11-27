@@ -6,7 +6,8 @@
 //! corrigir; 2 sem comando.
 
 mod agent;
-mod arquivo;
+#[path = "montagem.rs"]
+mod assembly;
 mod backup;
 mod categoria;
 mod chat;
@@ -15,6 +16,8 @@ mod config;
 mod departamento;
 mod doctor;
 mod ficha;
+#[path = "arquivo.rs"]
+mod file;
 mod flow;
 mod jev;
 mod kb;
@@ -22,7 +25,6 @@ mod logs;
 mod matrix;
 mod matrix_admin;
 mod modelo;
-mod montagem;
 mod org;
 mod product;
 mod rag;
@@ -105,7 +107,7 @@ enum Comando {
     Product(product::ProductAction),
     /// Biblioteca de arquivos do agente: enviar, listar, mostrar e excluir (HR-24).
     #[command(subcommand)]
-    File(arquivo::FileAction),
+    File(file::FileAction),
     /// Conversa com um agente pelo terminal (streaming; Ctrl-C cancela o turno).
     Chat(chat::ChatArgs),
     /// Jev (decisões rápidas): `eval` mede um gate sobre um conjunto rotulado (HR-28).
@@ -197,7 +199,7 @@ fn main() -> ExitCode {
             product::run(cli.config, &ambiente, cli.offline, cli.org.as_deref(), acao)
         }
         Comando::File(acao) => {
-            arquivo::run(cli.config, &ambiente, cli.offline, cli.org.as_deref(), acao)
+            file::run(cli.config, &ambiente, cli.offline, cli.org.as_deref(), acao)
         }
         Comando::Chat(args) => chat::executar(cli.config, &ambiente, cli.org.as_deref(), args),
         Comando::Serve(args) => servidor::executar(cli.config, &ambiente, args),
