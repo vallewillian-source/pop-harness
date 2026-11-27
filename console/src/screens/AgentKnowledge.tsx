@@ -95,29 +95,29 @@ function classIndex(index: StateIndex): string {
 
 function summaryReport(report: IndexReport): string {
     return [
-        countLabel(report.itens_novos, "knowledge.reindexNewOne", "knowledge.reindexNewMany"),
+        countLabel(report.newItems, "knowledge.reindexNewOne", "knowledge.reindexNewMany"),
         countLabel(
-            report.itens_alterados,
+            report.changedItems,
             "knowledge.reindexChangedOne",
             "knowledge.reindexChangedMany",
         ),
         countLabel(
-            report.itens_inalterados,
+            report.unchangedItems,
             "knowledge.reindexUnchangedOne",
             "knowledge.reindexUnchangedMany",
         ),
         countLabel(
-            report.itens_removidos,
+            report.removedItems,
             "knowledge.reindexRemovedOne",
             "knowledge.reindexRemovedMany",
         ),
         countLabel(
-            report.embeddings_gerados,
+            report.embeddingsGenerated,
             "knowledge.reindexEmbeddingsOne",
             "knowledge.reindexEmbeddingsMany",
         ),
         countLabel(
-            report.trechos_gravados,
+            report.passagesWritten,
             "knowledge.reindexChunksOne",
             "knowledge.reindexChunksMany",
         ),

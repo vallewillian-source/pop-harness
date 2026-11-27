@@ -18,7 +18,7 @@ import {
 } from "./modelJev";
 import type { Agente } from "./agents";
 
-const JEV_COMPLETO = {
+const FULL_JEV = {
     ativo: true,
     "despedida": "Até logo, foi um prazer!",
     "situacoes_de_handoff": ["cliente pede segunda via"],
@@ -62,16 +62,16 @@ describe("leitura dos gates (mesma precedência do motor)", () => {
 
 describe("mudancaDoJev: preserva o que a tela não edita", () => {
     it("ligar um gate não toca em nenhuma outra chave", () => {
-        const base = valuesOf(JEV_COMPLETO);
+        const base = valuesOf(FULL_JEV);
         const draft = structuredClone(base);
         draft.gates.g2 = "ligado";
 
-        const texto = jevChange(JEV_COMPLETO, base, draft)!;
+        const texto = jevChange(FULL_JEV, base, draft)!;
         const updated = JSON.parse(texto);
 
-        expect(updated["despedida"]).toBe(JEV_COMPLETO["despedida"]);
-        expect(updated["situacoes_de_handoff"]).toEqual(JEV_COMPLETO["situacoes_de_handoff"]);
-        expect(updated["resposta_segura"]).toBe(JEV_COMPLETO["resposta_segura"]);
+        expect(updated["despedida"]).toBe(FULL_JEV["despedida"]);
+        expect(updated["situacoes_de_handoff"]).toEqual(FULL_JEV["situacoes_de_handoff"]);
+        expect(updated["resposta_segura"]).toBe(FULL_JEV["resposta_segura"]);
         expect(updated["g7_acao"]).toBe("responder_padrao");
         expect(updated["g7_resposta"]).toBe("Não consigo ajudar com isso.");
         expect(updated["unknown_key"]).toEqual({ nested: [1, 2, 3] });
@@ -80,11 +80,11 @@ describe("mudancaDoJev: preserva o que a tela não edita", () => {
     });
 
     it("gate que muda sai da raiz, para não voltar a valer por trás da tela", () => {
-        const base = valuesOf(JEV_COMPLETO);
+        const base = valuesOf(FULL_JEV);
         const draft = structuredClone(base);
         draft.gates.g1 = "herdar";
 
-        const updated = JSON.parse(jevChange(JEV_COMPLETO, base, draft)!);
+        const updated = JSON.parse(jevChange(FULL_JEV, base, draft)!);
         expect(updated).not.toHaveProperty("g1");
         expect(updated.gates).toEqual({ g6: true, "gates_key": "fica" });
     });
@@ -116,8 +116,8 @@ describe("mudancaDoJev: preserva o que a tela não edita", () => {
     });
 
     it("sem mudança de gate nem de interruptor, não há jev_json para mandar", () => {
-        const base = valuesOf(JEV_COMPLETO);
-        expect(jevChange(JEV_COMPLETO, base, structuredClone(base))).toBeUndefined();
+        const base = valuesOf(FULL_JEV);
+        expect(jevChange(FULL_JEV, base, structuredClone(base))).toBeUndefined();
     });
 
     it("usa o jev atual (relido), não o que a tela tinha: outra mudança de quem salvou antes fica", () => {

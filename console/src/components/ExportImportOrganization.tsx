@@ -38,9 +38,9 @@ function withoutDescribedBy(control: SofaFieldControlProps) {
 function sums(report: ImportReport): { inseridas: number; atualizadas: number } {
     let inserted = 0;
     let updated = 0;
-    for (const line of Object.values(report.tabelas)) {
-        inserted += line.inseridas;
-        updated += line.atualizadas;
+    for (const line of Object.values(report.tables)) {
+        inserted += line.inserted;
+        updated += line.updated;
     }
     return { inseridas: inserted, atualizadas: updated };
 }
@@ -172,15 +172,15 @@ function RefusalOverwritten({
 function ReportImport({ report }: { report: ImportReport }) {
     const { translate: t } = useI18n();
     const totais = sums(report);
-    const lines = Object.entries(report.tabelas).filter(
-        ([, line]) => line.inseridas > 0 || line.atualizadas > 0,
+    const lines = Object.entries(report.tables).filter(
+        ([, line]) => line.inserted > 0 || line.updated > 0,
     );
-    const indexReadyNow = report.aviso === null;
+    const indexReadyNow = report.notice === null;
 
     return (
         <div className="poph-operation__report" role="status" aria-live="polite">
             <p style={{ margin: "0 0 var(--pop-spacing-sm, 6px)" }}>
-                {report.org.criada
+                {report.org.created
                     ? t("orgs.backupReportCreated")
                     : t("orgs.backupReportWritten")}{" "}
                 {t("orgs.backupReportTotals", {
@@ -206,21 +206,21 @@ function ReportImport({ report }: { report: ImportReport }) {
                         {lines.map(([table, line]) => (
                             <tr key={table}>
                                 <td>{tableName(table)}</td>
-                                <td>{numero(line.inseridas)}</td>
-                                <td>{numero(line.atualizadas)}</td>
+                                <td>{numero(line.inserted)}</td>
+                                <td>{numero(line.updated)}</td>
                             </tr>
                         ))}
                     </tbody>
                 </table>
             ) : null}
 
-            {report.segredos_a_redigitar > 0 ? (
+            {report.secretsToRedo > 0 ? (
                 <div style={{ marginTop: "var(--pop-spacing-md, 8px)" }}>
                     <SofaBanner tone="warn" title={t("orgs.backupSecretsTitle")}>
-                        {report.segredos_a_redigitar === 1
+                        {report.secretsToRedo === 1
                             ? t("orgs.backupSecretsOne")
                             : t("orgs.backupSecretsMany", {
-                                  count: numero(report.segredos_a_redigitar),
+                                  count: numero(report.secretsToRedo),
                               })}{" "}
                         {t("orgs.backupSecretsAction")}
                     </SofaBanner>
@@ -231,9 +231,9 @@ function ReportImport({ report }: { report: ImportReport }) {
                 {indexReadyNow ? (
                     <SofaBanner tone="success" title={t("orgs.backupIndexReadyTitle")}>
                         {t("orgs.backupIndexReady", {
-                            chunks: numero(report.indice.base_conhecimento.trechos),
-                            agents: numero(report.indice.base_conhecimento.agentes),
-                            productChunks: numero(report.indice.produtos.trechos),
+                            chunks: numero(report.index.knowledgeBase.passages),
+                            agents: numero(report.index.knowledgeBase.agents),
+                            productChunks: numero(report.index.products.passages),
                         })}
                     </SofaBanner>
                 ) : (
@@ -278,7 +278,7 @@ export function ExportImportOrganization({ org }: SectionBackupProps) {
             downloadFile(exported);
             setNoticeExport(t("orgs.backupDownloaded", { name: exported.nome }));
         } catch (error) {
-            setFailureExport(backupFailure(error, "exportar"));
+            setFailureExport(backupFailure(error, "export"));
         } finally {
             setExporting(false);
         }
@@ -316,7 +316,7 @@ export function ExportImportOrganization({ org }: SectionBackupProps) {
             if (refusalServer) {
                 setRefusal(refusalServer);
             } else {
-                setFailureImport(backupFailure(error, "importar"));
+                setFailureImport(backupFailure(error, "import"));
             }
         } finally {
             setImporting(false);

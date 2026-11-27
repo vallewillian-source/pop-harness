@@ -67,7 +67,7 @@ describe("falhaDeBackup", () => {
         const items = ["a", "b", "c", "d", "e", "f", "g"];
         const failure = backupFailure(
             new ApiError(409, "conflict", "cru", { conflicts: items.slice(0, 5), conflicts_more: 2 }),
-            "importar",
+            "import",
         );
         expect(failure["title"]).toBe("Importação recusada");
         expect(failure.texto).toMatch(/Nada foi gravado/);
@@ -79,54 +79,54 @@ describe("falhaDeBackup", () => {
     it("400 invalid_backup com versões: leva as duas versões", () => {
         const failure = backupFailure(
             new ApiError(400, "invalid_backup", "cru", { version: 7, supported_version: 1 }),
-            "importar",
+            "import",
         );
         expect(failure["versions"]).toEqual({ "file": 7, "installation": 1 });
         expect(failure.texto).not.toMatch(/cru/);
     });
 
     it("400 invalid_backup sem versões não inventa números", () => {
-        const failure = backupFailure(new ApiError(400, "invalid_backup", "cru", null), "importar");
+        const failure = backupFailure(new ApiError(400, "invalid_backup", "cru", null), "import");
         expect(failure["versions"]).toBeUndefined();
     });
 
     it("413 diz o limite de 64 MB e não oferece nova tentativa", () => {
-        const failure = backupFailure(new ApiError(413, "payload_too_large", "cru"), "importar");
+        const failure = backupFailure(new ApiError(413, "payload_too_large", "cru"), "import");
         expect(failure.texto).toMatch(/64 MB/);
         expect(failure["canRetry"]).toBe(false);
     });
 
     it("401 pede para entrar de novo, sem tentar de novo", () => {
-        const failure = backupFailure(new ApiError(401, "invalid_token", "cru"), "exportar");
+        const failure = backupFailure(new ApiError(401, "invalid_token", "cru"), "export");
         expect(failure["title"]).toBe("Sessão encerrada");
         expect(failure["canRetry"]).toBe(false);
     });
 
     it("403 e 500 podem tentar de novo", () => {
-        expect(backupFailure(new ApiError(403, "forbidden", "x"), "exportar")["canRetry"]).toBe(true);
-        expect(backupFailure(new ApiError(500, "interno", "x"), "importar")["canRetry"]).toBe(true);
+        expect(backupFailure(new ApiError(403, "forbidden", "x"), "export")["canRetry"]).toBe(true);
+        expect(backupFailure(new ApiError(500, "interno", "x"), "import")["canRetry"]).toBe(true);
     });
 
     it("404 diz que a organização não existe", () => {
-        const failure = backupFailure(new ApiError(404, "not_found", "x"), "exportar");
+        const failure = backupFailure(new ApiError(404, "not_found", "x"), "export");
         expect(failure["title"]).toBe("Organização não encontrada");
     });
 
     it("backup_incompleto explica a biblioteca sem conteúdo e não oferece nova tentativa", () => {
-        const failure = backupFailure(new ApiError(409, "backup_incompleto", "x", { name: "a.png" }), "exportar");
+        const failure = backupFailure(new ApiError(409, "backup_incompleto", "x", { name: "a.png" }), "export");
         expect(failure.texto).toMatch(/biblioteca/);
         expect(failure.texto).not.toMatch(/a\.png/);
         expect(failure["canRetry"]).toBe(false);
     });
 
     it("erro que não é da API vira mensagem genérica", () => {
-        const failure = backupFailure(new Error("bagunçado"), "importar");
+        const failure = backupFailure(new Error("bagunçado"), "import");
         expect(failure.texto).toBe("Algo deu errado. Tente de novo.");
         expect(failure["canRetry"]).toBe(true);
     });
 
     it("sem servidor pede para conferir se a instância está no ar", () => {
-        const failure = backupFailure(new ApiError(0, "rede", "x"), "exportar");
+        const failure = backupFailure(new ApiError(0, "rede", "x"), "export");
         expect(failure.texto).toMatch(/servidor está no ar/);
     });
 });
@@ -143,18 +143,18 @@ describe("backup em en-US", () => {
         expect(conflictText("`product_categories` 01a1-x")).toBe("Product categories: 01a1-x");
         expect(sampleText("agents: bia")).toBe("Agents: bia");
 
-        const session = backupFailure(new ApiError(401, "invalid_token", "cru"), "exportar");
+        const session = backupFailure(new ApiError(401, "invalid_token", "cru"), "export");
         expect(session["title"]).toBe("Session ended");
         expect(session.texto).toMatch(/Sign in again/);
 
         const conflict = backupFailure(
             new ApiError(409, "conflict", "cru", { conflicts: ["a"], conflicts_more: 1 }),
-            "importar",
+            "import",
         );
         expect(conflict["title"]).toBe("Import refused");
         expect(conflict.texto).toMatch(/Nothing was written/);
 
-        const large = backupFailure(new ApiError(413, "payload_too_large", "cru"), "importar");
+        const large = backupFailure(new ApiError(413, "payload_too_large", "cru"), "import");
         expect(large["title"]).toBe("File too large");
     });
 });
@@ -201,7 +201,7 @@ describe("recusa de sobrescrita (HR-48e-4)", () => {
     });
 
     it("a falha genérica da recusa não oferece tentar de novo", () => {
-        const failure = backupFailure(new ApiError(409, "importacao_sobrescreve", "x", null), "importar");
+        const failure = backupFailure(new ApiError(409, "importacao_sobrescreve", "x", null), "import");
         expect(failure["title"]).toBe("Esta importação vai sobrescrever o que já existe");
         expect(failure["canRetry"]).toBe(false);
     });

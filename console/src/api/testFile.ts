@@ -38,10 +38,10 @@ export function canSeeOnScreen(mime: string): boolean {
 export function headerName(value: string | null): string | null {
     if (!value) return null;
 
-    const estendido = /filename\*\s*=\s*UTF-8\x27\x27([^;]+)/i.exec(value);
-    if (estendido?.[1]) {
+    const extended = /filename\*\s*=\s*UTF-8\x27\x27([^;]+)/i.exec(value);
+    if (extended?.[1]) {
         try {
-            const nome = decodeURIComponent(estendido[1].trim());
+            const nome = decodeURIComponent(extended[1].trim());
             if (nome) return nome;
         } catch {
         }
@@ -124,9 +124,9 @@ export async function downloadTestAttachment(
 
 export async function readAsDataUrl(file: Blob, mime: string): Promise<string> {
     const bytes = new Uint8Array(await file.arrayBuffer());
-    let binario = "";
+    let binary = "";
     for (let start = 0; start < bytes.length; start += 0x8000) {
-        binario += String.fromCharCode(...bytes.subarray(start, start + 0x8000));
+        binary += String.fromCharCode(...bytes.subarray(start, start + 0x8000));
     }
-    return `data:${mime};base64,${btoa(binario)}`;
+    return `data:${mime};base64,${btoa(binary)}`;
 }

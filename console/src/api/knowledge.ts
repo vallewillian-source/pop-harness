@@ -34,12 +34,12 @@ export type KnowledgeItem = {
 };
 
 export type IndexReport = {
-    "itens_novos": number;
-    "itens_alterados": number;
-    "itens_inalterados": number;
-    "itens_removidos": number;
-    "embeddings_gerados": number;
-    "trechos_gravados": number;
+    newItems: number;
+    changedItems: number;
+    unchangedItems: number;
+    removedItems: number;
+    embeddingsGenerated: number;
+    passagesWritten: number;
 };
 
 export type ReindexResult = {
@@ -217,14 +217,35 @@ export async function unlinkGroup(
     await request<unknown>(baseLink(org, agente, group), { method: "DELETE" });
 }
 
+function countOrZero(value: unknown): number {
+    return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function readIndexReport(raw: unknown): IndexReport {
+    const body = (raw ?? {}) as Record<string, unknown>;
+    return {
+        newItems: countOrZero(body["itens_novos"]),
+        changedItems: countOrZero(body["itens_alterados"]),
+        unchangedItems: countOrZero(body["itens_inalterados"]),
+        removedItems: countOrZero(body["itens_removidos"]),
+        embeddingsGenerated: countOrZero(body["embeddings_gerados"]),
+        passagesWritten: countOrZero(body["trechos_gravados"]),
+    };
+}
+
 export async function reindexAgent(
     org: string,
     agente: string,
 ): Promise<ReindexResult> {
-    return request<ReindexResult>(
+    const raw = await request<Record<string, unknown>>(
         `/admin/v1/orgs/${encodeURIComponent(org)}/agents/${encodeURIComponent(agente)}/knowledge/reindex`,
         { method: "POST" },
     );
+    const agent = raw["agent"];
+    return {
+        agent: typeof agent === "string" ? agent : "",
+        indexed: readIndexReport(raw["indexed"]),
+    };
 }
 
 export function readTags(texto: string): string[] {

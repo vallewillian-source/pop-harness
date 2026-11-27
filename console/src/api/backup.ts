@@ -30,36 +30,76 @@ export async function exportOrg(org: string, withConversations: boolean): Promis
 }
 
 export type ImportReport = {
-    org: { id: string; "criada": boolean };
-    com_conversas: boolean;
-    tabelas: Record<string, { "inseridas": number; "atualizadas": number }>;
+    org: { id: string; created: boolean };
+    withConversations: boolean;
+    tables: Record<string, { inserted: number; updated: number }>;
     total: number;
-    "segredos_a_redigitar": number;
-    "indice": {
-        "base_conhecimento": { "agentes": number; "trechos": number };
-        "produtos": { "trechos": number };
+    secretsToRedo: number;
+    index: {
+        knowledgeBase: { agents: number; passages: number };
+        products: { passages: number };
     };
-    "aviso": string | null;
+    notice: string | null;
 };
+
+function countOrZero(value: unknown): number {
+    return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function readImportReport(raw: unknown): ImportReport {
+    const body = (raw ?? {}) as Record<string, unknown>;
+    const org = (body["org"] ?? {}) as Record<string, unknown>;
+    const tables = (body["tabelas"] ?? {}) as Record<string, unknown>;
+    const index = (body["indice"] ?? {}) as Record<string, unknown>;
+    const knowledge = (index["base_conhecimento"] ?? {}) as Record<string, unknown>;
+    const products = (index["produtos"] ?? {}) as Record<string, unknown>;
+    const counts: ImportReport["tables"] = {};
+    for (const [table, value] of Object.entries(tables)) {
+        const row = (value ?? {}) as Record<string, unknown>;
+        counts[table] = {
+            inserted: countOrZero(row["inseridas"]),
+            updated: countOrZero(row["atualizadas"]),
+        };
+    }
+    return {
+        org: {
+            id: typeof org.id === "string" ? org.id : "",
+            created: org["criada"] === true,
+        },
+        withConversations: body["com_conversas"] === true,
+        tables: counts,
+        total: countOrZero(body["total"]),
+        secretsToRedo: countOrZero(body["segredos_a_redigitar"]),
+        index: {
+            knowledgeBase: {
+                agents: countOrZero(knowledge["agentes"]),
+                passages: countOrZero(knowledge["trechos"]),
+            },
+            products: { passages: countOrZero(products["trechos"]) },
+        },
+        notice: typeof body["aviso"] === "string" ? body["aviso"] : null,
+    };
+}
 
 export async function importOrg(
     org: string,
     texto: string,
     sobrescrever = false,
 ): Promise<ImportReport> {
-    return request<ImportReport>(importPath(org, sobrescrever), {
+    const raw = await request<unknown>(importPath(org, sobrescrever), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: texto,
     });
+    return readImportReport(raw);
 }
 
 export function readFileText(file: Blob): Promise<string> {
-    return new Promise((resolver, rejeitar) => {
+    return new Promise((resolver, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolver(typeof reader.result === "string" ? reader.result : "");
         reader.onerror = () =>
-            rejeitar(reader.error ?? new Error(translate("orgs.backupReadFileError")));
+            reject(reader.error ?? new Error(translate("orgs.backupReadFileError")));
         reader.readAsText(file);
     });
 }
@@ -153,8 +193,8 @@ export function overwriteRefusal(error: unknown): OverwriteRefusal | null {
     const details = error["details"] && typeof error["details"] === "object"
         ? (error["details"] as Record<string, unknown>)
         : {};
-    const raw = details.tabelas && typeof details.tabelas === "object"
-        ? (details.tabelas as Record<string, unknown>)
+    const raw = details["tabelas"] && typeof details["tabelas"] === "object"
+        ? (details["tabelas"] as Record<string, unknown>)
         : {};
     const tabelas: Record<string, number> = {};
     for (const [table, value] of Object.entries(raw)) {
@@ -176,10 +216,10 @@ export function sampleText(item: string): string {
     return `${tableName(table)}: ${rest}`;
 }
 
-export function backupFailure(error: unknown, operation: "exportar" | "importar"): BackupFailure {
+export function backupFailure(error: unknown, operation: "export" | "import"): BackupFailure {
     if (!(error instanceof ApiError)) {
         return {
-            "title": translate(operation === "exportar" ? "orgs.backupExportFailed" : "orgs.backupImportFailed"),
+            "title": translate(operation === "export" ? "orgs.backupExportFailed" : "orgs.backupImportFailed"),
             texto: translate("orgs.backupGeneric"),
             "canRetry": true,
         };
@@ -187,7 +227,7 @@ export function backupFailure(error: unknown, operation: "exportar" | "importar"
 
     if (error["semServidor"]) {
         return {
-            "title": translate(operation === "exportar" ? "orgs.backupExportFailed" : "orgs.backupImportFailed"),
+            "title": translate(operation === "export" ? "orgs.backupExportFailed" : "orgs.backupImportFailed"),
             texto: translate("orgs.backupOffline"),
             "canRetry": true,
         };
@@ -203,7 +243,7 @@ export function backupFailure(error: unknown, operation: "exportar" | "importar"
 
     if (error.status === 403) {
         return {
-            "title": translate(operation === "exportar" ? "orgs.backupExportFailed" : "orgs.backupImportFailed"),
+            "title": translate(operation === "export" ? "orgs.backupExportFailed" : "orgs.backupImportFailed"),
             texto: translate("orgs.backupForbiddenText"),
             "canRetry": true,
         };
@@ -271,14 +311,14 @@ export function backupFailure(error: unknown, operation: "exportar" | "importar"
 
     if (error.status >= 500) {
         return {
-            "title": translate(operation === "exportar" ? "orgs.backupExportFailed" : "orgs.backupImportFailed"),
+            "title": translate(operation === "export" ? "orgs.backupExportFailed" : "orgs.backupImportFailed"),
             texto: translate("orgs.backupServerError", { status: error.status }),
             "canRetry": true,
         };
     }
 
     return {
-        "title": translate(operation === "exportar" ? "orgs.backupExportFailed" : "orgs.backupImportFailed"),
+        "title": translate(operation === "export" ? "orgs.backupExportFailed" : "orgs.backupImportFailed"),
         texto: translate("orgs.backupGeneric"),
         "canRetry": true,
     };

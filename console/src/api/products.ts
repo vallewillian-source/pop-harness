@@ -109,13 +109,15 @@ export async function deleteProduct(
     });
 }
 
-export type CartCount = { "itens_de_carrinho": number; "carrinhos": number };
+export type CartCount = { cartItems: number; carts: number };
 
 export function refusalCount(details: unknown): CartCount | null {
     if (!details || typeof details !== "object") return null;
-    const { "itens_de_carrinho": cartItems, "carrinhos": carts } = details as Record<string, unknown>;
+    const raw = details as Record<string, unknown>;
+    const cartItems = raw["itens_de_carrinho"];
+    const carts = raw["carrinhos"];
     if (typeof cartItems !== "number" || typeof carts !== "number") return null;
-    return { "itens_de_carrinho": cartItems, "carrinhos": carts };
+    return { cartItems, carts };
 }
 
 export async function listCategories(org: string): Promise<Category[]> {

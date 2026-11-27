@@ -313,7 +313,7 @@ export function Orgs() {
         try {
             downloadFile(await exportOrg(org.id, false));
         } catch (failure) {
-            const detail = backupFailure(failure, "exportar");
+            const detail = backupFailure(failure, "export");
             setNotice({ tom: "danger", title: detail.title, texto: detail.texto });
         }
     }

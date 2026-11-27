@@ -25,7 +25,7 @@ import {
     type WhatsappState,
     type WhatsappFailure,
     type Integracao,
-    type QrDoWhatsapp,
+    type WhatsappQr,
 } from "../api/integrations";
 import { useI18n } from "../i18n";
 import "../styles/whatsapp.css";
@@ -68,7 +68,7 @@ export function PanelWhatsApp({
     onUpdateIntegration,
 }: PanelWhatsAppProps) {
     const { translate: t } = useI18n();
-    const [qr, setQr] = useState<QrDoWhatsapp | null>(null);
+    const [qr, setQr] = useState<WhatsappQr | null>(null);
     const [stateLive, setStateLive] = useState<WhatsappState | null>(null);
     const [loadingQr, setLoadingQr] = useState(false);
     const [querying, setQuerying] = useState(false);

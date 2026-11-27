@@ -11,7 +11,7 @@ export type Departamento = components["schemas"]["DepartamentoJson"];
 export type Registro = Category | Departamento;
 export type StructureType = "categoria" | "departamento";
 
-const TRILHO: Record<StructureType, string> = {
+const ROUTES: Record<StructureType, string> = {
     "categoria": "categories",
     departamento: "departments",
 };
@@ -19,7 +19,7 @@ const TRILHO: Record<StructureType, string> = {
 const LIMIT_LIST = 200;
 
 function path(org: string, tipo: StructureType, id?: string): string {
-    const base = `/admin/v1/orgs/${encodeURIComponent(org)}/${TRILHO[tipo]}`;
+    const base = `/admin/v1/orgs/${encodeURIComponent(org)}/${ROUTES[tipo]}`;
     return id === undefined ? base : `${base}/${encodeURIComponent(id)}`;
 }
 

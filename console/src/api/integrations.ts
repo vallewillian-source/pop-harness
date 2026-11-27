@@ -151,7 +151,7 @@ export function noManifestForType(failure: unknown): boolean {
 }
 
 
-export type QrDoWhatsapp = {
+export type WhatsappQr = {
     qrcode: {
         base64?: string | null;
         code?: string | null;
@@ -170,13 +170,13 @@ export type WhatsappState = {
     instance?: string;
 };
 
-export type DesconexaoDoWhatsapp = {
+export type WhatsappDisconnect = {
     connection_state: string;
     disconnected: boolean;
     instance?: string;
 };
 
-function baseDoWhatsapp(org: string, agente: string, id: string): string {
+function whatsappBase(org: string, agente: string, id: string): string {
     return `${base(org, agente)}/${encodeURIComponent(id)}/whatsapp`;
 }
 
@@ -186,9 +186,9 @@ export async function generateWhatsappQr(
     id: string,
     versao: number,
     numero?: string,
-): Promise<QrDoWhatsapp> {
+): Promise<WhatsappQr> {
     const body = numero ? JSON.stringify({ number: numero }) : undefined;
-    return request<QrDoWhatsapp>(`${baseDoWhatsapp(org, agente, id)}/qrcode`, {
+    return request<WhatsappQr>(`${whatsappBase(org, agente, id)}/qrcode`, {
         method: "POST",
         headers: { "if-match": String(versao) },
         body: body,
@@ -200,7 +200,7 @@ export async function readWhatsappState(
     agente: string,
     id: string,
 ): Promise<WhatsappState> {
-    return request<WhatsappState>(`${baseDoWhatsapp(org, agente, id)}/state`);
+    return request<WhatsappState>(`${whatsappBase(org, agente, id)}/state`);
 }
 
 export async function disconnectWhatsapp(
@@ -208,8 +208,8 @@ export async function disconnectWhatsapp(
     agente: string,
     id: string,
     versao: number,
-): Promise<DesconexaoDoWhatsapp> {
-    return request<DesconexaoDoWhatsapp>(`${baseDoWhatsapp(org, agente, id)}/disconnect`, {
+): Promise<WhatsappDisconnect> {
+    return request<WhatsappDisconnect>(`${whatsappBase(org, agente, id)}/disconnect`, {
         method: "POST",
         headers: { "if-match": String(versao) },
     });

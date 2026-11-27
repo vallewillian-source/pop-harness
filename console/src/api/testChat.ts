@@ -190,9 +190,9 @@ export function parseFrame(frame: string): TurnEvent | null {
 
     for (const line of frame.split("\n")) {
         if (line === "" || line.startsWith(":")) continue;
-        const separador = line.indexOf(":");
-        const campo = separador === -1 ? line : line.slice(0, separador);
-        let value = separador === -1 ? "" : line.slice(separador + 1);
+        const separator = line.indexOf(":");
+        const campo = separator === -1 ? line : line.slice(0, separator);
+        let value = separator === -1 ? "" : line.slice(separator + 1);
         if (value.startsWith(" ")) value = value.slice(1);
         if (campo === "event") nome = value;
         else if (campo === "id") id = value;
@@ -219,7 +219,7 @@ export async function readFlow(
     signal?: AbortSignal,
 ): Promise<void> {
     const reader = body.getReader();
-    const decodificador = new TextDecoder();
+    const decoder = new TextDecoder();
     let pending = "";
 
     const deliver = (frame: string) => {
@@ -234,7 +234,7 @@ export async function readFlow(
         }
         const { done, value } = await reader.read();
         if (done) break;
-        pending += decodificador.decode(value, { stream: true }).replace(/\r\n?/g, "\n");
+        pending += decoder.decode(value, { stream: true }).replace(/\r\n?/g, "\n");
         let limit = pending.indexOf("\n\n");
         while (limit !== -1) {
             const frame = pending.slice(0, limit);
@@ -244,6 +244,6 @@ export async function readFlow(
         }
     }
 
-    pending += decodificador.decode().replace(/\r\n?/g, "\n");
+    pending += decoder.decode().replace(/\r\n?/g, "\n");
     if (pending.trim()) deliver(pending);
 }

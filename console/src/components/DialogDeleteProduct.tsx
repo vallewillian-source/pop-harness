@@ -54,14 +54,14 @@ export function DialogDeleteProduct({
                 </>
             );
         const itemsText = count
-            ? count.itens_de_carrinho === 1
+            ? count.cartItems === 1
                 ? translate("products.deleteCartItemOne")
-                : translate("products.deleteCartItemMany", { count: count.itens_de_carrinho })
+                : translate("products.deleteCartItemMany", { count: count.cartItems })
             : "";
         const cartsText = count
-            ? count.carrinhos === 1
+            ? count.carts === 1
                 ? translate("products.deleteCartOne")
-                : translate("products.deleteCartMany", { count: count.carrinhos })
+                : translate("products.deleteCartMany", { count: count.carts })
             : "";
         return (
             <div className="poph-stack" style={{ gap: "var(--pop-spacing-sm, 6px)" }}>
@@ -84,9 +84,9 @@ export function DialogDeleteProduct({
     }
 
     const forceItemsText = count
-        ? count.itens_de_carrinho === 1
+        ? count.cartItems === 1
             ? translate("products.deleteForceItemOne")
-            : translate("products.deleteForceItemMany", { count: count.itens_de_carrinho })
+            : translate("products.deleteForceItemMany", { count: count.cartItems })
         : "";
     const labelForce = count
         ? translate("products.deleteForceLabelWithCount", { items: forceItemsText })
