@@ -58,7 +58,7 @@ use poph_types::DomainError;
 use poph_types::config::FlowsConfig;
 
 use crate::compilador::Limites;
-use crate::ir::Regra;
+use crate::ir::Rule;
 use crate::linguagem::{LimitesStarlark, carregar_modulo};
 
 /// Erro de avaliação de regra.
@@ -199,13 +199,13 @@ impl Avaliador {
     ///
     /// Sempre devolve booleano ou erro tipado: campo ausente é tratado pela tabela do topo do
     /// módulo, nunca com pânico.
-    pub fn avaliar(&self, regra: &Regra, dados: &Dados) -> Result<bool, ErroRegra> {
+    pub fn avaliar(&self, regra: &Rule, dados: &Dados) -> Result<bool, ErroRegra> {
         self.avaliar_no(regra, dados, 0)
     }
 
     fn avaliar_no(
         &self,
-        regra: &Regra,
+        regra: &Rule,
         dados: &Dados,
         profundidade: usize,
     ) -> Result<bool, ErroRegra> {
@@ -215,23 +215,23 @@ impl Avaliador {
             )));
         }
         match regra {
-            Regra::Igual { campo, valor } => Ok(igual(valor_do_campo(dados, campo)?, valor)),
-            Regra::Diferente { campo, valor } => Ok(!igual(valor_do_campo(dados, campo)?, valor)),
-            Regra::Maior { campo, valor } => comparar(
+            Rule::Igual { campo, value: valor } => Ok(igual(valor_do_campo(dados, campo)?, valor)),
+            Rule::Diferente { campo, value: valor } => Ok(!igual(valor_do_campo(dados, campo)?, valor)),
+            Rule::Maior { campo, value: valor } => comparar(
                 valor_do_campo(dados, campo)?,
                 valor,
                 campo,
                 std::cmp::Ordering::Greater,
             ),
-            Regra::Menor { campo, valor } => comparar(
+            Rule::Menor { campo, value: valor } => comparar(
                 valor_do_campo(dados, campo)?,
                 valor,
                 campo,
                 std::cmp::Ordering::Less,
             ),
-            Regra::Contem { campo, valor } => Ok(contem(valor_do_campo(dados, campo)?, valor)),
-            Regra::Vazio { campo } => Ok(vazio(valor_do_campo(dados, campo)?)),
-            Regra::E { args } => {
+            Rule::Contem { campo, value: valor } => Ok(contem(valor_do_campo(dados, campo)?, valor)),
+            Rule::Vazio { campo } => Ok(vazio(valor_do_campo(dados, campo)?)),
+            Rule::E { args } => {
                 for arg in args {
                     if !self.avaliar_no(arg, dados, profundidade + 1)? {
                         return Ok(false);
@@ -239,7 +239,7 @@ impl Avaliador {
                 }
                 Ok(true)
             }
-            Regra::Ou { args } => {
+            Rule::Ou { args } => {
                 for arg in args {
                     if self.avaliar_no(arg, dados, profundidade + 1)? {
                         return Ok(true);
@@ -247,14 +247,14 @@ impl Avaliador {
                 }
                 Ok(false)
             }
-            Regra::Nao { args } => match args.as_slice() {
+            Rule::Nao { args } => match args.as_slice() {
                 [unico] => Ok(!self.avaliar_no(unico, dados, profundidade + 1)?),
                 _ => Err(invalida(format!(
                     "`nao` recebe exatamente 1 condição; a regra tem {}",
                     args.len()
                 ))),
             },
-            Regra::Funcao { nome } => self.avaliar_funcao(nome, dados),
+            Rule::Funcao { nome } => self.avaliar_funcao(nome, dados),
         }
     }
 
@@ -373,7 +373,7 @@ fn eh_limite(texto: &str) -> bool {
 ///
 /// Regra que chama `funcao("nome")` devolve [`DomainError::RegraInvalida`] — para usar `def` é
 /// preciso o módulo carregado de [`Avaliador::novo`].
-pub fn avaliar(regra: &Regra, dados: &Dados) -> Result<bool, ErroRegra> {
+pub fn avaliar(regra: &Rule, dados: &Dados) -> Result<bool, ErroRegra> {
     Avaliador::sem_funcoes().avaliar(regra, dados)
 }
 
@@ -781,7 +781,7 @@ mod testes {
         // (o `FLX12` do compilador já recusa a forma, mas a IR pode vir de fora).
         for campo in ["periodo", ".periodo", "relato."] {
             let erro = avaliar(
-                &Regra::Vazio {
+                &Rule::Vazio {
                     campo: campo.into(),
                 },
                 &dados("{}"),

@@ -27,8 +27,8 @@ use serde::{Deserialize, Serialize};
 
 use poph_types::FieldKind;
 
-use crate::diagnostico::{Codigo, Diagnostico};
-use crate::ir::{Destino, Efeito, Etapa, Ir, Regra};
+use crate::diagnostico::{Code, Diagnostic};
+use crate::ir::{Destination, Effect, Etapa, Ir, Rule};
 
 /// Teto de nós (etapas + decisões + fins), `FLUXOS_LINGUAGEM.md` §3.4 — o mesmo do compilador.
 pub const MAX_NOS: usize = crate::compilador::forma::MAX_NOS;
@@ -62,7 +62,7 @@ pub struct Resolucao {
 /// Devolve também os **avisos** (publicar não exige zero aviso, mas o autor deve ver). A IR que veio
 /// do compilador já passou por estas conferências: chamar isto sobre ela serve para provar que as
 /// duas direções concordam (há teste para isso).
-pub fn validar(ir: &Ir) -> Vec<Diagnostico> {
+pub fn validar(ir: &Ir) -> Vec<Diagnostic> {
     let mut validador = Validador::novo(ir);
     validador.confere_etapas();
     validador.confere_decisoes();
@@ -88,7 +88,7 @@ pub fn validar(ir: &Ir) -> Vec<Diagnostico> {
 pub fn resolver_departamentos(
     ir: &Ir,
     departamentos: &[Departamento],
-) -> (Vec<Resolucao>, Vec<Diagnostico>) {
+) -> (Vec<Resolucao>, Vec<Diagnostic>) {
     let mut citacoes: Vec<(String, String)> = Vec::new();
     let mut vistos: BTreeSet<String> = BTreeSet::new();
     let mut citar = |nome: &str, caminho: String| {
@@ -98,17 +98,17 @@ pub fn resolver_departamentos(
         }
     };
 
-    for (i, etapa) in ir.etapas.iter().enumerate() {
+    for (i, etapa) in ir.stages.iter().enumerate() {
         let base = caminho_etapa(i, etapa);
-        for (j, efeito) in etapa.ao_entrar.iter().enumerate() {
-            if let Efeito::Encaminhar { departamento } = efeito {
+        for (j, efeito) in etapa.on_enter.iter().enumerate() {
+            if let Effect::Encaminhar { departamento } = efeito {
                 citar(departamento, sub(&base, &format!("ao_entrar[{j}]")));
             }
         }
-        for (j, acao) in etapa.acoes.iter().enumerate() {
+        for (j, acao) in etapa.actions.iter().enumerate() {
             let caminho_acao = sub(&base, &format!("acoes[{j}]"));
-            for (k, efeito) in acao.efeitos.iter().enumerate() {
-                if let Efeito::Encaminhar { departamento } = efeito {
+            for (k, efeito) in acao.effects.iter().enumerate() {
+                if let Effect::Encaminhar { departamento } = efeito {
                     citar(departamento, sub(&caminho_acao, &format!("efeitos[{k}]")));
                 }
             }
@@ -128,8 +128,8 @@ pub fn resolver_departamentos(
                 departamento_id: Some(unico.id.clone()),
             },
             [] => {
-                diagnosticos.push(Diagnostico::aviso_no(
-                    Codigo::DepartamentoInexistente,
+                diagnosticos.push(Diagnostic::warning_at(
+                    Code::UnknownDepartment,
                     format!(
                         "O encaminhamento manda o atendimento para o departamento `{nome}`, que não existe nesta organização: o efeito vai falhar no atendimento. Confira o nome do departamento."
                     ),
@@ -141,8 +141,8 @@ pub fn resolver_departamentos(
                 }
             }
             varios => {
-                diagnosticos.push(Diagnostico::aviso_no(
-                    Codigo::DepartamentoInexistente,
+                diagnosticos.push(Diagnostic::warning_at(
+                    Code::UnknownDepartment,
                     format!(
                         "O encaminhamento manda o atendimento para `{nome}`, mas há {} departamentos com esse nome na organização: renomeie um deles para o encaminhamento ter destino. O efeito vai falhar no atendimento.",
                         varios.len()
@@ -203,7 +203,7 @@ struct Validador<'a> {
     exigidos: BTreeMap<&'a str, BTreeSet<&'a str>>,
     /// `def` usadas por alguma decisão.
     usadas: BTreeSet<&'a str>,
-    diagnosticos: Vec<Diagnostico>,
+    diagnosticos: Vec<Diagnostic>,
 }
 
 impl<'a> Validador<'a> {
@@ -219,13 +219,13 @@ impl<'a> Validador<'a> {
             usadas: BTreeSet::new(),
             diagnosticos: Vec::new(),
         };
-        for (i, etapa) in ir.etapas.iter().enumerate() {
+        for (i, etapa) in ir.stages.iter().enumerate() {
             validador.etapas.entry(etapa.id.as_str()).or_insert(i);
         }
-        for (i, decisao) in ir.decisoes.iter().enumerate() {
+        for (i, decisao) in ir.decisions.iter().enumerate() {
             validador.decisoes.entry(decisao.id.as_str()).or_insert(i);
         }
-        for (i, fim) in ir.fins.iter().enumerate() {
+        for (i, fim) in ir.ends.iter().enumerate() {
             validador.fins.entry(fim.id.as_str()).or_insert(i);
         }
         for (i, def) in ir.defs.iter().enumerate() {
@@ -234,30 +234,30 @@ impl<'a> Validador<'a> {
         validador
     }
 
-    fn erro_no(&mut self, codigo: Codigo, mensagem: impl Into<String>, caminho: impl Into<String>) {
+    fn erro_no(&mut self, codigo: Code, mensagem: impl Into<String>, caminho: impl Into<String>) {
         self.diagnosticos
-            .push(Diagnostico::erro_no(codigo, mensagem, caminho));
+            .push(Diagnostic::error_at(codigo, mensagem, caminho));
     }
 
     fn aviso_no(
         &mut self,
-        codigo: Codigo,
+        codigo: Code,
         mensagem: impl Into<String>,
         caminho: impl Into<String>,
     ) {
         self.diagnosticos
-            .push(Diagnostico::aviso_no(codigo, mensagem, caminho));
+            .push(Diagnostic::warning_at(codigo, mensagem, caminho));
     }
 
     // -------------------------------------------------------------- etapas
 
     fn confere_etapas(&mut self) {
         let ir = self.ir;
-        for (i, etapa) in ir.etapas.iter().enumerate() {
+        for (i, etapa) in ir.stages.iter().enumerate() {
             let base = caminho_etapa(i, etapa);
             if self.etapas.get(etapa.id.as_str()) != Some(&i) {
                 self.erro_no(
-                    Codigo::IdRepetido,
+                    Code::DuplicateId,
                     format!(
                         "O id `{}` está declarado duas vezes. Cada etapa, decisão, campo e ação tem id único no seu escopo.",
                         etapa.id
@@ -266,7 +266,7 @@ impl<'a> Validador<'a> {
                 );
             } else if self.decisoes.contains_key(etapa.id.as_str()) {
                 self.erro_no(
-                    Codigo::IdRepetido,
+                    Code::DuplicateId,
                     format!(
                         "O id `{}` é de uma etapa e de uma decisão ao mesmo tempo: um destino não saberia para onde ir. Use ids diferentes.",
                         etapa.id
@@ -279,9 +279,9 @@ impl<'a> Validador<'a> {
             self.confere_acoes(etapa, &base);
             self.confere_variaveis(etapa, &base);
 
-            if etapa.acoes.is_empty() {
+            if etapa.actions.is_empty() {
                 self.aviso_no(
-                    Codigo::EtapaSemAcao,
+                    Code::StageWithoutAction,
                     format!(
                         "A etapa `{}` não tem nenhuma `acao(...)`: o atendimento não sai dela. Acrescente uma ação com `vai_para`.",
                         etapa.id
@@ -292,13 +292,13 @@ impl<'a> Validador<'a> {
 
             // Ator permitido na etapa sem nenhuma ação dele: só vale quando toda ação é restrita
             // (ação sem `ator` é de qualquer ator da etapa).
-            if !etapa.acoes.is_empty() && etapa.acoes.iter().all(|acao| acao.ator.is_some()) {
-                for ator in &etapa.atores_acao {
-                    if etapa.acoes.iter().any(|acao| acao.ator == Some(*ator)) {
+            if !etapa.actions.is_empty() && etapa.actions.iter().all(|acao| acao.actor.is_some()) {
+                for ator in &etapa.action_actors {
+                    if etapa.actions.iter().any(|acao| acao.actor == Some(*ator)) {
                         continue;
                     }
                     self.aviso_no(
-                        Codigo::AtorSemAcao,
+                        Code::ActorWithoutAction,
                         format!(
                             "A etapa `{}` permite o `{}`, mas nenhuma ação é dele: na prática ele não tem o que fazer aqui.",
                             etapa.id,
@@ -317,7 +317,7 @@ impl<'a> Validador<'a> {
             let caminho = sub(base, &format!("campos[{j}]"));
             if !ids.insert(campo.id.as_str()) {
                 self.erro_no(
-                    Codigo::IdRepetido,
+                    Code::DuplicateId,
                     format!(
                         "O campo `{}` está declarado duas vezes na etapa `{}`.",
                         campo.id, etapa.id
@@ -327,20 +327,20 @@ impl<'a> Validador<'a> {
             }
             match campo.tipo {
                 FieldKind::Option => {
-                    if campo.opcoes.len() < 2 {
+                    if campo.options.len() < 2 {
                         self.erro_no(
-                            Codigo::OpcoesInvalidas,
+                            Code::InvalidOptions,
                             format!(
                                 "O campo `{}.{}` é do tipo `opcao` e precisa de pelo menos duas opções; hoje tem {}.",
                                 etapa.id,
                                 campo.id,
-                                campo.opcoes.len()
+                                campo.options.len()
                             ),
                             caminho,
                         );
-                    } else if repetidas(&campo.opcoes) {
+                    } else if repetidas(&campo.options) {
                         self.erro_no(
-                            Codigo::OpcoesInvalidas,
+                            Code::InvalidOptions,
                             format!(
                                 "O campo `{}.{}` repete uma opção: as opções precisam ser diferentes entre si.",
                                 etapa.id, campo.id
@@ -349,9 +349,9 @@ impl<'a> Validador<'a> {
                         );
                     }
                 }
-                _ if !campo.opcoes.is_empty() => {
+                _ if !campo.options.is_empty() => {
                     self.erro_no(
-                        Codigo::OpcoesInvalidas,
+                        Code::InvalidOptions,
                         format!(
                             "O campo `{}.{}` é do tipo `{}` e não aceita `opcoes`: isso só vale no tipo `opcao`.",
                             etapa.id,
@@ -368,11 +368,11 @@ impl<'a> Validador<'a> {
 
     fn confere_acoes(&mut self, etapa: &'a Etapa, base: &str) {
         let mut ids: BTreeSet<&str> = BTreeSet::new();
-        for (j, acao) in etapa.acoes.iter().enumerate() {
+        for (j, acao) in etapa.actions.iter().enumerate() {
             let caminho = sub(base, &format!("acoes[{j}]"));
             if !ids.insert(acao.id.as_str()) {
                 self.erro_no(
-                    Codigo::IdRepetido,
+                    Code::DuplicateId,
                     format!(
                         "A ação `{}` está declarada duas vezes na etapa `{}`.",
                         acao.id, etapa.id
@@ -382,7 +382,7 @@ impl<'a> Validador<'a> {
             }
             let onde = format!("A ação `{}.{}`", etapa.id, acao.id);
 
-            for exigido in &acao.exige {
+            for exigido in &acao.requires {
                 if etapa.campos.iter().any(|campo| campo.id == *exigido) {
                     self.exigidos
                         .entry(etapa.id.as_str())
@@ -390,7 +390,7 @@ impl<'a> Validador<'a> {
                         .insert(exigido.as_str());
                 } else {
                     self.erro_no(
-                        Codigo::ExigeInexistente,
+                        Code::UnknownRequirement,
                         format!(
                             "{onde} exige `{exigido}`, que não é campo da etapa `{}`.",
                             etapa.id
@@ -400,12 +400,12 @@ impl<'a> Validador<'a> {
                 }
             }
 
-            if let Some(ator) = acao.ator
-                && !etapa.atores_acao.contains(&ator)
+            if let Some(ator) = acao.actor
+                && !etapa.action_actors.contains(&ator)
             {
-                let permitidos: Vec<&str> = etapa.atores_acao.iter().map(|a| a.as_text()).collect();
+                let permitidos: Vec<&str> = etapa.action_actors.iter().map(|a| a.as_text()).collect();
                 self.erro_no(
-                    Codigo::RegraOuAtorInvalido,
+                    Code::InvalidRuleOrActor,
                     format!(
                         "{onde} é do ator `{}`, que não está em `atores` da etapa `{}` (lá estão: {}).",
                         ator.as_text(),
@@ -420,7 +420,7 @@ impl<'a> Validador<'a> {
                 );
             }
 
-            self.confere_destino(&acao.vai_para, &sub(&caminho, "vai_para"), &onde);
+            self.confere_destino(&acao.goes_to, &sub(&caminho, "vai_para"), &onde);
         }
     }
 
@@ -430,13 +430,13 @@ impl<'a> Validador<'a> {
     /// A varredura do texto é a mesma do compilador ([`crate::compilador::forma::variaveis`]), para
     /// as duas direções não divergirem.
     fn confere_variaveis(&mut self, etapa: &'a Etapa, base: &str) {
-        for (j, efeito) in etapa.ao_entrar.iter().enumerate() {
+        for (j, efeito) in etapa.on_enter.iter().enumerate() {
             let caminho = sub(base, &format!("ao_entrar[{j}]"));
             self.confere_variaveis_do_efeito(efeito, &caminho, Some(etapa));
         }
-        for (j, acao) in etapa.acoes.iter().enumerate() {
+        for (j, acao) in etapa.actions.iter().enumerate() {
             let caminho_acao = sub(base, &format!("acoes[{j}]"));
-            for (k, efeito) in acao.efeitos.iter().enumerate() {
+            for (k, efeito) in acao.effects.iter().enumerate() {
                 let caminho = sub(&caminho_acao, &format!("efeitos[{k}]"));
                 self.confere_variaveis_do_efeito(efeito, &caminho, None);
             }
@@ -445,23 +445,23 @@ impl<'a> Validador<'a> {
 
     fn confere_variaveis_do_efeito(
         &mut self,
-        efeito: &Efeito,
+        efeito: &Effect,
         caminho: &str,
         ao_entrar_da_etapa: Option<&'a Etapa>,
     ) {
         let (texto, campo, o_que) = match efeito {
-            Efeito::MensagemAoCliente { texto } => (texto.as_str(), "texto", "mensagem ao cliente"),
-            Efeito::NotificarWhatsapp { mensagem, .. } => {
+            Effect::MessageToCustomer { texto } => (texto.as_str(), "texto", "mensagem ao cliente"),
+            Effect::NotifyWhatsApp { mensagem, .. } => {
                 (mensagem.as_str(), "mensagem", "notificação para a equipe")
             }
-            Efeito::Encaminhar { .. } => return,
+            Effect::Encaminhar { .. } => return,
         };
         let caminho = sub(caminho, campo);
         let ir = self.ir;
         for variavel in crate::compilador::forma::variaveis(texto) {
             let Some((prefixo, nome)) = variavel.split_once('.') else {
                 self.erro_no(
-                    Codigo::VariavelInvalida,
+                    Code::InvalidVariable,
                     format!(
                         "A {o_que} usa `{{{variavel}}}`, que não existe. As variáveis são `{{etapa.campo}}`, `{{ficha.id}}` e `{{cliente.peer}}`."
                     ),
@@ -474,7 +474,7 @@ impl<'a> Validador<'a> {
             }
             if prefixo == "ficha" || prefixo == "cliente" {
                 self.erro_no(
-                    Codigo::VariavelInvalida,
+                    Code::InvalidVariable,
                     format!(
                         "A {o_que} usa `{{{variavel}}}`, que não existe. As variáveis são `{{etapa.campo}}`, `{{ficha.id}}` e `{{cliente.peer}}`."
                     ),
@@ -484,7 +484,7 @@ impl<'a> Validador<'a> {
             }
             let Some(indice) = self.etapas.get(prefixo).copied() else {
                 self.aviso_no(
-                    Codigo::VariavelSemCampo,
+                    Code::VariableWithoutField,
                     format!(
                         "A {o_que} usa `{{{variavel}}}`, mas a etapa `{prefixo}` não existe: no atendimento sai vazio."
                     ),
@@ -492,9 +492,9 @@ impl<'a> Validador<'a> {
                 );
                 continue;
             };
-            if !ir.etapas[indice].campos.iter().any(|c| c.id == nome) {
+            if !ir.stages[indice].campos.iter().any(|c| c.id == nome) {
                 self.aviso_no(
-                    Codigo::VariavelSemCampo,
+                    Code::VariableWithoutField,
                     format!(
                         "A {o_que} usa `{{{variavel}}}`, mas a etapa `{prefixo}` não tem o campo `{nome}`: no atendimento sai vazio."
                     ),
@@ -506,7 +506,7 @@ impl<'a> Validador<'a> {
                 && atual.id == prefixo
             {
                 self.aviso_no(
-                    Codigo::VariavelDoProprioPasso,
+                    Code::VariableFromOwnStep,
                     format!(
                         "`ao_entrar` da etapa `{}` usa `{{{variavel}}}`, que só é preenchido dentro da própria etapa: a mensagem sai com o texto vazio.",
                         atual.id
@@ -521,11 +521,11 @@ impl<'a> Validador<'a> {
 
     fn confere_decisoes(&mut self) {
         let ir = self.ir;
-        for (i, decisao) in ir.decisoes.iter().enumerate() {
+        for (i, decisao) in ir.decisions.iter().enumerate() {
             let base = caminho_decisao(i, decisao);
             if self.decisoes.get(decisao.id.as_str()) != Some(&i) {
                 self.erro_no(
-                    Codigo::IdRepetido,
+                    Code::DuplicateId,
                     format!(
                         "O id `{}` está declarado duas vezes entre as decisões do fluxo.",
                         decisao.id
@@ -534,7 +534,7 @@ impl<'a> Validador<'a> {
                 );
             } else if self.etapas.contains_key(decisao.id.as_str()) {
                 self.erro_no(
-                    Codigo::IdRepetido,
+                    Code::DuplicateId,
                     format!(
                         "O id `{}` é de uma decisão e de uma etapa ao mesmo tempo: um destino não saberia para onde ir. Use ids diferentes.",
                         decisao.id
@@ -543,50 +543,50 @@ impl<'a> Validador<'a> {
                 );
             }
             let onde = format!("A decisão `{}`", decisao.id);
-            self.confere_destino(&decisao.entao, &sub(&base, "entao"), &onde);
-            self.confere_destino(&decisao.senao, &sub(&base, "senao"), &onde);
+            self.confere_destino(&decisao.then_branch, &sub(&base, "entao"), &onde);
+            self.confere_destino(&decisao.else_branch, &sub(&base, "senao"), &onde);
             self.confere_regra(&decisao.se, &sub(&base, "se"), &onde);
         }
     }
 
-    fn confere_regra(&mut self, regra: &'a Regra, caminho: &str, onde: &str) {
+    fn confere_regra(&mut self, regra: &'a Rule, caminho: &str, onde: &str) {
         match regra {
-            Regra::Igual { campo, valor } => {
+            Rule::Igual { campo, value: valor } => {
                 self.confere_folha(campo, Some(valor), "igual", caminho, onde)
             }
-            Regra::Diferente { campo, valor } => {
+            Rule::Diferente { campo, value: valor } => {
                 self.confere_folha(campo, Some(valor), "diferente", caminho, onde)
             }
-            Regra::Maior { campo, valor } => {
+            Rule::Maior { campo, value: valor } => {
                 self.confere_folha(campo, Some(valor), "maior", caminho, onde)
             }
-            Regra::Menor { campo, valor } => {
+            Rule::Menor { campo, value: valor } => {
                 self.confere_folha(campo, Some(valor), "menor", caminho, onde)
             }
-            Regra::Contem { campo, valor } => {
+            Rule::Contem { campo, value: valor } => {
                 self.confere_folha(campo, Some(valor), "contem", caminho, onde)
             }
-            Regra::Vazio { campo } => self.confere_folha(campo, None, "vazio", caminho, onde),
-            Regra::Funcao { nome } => {
+            Rule::Vazio { campo } => self.confere_folha(campo, None, "vazio", caminho, onde),
+            Rule::Funcao { nome } => {
                 self.usadas.insert(nome.as_str());
                 if !self.defs.contains_key(nome.as_str()) {
                     self.erro_no(
-                        Codigo::RegraOuAtorInvalido,
+                        Code::InvalidRuleOrActor,
                         format!("{onde} usa `funcao(\"{nome}\")`, mas não existe `def {nome}(dados)` neste fluxo."),
                         caminho,
                     );
                 }
             }
-            Regra::E { args } | Regra::Ou { args } | Regra::Nao { args } => {
+            Rule::E { args } | Rule::Ou { args } | Rule::Nao { args } => {
                 self.confere_grupo(regra, args, caminho, onde);
             }
         }
     }
 
-    fn confere_grupo(&mut self, regra: &'a Regra, args: &'a [Regra], caminho: &str, onde: &str) {
-        if matches!(regra, Regra::Nao { .. }) && args.len() != 1 {
+    fn confere_grupo(&mut self, regra: &'a Rule, args: &'a [Rule], caminho: &str, onde: &str) {
+        if matches!(regra, Rule::Nao { .. }) && args.len() != 1 {
             self.erro_no(
-                Codigo::CombinadorMalformado,
+                Code::MalformedCombinator,
                 format!(
                     "`nao` recebe exatamente uma condição; {onde} usa {}.",
                     args.len()
@@ -594,12 +594,12 @@ impl<'a> Validador<'a> {
                 caminho,
             );
         }
-        if matches!(regra, Regra::E { .. } | Regra::Ou { .. }) && args.len() < 2 {
+        if matches!(regra, Rule::E { .. } | Rule::Ou { .. }) && args.len() < 2 {
             self.erro_no(
-                Codigo::CombinadorMalformado,
+                Code::MalformedCombinator,
                 format!(
                     "`{}` precisa de pelo menos duas condições; {onde} usa {}.",
-                    if matches!(regra, Regra::E { .. }) {
+                    if matches!(regra, Rule::E { .. }) {
                         "e"
                     } else {
                         "ou"
@@ -613,14 +613,14 @@ impl<'a> Validador<'a> {
         // FLX55: condição que sempre dá o mesmo resultado.
         let folhas: Vec<(&str, Option<&str>, &str)> =
             args.iter().filter_map(chave_da_folha).collect();
-        if matches!(regra, Regra::E { .. }) {
+        if matches!(regra, Rule::E { .. }) {
             for (i, a) in folhas.iter().enumerate() {
                 for b in folhas.iter().skip(i + 1) {
                     let opostas =
                         matches!((a.2, b.2), ("igual", "diferente") | ("diferente", "igual"));
                     if a.0 == b.0 && a.1 == b.1 && opostas {
                         self.aviso_no(
-                            Codigo::CondicaoContraditoria,
+                            Code::ContradictoryCondition,
                             format!(
                                 "{onde} não pode ser verdadeira com `{}` igual e diferente de `{}` ao mesmo tempo.",
                                 a.0,
@@ -633,11 +633,11 @@ impl<'a> Validador<'a> {
                 }
             }
         }
-        if matches!(regra, Regra::Ou { .. }) {
+        if matches!(regra, Rule::Ou { .. }) {
             for (i, a) in args.iter().enumerate() {
                 if args.iter().skip(i + 1).any(|b| b == a) {
                     self.aviso_no(
-                        Codigo::CondicaoContraditoria,
+                        Code::ContradictoryCondition,
                         format!(
                             "{onde} repete o mesmo teste duas vezes na mesma disjunção (`ou`)."
                         ),
@@ -663,7 +663,7 @@ impl<'a> Validador<'a> {
     ) {
         let Some((etapa_id, campo_id)) = campo.split_once('.') else {
             self.erro_no(
-                Codigo::CombinadorMalformado,
+                Code::MalformedCombinator,
                 format!(
                     "{onde} compara `{campo}`; use `etapa.campo`, por exemplo `coleta.endereco`."
                 ),
@@ -673,7 +673,7 @@ impl<'a> Validador<'a> {
         };
         if etapa_id.is_empty() || campo_id.is_empty() || campo_id.contains('.') {
             self.erro_no(
-                Codigo::CombinadorMalformado,
+                Code::MalformedCombinator,
                 format!(
                     "{onde} compara `{campo}`; use `etapa.campo`, com ids em minúsculas (por exemplo `coleta.endereco`)."
                 ),
@@ -684,15 +684,15 @@ impl<'a> Validador<'a> {
         let ir = self.ir;
         let Some(indice) = self.etapas.get(etapa_id).copied() else {
             self.erro_no(
-                Codigo::CampoInexistente,
+                Code::UnknownField,
                 format!("{onde} compara `{campo}`, mas a etapa `{etapa_id}` não existe."),
                 caminho,
             );
             return;
         };
-        let Some(campo_info) = ir.etapas[indice].campos.iter().find(|c| c.id == campo_id) else {
+        let Some(campo_info) = ir.stages[indice].campos.iter().find(|c| c.id == campo_id) else {
             self.erro_no(
-                Codigo::CampoInexistente,
+                Code::UnknownField,
                 format!(
                     "{onde} compara `{campo}`, mas a etapa `{etapa_id}` não tem o campo `{campo_id}`."
                 ),
@@ -700,9 +700,9 @@ impl<'a> Validador<'a> {
             );
             return;
         };
-        let (tipo_campo, opcoes) = (campo_info.tipo, campo_info.opcoes.clone());
+        let (tipo_campo, opcoes) = (campo_info.tipo, campo_info.options.clone());
         self.lidos
-            .entry(ir.etapas[indice].id.as_str())
+            .entry(ir.stages[indice].id.as_str())
             .or_default()
             .insert(campo_info.id.as_str());
 
@@ -713,7 +713,7 @@ impl<'a> Validador<'a> {
                     && !opcoes.iter().any(|o| o == valor)
                 {
                     self.aviso_no(
-                        Codigo::ForaDasOpcoes,
+                        Code::OutsideOptions,
                         format!(
                             "{onde} compara `{campo}` com `{valor}`, que não é uma das opções ({}): o teste nunca casa.",
                             opcoes.join(", ")
@@ -724,7 +724,7 @@ impl<'a> Validador<'a> {
             }
             "maior" | "menor" if tipo_campo != FieldKind::Number => {
                 self.aviso_no(
-                    Codigo::ComparacaoDeTexto,
+                    Code::TextComparison,
                     format!(
                         "{onde} usa `{tipo}` com `{campo}`, mas o campo é `{}`: mude o tipo para `numero` ou use `igual`.",
                         tipo_campo.as_text()
@@ -738,12 +738,12 @@ impl<'a> Validador<'a> {
 
     // -------------------------------------------------------------- destinos e fins
 
-    fn confere_destino(&mut self, destino: &Destino, caminho: &str, onde: &str) {
+    fn confere_destino(&mut self, destino: &Destination, caminho: &str, onde: &str) {
         match destino {
-            Destino::Etapa { id } => {
+            Destination::Etapa { id } => {
                 if !self.etapas.contains_key(id.as_str()) {
                     self.erro_no(
-                        Codigo::DestinoInexistente,
+                        Code::UnknownDestination,
                         format!(
                             "{onde} vai para a etapa `{id}`, que não existe. Use o id de uma etapa ou de uma decisão."
                         ),
@@ -751,10 +751,10 @@ impl<'a> Validador<'a> {
                     );
                 }
             }
-            Destino::Decisao { id } => {
+            Destination::Decisao { id } => {
                 if !self.decisoes.contains_key(id.as_str()) {
                     self.erro_no(
-                        Codigo::DestinoInexistente,
+                        Code::UnknownDestination,
                         format!(
                             "{onde} vai para a decisão `{id}`, que não existe. Use o id de uma etapa ou de uma decisão."
                         ),
@@ -762,25 +762,25 @@ impl<'a> Validador<'a> {
                     );
                 }
             }
-            Destino::Fim {
+            Destination::Fim {
                 id,
                 resultado,
-                encerra_atendimento,
+                ends_service: encerra_atendimento,
             } => match self.fins.get(id.as_str()).copied() {
                 None => self.erro_no(
-                    Codigo::DestinoInexistente,
+                    Code::UnknownDestination,
                     format!(
                         "{onde} termina no fim `{id}`, que não está declarado em `fins` deste fluxo."
                     ),
                     caminho,
                 ),
                 Some(indice) => {
-                    let fim = &self.ir.fins[indice];
+                    let fim = &self.ir.ends[indice];
                     if fim.resultado != *resultado
-                        || fim.encerra_atendimento != *encerra_atendimento
+                        || fim.ends_service != *encerra_atendimento
                     {
                         self.erro_no(
-                            Codigo::FimDivergente,
+                            Code::DivergentEnd,
                             format!(
                                 "O fim `{id}` diz uma coisa aqui e outra em `fins[{indice}]` ({}): use a mesma declaração de `fim(...)` nos dois lugares.",
                                 if fim.resultado != *resultado {
@@ -800,10 +800,10 @@ impl<'a> Validador<'a> {
     fn confere_fins(&mut self) {
         let ir = self.ir;
         let mut vistos: BTreeSet<&str> = BTreeSet::new();
-        for (i, fim) in ir.fins.iter().enumerate() {
+        for (i, fim) in ir.ends.iter().enumerate() {
             if !vistos.insert(fim.id.as_str()) {
                 self.erro_no(
-                    Codigo::IdRepetido,
+                    Code::DuplicateId,
                     format!(
                         "O fim `{}` está declarado duas vezes em `fins`; use a mesma declaração nos dois lugares.",
                         fim.id
@@ -815,18 +815,18 @@ impl<'a> Validador<'a> {
     }
 
     fn confere_inicio(&mut self) {
-        if self.ir.inicio.is_empty() {
+        if self.ir.start.is_empty() {
             self.erro_no(
-                Codigo::DestinoInexistente,
+                Code::UnknownDestination,
                 "O fluxo não declara a etapa de início. Indique o id da etapa em que o atendimento começa.",
                 "inicio",
             );
-        } else if !self.etapas.contains_key(self.ir.inicio.as_str()) {
+        } else if !self.etapas.contains_key(self.ir.start.as_str()) {
             self.erro_no(
-                Codigo::DestinoInexistente,
+                Code::UnknownDestination,
                 format!(
                     "O fluxo começa em `{}`, que não é uma etapa deste fluxo. Use o id de uma etapa.",
-                    self.ir.inicio
+                    self.ir.start
                 ),
                 "inicio",
             );
@@ -838,10 +838,10 @@ impl<'a> Validador<'a> {
     fn confere_ciclo(&mut self) {
         let ir = self.ir;
         let mut grafo: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
-        for decisao in &ir.decisoes {
+        for decisao in &ir.decisions {
             let mut arestas: Vec<&str> = Vec::new();
-            for destino in [&decisao.entao, &decisao.senao] {
-                if let Destino::Decisao { id } = destino {
+            for destino in [&decisao.then_branch, &decisao.else_branch] {
+                if let Destination::Decisao { id } = destino {
                     arestas.push(id.as_str());
                 }
             }
@@ -853,12 +853,12 @@ impl<'a> Validador<'a> {
         let primeiro = ciclo.first().map(String::as_str).unwrap_or("");
         let indice = self.decisoes.get(primeiro).copied().unwrap_or(0);
         let caminho = ir
-            .decisoes
+            .decisions
             .get(indice)
             .map(|decisao| caminho_decisao(indice, decisao))
             .unwrap_or_else(|| "decisoes".to_owned());
         self.erro_no(
-            Codigo::CicloDeDecisao,
+            Code::DecisionCycle,
             format!(
                 "As decisões formam um ciclo ({}): um fluxo não pode voltar a uma decisão já avaliada.",
                 ciclo.join(" → ")
@@ -869,24 +869,24 @@ impl<'a> Validador<'a> {
 
     fn confere_alcance(&mut self) {
         let ir = self.ir;
-        let inicio = ir.inicio.as_str();
+        let inicio = ir.start.as_str();
         if inicio.is_empty() || !self.etapas.contains_key(inicio) {
             // Sem início válido não há de onde alcançar; o `FLX15` do início já explicou.
             return;
         }
         let mut grafo: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
-        for etapa in &ir.etapas {
+        for etapa in &ir.stages {
             let arestas = grafo.entry(etapa.id.as_str()).or_default();
-            for acao in &etapa.acoes {
-                if let Some(id) = acao.vai_para.aberto() {
+            for acao in &etapa.actions {
+                if let Some(id) = acao.goes_to.is_open() {
                     arestas.push(id);
                 }
             }
         }
-        for decisao in &ir.decisoes {
+        for decisao in &ir.decisions {
             let arestas = grafo.entry(decisao.id.as_str()).or_default();
-            for destino in [&decisao.entao, &decisao.senao] {
-                if let Some(id) = destino.aberto() {
+            for destino in [&decisao.then_branch, &decisao.else_branch] {
+                if let Some(id) = destino.is_open() {
                     arestas.push(id);
                 }
             }
@@ -905,10 +905,10 @@ impl<'a> Validador<'a> {
             }
         }
 
-        for (i, etapa) in ir.etapas.iter().enumerate() {
+        for (i, etapa) in ir.stages.iter().enumerate() {
             if !alcancados.contains(etapa.id.as_str()) {
                 self.aviso_no(
-                    Codigo::Inalcancavel,
+                    Code::Unreachable,
                     format!(
                         "A etapa `{}` não é alcançável a partir de `inicio = \"{inicio}\"`. Confira os `vai_para`.",
                         etapa.id
@@ -917,10 +917,10 @@ impl<'a> Validador<'a> {
                 );
             }
         }
-        for (i, decisao) in ir.decisoes.iter().enumerate() {
+        for (i, decisao) in ir.decisions.iter().enumerate() {
             if !alcancados.contains(decisao.id.as_str()) {
                 self.aviso_no(
-                    Codigo::Inalcancavel,
+                    Code::Unreachable,
                     format!(
                         "A decisão `{}` não é alcançável a partir de `inicio = \"{inicio}\"`. Confira os `vai_para` e os ramos `entao`/`senao`.",
                         decisao.id
@@ -932,10 +932,10 @@ impl<'a> Validador<'a> {
     }
 
     fn confere_teto(&mut self) {
-        let nos = self.ir.etapas.len() + self.ir.decisoes.len() + self.ir.fins.len();
+        let nos = self.ir.stages.len() + self.ir.decisions.len() + self.ir.ends.len();
         if nos > MAX_NOS {
             self.erro_no(
-                Codigo::NosDemais,
+                Code::NodeLimit,
                 format!(
                     "O fluxo tem {nos} nós e o limite é {MAX_NOS}. Junte etapas parecidas ou divida o fluxo."
                 ),
@@ -948,7 +948,7 @@ impl<'a> Validador<'a> {
 
     fn confere_uso_dos_campos(&mut self) {
         let ir = self.ir;
-        for (i, etapa) in ir.etapas.iter().enumerate() {
+        for (i, etapa) in ir.stages.iter().enumerate() {
             let base = caminho_etapa(i, etapa);
             for (j, campo) in etapa.campos.iter().enumerate() {
                 let exigido = self
@@ -963,7 +963,7 @@ impl<'a> Validador<'a> {
                     continue;
                 }
                 self.aviso_no(
-                    Codigo::CampoNaoUsado,
+                    Code::UnusedField,
                     format!(
                         "O campo `{}.{}` não é exigido por nenhuma ação nem lido por nenhuma regra: ninguém usa o valor.",
                         etapa.id, campo.id
@@ -987,7 +987,7 @@ impl<'a> Validador<'a> {
                 continue;
             }
             self.aviso_no(
-                Codigo::DefNaoUsada,
+                Code::UnusedDef,
                 format!(
                     "A função `{nome}` está definida e nenhuma decisão usa `funcao(\"{nome}\")`. Chame ou apague."
                 ),
@@ -998,15 +998,15 @@ impl<'a> Validador<'a> {
 }
 
 /// Chave de comparação de uma folha de combinador: campo, valor e o nome do combinador.
-fn chave_da_folha(regra: &Regra) -> Option<(&str, Option<&str>, &'static str)> {
+fn chave_da_folha(regra: &Rule) -> Option<(&str, Option<&str>, &'static str)> {
     match regra {
-        Regra::Igual { campo, valor } => Some((campo, Some(valor), "igual")),
-        Regra::Diferente { campo, valor } => Some((campo, Some(valor), "diferente")),
-        Regra::Maior { campo, valor } => Some((campo, Some(valor), "maior")),
-        Regra::Menor { campo, valor } => Some((campo, Some(valor), "menor")),
-        Regra::Contem { campo, valor } => Some((campo, Some(valor), "contem")),
-        Regra::Vazio { campo } => Some((campo, None, "vazio")),
-        Regra::E { .. } | Regra::Ou { .. } | Regra::Nao { .. } | Regra::Funcao { .. } => None,
+        Rule::Igual { campo, value: valor } => Some((campo, Some(valor), "igual")),
+        Rule::Diferente { campo, value: valor } => Some((campo, Some(valor), "diferente")),
+        Rule::Maior { campo, value: valor } => Some((campo, Some(valor), "maior")),
+        Rule::Menor { campo, value: valor } => Some((campo, Some(valor), "menor")),
+        Rule::Contem { campo, value: valor } => Some((campo, Some(valor), "contem")),
+        Rule::Vazio { campo } => Some((campo, None, "vazio")),
+        Rule::E { .. } | Rule::Ou { .. } | Rule::Nao { .. } | Rule::Funcao { .. } => None,
     }
 }
 

@@ -20,7 +20,7 @@ pub(crate) mod forma;
 
 use poph_types::config::FlowsConfig;
 
-use crate::diagnostico::{Codigo, Diagnostico};
+use crate::diagnostico::{Code, Diagnostic};
 use crate::ir::Ir;
 use crate::linguagem::{LimitesStarlark, analisa, carregar_modulo};
 
@@ -103,27 +103,27 @@ pub struct Compilado {
     /// A estrutura compilada; `None` quando há pelo menos um erro.
     pub ir: Option<Ir>,
     /// Diagnósticos de forma, na ordem em que foram encontrados (erros e avisos juntos).
-    pub diagnosticos: Vec<Diagnostico>,
+    pub diagnosticos: Vec<Diagnostic>,
 }
 
 impl Compilado {
     /// Se algum diagnóstico bloqueia a publicação.
     pub fn tem_erro(&self) -> bool {
-        self.diagnosticos.iter().any(Diagnostico::e_erro)
+        self.diagnosticos.iter().any(Diagnostic::is_error)
     }
 
     /// Só os erros.
-    pub fn erros(&self) -> impl Iterator<Item = &Diagnostico> {
-        self.diagnosticos.iter().filter(|d| d.e_erro())
+    pub fn erros(&self) -> impl Iterator<Item = &Diagnostic> {
+        self.diagnosticos.iter().filter(|d| d.is_error())
     }
 
     /// Só os avisos.
-    pub fn avisos(&self) -> impl Iterator<Item = &Diagnostico> {
-        self.diagnosticos.iter().filter(|d| !d.e_erro())
+    pub fn avisos(&self) -> impl Iterator<Item = &Diagnostic> {
+        self.diagnosticos.iter().filter(|d| !d.is_error())
     }
 
     /// A IR, ou os diagnósticos que impediram de gerá-la.
-    pub fn ir(&self) -> Result<&Ir, &[Diagnostico]> {
+    pub fn ir(&self) -> Result<&Ir, &[Diagnostic]> {
         match &self.ir {
             Some(ir) => Ok(ir),
             None => Err(&self.diagnosticos),
@@ -135,7 +135,7 @@ impl Compilado {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FalhaCarregamento {
     /// O texto não compila: os diagnósticos explicam o que corrigir.
-    Forma(Vec<Diagnostico>),
+    Forma(Vec<Diagnostic>),
     /// O texto compila, mas o resultado não é a IR gravada (`FLXR06`): o fluxo falha fechado.
     Divergente {
         /// Id do fluxo da IR gravada.
@@ -163,8 +163,8 @@ pub fn compilar(fonte: &str, limites: &Limites) -> Compilado {
     let mut diagnosticos = Vec::new();
 
     if fonte.len() > limites.max_fonte_bytes {
-        diagnosticos.push(Diagnostico::erro(
-            Codigo::FonteGrande,
+        diagnosticos.push(Diagnostic::error(
+            Code::SourceTooLarge,
             format!(
                 "O script tem {} bytes e o limite é {} bytes ({} KB). Tire textos longos das instruções ou divida o fluxo em dois.",
                 fonte.len(),
@@ -197,10 +197,10 @@ pub fn compilar(fonte: &str, limites: &Limites) -> Compilado {
     // Teto de nós da configuração (`fluxos.max_nos`). O teto de forma (60) já foi conferido pela
     // leitura da árvore; aqui vale o limite do processo, que pode ser menor.
     let ir = match ir {
-        Some(ir) if ir.etapas.len() + ir.decisoes.len() + ir.fins.len() > limites.max_nos => {
-            let nos = ir.etapas.len() + ir.decisoes.len() + ir.fins.len();
-            diagnosticos.push(Diagnostico::erro(
-                Codigo::NosDemais,
+        Some(ir) if ir.stages.len() + ir.decisions.len() + ir.ends.len() > limites.max_nos => {
+            let nos = ir.stages.len() + ir.decisions.len() + ir.ends.len();
+            diagnosticos.push(Diagnostic::error(
+                Code::NodeLimit,
                 format!(
                     "O fluxo tem {nos} nós e o limite é {}. Junte etapas parecidas ou divida o fluxo.",
                     limites.max_nos
@@ -259,16 +259,16 @@ fn diferencas(gravada: &Ir, recompilada: &Ir) -> String {
     if gravada.gatilho != recompilada.gatilho {
         partes.push("o gatilho");
     }
-    if gravada.inicio != recompilada.inicio {
+    if gravada.start != recompilada.start {
         partes.push("a etapa de início");
     }
-    if gravada.etapas != recompilada.etapas {
+    if gravada.stages != recompilada.stages {
         partes.push("as etapas");
     }
-    if gravada.decisoes != recompilada.decisoes {
+    if gravada.decisions != recompilada.decisions {
         partes.push("as decisões");
     }
-    if gravada.fins != recompilada.fins {
+    if gravada.ends != recompilada.ends {
         partes.push("os fins");
     }
     if gravada.defs != recompilada.defs {
@@ -285,7 +285,7 @@ fn diferencas(gravada: &Ir, recompilada: &Ir) -> String {
 }
 
 /// Traduz o erro do parser em um dos códigos da lista fechada.
-fn diagnostico_do_parse(erro: &starlark::Error) -> Diagnostico {
+fn diagnostico_do_parse(erro: &starlark::Error) -> Diagnostic {
     let (linha, coluna) = posicao_do_erro(erro);
     let texto = erro.to_string();
     let minusculo = texto.to_lowercase();
@@ -315,7 +315,7 @@ fn diagnostico_do_parse(erro: &starlark::Error) -> Diagnostico {
             "esta construção"
         };
         (
-            Codigo::Dialeto,
+            Code::Dialect,
             format!(
                 "{qual} não faz parte da linguagem de fluxos. Um fluxo descreve etapas, campos, ações e regras; cálculo livre só dentro de `def {}(dados)`.",
                 "minha_regra"
@@ -326,15 +326,15 @@ fn diagnostico_do_parse(erro: &starlark::Error) -> Diagnostico {
         // trecho, que não cabe numa mensagem de API.
         let resumo = texto.lines().next().unwrap_or(&texto).trim().to_owned();
         (
-            Codigo::Sintaxe,
+            Code::Syntax,
             format!("Erro de sintaxe no script: {resumo}"),
         )
     };
-    Diagnostico::erro(codigo, mensagem, linha, coluna)
+    Diagnostic::error(codigo, mensagem, linha, coluna)
 }
 
 /// Traduz o erro da carga em um dos códigos da lista fechada.
-fn diagnostico_da_carga(erro: &starlark::Error) -> Diagnostico {
+fn diagnostico_da_carga(erro: &starlark::Error) -> Diagnostic {
     let (linha, coluna) = posicao_do_erro(erro);
     let texto = erro.to_string();
     let minusculo = texto.to_lowercase();
@@ -345,24 +345,24 @@ fn diagnostico_da_carga(erro: &starlark::Error) -> Diagnostico {
         || minusculo.contains("stack overflow")
         || minusculo.contains("recursion")
     {
-        return Diagnostico::erro(
-            Codigo::LimiteDeCarga,
+        return Diagnostic::error(
+            Code::LoadLimit,
             "O script executou demais ao ser carregado (ticks, memória, profundidade ou prazo de 1 s). No topo do arquivo deve haver só declarações; confira se alguma `def` tem laço longo.",
             linha,
             coluna,
         );
     }
     if minusculo.contains("not found") {
-        return Diagnostico::erro(
-            Codigo::NomeInexistente,
+        return Diagnostic::error(
+            Code::UnknownName,
             format!("O script usa um nome que não existe na linguagem de fluxos: {texto}"),
             linha,
             coluna,
         );
     }
     let resumo = texto.lines().next().unwrap_or(&texto).trim().to_owned();
-    Diagnostico::erro(
-        Codigo::Sintaxe,
+    Diagnostic::error(
+        Code::Syntax,
         format!("O script não carregou: {resumo}"),
         linha,
         coluna,

@@ -27,7 +27,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
-use poph_fluxos::ir::Destino;
+use poph_fluxos::ir::Destination;
 use poph_fluxos::motor::{Contexto, Estado as EstadoMotor, executar_acao};
 use poph_fluxos::{Avaliador, Ir, Limites, compilar};
 use poph_server::Estado;
@@ -287,7 +287,7 @@ impl Cenario {
                 RevisionPublication {
                     expected: fluxo.version,
                     fonte: SCRIPT.to_owned(),
-                    definicao_json: ir.para_json(),
+                    definicao_json: ir.to_json(),
                     schema_versao: Some(ir.schema_versao),
                     resolucoes_json: "{}".to_owned(),
                     ator_tipo: "admin_token".to_owned(),
@@ -383,7 +383,7 @@ impl Cenario {
             .revisions()
             .get_by_id(org_id, execucao.revisao_id)
             .expect("lê a revisão");
-        let ir = Ir::de_json(&revisao.definicao_json).expect("IR da revisão");
+        let ir = Ir::from_json(&revisao.definicao_json).expect("IR da revisão");
         let atores_que_agiram = self
             .store
             .executions()
@@ -397,7 +397,7 @@ impl Cenario {
         let estado = EstadoMotor {
             fluxo_id: ir.fluxo.id.clone(),
             status: execucao.status,
-            no_atual: Destino::Etapa {
+            no_atual: Destination::Etapa {
                 id: execucao.no_atual.clone(),
             },
             dados: serde_json::from_str(&execucao.dados_json).expect("dados da execução"),

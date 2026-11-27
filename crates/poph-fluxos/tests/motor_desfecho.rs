@@ -6,7 +6,7 @@
 //! decisões (`FLX23`) — porque o motor também precisa falhar fechado com estrutura gravada à mão.
 
 use poph_fluxos::ir::{
-    Acao, Campo, Decisao, Destino, Efeito, Etapa, Fim, Fluxo, Gatilho, Ir, Regra,
+    Acao, Campo, Decisao, Destination, Effect, Etapa, Fim, Fluxo, Gatilho, Ir, Rule,
 };
 use poph_fluxos::motor::{Campos, Contexto, abandonar, efeitos_de_entrada, executar_acao, iniciar};
 use poph_fluxos::regras::{Avaliador, Dados};
@@ -18,51 +18,51 @@ use serde_json::{Value as Json, json};
 fn campo(id: &str, tipo: FieldKind, obrigatorio: bool) -> Campo {
     Campo {
         id: id.to_owned(),
-        rotulo: id.to_uppercase(),
+        label: id.to_uppercase(),
         tipo,
-        obrigatorio,
-        opcoes: Vec::new(),
-        ajuda: None,
+        required: obrigatorio,
+        options: Vec::new(),
+        help: None,
     }
 }
 
-fn acao_para(id: &str, ator: Option<ActionActor>, destino: Destino, efeitos: Vec<Efeito>) -> Acao {
+fn acao_para(id: &str, ator: Option<ActionActor>, destino: Destination, efeitos: Vec<Effect>) -> Acao {
     Acao {
         id: id.to_owned(),
-        rotulo: id.to_uppercase(),
-        exige: Vec::new(),
-        ator,
-        vai_para: destino,
-        efeitos,
+        label: id.to_uppercase(),
+        requires: Vec::new(),
+        actor: ator,
+        goes_to: destino,
+        effects: efeitos,
     }
 }
 
-fn etapa(id: &str, campos: Vec<Campo>, acoes: Vec<Acao>, ao_entrar: Vec<Efeito>) -> Etapa {
+fn etapa(id: &str, campos: Vec<Campo>, acoes: Vec<Acao>, ao_entrar: Vec<Effect>) -> Etapa {
     Etapa {
         id: id.to_owned(),
         nome: id.to_uppercase(),
-        instrucao: None,
-        atores_acao: vec![ActionActor::Agent],
+        instruction: None,
+        action_actors: vec![ActionActor::Agent],
         campos,
-        acoes,
-        ao_entrar,
+        actions: acoes,
+        on_enter: ao_entrar,
     }
 }
 
-fn decisao(id: &str, se: Regra, entao: Destino, senao: Destino) -> Decisao {
+fn decisao(id: &str, se: Rule, entao: Destination, senao: Destination) -> Decisao {
     Decisao {
         id: id.to_owned(),
         se,
-        entao,
-        senao,
+        then_branch: entao,
+        else_branch: senao,
     }
 }
 
 /// Decisão que sempre é verdadeira (o campo não existe, logo está vazio).
-fn decisao_sempre(id: &str, entao: Destino, senao: Destino) -> Decisao {
+fn decisao_sempre(id: &str, entao: Destination, senao: Destination) -> Decisao {
     decisao(
         id,
-        Regra::Vazio {
+        Rule::Vazio {
             campo: "coleta.nada".to_owned(),
         },
         entao,
@@ -70,19 +70,19 @@ fn decisao_sempre(id: &str, entao: Destino, senao: Destino) -> Decisao {
     )
 }
 
-fn vai_para(id: &str) -> Destino {
-    Destino::Etapa { id: id.to_owned() }
+fn vai_para(id: &str) -> Destination {
+    Destination::Etapa { id: id.to_owned() }
 }
 
-fn vai_para_decisao(id: &str) -> Destino {
-    Destino::Decisao { id: id.to_owned() }
+fn vai_para_decisao(id: &str) -> Destination {
+    Destination::Decisao { id: id.to_owned() }
 }
 
-fn fim(id: &str, encerra_atendimento: bool) -> Destino {
-    Destino::Fim {
+fn fim(id: &str, encerra_atendimento: bool) -> Destination {
+    Destination::Fim {
         id: id.to_owned(),
         resultado: Some(format!("Resultado de {id}")),
-        encerra_atendimento,
+        ends_service: encerra_atendimento,
     }
 }
 
@@ -99,17 +99,17 @@ fn fluxo(etapas: Vec<Etapa>, decisoes: Vec<Decisao>) -> Ir {
             descricao: None,
         },
         gatilho: Gatilho {
-            quando: "o cliente pede".to_owned(),
-            nao_quando: None,
-            exemplos: Vec::new(),
+            when: "o cliente pede".to_owned(),
+            not_when: None,
+            examples: Vec::new(),
         },
-        inicio,
-        etapas,
-        decisoes,
-        fins: vec![Fim {
+        start: inicio,
+        stages: etapas,
+        decisions: decisoes,
+        ends: vec![Fim {
             id: "concluido".to_owned(),
             resultado: Some("Concluído".to_owned()),
-            encerra_atendimento: false,
+            ends_service: false,
         }],
         defs: Vec::new(),
     }
@@ -135,7 +135,7 @@ fn motivo(erro: &DomainError) -> String {
 }
 
 /// Fluxo com uma etapa `coleta` (campo `marca` e a ação `ir`) que bifurca numa decisão `escolher`.
-fn fluxo_com_decisao(entao: Destino, senao: Destino) -> Ir {
+fn fluxo_com_decisao(entao: Destination, senao: Destination) -> Ir {
     fluxo(
         vec![
             etapa(
@@ -154,9 +154,9 @@ fn fluxo_com_decisao(entao: Destino, senao: Destino) -> Ir {
         ],
         vec![decisao(
             "escolher",
-            Regra::Igual {
+            Rule::Igual {
                 campo: "coleta.marca".to_owned(),
-                valor: "urgente".to_owned(),
+                value: "urgente".to_owned(),
             },
             entao,
             senao,
@@ -509,7 +509,7 @@ fn regra_que_nao_avalia_para_a_execucao_em_falha() {
         ],
         vec![decisao(
             "escolher",
-            Regra::Funcao {
+            Rule::Funcao {
                 nome: "grave".to_owned(),
             },
             vai_para("normal"),
@@ -689,15 +689,15 @@ fn fluxo_com_efeitos() -> Ir {
                     None,
                     vai_para("confirmacao"),
                     vec![
-                        Efeito::MensagemAoCliente {
+                        Effect::MessageToCustomer {
                             texto: "Pedido para {coleta.endereco}, do contato {cliente.peer}"
                                 .to_owned(),
                         },
-                        Efeito::NotificarWhatsapp {
+                        Effect::NotifyWhatsApp {
                             para: "5521999990000".to_owned(),
                             mensagem: "Ficha {ficha.id}: {coleta.endereco}".to_owned(),
                         },
-                        Efeito::Encaminhar {
+                        Effect::Encaminhar {
                             departamento: "Logística".to_owned(),
                         },
                     ],
@@ -708,7 +708,7 @@ fn fluxo_com_efeitos() -> Ir {
                 "confirmacao",
                 Vec::new(),
                 Vec::new(),
-                vec![Efeito::MensagemAoCliente {
+                vec![Effect::MessageToCustomer {
                     texto: "Confirmando o pedido.".to_owned(),
                 }],
             ),
@@ -754,20 +754,20 @@ fn efeitos_saem_na_ordem_da_ia_com_o_texto_resolvido() {
     );
     assert_eq!(
         resultado.efeitos[0].efeito,
-        Efeito::MensagemAoCliente {
+        Effect::MessageToCustomer {
             texto: "Pedido para Rua das Flores, 10, do contato 5521900000000".to_owned()
         }
     );
     assert_eq!(
         resultado.efeitos[1].efeito,
-        Efeito::NotificarWhatsapp {
+        Effect::NotifyWhatsApp {
             para: "5521999990000".to_owned(),
             mensagem: "Ficha ficha-1: Rua das Flores, 10".to_owned()
         }
     );
     assert_eq!(
         resultado.efeitos[2].efeito,
-        Efeito::Encaminhar {
+        Effect::Encaminhar {
             departamento: "Logística".to_owned()
         }
     );
@@ -828,7 +828,7 @@ fn variavel_de_efeito_que_nao_existe_vira_texto_vazio() {
                 "confirmar",
                 None,
                 fim("concluido", false),
-                vec![Efeito::MensagemAoCliente {
+                vec![Effect::MessageToCustomer {
                     texto: "Pedido para {coleta.endereco}.".to_owned(),
                 }],
             )],
@@ -852,7 +852,7 @@ fn variavel_de_efeito_que_nao_existe_vira_texto_vazio() {
 
     assert_eq!(
         resultado.efeitos[0].efeito,
-        Efeito::MensagemAoCliente {
+        Effect::MessageToCustomer {
             texto: "Pedido para .".to_owned()
         },
         "variável inexistente sai vazia (FLX59 avisa na publicação)"
@@ -869,7 +869,7 @@ fn o_dado_do_cliente_entra_como_valor_no_texto_do_efeito() {
                 "confirmar",
                 None,
                 fim("concluido", false),
-                vec![Efeito::MensagemAoCliente {
+                vec![Effect::MessageToCustomer {
                     texto: "Pedido: {coleta.endereco}".to_owned(),
                 }],
             )],
@@ -893,7 +893,7 @@ fn o_dado_do_cliente_entra_como_valor_no_texto_do_efeito() {
 
     assert_eq!(
         resultado.efeitos[0].efeito,
-        Efeito::MensagemAoCliente {
+        Effect::MessageToCustomer {
             texto: "Pedido: Rua A".to_owned()
         },
         "o texto canônico do campo entra como valor"
@@ -907,7 +907,7 @@ fn efeitos_da_entrada_da_primeira_etapa_saem_pela_funcao_publica() {
             "abertura",
             Vec::new(),
             Vec::new(),
-            vec![Efeito::NotificarWhatsapp {
+            vec![Effect::NotifyWhatsApp {
                 para: "5521999990000".to_owned(),
                 mensagem: "Atendimento {ficha.id} começou".to_owned(),
             }],
@@ -924,7 +924,7 @@ fn efeitos_da_entrada_da_primeira_etapa_saem_pela_funcao_publica() {
     assert_eq!(efeitos[0].chave, "etapa:abertura/0");
     assert_eq!(
         efeitos[0].efeito,
-        Efeito::NotificarWhatsapp {
+        Effect::NotifyWhatsApp {
             para: "5521999990000".to_owned(),
             mensagem: "Atendimento ficha-9 começou".to_owned()
         }

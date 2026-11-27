@@ -3,7 +3,7 @@
 //! Cada chave com efeito no compilador ou na avaliação tem um teste que muda o valor e prova que
 //! o limite de fato muda (`Limites::da_config`, `LimitesRegra::da_config`, `compilar`).
 
-use poph_fluxos::{Codigo, Limites, LimitesRegra, Severidade, compilar, formatar_com};
+use poph_fluxos::{Code, Limites, LimitesRegra, Severity, compilar, formatar_com};
 use poph_types::config::FlowsConfig;
 
 /// Um dos exemplos do repositório: script válido que o compilador aceita com o padrão.
@@ -21,14 +21,14 @@ fn nos_do_exemplo() -> usize {
     let ir = compilar(EXEMPLO, &Limites::default())
         .ir
         .expect("o exemplo compila com o padrão");
-    ir.etapas.len() + ir.decisoes.len() + ir.fins.len()
+    ir.stages.len() + ir.decisions.len() + ir.ends.len()
 }
 
-fn erros_com_codigo(fonte: &str, limites: &Limites, codigo: Codigo) -> bool {
+fn erros_com_codigo(fonte: &str, limites: &Limites, codigo: Code) -> bool {
     compilar(fonte, limites)
         .diagnosticos
         .iter()
-        .any(|d| d.codigo == codigo && d.severidade == Severidade::Erro)
+        .any(|d| d.code == codigo && d.severity == Severity::Error)
 }
 
 #[test]
@@ -102,7 +102,7 @@ fn script_de_40_kib_e_recusado_com_o_padrao() {
     // Padrão de `fluxos.max_fonte_bytes` = 32 KiB (decisão D1): quem quer mais sobe a configuração.
     let fonte = script_de_tamanho(40 * 1024);
     let limites = Limites::da_config(&FlowsConfig::default());
-    assert!(erros_com_codigo(&fonte, &limites, Codigo::FonteGrande));
+    assert!(erros_com_codigo(&fonte, &limites, Code::SourceTooLarge));
 }
 
 #[test]
@@ -114,7 +114,7 @@ fn script_de_40_kib_e_recusado_com_teto_de_32_kib() {
     };
     let limites = Limites::da_config(&cfg);
     assert!(
-        erros_com_codigo(&fonte, &limites, Codigo::FonteGrande),
+        erros_com_codigo(&fonte, &limites, Code::SourceTooLarge),
         "40 KiB com teto de 32 KiB tem de cair em FLX02"
     );
     assert!(compilar(&fonte, &limites).ir.is_none());
@@ -128,7 +128,7 @@ fn teto_de_nos_da_configuracao_recusa_o_que_passa_dele() {
         ..FlowsConfig::default()
     });
     assert!(
-        erros_com_codigo(EXEMPLO, &aperto, Codigo::NosDemais),
+        erros_com_codigo(EXEMPLO, &aperto, Code::NodeLimit),
         "um nó a mais que o teto tem de cair em FLX27"
     );
     let no_limite = Limites::da_config(&FlowsConfig {

@@ -141,7 +141,7 @@ impl ChaveRevisao {
 /// Base: o JSON canônico da IR (`Ir::para_json`, o mesmo que vai ao banco), vezes
 /// [`FATOR_DO_PESO`], mais [`CUSTO_FIXO_DA_ENTRADA`].
 pub fn peso_da_ir(ir: &Ir) -> usize {
-    ir.para_json()
+    ir.to_json()
         .len()
         .saturating_mul(FATOR_DO_PESO)
         .saturating_add(CUSTO_FIXO_DA_ENTRADA)

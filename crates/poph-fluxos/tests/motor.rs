@@ -6,7 +6,7 @@
 //! recusaria, como uma etapa de destino que não existe); um dos testes roda a IR dourada de
 //! `agendar_visita`, que passou pelo compilador.
 
-use poph_fluxos::ir::{Acao, Campo, Destino, Etapa, Fim, Fluxo, Gatilho, Ir};
+use poph_fluxos::ir::{Acao, Campo, Destination, Etapa, Fim, Fluxo, Gatilho, Ir};
 use poph_fluxos::motor::{
     Campos, Contexto, Estado, atores_exigidos, campos_faltando, executar_acao, iniciar,
 };
@@ -27,39 +27,39 @@ fn contexto() -> Contexto<'static> {
 fn campo(id: &str, tipo: FieldKind, obrigatorio: bool, opcoes: &[&str]) -> Campo {
     Campo {
         id: id.to_owned(),
-        rotulo: id.to_uppercase(),
+        label: id.to_uppercase(),
         tipo,
-        obrigatorio,
-        opcoes: opcoes.iter().map(|opcao| (*opcao).to_owned()).collect(),
-        ajuda: None,
+        required: obrigatorio,
+        options: opcoes.iter().map(|opcao| (*opcao).to_owned()).collect(),
+        help: None,
     }
 }
 
 fn acao(id: &str, ator: Option<ActionActor>, exige: &[&str], vai_para: &str) -> Acao {
     Acao {
         id: id.to_owned(),
-        rotulo: id.to_uppercase(),
-        exige: exige.iter().map(|nome| (*nome).to_owned()).collect(),
-        ator,
-        vai_para: Destino::Etapa {
+        label: id.to_uppercase(),
+        requires: exige.iter().map(|nome| (*nome).to_owned()).collect(),
+        actor: ator,
+        goes_to: Destination::Etapa {
             id: vai_para.to_owned(),
         },
-        efeitos: Vec::new(),
+        effects: Vec::new(),
     }
 }
 
 fn acao_para_fim(id: &str, ator: Option<ActionActor>) -> Acao {
     Acao {
         id: id.to_owned(),
-        rotulo: id.to_uppercase(),
-        exige: Vec::new(),
-        ator,
-        vai_para: Destino::Fim {
+        label: id.to_uppercase(),
+        requires: Vec::new(),
+        actor: ator,
+        goes_to: Destination::Fim {
             id: "concluido".to_owned(),
             resultado: Some("Concluído".to_owned()),
-            encerra_atendimento: false,
+            ends_service: false,
         },
-        efeitos: Vec::new(),
+        effects: Vec::new(),
     }
 }
 
@@ -67,11 +67,11 @@ fn etapa(id: &str, atores: &[ActionActor], campos: Vec<Campo>, acoes: Vec<Acao>)
     Etapa {
         id: id.to_owned(),
         nome: id.to_uppercase(),
-        instrucao: None,
-        atores_acao: atores.to_vec(),
+        instruction: None,
+        action_actors: atores.to_vec(),
         campos,
-        acoes,
-        ao_entrar: Vec::new(),
+        actions: acoes,
+        on_enter: Vec::new(),
     }
 }
 
@@ -89,17 +89,17 @@ fn fluxo(etapas: Vec<Etapa>) -> Ir {
             descricao: None,
         },
         gatilho: Gatilho {
-            quando: "o cliente pede".to_owned(),
-            nao_quando: None,
-            exemplos: Vec::new(),
+            when: "o cliente pede".to_owned(),
+            not_when: None,
+            examples: Vec::new(),
         },
-        inicio,
-        etapas,
-        decisoes: Vec::new(),
-        fins: vec![Fim {
+        start: inicio,
+        stages: etapas,
+        decisions: Vec::new(),
+        ends: vec![Fim {
             id: "concluido".to_owned(),
             resultado: Some("Concluído".to_owned()),
-            encerra_atendimento: false,
+            ends_service: false,
         }],
         defs: Vec::new(),
     }
@@ -191,7 +191,7 @@ fn iniciar_comeca_na_etapa_de_inicio_com_o_estado_vazio() {
     assert_eq!(estado.status, ExecutionStatus::Active);
     assert_eq!(
         estado.no_atual,
-        Destino::Etapa {
+        Destination::Etapa {
             id: "coleta".to_owned()
         }
     );
@@ -205,7 +205,7 @@ fn iniciar_comeca_na_etapa_de_inicio_com_o_estado_vazio() {
 fn iniciar_recusa_ir_que_aponta_para_etapa_inexistente() {
     // A publicação recusa isto (FX-11), mas uma IR gravada à mão não pode derrubar o processo.
     let mut ir = fluxo_simples();
-    ir.inicio = "nao_existe".to_owned();
+    ir.start = "nao_existe".to_owned();
 
     let erro = iniciar(&ir).expect_err("a etapa de início não existe");
     assert!(
@@ -235,7 +235,7 @@ fn acao_valida_grava_os_campos_e_avanca_para_a_etapa_de_destino() {
 
     assert_eq!(
         resultado.novo_estado.no_atual,
-        Destino::Etapa {
+        Destination::Etapa {
             id: "confirmacao".to_owned()
         }
     );
@@ -301,10 +301,10 @@ fn dados_das_etapas_anteriores_continuam_na_execucao() {
     );
     assert_eq!(
         resultado.novo_estado.no_atual,
-        Destino::Fim {
+        Destination::Fim {
             id: "concluido".to_owned(),
             resultado: Some("Concluído".to_owned()),
-            encerra_atendimento: false,
+            ends_service: false,
         },
         "ação que vai para fim deixa o estado no nó do fim (a FX-14 conclui)"
     );
@@ -446,7 +446,7 @@ fn o_campo_informado_antes_conta_para_o_exige_da_acao_seguinte() {
     .expect("o campo já estava gravado");
     assert_eq!(
         resultado.novo_estado.no_atual,
-        Destino::Etapa {
+        Destination::Etapa {
             id: "confirmacao".to_owned()
         }
     );
@@ -816,7 +816,7 @@ fn etapa_com_dois_atores_fica_parcial_e_diz_quem_falta() {
 
     assert_eq!(
         resultado.novo_estado.no_atual,
-        Destino::Etapa {
+        Destination::Etapa {
             id: "triagem".to_owned()
         },
         "a etapa não avança enquanto o atendente não agir"
@@ -870,7 +870,7 @@ fn a_etapa_avanca_quando_o_segundo_ator_age() {
 
     assert_eq!(
         resultado.novo_estado.no_atual,
-        Destino::Etapa {
+        Destination::Etapa {
             id: "depois".to_owned()
         }
     );
@@ -948,7 +948,7 @@ fn os_dois_atores_chegam_ao_mesmo_destino_em_qualquer_ordem() {
     );
     assert_eq!(
         fim_agente_primeiro.novo_estado.no_atual,
-        Destino::Etapa {
+        Destination::Etapa {
             id: "depois".to_owned()
         }
     );
@@ -990,7 +990,7 @@ fn acao_irrestrita_avanca_sozinha() {
 
     assert_eq!(
         resultado.novo_estado.no_atual,
-        Destino::Etapa {
+        Destination::Etapa {
             id: "outro".to_owned()
         }
     );
@@ -1039,7 +1039,7 @@ fn a_acao_irrestrita_ainda_espera_a_acao_restrita_do_outro_ator() {
     .expect("a ação irrestrita é válida");
     assert_eq!(
         parcial.novo_estado.no_atual,
-        Destino::Etapa {
+        Destination::Etapa {
             id: "triagem".to_owned()
         },
         "o atendente ainda não agiu"
@@ -1059,7 +1059,7 @@ fn a_acao_irrestrita_ainda_espera_a_acao_restrita_do_outro_ator() {
     .expect("o atendente age");
     assert_eq!(
         avancou.novo_estado.no_atual,
-        Destino::Etapa {
+        Destination::Etapa {
             id: "depois".to_owned()
         },
         "a rota é a da última ação executada"
@@ -1101,7 +1101,7 @@ fn acao_que_vai_para_o_fim_e_decisiva_mesmo_com_outro_ator_pendente() {
     .expect("a ação é válida");
 
     assert!(
-        matches!(resultado.novo_estado.no_atual, Destino::Fim { .. }),
+        matches!(resultado.novo_estado.no_atual, Destination::Fim { .. }),
         "a ação de saída leva ao fim: {:?}",
         resultado.novo_estado.no_atual
     );
@@ -1164,7 +1164,7 @@ fn a_etapa_com_acao_restrita_de_um_ator_so_nao_espera_o_outro() {
 
     assert_eq!(
         resultado.novo_estado.no_atual,
-        Destino::Etapa {
+        Destination::Etapa {
             id: "depois".to_owned()
         }
     );
@@ -1339,7 +1339,7 @@ fn acao_inexistente_devolve_as_validas_e_nao_muda_nada() {
     assert!(estado.dados.is_empty());
     assert_eq!(
         estado.no_atual,
-        Destino::Etapa {
+        Destination::Etapa {
             id: "coleta".to_owned()
         }
     );
@@ -1398,21 +1398,21 @@ fn execucao_parada_numa_decisao_resolve_antes_de_executar_a_acao() {
     // FX-14 o motor atravessa a decisão na mesma passagem, então a ação é aplicada na etapa em que
     // a decisão desemboca (o caso de teste da FX-13 que exigia recusa virou este).
     let mut ir = fluxo_simples();
-    ir.decisoes = vec![poph_fluxos::ir::Decisao {
+    ir.decisions = vec![poph_fluxos::ir::Decisao {
         id: "escolher_rota".to_owned(),
         // Sem endereço ainda, a decisão manda para a coleta; com ele, para a confirmação.
-        se: poph_fluxos::ir::Regra::Vazio {
+        se: poph_fluxos::ir::Rule::Vazio {
             campo: "coleta.endereco".to_owned(),
         },
-        entao: Destino::Etapa {
+        then_branch: Destination::Etapa {
             id: "coleta".to_owned(),
         },
-        senao: Destino::Etapa {
+        else_branch: Destination::Etapa {
             id: "confirmacao".to_owned(),
         },
     }];
     let mut estado = iniciar(&ir).expect("início");
-    estado.no_atual = Destino::Decisao {
+    estado.no_atual = Destination::Decisao {
         id: "escolher_rota".to_owned(),
     };
 
@@ -1441,7 +1441,7 @@ fn execucao_parada_numa_decisao_resolve_antes_de_executar_a_acao() {
     );
     assert_eq!(
         resultado.novo_estado.no_atual,
-        Destino::Etapa {
+        Destination::Etapa {
             id: "confirmacao".to_owned()
         }
     );
@@ -1511,12 +1511,12 @@ fn a_ir_dourada_de_agendar_visita_roda_do_inicio_ao_fim_da_etapa() {
     );
     let texto =
         std::fs::read_to_string(&caminho).unwrap_or_else(|erro| panic!("{caminho}: {erro}"));
-    let ir = Ir::de_json(&texto).expect("a IR dourada é JSON válido");
+    let ir = Ir::from_json(&texto).expect("a IR dourada é JSON válido");
 
     let estado = iniciar(&ir).expect("início");
     assert_eq!(
         estado.no_atual,
-        Destino::Etapa {
+        Destination::Etapa {
             id: "coleta".to_owned()
         }
     );
@@ -1533,7 +1533,7 @@ fn a_ir_dourada_de_agendar_visita_roda_do_inicio_ao_fim_da_etapa() {
     .expect("a ação confirmar é válida");
     assert_eq!(
         coletado.novo_estado.no_atual,
-        Destino::Etapa {
+        Destination::Etapa {
             id: "confirmacao".to_owned()
         }
     );
@@ -1549,7 +1549,7 @@ fn a_ir_dourada_de_agendar_visita_roda_do_inicio_ao_fim_da_etapa() {
     )
     .expect("a ação ok é válida");
     assert!(
-        matches!(confirmado.novo_estado.no_atual, Destino::Fim { .. }),
+        matches!(confirmado.novo_estado.no_atual, Destination::Fim { .. }),
         "{:?}",
         confirmado.novo_estado.no_atual
     );

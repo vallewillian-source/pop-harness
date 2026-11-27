@@ -41,7 +41,7 @@ use serde_json::Value as Json;
 
 use poph_types::{ActionActor, DomainError, DomainResult, ExecutionStatus, FieldKind};
 
-use crate::ir::{Acao, Campo, Destino, Etapa, Ir};
+use crate::ir::{Acao, Campo, Destination, Etapa, Ir};
 use crate::motor::{Estado, atores_exigidos, dados_da_etapa};
 use crate::regras::preenchido;
 
@@ -76,7 +76,7 @@ pub fn renderizar_bloco(ir: &Ir, estado: &Estado) -> String {
     linha(&mut saida, "");
 
     match &estado.no_atual {
-        Destino::Etapa { id } => match etapa_por_id(ir, id) {
+        Destination::Etapa { id } => match etapa_por_id(ir, id) {
             Some(etapa) => secao_da_etapa(&mut saida, ir, etapa, estado),
             None => linha(
                 &mut saida,
@@ -85,14 +85,14 @@ pub fn renderizar_bloco(ir: &Ir, estado: &Estado) -> String {
                 ),
             ),
         },
-        Destino::Decisao { id } => linha(
+        Destination::Decisao { id } => linha(
             &mut saida,
             &format!(
                 "Situação: a execução está na decisão {id}, que o sistema resolve antes de \
                  qualquer ação. Não há ação a executar agora."
             ),
         ),
-        Destino::Fim { id, resultado, .. } => {
+        Destination::Fim { id, resultado, .. } => {
             let resultado = match resultado {
                 Some(texto) => format!(" com o resultado \"{texto}\""),
                 None => String::new(),
@@ -128,7 +128,7 @@ pub fn bloco_da_etapa(ir: &Ir, etapa_id: &str) -> DomainResult<String> {
     let estado = Estado {
         fluxo_id: ir.fluxo.id.clone(),
         status: ExecutionStatus::Active,
-        no_atual: Destino::Etapa {
+        no_atual: Destination::Etapa {
             id: etapa_id.to_owned(),
         },
         dados: serde_json::Map::new(),
@@ -148,7 +148,7 @@ fn secao_da_etapa(saida: &mut String, ir: &Ir, etapa: &Etapa, estado: &Estado) {
         saida,
         &format!("Etapa atual: {} ({}).", etapa.nome, etapa.id),
     );
-    if let Some(instrucao) = &etapa.instrucao {
+    if let Some(instrucao) = &etapa.instruction {
         linha(saida, &format!("Instrução: {instrucao}"));
     }
 
@@ -197,9 +197,9 @@ fn secao_dos_campos(saida: &mut String, etapa: &Etapa, estado: &Estado) {
             &format!(
                 "- {} ({}): {}, {}. {}",
                 campo.id,
-                campo.rotulo,
+                campo.label,
                 tipo_como_texto(campo),
-                if campo.obrigatorio {
+                if campo.required {
                     "obrigatório"
                 } else {
                     "opcional"
@@ -212,12 +212,12 @@ fn secao_dos_campos(saida: &mut String, etapa: &Etapa, estado: &Estado) {
 
 /// Ações da etapa, na ordem da IR, com o que cada uma exige, quem executa e para onde leva.
 fn secao_das_acoes(saida: &mut String, ir: &Ir, etapa: &Etapa) {
-    if etapa.acoes.is_empty() {
+    if etapa.actions.is_empty() {
         linha(saida, "Ações desta etapa: nenhuma (a etapa não tem saída).");
         return;
     }
     linha(saida, "Ações desta etapa:");
-    for acao in &etapa.acoes {
+    for acao in &etapa.actions {
         linha(saida, &linha_da_acao(ir, etapa, acao));
     }
 }
@@ -225,7 +225,7 @@ fn secao_das_acoes(saida: &mut String, ir: &Ir, etapa: &Etapa) {
 /// Mapa das etapas, na ordem da IR, marcando a etapa em que a execução está.
 fn secao_do_mapa(saida: &mut String, ir: &Ir, no_atual: &str) {
     linha(saida, "Mapa do fluxo:");
-    for etapa in &ir.etapas {
+    for etapa in &ir.stages {
         let marca = if etapa.id == no_atual {
             ", etapa atual"
         } else {
@@ -238,33 +238,33 @@ fn secao_do_mapa(saida: &mut String, ir: &Ir, no_atual: &str) {
 // ------------------------------------------------------------------ linhas e textos
 
 fn linha_da_acao(ir: &Ir, etapa: &Etapa, acao: &Acao) -> String {
-    let exige = if acao.exige.is_empty() {
+    let exige = if acao.requires.is_empty() {
         "não exige campos".to_owned()
     } else {
-        format!("exige {}", acao.exige.join(", "))
+        format!("exige {}", acao.requires.join(", "))
     };
     format!(
         "- {} ({}): {}. Quem executa: {}. {}",
         acao.id,
-        acao.rotulo,
+        acao.label,
         exige,
         quem_executa(etapa, acao),
-        destino_em_palavras(ir, &acao.vai_para)
+        destino_em_palavras(ir, &acao.goes_to)
     )
 }
 
 /// Quem pode executar a ação, em palavras. Ação restrita a um ator é dita com o nome dele, para o
 /// agente saber que não é dele executar; ação sem restrição segue os atores da etapa.
 fn quem_executa(etapa: &Etapa, acao: &Acao) -> String {
-    match acao.ator {
+    match acao.actor {
         Some(ActionActor::Agent) => "o agente".to_owned(),
         Some(ActionActor::Attendant) => "o atendente (o agente não executa esta ação)".to_owned(),
         None => {
-            if etapa.atores_acao.is_empty() {
+            if etapa.action_actors.is_empty() {
                 "ninguém definido".to_owned()
             } else {
                 etapa
-                    .atores_acao
+                    .action_actors
                     .iter()
                     .map(|ator| ator.as_text())
                     .collect::<Vec<_>>()
@@ -275,18 +275,18 @@ fn quem_executa(etapa: &Etapa, acao: &Acao) -> String {
 }
 
 /// Para onde a ação leva, em uma frase que o agente entende sem ver o identificador.
-fn destino_em_palavras(ir: &Ir, destino: &Destino) -> String {
+fn destino_em_palavras(ir: &Ir, destino: &Destination) -> String {
     match destino {
-        Destino::Etapa { id } => match etapa_por_id(ir, id) {
+        Destination::Etapa { id } => match etapa_por_id(ir, id) {
             Some(etapa) => format!("Vai para a etapa \"{}\" ({id}).", etapa.nome),
             None => format!("Vai para a etapa {id}."),
         },
-        Destino::Decisao { id } => {
+        Destination::Decisao { id } => {
             format!("Vai para a decisão {id}, que o sistema resolve pelas regras.")
         }
-        Destino::Fim {
+        Destination::Fim {
             resultado,
-            encerra_atendimento,
+            ends_service: encerra_atendimento,
             ..
         } => {
             let mut frase = "Encerra o fluxo".to_owned();
@@ -309,7 +309,7 @@ fn tipo_como_texto(campo: &Campo) -> String {
         FieldKind::Data => "data".to_owned(),
         FieldKind::Boolean => "sim ou não".to_owned(),
         FieldKind::Attachment => "anexo".to_owned(),
-        FieldKind::Option => format!("opção ({})", campo.opcoes.join(", ")),
+        FieldKind::Option => format!("opção ({})", campo.options.join(", ")),
     }
 }
 
@@ -397,5 +397,5 @@ fn linha(saida: &mut String, texto: &str) {
 
 /// Etapa da estrutura pelo id; `None` quando a IR não a tem.
 fn etapa_por_id<'a>(ir: &'a Ir, id: &str) -> Option<&'a Etapa> {
-    ir.etapas.iter().find(|etapa| etapa.id == id)
+    ir.stages.iter().find(|etapa| etapa.id == id)
 }

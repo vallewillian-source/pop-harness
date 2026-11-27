@@ -1,17 +1,3 @@
-//! O dialeto de fluxos e a lista fechada de nomes que o autor alcança
-//! (`docs/FLUXOS_LINGUAGEM.md` §3).
-//!
-//! O script de fluxo é Starlark (decisão da FX-01) com um recorte: no topo só declaração, `load`
-//! desligado, sem `lambda`, sem f-string, sem tipo e sem laço no topo. A biblioteca registrada no
-//! módulo é a `standard` sem `struct` — a checagem de nomes ([`NOMES_PERMITIDOS`]) é o que fecha a
-//! superfície: **não há relógio, rede, arquivo nem aleatório**.
-//!
-//! Este módulo também é quem **carrega** o script (parse + avaliação com limites), que é o que o
-//! motor (FX-12) usa para avaliar uma `def` e o que o compilador usa como última barreira.
-//!
-//! As funções de declaração registradas aqui não fazem nada: o compilador monta a IR lendo a
-//! árvore sintática (é o que dá linha e coluna em cada diagnóstico), e quem avalia de verdade é o
-//! motor, que precisa só do módulo congelado para as regras avançadas.
 
 use std::time::{Duration, Instant};
 
@@ -22,16 +8,12 @@ use starlark::values::Value;
 use starlark::values::none::NoneType;
 use starlark::values::tuple::UnpackTuple;
 
-/// Nomes de declaração de topo.
 pub const DECLARACOES: &[&str] = &["fluxo", "etapa", "decisao"];
 
-/// Nomes que produzem valor dentro de uma declaração.
 pub const VALORES: &[&str] = &["gatilho", "campo", "acao", "fim", "funcao"];
 
-/// Nomes de efeito.
 pub const EFEITOS: &[&str] = &["mensagem_ao_cliente", "notificar_whatsapp", "encaminhar"];
 
-/// Nomes de combinador de regra.
 pub const COMBINADORES: &[&str] = &[
     "igual",
     "diferente",
@@ -44,10 +26,8 @@ pub const COMBINADORES: &[&str] = &[
     "nao",
 ];
 
-/// Constantes que o script alcança.
 pub const CONSTANTES: &[&str] = &["True", "False", "None"];
 
-/// Funções puras, só dentro de `def`.
 pub const FUNCOES_PURAS: &[&str] = &[
     "abs",
     "all",
@@ -69,9 +49,6 @@ pub const FUNCOES_PURAS: &[&str] = &[
     "zip",
 ];
 
-/// A lista fechada de nomes que o autor alcança (§3.3) — 41 nomes, e nada além disso.
-///
-/// Um teste do crate falha se esta lista mudar sem a tabela do documento mudar junto.
 pub fn nomes_permitidos() -> Vec<&'static str> {
     let mut nomes = Vec::new();
     nomes.extend_from_slice(DECLARACOES);
@@ -83,7 +60,6 @@ pub fn nomes_permitidos() -> Vec<&'static str> {
     nomes
 }
 
-/// Se o nome existe no dialeto do fluxo.
 pub fn nome_permitido(nome: &str) -> bool {
     DECLARACOES.contains(&nome)
         || VALORES.contains(&nome)
@@ -93,11 +69,6 @@ pub fn nome_permitido(nome: &str) -> bool {
         || FUNCOES_PURAS.contains(&nome)
 }
 
-/// O dialeto: Starlark com o "proibido" do §3.2 aplicado pelo próprio parser.
-///
-/// `enable_load: false` recusa `load`; `enable_top_level_stmt: false` recusa laço e `if` no topo;
-/// `enable_f_strings: false` recusa f-string; `enable_lambda: false` recusa `lambda`. `while` e
-/// `**` não existem no Starlark em nenhuma configuração.
 pub fn dialeto() -> Dialect {
     Dialect {
         enable_def: true,
@@ -113,15 +84,6 @@ pub fn dialeto() -> Dialect {
     }
 }
 
-/// Registra as funções de declaração, de valor, de efeito e os combinadores.
-///
-/// Todas devolvem `None`: o valor delas não é usado — quem monta a IR lê a árvore sintática. Elas
-/// existem para que o módulo **carregue**, que é o que o motor precisa para avaliar as `def`.
-///
-/// As formas de chamada são as do documento (§4, P10): posicionais em `campo`, `acao`, `fim`,
-/// `mensagem_ao_cliente`, `encaminhar` e nos combinadores; nomeadas em `fluxo`, `etapa`, `decisao`,
-/// `gatilho` e `notificar_whatsapp`. O compilador recusa a outra forma antes da carga, então aqui
-/// não existe divergência entre o que o validador aceita e o que a biblioteca aceita.
 #[starlark::starlark_module]
 fn declaracoes(builder: &mut GlobalsBuilder) {
     fn fluxo<'v>(#[starlark(kwargs)] _kwargs: Value<'v>) -> starlark::Result<NoneType> {
@@ -215,40 +177,27 @@ fn declaracoes(builder: &mut GlobalsBuilder) {
     }
 }
 
-/// Ambiente do script: stdlib do Starlark **sem** `struct`, mais as declarações.
 pub fn globais() -> Globals {
     GlobalsBuilder::extended_by(&[LibraryExtension::StructType])
         .with(declaracoes)
         .build()
 }
 
-/// Prazo de parede da carga de um script.
 pub struct Prazos {
-    /// Instante limite da avaliação.
     pub ate: Instant,
 }
 
-/// Analisa o script (só parse), sem executar.
 pub fn analisa(fonte: &str, nome: &str) -> Result<AstModule, starlark::Error> {
     AstModule::parse(nome, fonte.to_owned(), &dialeto())
 }
 
-/// Limites que o motor aplica na carga e na avaliação de regra.
 pub struct LimitesStarlark {
-    /// Ticks antes de considerar laço infinito.
     pub max_ticks: u64,
-    /// Heap máximo em bytes.
     pub max_heap_bytes: usize,
-    /// Profundidade máxima de chamada.
     pub max_callstack: usize,
-    /// Prazo de parede.
     pub prazo: Duration,
 }
 
-/// Carrega o script: parse → avaliação com limites → congelamento.
-///
-/// É o que o motor usa para ter o módulo com as `def` carregadas. O compilador usa o mesmo
-/// caminho como última barreira: com o script de forma válida, a carga só pode falhar por limite.
 pub fn carregar_modulo(
     fonte: &str,
     nome: &str,
@@ -283,7 +232,6 @@ mod testes {
 
     #[test]
     fn a_lista_fechada_e_exatamente_a_do_documento() {
-        // Cópia da tabela do §3.3: se `linguagem.rs` mudar sem o documento, este teste cai.
         let esperado = [
             "fluxo",
             "etapa",
@@ -338,7 +286,6 @@ mod testes {
 
     #[test]
     fn o_dialeto_recusa_o_que_o_parser_ja_recusa() {
-        // `load`, `for`/`if` no topo, `lambda` e f-string morrem no parse.
         for fonte in [
             "load(\"x.star\", \"y\")\n",
             "for x in [1]:\n    pass\n",
@@ -352,7 +299,6 @@ mod testes {
                 "o dialeto tinha de recusar: {fonte:?}"
             );
         }
-        // Atribuição solta no topo o parser deixa passar; quem recusa é o compilador (FLX05).
         assert!(analisa("x = 1\n", "t.star").is_ok());
     }
 }

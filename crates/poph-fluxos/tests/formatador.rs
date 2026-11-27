@@ -6,9 +6,9 @@
 
 use poph_fluxos::formatador::{LARGURA, formatar, imprimir};
 use poph_fluxos::ir::{
-    Acao, Campo, Decisao, Def, Destino, Efeito, Etapa, Fim, Fluxo, Gatilho, Regra, SCHEMA_VERSAO,
+    Acao, Campo, Decisao, Def, Destination, Effect, Etapa, Fim, Fluxo, Gatilho, Rule, SCHEMA_VERSAO,
 };
-use poph_fluxos::{Codigo, Ir, Limites, Severidade, compilar};
+use poph_fluxos::{Code, Ir, Limites, Severity, compilar};
 use poph_types::ActionActor;
 
 /// Os três exemplos do repositório.
@@ -31,13 +31,13 @@ fn compila(fonte: &str) -> Ir {
     let erros: Vec<String> = compilado
         .diagnosticos
         .iter()
-        .filter(|d| d.e_erro())
+        .filter(|d| d.is_error())
         .map(|d| {
             format!(
                 "{:?} {}:{} {}",
-                d.codigo,
-                d.linha.unwrap_or(0),
-                d.coluna.unwrap_or(0),
+                d.code,
+                d.line.unwrap_or(0),
+                d.column.unwrap_or(0),
                 d.mensagem
             )
         })
@@ -134,22 +134,22 @@ fn a_regra_composta_fica_aberta_mesmo_quando_cabe() {
     // `e(...)`/`ou(...)`/`nao(...)` são a exceção à regra de largura: uma regra composta se lê como
     // lista. Sem isso, o `se` de uma decisão curta voltaria para a linha única.
     let mut ir = ir_minima_com_instrucao("faça");
-    ir.decisoes.push(Decisao {
+    ir.decisions.push(Decisao {
         id: "escolha".to_owned(),
-        se: Regra::E {
+        se: Rule::E {
             args: vec![
-                Regra::Vazio {
+                Rule::Vazio {
                     campo: "aa".to_owned(),
                 },
-                Regra::Vazio {
+                Rule::Vazio {
                     campo: "aa".to_owned(),
                 },
             ],
         },
-        entao: Destino::Etapa {
+        then_branch: Destination::Etapa {
             id: "unica".to_owned(),
         },
-        senao: Destino::Etapa {
+        else_branch: Destination::Etapa {
             id: "unica".to_owned(),
         },
     });
@@ -321,21 +321,21 @@ fn texto_longo_continua_numa_linha_so() {
 #[test]
 fn script_com_erro_devolve_erro_e_nenhum_texto() {
     // Dois tipos de erro: sintaxe (o parser não fecha a chamada) e forma (argumento desconhecido).
-    let casos: Vec<(&str, Codigo)> = vec![
-        ("fluxo(\n    id = \"f\",\n", Codigo::Sintaxe),
+    let casos: Vec<(&str, Code)> = vec![
+        ("fluxo(\n    id = \"f\",\n", Code::Syntax),
         (
             "fluxo(\n    id = \"ff\",\n    nome = \"Fluxo\",\n    inicio = \"aa\",\n    cor = \"azul\",\n)\n",
-            Codigo::ArgumentoDesconhecido,
+            Code::UnknownArgument,
         ),
         (
             "fluxo(\n    id = \"FF\",\n    nome = \"Fluxo\",\n    inicio = \"aa\",\n)\n",
-            Codigo::IdInvalido,
+            Code::InvalidId,
         ),
     ];
     for (fonte, esperado) in casos {
         let falha = formatar(fonte).expect_err("o script tem erro");
         assert_eq!(falha.codigo(), "fluxo_invalido");
-        let erros: Vec<Codigo> = falha.erros().map(|d| d.codigo).collect();
+        let erros: Vec<Code> = falha.erros().map(|d| d.code).collect();
         assert!(
             erros.contains(&esperado),
             "esperava {esperado:?} em {fonte:?}, veio {erros:?}"
@@ -344,8 +344,8 @@ fn script_com_erro_devolve_erro_e_nenhum_texto() {
             falha
                 .diagnosticos
                 .iter()
-                .filter(|d| d.e_erro())
-                .all(|d| d.severidade == Severidade::Erro),
+                .filter(|d| d.is_error())
+                .all(|d| d.severity == Severity::Error),
             "diagnóstico de erro com severidade trocada"
         );
         // A mensagem de exibição não vaza o script inteiro nem devolve texto parcial.
@@ -365,7 +365,7 @@ fn fonte_acima_do_limite_tambem_e_erro() {
         "fluxo(\n    id = \"ff\",\n    nome = \"Fluxo\",\n    inicio = \"aa\",\n    descricao = \"{gigante}\",\n)\n"
     );
     let falha = formatar(&fonte).expect_err("a fonte passa do teto");
-    assert_eq!(falha.diagnosticos[0].codigo, Codigo::FonteGrande);
+    assert_eq!(falha.diagnosticos[0].code, Code::SourceTooLarge);
 }
 
 // ------------------------------------------------------------------ amostragem
@@ -382,8 +382,8 @@ fn a_amostragem_aleatoria_volta_a_mesma_ir() {
         let erros: Vec<String> = compilado
             .diagnosticos
             .iter()
-            .filter(|d| d.e_erro())
-            .map(|d| format!("{:?} {}", d.codigo, d.mensagem))
+            .filter(|d| d.is_error())
+            .map(|d| format!("{:?} {}", d.code, d.mensagem))
             .collect();
         assert!(
             erros.is_empty(),
@@ -460,11 +460,11 @@ impl Gerador {
                 };
                 campos.push(Campo {
                     id: format!("c{c}"),
-                    rotulo: format!("Campo {c} da etapa {indice}"),
+                    label: format!("Campo {c} da etapa {indice}"),
                     tipo,
-                    obrigatorio: self.sim(),
-                    opcoes,
-                    ajuda: if self.sim() {
+                    required: self.sim(),
+                    options: opcoes,
+                    help: if self.sim() {
                         Some(format!("dica {marca}-{indice}-{c}"))
                     } else {
                         None
@@ -481,7 +481,7 @@ impl Gerador {
             let quantas_acoes = self.entre(1, 2);
             for a in 0..quantas_acoes {
                 let destino = if indice + 1 < quantas_etapas && a == 0 {
-                    Destino::Etapa {
+                    Destination::Etapa {
                         id: nomes[indice + 1].clone(),
                     }
                 } else {
@@ -493,13 +493,13 @@ impl Gerador {
                         } else {
                             None
                         },
-                        encerra_atendimento: self.sim(),
+                        ends_service: self.sim(),
                     };
                     fins.push(fim.clone());
-                    Destino::Fim {
+                    Destination::Fim {
                         id: fim.id,
                         resultado: fim.resultado,
-                        encerra_atendimento: fim.encerra_atendimento,
+                        ends_service: fim.ends_service,
                     }
                 };
                 let mut exige: Vec<String> = campos
@@ -517,27 +517,27 @@ impl Gerador {
                 };
                 let mut efeitos = Vec::new();
                 if self.sim() {
-                    efeitos.push(Efeito::MensagemAoCliente {
+                    efeitos.push(Effect::MessageToCustomer {
                         texto: format!("mensagem {marca}-{indice}-{a}"),
                     });
                 }
                 if self.sim() {
-                    efeitos.push(Efeito::Encaminhar {
+                    efeitos.push(Effect::Encaminhar {
                         departamento: format!("departamento {a}"),
                     });
                 }
                 acoes.push(Acao {
                     id: format!("a{a}"),
-                    rotulo: format!("Ação {a} da etapa {indice}"),
-                    exige,
-                    ator,
-                    vai_para: destino,
-                    efeitos,
+                    label: format!("Ação {a} da etapa {indice}"),
+                    requires: exige,
+                    actor: ator,
+                    goes_to: destino,
+                    effects: efeitos,
                 });
             }
             let mut ao_entrar = Vec::new();
             if self.sim() {
-                ao_entrar.push(Efeito::NotificarWhatsapp {
+                ao_entrar.push(Effect::NotifyWhatsApp {
                     para: "5521999990000".to_owned(),
                     mensagem: format!("aviso {marca}-{indice}"),
                 });
@@ -545,15 +545,15 @@ impl Gerador {
             etapas.push(Etapa {
                 id: id.clone(),
                 nome: format!("Etapa {indice}"),
-                instrucao: if self.sim() {
+                instruction: if self.sim() {
                     Some(format!("faça {indice}"))
                 } else {
                     None
                 },
-                atores_acao,
+                action_actors: atores_acao,
                 campos,
-                acoes,
-                ao_entrar,
+                actions: acoes,
+                on_enter: ao_entrar,
             });
         }
 
@@ -564,27 +564,27 @@ impl Gerador {
             let etapa = &etapas[0];
             if let Some(campo) = etapa.campos.first() {
                 let regra = match self.sorteia() % 4 {
-                    0 => Regra::Igual {
+                    0 => Rule::Igual {
                         campo: format!("{}.{}", etapa.id, campo.id),
-                        valor: "sim".to_owned(),
+                        value: "sim".to_owned(),
                     },
-                    1 => Regra::Vazio {
+                    1 => Rule::Vazio {
                         campo: format!("{}.{}", etapa.id, campo.id),
                     },
-                    2 => Regra::Nao {
-                        args: vec![Regra::Igual {
+                    2 => Rule::Nao {
+                        args: vec![Rule::Igual {
                             campo: format!("{}.{}", etapa.id, campo.id),
-                            valor: "nao".to_owned(),
+                            value: "nao".to_owned(),
                         }],
                     },
-                    _ => Regra::E {
+                    _ => Rule::E {
                         args: vec![
-                            Regra::Vazio {
+                            Rule::Vazio {
                                 campo: format!("{}.{}", etapa.id, campo.id),
                             },
-                            Regra::Igual {
+                            Rule::Igual {
                                 campo: format!("{}.{}", etapa.id, campo.id),
-                                valor: "sim".to_owned(),
+                                value: "sim".to_owned(),
                             },
                         ],
                     },
@@ -598,7 +598,7 @@ impl Gerador {
                             "def {nome_def}(dados):\n    # regra gerada no caso {marca}\n    return True"
                         ),
                     });
-                    Regra::Funcao { nome: nome_def }
+                    Rule::Funcao { nome: nome_def }
                 } else {
                     regra
                 };
@@ -606,19 +606,19 @@ impl Gerador {
                 decisoes.push(Decisao {
                     id: id.clone(),
                     se: regra,
-                    entao: Destino::Etapa {
+                    then_branch: Destination::Etapa {
                         id: nomes[quantas_etapas - 1].clone(),
                     },
-                    senao: Destino::Fim {
+                    else_branch: Destination::Fim {
                         id: format!("fim_decisao{marca}"),
                         resultado: Some("decidido".to_owned()),
-                        encerra_atendimento: false,
+                        ends_service: false,
                     },
                 });
                 fins.push(Fim {
                     id: format!("fim_decisao{marca}"),
                     resultado: Some("decidido".to_owned()),
-                    encerra_atendimento: false,
+                    ends_service: false,
                 });
             }
         }
@@ -635,13 +635,13 @@ impl Gerador {
                 },
             },
             gatilho: Gatilho {
-                quando: format!("quando {marca}"),
-                nao_quando: if self.sim() {
+                when: format!("quando {marca}"),
+                not_when: if self.sim() {
                     Some(format!("não quando {marca}"))
                 } else {
                     None
                 },
-                exemplos: if self.sim() {
+                examples: if self.sim() {
                     vec![
                         format!("exemplo um {marca}"),
                         format!("exemplo dois {marca}"),
@@ -650,10 +650,10 @@ impl Gerador {
                     Vec::new()
                 },
             },
-            inicio: nomes[0].clone(),
-            etapas,
-            decisoes,
-            fins,
+            start: nomes[0].clone(),
+            stages: etapas,
+            decisions: decisoes,
+            ends: fins,
             defs,
         }
     }
@@ -669,45 +669,45 @@ fn com_textos_complicados(texto: &str) -> Ir {
             descricao: Some(texto.to_owned()),
         },
         gatilho: Gatilho {
-            quando: texto.to_owned(),
-            nao_quando: Some(texto.to_owned()),
-            exemplos: vec![texto.to_owned()],
+            when: texto.to_owned(),
+            not_when: Some(texto.to_owned()),
+            examples: vec![texto.to_owned()],
         },
-        inicio: "unica".to_owned(),
-        etapas: vec![Etapa {
+        start: "unica".to_owned(),
+        stages: vec![Etapa {
             id: "unica".to_owned(),
             nome: texto.to_owned(),
-            instrucao: Some(texto.to_owned()),
-            atores_acao: vec![ActionActor::Agent],
+            instruction: Some(texto.to_owned()),
+            action_actors: vec![ActionActor::Agent],
             campos: vec![Campo {
                 id: "dado".to_owned(),
-                rotulo: texto.to_owned(),
+                label: texto.to_owned(),
                 tipo: poph_types::FieldKind::Text,
-                obrigatorio: true,
-                opcoes: Vec::new(),
-                ajuda: Some(texto.to_owned()),
+                required: true,
+                options: Vec::new(),
+                help: Some(texto.to_owned()),
             }],
-            acoes: vec![Acao {
+            actions: vec![Acao {
                 id: "seguir".to_owned(),
-                rotulo: texto.to_owned(),
-                exige: vec!["dado".to_owned()],
-                ator: None,
-                vai_para: Destino::Fim {
+                label: texto.to_owned(),
+                requires: vec!["dado".to_owned()],
+                actor: None,
+                goes_to: Destination::Fim {
                     id: "fim".to_owned(),
                     resultado: Some(texto.to_owned()),
-                    encerra_atendimento: false,
+                    ends_service: false,
                 },
-                efeitos: vec![Efeito::MensagemAoCliente {
+                effects: vec![Effect::MessageToCustomer {
                     texto: format!("{texto} {{ficha.id}}"),
                 }],
             }],
-            ao_entrar: Vec::new(),
+            on_enter: Vec::new(),
         }],
-        decisoes: Vec::new(),
-        fins: vec![Fim {
+        decisions: Vec::new(),
+        ends: vec![Fim {
             id: "fim".to_owned(),
             resultado: Some(texto.to_owned()),
-            encerra_atendimento: false,
+            ends_service: false,
         }],
         defs: Vec::new(),
     }
@@ -723,36 +723,36 @@ fn ir_minima_com_instrucao(instrucao: &str) -> Ir {
             descricao: None,
         },
         gatilho: Gatilho {
-            quando: "quando".to_owned(),
-            nao_quando: None,
-            exemplos: Vec::new(),
+            when: "quando".to_owned(),
+            not_when: None,
+            examples: Vec::new(),
         },
-        inicio: "unica".to_owned(),
-        etapas: vec![Etapa {
+        start: "unica".to_owned(),
+        stages: vec![Etapa {
             id: "unica".to_owned(),
             nome: "Única".to_owned(),
-            instrucao: Some(instrucao.to_owned()),
-            atores_acao: vec![ActionActor::Agent],
+            instruction: Some(instrucao.to_owned()),
+            action_actors: vec![ActionActor::Agent],
             campos: Vec::new(),
-            acoes: vec![Acao {
+            actions: vec![Acao {
                 id: "seguir".to_owned(),
-                rotulo: "Seguir".to_owned(),
-                exige: Vec::new(),
-                ator: None,
-                vai_para: Destino::Fim {
+                label: "Seguir".to_owned(),
+                requires: Vec::new(),
+                actor: None,
+                goes_to: Destination::Fim {
                     id: "fim".to_owned(),
                     resultado: None,
-                    encerra_atendimento: false,
+                    ends_service: false,
                 },
-                efeitos: Vec::new(),
+                effects: Vec::new(),
             }],
-            ao_entrar: Vec::new(),
+            on_enter: Vec::new(),
         }],
-        decisoes: Vec::new(),
-        fins: vec![Fim {
+        decisions: Vec::new(),
+        ends: vec![Fim {
             id: "fim".to_owned(),
             resultado: None,
-            encerra_atendimento: false,
+            ends_service: false,
         }],
         defs: Vec::new(),
     }

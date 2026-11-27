@@ -165,9 +165,9 @@ fn flow_jev(fluxo: &Fluxo, ir: &Ir) -> JevFlow {
     JevFlow {
         id: fluxo.slug.clone(),
         nome: fluxo.name.clone(),
-        when: ir.gatilho.quando.clone(),
-        not_when: ir.gatilho.nao_quando.clone().unwrap_or_default(),
-        examples: ir.gatilho.exemplos.clone(),
+        when: ir.gatilho.when.clone(),
+        not_when: ir.gatilho.not_when.clone().unwrap_or_default(),
+        examples: ir.gatilho.examples.clone(),
     }
 }
 
@@ -193,7 +193,7 @@ fn load_ir(
     fluxo: &Fluxo,
     revision: &FlowRevision,
 ) -> Option<Arc<Ir>> {
-    let stored = match Ir::de_json(&revision.definicao_json) {
+    let stored = match Ir::from_json(&revision.definicao_json) {
         Ok(ir) => ir,
         Err(error) => {
             tracing::error!(
@@ -237,23 +237,23 @@ fn state_of_execution(
             return None;
         }
     };
-    let no_atual = if ir.etapas.iter().any(|etapa| etapa.id == execution.no_atual) {
-        poph_fluxos::ir::Destino::Etapa {
+    let no_atual = if ir.stages.iter().any(|etapa| etapa.id == execution.no_atual) {
+        poph_fluxos::ir::Destination::Etapa {
             id: execution.no_atual.clone(),
         }
     } else if ir
-        .decisoes
+        .decisions
         .iter()
         .any(|decisao| decisao.id == execution.no_atual)
     {
-        poph_fluxos::ir::Destino::Decisao {
+        poph_fluxos::ir::Destination::Decisao {
             id: execution.no_atual.clone(),
         }
-    } else if let Some(fim) = ir.fins.iter().find(|fim| fim.id == execution.no_atual) {
-        poph_fluxos::ir::Destino::Fim {
+    } else if let Some(fim) = ir.ends.iter().find(|fim| fim.id == execution.no_atual) {
+        poph_fluxos::ir::Destination::Fim {
             id: fim.id.clone(),
             resultado: fim.resultado.clone(),
-            encerra_atendimento: fim.encerra_atendimento,
+            ends_service: fim.ends_service,
         }
     } else {
         tracing::warn!(

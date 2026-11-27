@@ -374,7 +374,7 @@ fn estado_do_banco(execucao: &poph_store::Execution) -> EstadoMotor {
     EstadoMotor {
         fluxo_id: execucao.fluxo_id.to_string(),
         status: execucao.status,
-        no_atual: poph_fluxos::ir::Destino::Etapa { id: ir.clone() },
+        no_atual: poph_fluxos::ir::Destination::Etapa { id: ir.clone() },
         dados: poph_fluxos::Dados::new(),
         atores_que_agiram: Vec::new(),
         resultado: execucao.result.clone(),

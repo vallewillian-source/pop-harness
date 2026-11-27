@@ -18,7 +18,7 @@ use std::process::ExitCode;
 
 use clap::{Args, Subcommand};
 use poph_server::fluxos_servico::{
-    Ator, CacheRevisoes, Diagnostico, FalhaFluxo, Operacoes, auditar, json_comparacao, json_fluxo,
+    Ator, CacheRevisoes, Diagnostic, FalhaFluxo, Operacoes, auditar, json_comparacao, json_fluxo,
     json_fluxo_com_rascunho, json_revisao_resumo, json_validacao,
 };
 use poph_store::{FlowFilter, Store};
@@ -269,7 +269,7 @@ fn formatar(sessao: &Sessao, args: FormatarArgs) -> Result<ExitCode, String> {
         Ok(texto) => texto,
         Err(FalhaFluxo::ScriptInvalido(diagnosticos)) => {
             imprimir_diagnosticos(&diagnosticos);
-            let erros = diagnosticos.iter().filter(|d| d.e_erro()).count();
+            let erros = diagnosticos.iter().filter(|d| d.is_error()).count();
             return Err(format!(
                 "o script não compila: {erros} erro(s) a corrigir antes de formatar"
             ));
@@ -305,7 +305,7 @@ fn publicar(sessao: &Sessao, org: Option<&str>, args: PublicarArgs) -> Result<Ex
     let compilado = ops.compilar(&fonte);
     if compilado.tem_erro() {
         imprimir_diagnosticos(&compilado.diagnosticos);
-        let erros = compilado.diagnosticos.iter().filter(|d| d.e_erro()).count();
+        let erros = compilado.diagnosticos.iter().filter(|d| d.is_error()).count();
         return Err(format!(
             "o script não passa na validação: {erros} erro(s) a corrigir; nada foi gravado"
         ));
@@ -558,16 +558,16 @@ fn texto_de(valor: &Value) -> String {
 }
 
 /// Uma linha por diagnóstico, com linha e coluna quando o compilador as conhece.
-fn imprimir_diagnosticos(diagnosticos: &[Diagnostico]) {
+fn imprimir_diagnosticos(diagnosticos: &[Diagnostic]) {
     for diagnostico in diagnosticos {
-        let lugar = match (diagnostico.linha(), diagnostico.coluna()) {
+        let lugar = match (diagnostico.line(), diagnostico.column()) {
             (Some(linha), Some(coluna)) => format!("linha {linha}, coluna {coluna}: "),
             _ => String::new(),
         };
         println!(
             "  {lugar}{} {}: {}",
-            diagnostico.severidade.como_texto(),
-            diagnostico.codigo.como_texto(),
+            diagnostico.severity.as_text(),
+            diagnostico.code.as_text(),
             diagnostico.mensagem
         );
     }

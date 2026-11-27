@@ -123,7 +123,7 @@ use poph_types::{
     ActionActor, DomainError, DomainResult, EventActor, ExecutionStatus, FieldKind, RecordEventKind,
 };
 
-use crate::ir::{Campo, Decisao, Destino, Efeito, Etapa, Ir};
+use crate::ir::{Campo, Decisao, Destination, Effect, Etapa, Ir};
 use crate::regras::{Avaliador, Dados, preenchido, texto_canonico};
 
 /// Valores de campo informados junto de uma ação: `campo -> valor`.
@@ -196,7 +196,7 @@ pub struct Estado {
     /// Situação da execução; o motor só aceita ação em [`StatusExecucao::Ativa`].
     pub status: ExecutionStatus,
     /// Nó em que a execução está: etapa, decisão aguardando resolução (FX-14) ou fim (FX-14).
-    pub no_atual: Destino,
+    pub no_atual: Destination,
     /// `dados[etapa][campo]` — o mesmo formato de `fluxo_execucoes.dados_json`.
     pub dados: Dados,
     /// Atores que já agiram **na etapa atual**, em ordem alfabética do texto (`agente`,
@@ -214,7 +214,7 @@ pub struct Estado {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Recibo {
     /// Nó em que a execução ficou naquela passagem.
-    pub no_atual: Destino,
+    pub no_atual: Destination,
     /// Quem ainda faltava agir quando a etapa ficou `parcial`; vazio quando a etapa avançou.
     pub aguardando: Vec<ActionActor>,
 }
@@ -278,16 +278,16 @@ pub struct EfeitoProduzido {
     /// Posição do efeito na lista declarada (base zero).
     pub indice: usize,
     /// O que fazer, com o texto já interpolado.
-    pub efeito: Efeito,
+    pub efeito: Effect,
 }
 
 impl EfeitoProduzido {
     /// Tipo do efeito como a coluna `fluxo_efeitos.tipo` grava.
     pub fn tipo(&self) -> &'static str {
         match self.efeito {
-            Efeito::MensagemAoCliente { .. } => "mensagem_ao_cliente",
-            Efeito::NotificarWhatsapp { .. } => "notificar_whatsapp",
-            Efeito::Encaminhar { .. } => "encaminhar",
+            Effect::MessageToCustomer { .. } => "mensagem_ao_cliente",
+            Effect::NotifyWhatsApp { .. } => "notificar_whatsapp",
+            Effect::Encaminhar { .. } => "encaminhar",
         }
     }
 }
@@ -298,11 +298,11 @@ impl EfeitoProduzido {
 /// FX-11 já recusa isso na publicação, mas uma IR gravada à mão não pode fazer o motor entrar em
 /// pânico.
 pub fn iniciar(ir: &Ir) -> DomainResult<Estado> {
-    let etapa = etapa_por_id(ir, &ir.inicio)?;
+    let etapa = etapa_por_id(ir, &ir.start)?;
     Ok(Estado {
         fluxo_id: ir.fluxo.id.clone(),
         status: ExecutionStatus::Active,
-        no_atual: Destino::Etapa {
+        no_atual: Destination::Etapa {
             id: etapa.id.clone(),
         },
         dados: Dados::new(),
@@ -376,7 +376,7 @@ pub fn executar_acao(
     // 3. Estado parado numa decisão: resolve antes de olhar a ação. Desde esta tarefa o motor
     //    atravessa a decisão na mesma passagem, então isso só aparece em estado gravado por uma
     //    versão anterior do motor.
-    if let Destino::Decisao { .. } = trabalho.no_atual {
+    if let Destination::Decisao { .. } = trabalho.no_atual {
         let parada = trabalho.no_atual.clone();
         let desfecho = seguir(
             ir,
@@ -398,8 +398,8 @@ pub fn executar_acao(
 
     // 4. A execução precisa estar numa etapa para receber ação.
     let etapa_id = match &trabalho.no_atual {
-        Destino::Etapa { id } => id.clone(),
-        Destino::Decisao { id } => {
+        Destination::Etapa { id } => id.clone(),
+        Destination::Decisao { id } => {
             // Inalcançável: a decisão acima foi resolvida ou a execução parou.
             return Err(recusa(
                 acao,
@@ -408,7 +408,7 @@ pub fn executar_acao(
                 ),
             ));
         }
-        Destino::Fim { id, .. } => {
+        Destination::Fim { id, .. } => {
             return Err(recusa(
                 acao,
                 format!("a execução chegou ao fim `{id}`: não há ação depois dele"),
@@ -418,7 +418,7 @@ pub fn executar_acao(
     let etapa = etapa_por_id(ir, &etapa_id)?;
 
     // 5. A ação existe nesta etapa (sem busca em largura: só as ações daqui).
-    let Some(acao_ir) = etapa.acoes.iter().find(|candidata| candidata.id == acao) else {
+    let Some(acao_ir) = etapa.actions.iter().find(|candidata| candidata.id == acao) else {
         return Err(recusa(
             acao,
             format!(
@@ -430,19 +430,19 @@ pub fn executar_acao(
     };
 
     // 6. O ator age nesta etapa.
-    if !etapa.atores_acao.contains(&ator) {
+    if !etapa.action_actors.contains(&ator) {
         return Err(recusa(
             acao,
             format!(
                 "o ator `{ator}` não age na etapa `{}`; atores: {}",
                 etapa.id,
-                lista_de_atores(&etapa.atores_acao)
+                lista_de_atores(&etapa.action_actors)
             ),
         ));
     }
 
     // 7. A ação não é de outro ator.
-    if let Some(dono) = acao_ir.ator
+    if let Some(dono) = acao_ir.actor
         && dono != ator
     {
         return Err(recusa(
@@ -461,7 +461,7 @@ pub fn executar_acao(
     let mut registrados = dados_da_etapa(&trabalho.dados, &etapa.id);
     registrados.extend(validados.clone());
     let mut faltando: Vec<String> = acao_ir
-        .exige
+        .requires
         .iter()
         .filter(|campo| !preenchido(registrados.get(*campo)))
         .map(|campo| {
@@ -497,7 +497,7 @@ pub fn executar_acao(
 
     // Ação de saída (`fim`) é decisiva: leva ao desfecho mesmo com outro ator pendente, como no
     // `state_engine.py` ("encerramento é decisivo").
-    let decisiva = matches!(acao_ir.vai_para, Destino::Fim { .. });
+    let decisiva = matches!(acao_ir.goes_to, Destination::Fim { .. });
     let avanca = decisiva || aguardando.is_empty();
 
     // 11. Eventos e estado novo.
@@ -515,7 +515,7 @@ pub fn executar_acao(
         payload: json!({
             "etapa": etapa.id,
             "acao": acao,
-            "destino": acao_ir.vai_para,
+            "destino": acao_ir.goes_to,
             "parcial": !avanca,
             "aguardando": aguardando,
         }),
@@ -531,7 +531,7 @@ pub fn executar_acao(
     let aguardando_do_resultado = if avanca {
         // Efeitos da ação: saem depois de a transição ser aceita (`FLUXOS_LINGUAGEM.md` §4.9).
         let no_da_acao = format!("acao:{}.{acao}", etapa.id);
-        for efeito in efeitos_declarados(&acao_ir.efeitos, no_da_acao, &novo_estado.dados, contexto)
+        for efeito in efeitos_declarados(&acao_ir.effects, no_da_acao, &novo_estado.dados, contexto)
         {
             eventos.push(evento_do_efeito(&efeito));
             efeitos.push(efeito);
@@ -545,7 +545,7 @@ pub fn executar_acao(
         let desfecho = seguir(
             ir,
             &mut novo_estado,
-            acao_ir.vai_para.clone(),
+            acao_ir.goes_to.clone(),
             contexto,
             &mut eventos,
             &mut efeitos,
@@ -702,7 +702,7 @@ struct Desfecho {
 fn seguir(
     ir: &Ir,
     estado: &mut Estado,
-    mut destino: Destino,
+    mut destino: Destination,
     contexto: &Contexto<'_>,
     eventos: &mut Vec<Evento>,
     efeitos: &mut Vec<EfeitoProduzido>,
@@ -712,9 +712,9 @@ fn seguir(
 
     loop {
         match destino.clone() {
-            Destino::Etapa { id } => {
+            Destination::Etapa { id } => {
                 let etapa = etapa_por_id(ir, &id)?;
-                estado.no_atual = Destino::Etapa { id: id.clone() };
+                estado.no_atual = Destination::Etapa { id: id.clone() };
                 estado.atores_que_agiram = Vec::new();
                 eventos.push(Evento {
                     tipo: RecordEventKind::StepEntered,
@@ -728,7 +728,7 @@ fn seguir(
                 }
                 return Ok(Desfecho::default());
             }
-            Destino::Decisao { id } => {
+            Destination::Decisao { id } => {
                 let decisao = decisao_por_id(ir, &id)?;
                 if visitadas.contains(&id) {
                     let caminho = format!("{} → {id}", visitadas.join(" → "));
@@ -738,7 +738,7 @@ fn seguir(
                     );
                     return Ok(parar_em_falha(
                         estado,
-                        Destino::Decisao { id },
+                        Destination::Decisao { id },
                         motivo,
                         eventos,
                         false,
@@ -754,7 +754,7 @@ fn seguir(
                     );
                     return Ok(parar_em_falha(
                         estado,
-                        Destino::Decisao { id },
+                        Destination::Decisao { id },
                         motivo,
                         eventos,
                         false,
@@ -767,7 +767,7 @@ fn seguir(
                     Err(erro) => {
                         return Ok(parar_em_falha(
                             estado,
-                            Destino::Decisao { id },
+                            Destination::Decisao { id },
                             erro.to_string(),
                             eventos,
                             true,
@@ -775,9 +775,9 @@ fn seguir(
                     }
                 };
                 let ramo = if escolha {
-                    decisao.entao.clone()
+                    decisao.then_branch.clone()
                 } else {
-                    decisao.senao.clone()
+                    decisao.else_branch.clone()
                 };
                 eventos.push(Evento {
                     tipo: RecordEventKind::DecisionResolved,
@@ -786,17 +786,17 @@ fn seguir(
                 });
                 destino = ramo;
             }
-            Destino::Fim {
+            Destination::Fim {
                 id,
                 resultado,
-                encerra_atendimento,
+                ends_service: encerra_atendimento,
             } => {
                 estado.status = ExecutionStatus::Completed;
                 estado.resultado = resultado.clone();
-                estado.no_atual = Destino::Fim {
+                estado.no_atual = Destination::Fim {
                     id: id.clone(),
                     resultado: resultado.clone(),
-                    encerra_atendimento,
+                    ends_service: encerra_atendimento,
                 };
                 eventos.push(Evento {
                     tipo: RecordEventKind::ExecutionCompleted,
@@ -822,7 +822,7 @@ fn seguir(
 /// saltos), que o estado guarda só como texto.
 fn parar_em_falha(
     estado: &mut Estado,
-    no: Destino,
+    no: Destination,
     motivo: String,
     eventos: &mut Vec<Evento>,
     erro_de_regra: bool,
@@ -863,7 +863,7 @@ fn resultado_parado(
 /// Efeitos do `ao_entrar` de uma etapa (lista declarada), com a chave de cada um.
 fn efeitos_da_etapa(etapa: &Etapa, dados: &Dados, contexto: &Contexto<'_>) -> Vec<EfeitoProduzido> {
     efeitos_declarados(
-        &etapa.ao_entrar,
+        &etapa.on_enter,
         format!("etapa:{}", etapa.id),
         dados,
         contexto,
@@ -876,7 +876,7 @@ fn efeitos_da_etapa(etapa: &Etapa, dados: &Dados, contexto: &Contexto<'_>) -> Ve
 /// `{cliente.peer}`. O `para` do `notificar_whatsapp` e o departamento do `encaminhar` são
 /// identificadores e passam como estão.
 fn efeitos_declarados(
-    declarados: &[Efeito],
+    declarados: &[Effect],
     no: String,
     dados: &Dados,
     contexto: &Contexto<'_>,
@@ -886,14 +886,14 @@ fn efeitos_declarados(
         .enumerate()
         .map(|(indice, declarado)| {
             let efeito = match declarado {
-                Efeito::MensagemAoCliente { texto } => Efeito::MensagemAoCliente {
+                Effect::MessageToCustomer { texto } => Effect::MessageToCustomer {
                     texto: interpolar(texto, dados, contexto),
                 },
-                Efeito::NotificarWhatsapp { para, mensagem } => Efeito::NotificarWhatsapp {
+                Effect::NotifyWhatsApp { para, mensagem } => Effect::NotifyWhatsApp {
                     para: para.clone(),
                     mensagem: interpolar(mensagem, dados, contexto),
                 },
-                Efeito::Encaminhar { departamento } => Efeito::Encaminhar {
+                Effect::Encaminhar { departamento } => Effect::Encaminhar {
                     departamento: departamento.clone(),
                 },
             };
@@ -961,7 +961,7 @@ fn valor_da_variavel(nome: &str, dados: &Dados, contexto: &Contexto<'_>) -> Stri
 
 /// Decisão da IR pelo id; IR que aponta para decisão inexistente é divergência, não pânico.
 fn decisao_por_id<'a>(ir: &'a Ir, id: &str) -> DomainResult<&'a Decisao> {
-    ir.decisoes
+    ir.decisions
         .iter()
         .find(|decisao| decisao.id == id)
         .ok_or_else(|| DomainError::IrDivergent {
@@ -977,11 +977,11 @@ fn decisao_por_id<'a>(ir: &'a Ir, id: &str) -> DomainResult<&'a Decisao> {
 /// ninguém — é o mesmo cálculo de `state_engine.required_actor_types`.
 pub fn atores_exigidos(etapa: &Etapa) -> Vec<ActionActor> {
     let mut exigidos: Vec<ActionActor> = Vec::new();
-    for acao in &etapa.acoes {
-        if matches!(acao.vai_para, Destino::Fim { .. }) {
+    for acao in &etapa.actions {
+        if matches!(acao.goes_to, Destination::Fim { .. }) {
             continue;
         }
-        let Some(ator) = acao.ator else {
+        let Some(ator) = acao.actor else {
             continue;
         };
         if !exigidos.contains(&ator) {
@@ -998,7 +998,7 @@ pub fn campos_faltando(etapa: &Etapa, dados: &Dados) -> Vec<String> {
     etapa
         .campos
         .iter()
-        .filter(|campo| campo.obrigatorio && !preenchido(registrados.get(&campo.id)))
+        .filter(|campo| campo.required && !preenchido(registrados.get(&campo.id)))
         .map(|campo| campo.id.clone())
         .collect()
 }
@@ -1017,7 +1017,7 @@ pub fn dados_da_etapa(dados: &Dados, etapa: &str) -> Campos {
 
 /// Etapa da IR pelo id; IR que aponta para etapa inexistente é divergência, não pânico.
 fn etapa_por_id<'a>(ir: &'a Ir, id: &str) -> DomainResult<&'a Etapa> {
-    ir.etapas
+    ir.stages
         .iter()
         .find(|etapa| etapa.id == id)
         .ok_or_else(|| DomainError::IrDivergent {
@@ -1088,7 +1088,7 @@ fn validar_campos(etapa: &Etapa, campos: &Campos) -> Result<Campos, Vec<String>>
 /// `null` é "não preenchido": aceito no campo opcional, recusado no obrigatório.
 fn validar_valor(campo: &Campo, valor: &Json) -> Result<Json, String> {
     if valor.is_null() {
-        return if campo.obrigatorio {
+        return if campo.required {
             Err("é obrigatório e não aceita valor vazio".to_owned())
         } else {
             Ok(Json::Null)
@@ -1098,7 +1098,7 @@ fn validar_valor(campo: &Campo, valor: &Json) -> Result<Json, String> {
         FieldKind::Text => match valor {
             Json::String(texto) => {
                 let limpo = texto.trim();
-                if campo.obrigatorio && limpo.is_empty() {
+                if campo.required && limpo.is_empty() {
                     return Err("é obrigatório e veio vazio".to_owned());
                 }
                 Ok(Json::String(limpo.to_owned()))
@@ -1125,7 +1125,7 @@ fn validar_valor(campo: &Campo, valor: &Json) -> Result<Json, String> {
         FieldKind::Option => match valor {
             Json::String(texto) => {
                 let limpo = texto.trim();
-                if campo.opcoes.iter().any(|opcao| opcao == limpo) {
+                if campo.options.iter().any(|opcao| opcao == limpo) {
                     Ok(Json::String(limpo.to_owned()))
                 } else {
                     Err(format!(
@@ -1174,11 +1174,11 @@ fn campo_de_fora_da_etapa(etapa: &Etapa, chave: &str) -> String {
 }
 
 fn lista_de_acoes(etapa: &Etapa) -> String {
-    if etapa.acoes.is_empty() {
+    if etapa.actions.is_empty() {
         return "nenhuma (a etapa não tem saída)".to_owned();
     }
     etapa
-        .acoes
+        .actions
         .iter()
         .map(|acao| format!("`{}`", acao.id))
         .collect::<Vec<_>>()
@@ -1199,7 +1199,7 @@ fn lista_de_campos(etapa: &Etapa) -> String {
 
 fn lista_de_opcoes(campo: &Campo) -> String {
     campo
-        .opcoes
+        .options
         .iter()
         .map(|opcao| format!("`{opcao}`"))
         .collect::<Vec<_>>()
@@ -1358,11 +1358,11 @@ mod tests {
         let etapa = Etapa {
             id: "cadastro".to_owned(),
             nome: "Cadastro".to_owned(),
-            instrucao: None,
-            atores_acao: vec![ActionActor::Agent],
+            instruction: None,
+            action_actors: vec![ActionActor::Agent],
             campos: Vec::new(),
-            acoes: Vec::new(),
-            ao_entrar: Vec::new(),
+            actions: Vec::new(),
+            on_enter: Vec::new(),
         };
         let mut campos = Campos::new();
         for chave in ["zeta", "alfa", "meio"] {

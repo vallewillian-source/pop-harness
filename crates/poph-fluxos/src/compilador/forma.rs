@@ -30,9 +30,9 @@ use starlark::syntax::ast::{
     Clause, DefP, Expr, Parameter, Stmt,
 };
 
-use crate::diagnostico::{Codigo, Diagnostico};
+use crate::diagnostico::{Code, Diagnostic};
 use crate::ir::{
-    Acao, Campo, Decisao, Def, Destino, Efeito, Etapa, Fim, Fluxo, Gatilho, Ir, Regra,
+    Acao, Campo, Decisao, Def, Destination, Effect, Etapa, Fim, Fluxo, Gatilho, Ir, Rule,
     SCHEMA_VERSAO,
 };
 use crate::linguagem::nome_permitido;
@@ -104,12 +104,12 @@ enum DestinoBruto {
 #[derive(Clone)]
 enum RegraBruta {
     /// `igual`, `diferente`, `maior`, `menor`, `contem`, `vazio`.
-    Folha { regra: Regra, pos: Pos },
+    Folha { regra: Rule, pos: Pos },
     /// `funcao("nome")`.
     Funcao { nome: String, pos: Pos },
     /// `e`, `ou`, `nao`.
     Grupo {
-        regra: Regra,
+        regra: Rule,
         filhos: Vec<RegraBruta>,
         pos: Pos,
     },
@@ -145,7 +145,7 @@ struct DecisaoColetada {
 
 /// Efeito com a posição do texto e de qual etapa veio.
 struct EfeitoColetado {
-    efeito: Efeito,
+    efeito: Effect,
     pos_texto: Pos,
     etapa: String,
     ao_entrar: bool,
@@ -162,7 +162,7 @@ struct UsoCampos {
 struct Forma<'a> {
     fonte: &'a str,
     modulo: &'a AstModule,
-    diags: Vec<Diagnostico>,
+    diags: Vec<Diagnostic>,
     fluxo: Option<Fluxo>,
     pos_fluxo: Pos,
     gatilho: Option<Gatilho>,
@@ -183,7 +183,7 @@ struct Forma<'a> {
 ///
 /// `modulo` é o resultado do parse (o chamador já tratou tamanho e erro de sintaxe). A IR só sai
 /// quando **não há erro**; com aviso ela sai normal.
-pub(crate) fn compila(fonte: &str, modulo: &AstModule) -> (Option<Ir>, Vec<Diagnostico>) {
+pub(crate) fn compila(fonte: &str, modulo: &AstModule) -> (Option<Ir>, Vec<Diagnostic>) {
     let um = Pos {
         linha: 1,
         coluna: 1,
@@ -223,18 +223,18 @@ impl<'a> Forma<'a> {
         }
     }
 
-    fn erro(&mut self, codigo: Codigo, mensagem: impl Into<String>, pos: Pos) {
+    fn erro(&mut self, codigo: Code, mensagem: impl Into<String>, pos: Pos) {
         self.diags
-            .push(Diagnostico::erro(codigo, mensagem, pos.linha, pos.coluna));
+            .push(Diagnostic::error(codigo, mensagem, pos.linha, pos.coluna));
     }
 
-    fn aviso(&mut self, codigo: Codigo, mensagem: impl Into<String>, pos: Pos) {
+    fn aviso(&mut self, codigo: Code, mensagem: impl Into<String>, pos: Pos) {
         self.diags
-            .push(Diagnostico::aviso(codigo, mensagem, pos.linha, pos.coluna));
+            .push(Diagnostic::warning(codigo, mensagem, pos.linha, pos.coluna));
     }
 
     fn tem_erro(&self) -> bool {
-        self.diags.iter().any(Diagnostico::e_erro)
+        self.diags.iter().any(Diagnostic::is_error)
     }
 
     // ---------------------------------------------------------------- passagem 1: topo
@@ -263,7 +263,7 @@ impl<'a> Forma<'a> {
                         Expr::Identifier(ident) => ident.node.ident.clone(),
                         _ => {
                             self.erro(
-                                Codigo::TopoInvalido,
+                                Code::InvalidTopLevel,
                                 "No topo do arquivo só pode haver `fluxo(...)`, `etapa(...)`, `decisao(...)` e `def`; isto é uma chamada de atributo.",
                                 pos,
                             );
@@ -275,7 +275,7 @@ impl<'a> Forma<'a> {
                         "etapa" => self.coleta_etapa(args, pos),
                         "decisao" => self.coleta_decisao(args, pos),
                         outro => self.erro(
-                            Codigo::TopoInvalido,
+                            Code::InvalidTopLevel,
                             format!(
                                 "`{outro}(...)` não é declaração de fluxo: no topo do arquivo só pode haver `fluxo(...)`, `etapa(...)`, `decisao(...)` e `def`."
                             ),
@@ -284,38 +284,38 @@ impl<'a> Forma<'a> {
                     }
                 }
                 _ => self.erro(
-                    Codigo::TopoInvalido,
+                    Code::InvalidTopLevel,
                     "No topo do arquivo só pode haver `fluxo(...)`, `etapa(...)`, `decisao(...)` e `def`. Tire esta expressão solta.",
                     pos,
                 ),
             },
             Stmt::Assign(_) => self.erro(
-                Codigo::TopoInvalido,
+                Code::InvalidTopLevel,
                 "No topo do arquivo não existe atribuição (`x = ...`): só `fluxo(...)`, `etapa(...)`, `decisao(...)` e `def`.",
                 pos,
             ),
             Stmt::AssignModify(..) => self.erro(
-                Codigo::TopoInvalido,
+                Code::InvalidTopLevel,
                 "No topo do arquivo não existe atribuição (`x += ...`): só `fluxo(...)`, `etapa(...)`, `decisao(...)` e `def`.",
                 pos,
             ),
             Stmt::For(_) => self.erro(
-                Codigo::Dialeto,
+                Code::Dialect,
                 "Laço (`for`) não existe no topo de um fluxo: só `fluxo(...)`, `etapa(...)`, `decisao(...)` e `def`.",
                 pos,
             ),
             Stmt::If(..) | Stmt::IfElse(..) => self.erro(
-                Codigo::Dialeto,
+                Code::Dialect,
                 "Condição (`if`) não existe no topo de um fluxo: a bifurcação do atendimento é `decisao(...)`.",
                 pos,
             ),
             Stmt::Load(_) => self.erro(
-                Codigo::Dialeto,
+                Code::Dialect,
                 "`load` não faz parte da linguagem de fluxos: um fluxo não importa outro arquivo.",
                 pos,
             ),
             Stmt::Return(_) | Stmt::Break | Stmt::Continue | Stmt::Pass | Stmt::Statements(_) => self.erro(
-                Codigo::TopoInvalido,
+                Code::InvalidTopLevel,
                 "No topo do arquivo só pode haver `fluxo(...)`, `etapa(...)`, `decisao(...)` e `def`.",
                 pos,
             ),
@@ -333,7 +333,7 @@ impl<'a> Forma<'a> {
                     expr,
                 }),
                 Argument::Args(_) | Argument::KwArgs(_) => self.erro(
-                    Codigo::ArgumentoDesconhecido,
+                    Code::UnknownArgument,
                     format!(
                         "{onde} não aceita `*`/`**` na chamada: escreva os argumentos um a um."
                     ),
@@ -349,7 +349,7 @@ impl<'a> Forma<'a> {
     fn coleta_fluxo(&mut self, args: ArgsAst<'a>, pos: Pos) {
         if self.fluxo.is_some() {
             self.erro(
-                Codigo::FluxoAusente,
+                Code::MissingFlow,
                 "O arquivo declara `fluxo(...)` mais de uma vez. Um arquivo é um fluxo: deixe só um.",
                 pos,
             );
@@ -371,7 +371,7 @@ impl<'a> Forma<'a> {
             && !id_valido(id)
         {
             self.erro(
-                Codigo::IdInvalido,
+                Code::InvalidId,
                 format!(
                     "O id `{id}` não é válido: use minúsculas, números e `_`, de {ID_MIN} a {ID_MAX} caracteres, por exemplo `agendar_visita`."
                 ),
@@ -398,7 +398,7 @@ impl<'a> Forma<'a> {
         };
         if nome != "gatilho" {
             self.erro(
-                Codigo::TipoErrado,
+                Code::WrongType,
                 format!("O `gatilho` do fluxo precisa ser `gatilho(quando = ..., nao_quando = ..., exemplos = [...])`, não `{nome}(...)`."),
                 pos,
             );
@@ -423,14 +423,14 @@ impl<'a> Forma<'a> {
             let Some(texto) = texto else { continue };
             if !variaveis(texto).is_empty() {
                 self.erro(
-                    Codigo::InterpolacaoProibida,
+                    Code::ForbiddenInterpolation,
                     format!("`gatilho.{chave}` tem `{{...}}`, mas esse texto não interpola: o Jev lê o texto como está."),
                     pos_texto,
                 );
             }
             if texto.chars().count() > MAX_TEXTO_GATILHO {
                 self.aviso(
-                    Codigo::TextoLongo,
+                    Code::LongText,
                     format!(
                         "`gatilho.{chave}` tem {} caracteres; o recomendado é até {MAX_TEXTO_GATILHO}.",
                         texto.chars().count()
@@ -441,22 +441,22 @@ impl<'a> Forma<'a> {
         }
         if exemplos.is_empty() {
             self.aviso(
-                Codigo::GatilhoSemExemplos,
+                Code::TriggerWithoutExamples,
                 "O gatilho não tem `exemplos`: com 2 ou 3 falas típicas do cliente o Jev acerta mais.",
                 pos,
             );
         }
         if nao_quando.is_none() {
             self.aviso(
-                Codigo::GatilhoSemNegativo,
+                Code::TriggerWithoutNegative,
                 "O gatilho não tem `nao_quando`: diga em que situação o fluxo NÃO deve começar.",
                 pos,
             );
         }
         self.gatilho = Some(Gatilho {
-            quando: quando.unwrap_or_default(),
-            nao_quando,
-            exemplos,
+            when: quando.unwrap_or_default(),
+            not_when: nao_quando,
+            examples: exemplos,
         });
     }
 
@@ -480,14 +480,14 @@ impl<'a> Forma<'a> {
         if !id.is_empty() {
             if !id_valido(&id) {
                 self.erro(
-                    Codigo::IdInvalido,
+                    Code::InvalidId,
                     format!("O id de etapa `{id}` não é válido: use minúsculas, números e `_`, de {ID_MIN} a {ID_MAX} caracteres."),
                     pos_id,
                 );
             }
             if self.id_ocupado(&id) {
                 self.erro(
-                    Codigo::IdRepetido,
+                    Code::DuplicateId,
                     format!("O id `{id}` está declarado mais de uma vez. Cada etapa e cada decisão tem id único no fluxo."),
                     pos_id,
                 );
@@ -496,7 +496,7 @@ impl<'a> Forma<'a> {
         if let Some(texto) = &instrucao {
             if !variaveis(texto).is_empty() {
                 self.erro(
-                    Codigo::InterpolacaoProibida,
+                    Code::ForbiddenInterpolation,
                     format!(
                         "A `instrucao` da etapa `{id}` tem `{{...}}`, mas instrução não interpola: o agente lê o texto como está. Use variável só em `mensagem_ao_cliente` e `notificar_whatsapp`."
                     ),
@@ -505,7 +505,7 @@ impl<'a> Forma<'a> {
             }
             if texto.chars().count() > MAX_TEXTO_INSTRUCAO {
                 self.aviso(
-                    Codigo::TextoLongo,
+                    Code::LongText,
                     format!(
                         "A `instrucao` da etapa `{id}` tem {} caracteres; o recomendado é até {MAX_TEXTO_INSTRUCAO}, porque entra no prompt a cada turno.",
                         texto.chars().count()
@@ -522,7 +522,7 @@ impl<'a> Forma<'a> {
                 match ActionActor::from_text(&ator) {
                     Ok(ator) => atores_acao.push(ator),
                     Err(_) => self.erro(
-                        Codigo::RegraOuAtorInvalido,
+                        Code::InvalidRuleOrActor,
                         format!("A etapa `{id}` tem o ator `{ator}`; use `agente` ou `atendente` (o cliente não é ator)."),
                         pos_atores,
                     ),
@@ -566,14 +566,14 @@ impl<'a> Forma<'a> {
 
         // Ator listado na etapa sem nenhuma ação dele: na prática ele não tem o que fazer aqui.
         // Só vale quando toda ação é restrita (ação sem `ator` qualquer um dos atores executa).
-        if !acoes.is_empty() && acoes.iter().all(|a| a.acao.ator.is_some()) {
+        if !acoes.is_empty() && acoes.iter().all(|a| a.acao.actor.is_some()) {
             for ator in &atores_acao {
-                if acoes.iter().any(|a| a.acao.ator == Some(*ator)) {
+                if acoes.iter().any(|a| a.acao.actor == Some(*ator)) {
                     continue;
                 }
                 let pos_atores = atores_expr.map(|expr| self.pos(expr.span)).unwrap_or(pos);
                 self.aviso(
-                    Codigo::AtorSemAcao,
+                    Code::ActorWithoutAction,
                     format!(
                         "A etapa `{id}` permite o `{}`, mas nenhuma ação é dele: na prática ele não tem o que fazer aqui.",
                         ator.as_text()
@@ -589,11 +589,11 @@ impl<'a> Forma<'a> {
             etapa: Etapa {
                 id,
                 nome: nome.unwrap_or_default(),
-                instrucao,
-                atores_acao,
+                instruction: instrucao,
+                action_actors: atores_acao,
                 campos,
-                acoes: Vec::new(),
-                ao_entrar,
+                actions: Vec::new(),
+                on_enter: ao_entrar,
             },
             acoes,
             pos,
@@ -623,7 +623,7 @@ impl<'a> Forma<'a> {
             };
             if nome != "campo" {
                 self.erro(
-                    Codigo::TipoErrado,
+                    Code::WrongType,
                     format!(
                         "`campos` da etapa `{etapa}` aceita só `campo(...)`, não `{nome}(...)`."
                     ),
@@ -648,7 +648,7 @@ impl<'a> Forma<'a> {
             let id = id.unwrap_or_default();
             if !id.is_empty() && !id_valido(&id) {
                 self.erro(
-                    Codigo::IdInvalido,
+                    Code::InvalidId,
                     format!("O id do campo `{id}` na etapa `{etapa}` não é válido: use minúsculas, números e `_`, de {ID_MIN} a {ID_MAX} caracteres."),
                     pos_id,
                 );
@@ -656,7 +656,7 @@ impl<'a> Forma<'a> {
             let mut repetido = false;
             if !id.is_empty() && !vistos.insert(id.clone()) {
                 self.erro(
-                    Codigo::IdRepetido,
+                    Code::DuplicateId,
                     format!("O campo `{id}` está declarado duas vezes na etapa `{etapa}`."),
                     pos_id,
                 );
@@ -664,7 +664,7 @@ impl<'a> Forma<'a> {
             }
             if rotulo.is_none() {
                 self.erro(
-                    Codigo::ArgumentoAusente,
+                    Code::MissingArgument,
                     format!(
                         "O campo `{etapa}.{id}` não recebeu o rótulo (segundo argumento): `campo(\"{id}\", \"Rótulo\")`."
                     ),
@@ -680,7 +680,7 @@ impl<'a> Forma<'a> {
                         Ok(tipo) => tipo,
                         Err(_) => {
                             self.erro(
-                                Codigo::TipoDesconhecido,
+                                Code::UnknownType,
                                 format!(
                                     "O campo `{etapa}.{id}` tem tipo `{bruto}`; use texto, numero, data, booleano, opcao ou anexo."
                                 ),
@@ -705,7 +705,7 @@ impl<'a> Forma<'a> {
                 for opcao in &opcoes {
                     if !vistas.insert(opcao.clone()) {
                         self.erro(
-                            Codigo::OpcoesInvalidas,
+                            Code::InvalidOptions,
                             format!("O campo `{etapa}.{id}` repete a opção `{opcao}`."),
                             pos_opcoes,
                         );
@@ -714,7 +714,7 @@ impl<'a> Forma<'a> {
             }
             if tipo == FieldKind::Option && opcoes.len() < 2 {
                 self.erro(
-                    Codigo::OpcoesInvalidas,
+                    Code::InvalidOptions,
                     format!(
                         "O campo `{etapa}.{id}` é `opcao` e precisa de pelo menos duas `opcoes`."
                     ),
@@ -727,7 +727,7 @@ impl<'a> Forma<'a> {
             }
             if tipo != FieldKind::Option && !opcoes.is_empty() {
                 self.erro(
-                    Codigo::OpcoesInvalidas,
+                    Code::InvalidOptions,
                     format!(
                         "O campo `{etapa}.{id}` tem `opcoes`, mas o tipo é `{}`: `opcoes` só vale com `tipo = \"opcao\"`.",
                         tipo.as_text()
@@ -741,11 +741,11 @@ impl<'a> Forma<'a> {
             posicoes.insert(id.clone(), pos_id);
             campos.push(Campo {
                 id,
-                rotulo: rotulo.unwrap_or_default(),
+                label: rotulo.unwrap_or_default(),
                 tipo,
-                obrigatorio,
-                opcoes,
-                ajuda,
+                required: obrigatorio,
+                options: opcoes,
+                help: ajuda,
             });
         }
         (campos, posicoes)
@@ -771,7 +771,7 @@ impl<'a> Forma<'a> {
             };
             if nome != "acao" {
                 self.erro(
-                    Codigo::TipoErrado,
+                    Code::WrongType,
                     format!("`acoes` da etapa `{etapa}` aceita só `acao(...)`, não `{nome}(...)`."),
                     pos,
                 );
@@ -792,14 +792,14 @@ impl<'a> Forma<'a> {
             let id = id.unwrap_or_default();
             if !id.is_empty() && !id_valido(&id) {
                 self.erro(
-                    Codigo::IdInvalido,
+                    Code::InvalidId,
                     format!("O id da ação `{id}` na etapa `{etapa}` não é válido: use minúsculas, números e `_`, de {ID_MIN} a {ID_MAX} caracteres."),
                     pos,
                 );
             }
             if rotulo.is_none() {
                 self.erro(
-                    Codigo::ArgumentoAusente,
+                    Code::MissingArgument,
                     format!(
                         "A ação `{etapa}.{id}` não recebeu o rótulo (segundo argumento): `acao(\"{id}\", \"Rótulo\", vai_para = ...)`."
                     ),
@@ -812,7 +812,7 @@ impl<'a> Forma<'a> {
                 for campo in self.lista_texto(expr, &onde_exige) {
                     if !ids_campos.contains(campo.as_str()) {
                         self.erro(
-                            Codigo::ExigeInexistente,
+                            Code::UnknownRequirement,
                             format!("A ação `{etapa}.{id}` exige o campo `{campo}`, que não existe na etapa `{etapa}`."),
                             pos_exige,
                         );
@@ -833,7 +833,7 @@ impl<'a> Forma<'a> {
                         Ok(ator) => {
                             if !atores.contains(&ator) {
                                 self.erro(
-                                    Codigo::RegraOuAtorInvalido,
+                                    Code::InvalidRuleOrActor,
                                     format!(
                                         "A ação `{etapa}.{id}` é do ator `{bruto}`, que não está em `atores` da etapa `{etapa}`. Inclua `{bruto}` em `atores` ou tire o `ator` da ação."
                                     ),
@@ -844,7 +844,7 @@ impl<'a> Forma<'a> {
                         }
                         Err(_) => {
                             self.erro(
-                                Codigo::RegraOuAtorInvalido,
+                                Code::InvalidRuleOrActor,
                                 format!("A ação `{etapa}.{id}` tem `ator = \"{bruto}\"`; use `agente` ou `atendente` (ou deixe vazio)."),
                                 pos_ator,
                             );
@@ -858,7 +858,7 @@ impl<'a> Forma<'a> {
                 Some(expr) => self.destino(expr, &format!("a ação `{etapa}.{id}`")),
                 None => {
                     self.erro(
-                        Codigo::ArgumentoAusente,
+                        Code::MissingArgument,
                         format!("A ação `{etapa}.{id}` não recebeu `vai_para`: diga para qual etapa, decisão ou `fim(...)` ela leva."),
                         pos_vai_para,
                     );
@@ -881,7 +881,7 @@ impl<'a> Forma<'a> {
             let mut segue = true;
             if !id.is_empty() && !vistos.insert(id.clone()) {
                 self.erro(
-                    Codigo::IdRepetido,
+                    Code::DuplicateId,
                     format!("A ação `{id}` está declarada duas vezes na etapa `{etapa}`."),
                     pos,
                 );
@@ -893,11 +893,11 @@ impl<'a> Forma<'a> {
             acoes.push(AcaoBruta {
                 acao: Acao {
                     id,
-                    rotulo: rotulo.unwrap_or_default(),
-                    exige,
-                    ator,
-                    vai_para: Destino::Etapa { id: String::new() },
-                    efeitos,
+                    label: rotulo.unwrap_or_default(),
+                    requires: exige,
+                    actor: ator,
+                    goes_to: Destination::Etapa { id: String::new() },
+                    effects: efeitos,
                 },
                 destino,
             });
@@ -921,7 +921,7 @@ impl<'a> Forma<'a> {
                     leitor.fecha(self);
                     let Some(texto) = texto else {
                         self.erro(
-                            Codigo::ArgumentoAusente,
+                            Code::MissingArgument,
                             format!("{onde} tem `mensagem_ao_cliente()` sem o texto: `mensagem_ao_cliente(\"Texto enviado ao cliente\")`."),
                             pos,
                         );
@@ -929,7 +929,7 @@ impl<'a> Forma<'a> {
                     };
                     self.confere_formato_das_variaveis(&texto, onde, pos_texto);
                     pos_texto_final = pos_texto;
-                    Efeito::MensagemAoCliente { texto }
+                    Effect::MessageToCustomer { texto }
                 }
                 "notificar_whatsapp" => {
                     let mut leitor =
@@ -943,7 +943,7 @@ impl<'a> Forma<'a> {
                         Some(para) => {
                             if para.len() < 10 || !para.chars().all(|c| c.is_ascii_digit()) {
                                 self.erro(
-                                    Codigo::NumeroInvalido,
+                                    Code::InvalidNumber,
                                     format!("O número `{para}` não serve: use dígitos com DDI, por exemplo `5521999990000`."),
                                     pos_para,
                                 );
@@ -952,7 +952,7 @@ impl<'a> Forma<'a> {
                         }
                         None => {
                             self.erro(
-                                Codigo::ArgumentoAusente,
+                                Code::MissingArgument,
                                 format!("{onde} tem `notificar_whatsapp` sem `para`: indique o número que recebe a notificação."),
                                 pos,
                             );
@@ -965,7 +965,7 @@ impl<'a> Forma<'a> {
                             self.confere_formato_das_variaveis(&mensagem, onde, pos_mensagem);
                             if variaveis(&mensagem).is_empty() {
                                 self.aviso(
-                                    Codigo::NotificacaoSemVariavel,
+                                    Code::NotificationWithoutVariable,
                                     format!("{onde} notifica a equipe sem nenhuma variável: ela recebe sempre o mesmo texto, sem saber de qual atendimento se trata."),
                                     pos_mensagem,
                                 );
@@ -974,24 +974,24 @@ impl<'a> Forma<'a> {
                         }
                         None => {
                             self.erro(
-                                Codigo::ArgumentoAusente,
+                                Code::MissingArgument,
                                 format!("{onde} tem `notificar_whatsapp` sem `mensagem`: escreva o texto da notificação."),
                                 pos,
                             );
                             String::new()
                         }
                     };
-                    Efeito::NotificarWhatsapp { para, mensagem }
+                    Effect::NotifyWhatsApp { para, mensagem }
                 }
                 "encaminhar" => {
                     let mut leitor = Leitor::novo("`encaminhar`", pos, &[], itens);
                     let departamento = leitor.posicional_texto(self, 0);
                     leitor.fecha(self);
                     match departamento {
-                        Some(departamento) => Efeito::Encaminhar { departamento },
+                        Some(departamento) => Effect::Encaminhar { departamento },
                         None => {
                             self.erro(
-                                Codigo::ArgumentoAusente,
+                                Code::MissingArgument,
                                 format!("{onde} tem `encaminhar()` sem o departamento: `encaminhar(\"Logística\")`."),
                                 pos,
                             );
@@ -1001,7 +1001,7 @@ impl<'a> Forma<'a> {
                 }
                 outro => {
                     self.erro(
-                        Codigo::TopoInvalido,
+                        Code::InvalidTopLevel,
                         format!("{onde} usa o efeito `{outro}(...)`; use `mensagem_ao_cliente`, `notificar_whatsapp` ou `encaminhar`."),
                         pos,
                     );
@@ -1035,14 +1035,14 @@ impl<'a> Forma<'a> {
         if !id.is_empty() {
             if !id_valido(&id) {
                 self.erro(
-                    Codigo::IdInvalido,
+                    Code::InvalidId,
                     format!("O id de decisão `{id}` não é válido: use minúsculas, números e `_`, de {ID_MIN} a {ID_MAX} caracteres."),
                     pos_id,
                 );
             }
             if self.id_ocupado(&id) {
                 self.erro(
-                    Codigo::IdRepetido,
+                    Code::DuplicateId,
                     format!("O id `{id}` está declarado mais de uma vez. Cada etapa e cada decisão tem id único no fluxo."),
                     pos_id,
                 );
@@ -1052,7 +1052,7 @@ impl<'a> Forma<'a> {
             Some(expr) => self.regra(expr, &format!("a decisão `{id}`")),
             None => {
                 self.erro(
-                    Codigo::ArgumentoAusente,
+                    Code::MissingArgument,
                     format!("A decisão `{id}` não recebeu `se`: escreva a regra, por exemplo `se = igual(\"coleta.periodo\", \"manhã\")`."),
                     pos_se,
                 );
@@ -1063,7 +1063,7 @@ impl<'a> Forma<'a> {
             Some(expr) => self.destino(expr, &format!("o ramo `entao` da decisão `{id}`")),
             None => {
                 self.erro(
-                    Codigo::ArgumentoAusente,
+                    Code::MissingArgument,
                     format!("A decisão `{id}` não recebeu `entao`: diga para onde vai quando a regra é verdadeira."),
                     pos_entao,
                 );
@@ -1074,7 +1074,7 @@ impl<'a> Forma<'a> {
             Some(expr) => self.destino(expr, &format!("o ramo `senao` da decisão `{id}`")),
             None => {
                 self.erro(
-                    Codigo::ArgumentoAusente,
+                    Code::MissingArgument,
                     format!("A decisão `{id}` não recebeu `senao`: toda decisão tem os dois ramos (`senao` é obrigatório)."),
                     pos_senao,
                 );
@@ -1110,18 +1110,18 @@ impl<'a> Forma<'a> {
                 let (Some(campo), Some(valor)) = (campo, valor) else {
                     let pos_erro = if sem_campo { pos } else { pos_valor };
                     self.erro(
-                        Codigo::CombinadorMalformado,
+                        Code::MalformedCombinator,
                         format!("{onde} usa `{nome}` sem o campo e o valor: `{nome}(\"etapa.campo\", \"valor\")`."),
                         pos_erro,
                     );
                     return RegraBruta::Invalida;
                 };
                 let regra = match nome.as_str() {
-                    "igual" => Regra::Igual { campo, valor },
-                    "diferente" => Regra::Diferente { campo, valor },
-                    "maior" => Regra::Maior { campo, valor },
-                    "menor" => Regra::Menor { campo, valor },
-                    _ => Regra::Contem { campo, valor },
+                    "igual" => Rule::Igual { campo, value: valor },
+                    "diferente" => Rule::Diferente { campo, value: valor },
+                    "maior" => Rule::Maior { campo, value: valor },
+                    "menor" => Rule::Menor { campo, value: valor },
+                    _ => Rule::Contem { campo, value: valor },
                 };
                 RegraBruta::Folha {
                     regra,
@@ -1135,14 +1135,14 @@ impl<'a> Forma<'a> {
                 leitor.fecha(self);
                 let Some(campo) = campo else {
                     self.erro(
-                        Codigo::CombinadorMalformado,
+                        Code::MalformedCombinator,
                         format!("{onde} usa `vazio` sem o campo: `vazio(\"etapa.campo\")`."),
                         pos,
                     );
                     return RegraBruta::Invalida;
                 };
                 RegraBruta::Folha {
-                    regra: Regra::Vazio { campo },
+                    regra: Rule::Vazio { campo },
                     pos: pos_campo,
                 }
             }
@@ -1152,7 +1152,7 @@ impl<'a> Forma<'a> {
                 leitor.fecha(self);
                 let Some(nome_def) = nome_def else {
                     self.erro(
-                        Codigo::RegraOuAtorInvalido,
+                        Code::InvalidRuleOrActor,
                         format!("{onde} usa `funcao()` sem o nome: `funcao(\"minha_regra\")`."),
                         pos,
                     );
@@ -1169,7 +1169,7 @@ impl<'a> Forma<'a> {
                     if item.nome.is_some() {
                         let p = self.pos(item.expr.span);
                         self.erro(
-                            Codigo::CombinadorMalformado,
+                            Code::MalformedCombinator,
                             format!("{onde} usa `{nome}` com argumento nomeado; `{nome}` recebe os combinadores em sequência."),
                             p,
                         );
@@ -1189,7 +1189,7 @@ impl<'a> Forma<'a> {
                         "2 ou mais argumentos".to_owned()
                     };
                     self.erro(
-                        Codigo::CombinadorMalformado,
+                        Code::MalformedCombinator,
                         format!(
                             "{onde} usa `{nome}` com {} argumento(s); `{nome}` recebe {esperado}.",
                             posicionais.len()
@@ -1203,15 +1203,15 @@ impl<'a> Forma<'a> {
                     filhos.push(self.regra(filho, onde));
                 }
                 let regra = match nome.as_str() {
-                    "e" => Regra::E { args: Vec::new() },
-                    "ou" => Regra::Ou { args: Vec::new() },
-                    _ => Regra::Nao { args: Vec::new() },
+                    "e" => Rule::E { args: Vec::new() },
+                    "ou" => Rule::Ou { args: Vec::new() },
+                    _ => Rule::Nao { args: Vec::new() },
                 };
                 RegraBruta::Grupo { regra, filhos, pos }
             }
             outro => {
                 self.erro(
-                    Codigo::RegraOuAtorInvalido,
+                    Code::InvalidRuleOrActor,
                     format!(
                         "{onde} tem `se = {outro}(...)`, que não é combinador nem `funcao(\"nome\")`. Use `igual`, `diferente`, `maior`, `menor`, `contem`, `vazio`, `e`, `ou`, `nao` ou `funcao`."
                     ),
@@ -1238,7 +1238,7 @@ impl<'a> Forma<'a> {
                 };
                 if nome != "fim" {
                     self.erro(
-                        Codigo::TipoErrado,
+                        Code::WrongType,
                         format!("{onde} precisa apontar para o id de uma etapa, de uma decisão ou para `fim(\"id\")`, não para `{nome}(...)`."),
                         pos,
                     );
@@ -1253,7 +1253,7 @@ impl<'a> Forma<'a> {
                 leitor.fecha(self);
                 let Some(id) = id else {
                     self.erro(
-                        Codigo::ArgumentoAusente,
+                        Code::MissingArgument,
                         format!(
                             "{onde} usa `fim()` sem id: `fim(\"concluido\", resultado = \"...\")`."
                         ),
@@ -1263,7 +1263,7 @@ impl<'a> Forma<'a> {
                 };
                 if !id_valido(&id) {
                     self.erro(
-                        Codigo::IdInvalido,
+                        Code::InvalidId,
                         format!("O id do fim `{id}` não é válido: use minúsculas, números e `_`, de {ID_MIN} a {ID_MAX} caracteres."),
                         pos_id,
                     );
@@ -1278,14 +1278,14 @@ impl<'a> Forma<'a> {
                     fim: Fim {
                         id,
                         resultado,
-                        encerra_atendimento,
+                        ends_service: encerra_atendimento,
                     },
                     pos,
                 }
             }
             _ => {
                 self.erro(
-                    Codigo::TipoErrado,
+                    Code::WrongType,
                     format!("{onde} precisa apontar para o id de uma etapa, de uma decisão ou para `fim(\"id\")`, não para {}.", descreve(expr)),
                     pos,
                 );
@@ -1298,7 +1298,7 @@ impl<'a> Forma<'a> {
         let nome = def.name.node.ident.clone();
         if nome_permitido(&nome) {
             self.erro(
-                Codigo::DefInvalida,
+                Code::InvalidDef,
                 format!("`{nome}` é nome reservado da linguagem de fluxos; escolha outro nome para a função de regra."),
                 pos,
             );
@@ -1306,7 +1306,7 @@ impl<'a> Forma<'a> {
         }
         if self.pos_defs.contains_key(&nome) {
             self.erro(
-                Codigo::DefInvalida,
+                Code::InvalidDef,
                 format!("Existe mais de uma `def {nome}`: cada função de regra tem nome único."),
                 pos,
             );
@@ -1327,7 +1327,7 @@ impl<'a> Forma<'a> {
         if !so_dados {
             let escrito = parametros.join(", ");
             self.erro(
-                Codigo::DefInvalida,
+                Code::InvalidDef,
                 format!("`def {nome}({escrito})` precisa receber um único argumento chamado `dados`: `def {nome}(dados):`."),
                 pos,
             );
@@ -1358,7 +1358,7 @@ impl<'a> Forma<'a> {
                     _ => {
                         let pos = self.pos(expr.span);
                         self.erro(
-                            Codigo::TopoInvalido,
+                            Code::InvalidTopLevel,
                             format!("{onde} precisa ser a chamada de uma declaração da linguagem, não uma chamada de atributo."),
                             pos,
                         );
@@ -1372,7 +1372,7 @@ impl<'a> Forma<'a> {
             _ => {
                 let pos = self.pos(expr.span);
                 self.erro(
-                    Codigo::TipoErrado,
+                    Code::WrongType,
                     format!(
                         "{onde} precisa ser uma chamada de declaração, não {}.",
                         descreve(expr)
@@ -1391,7 +1391,7 @@ impl<'a> Forma<'a> {
             _ => {
                 let pos = self.pos(expr.span);
                 self.erro(
-                    Codigo::TipoErrado,
+                    Code::WrongType,
                     format!(
                         "{onde} precisa ser uma lista `[...]`, não {}.",
                         descreve(expr)
@@ -1428,7 +1428,7 @@ impl<'a> Forma<'a> {
                 descreve(expr)
             )
         };
-        self.erro(Codigo::TipoErrado, mensagem, pos);
+        self.erro(Code::WrongType, mensagem, pos);
         None
     }
 
@@ -1442,7 +1442,7 @@ impl<'a> Forma<'a> {
         }
         let pos = self.pos(expr.span);
         self.erro(
-            Codigo::TipoErrado,
+            Code::WrongType,
             format!(
                 "{onde} precisa ser `True` ou `False`, não {}.",
                 descreve(expr)
@@ -1459,7 +1459,7 @@ impl<'a> Forma<'a> {
 
         let Some(fluxo) = self.fluxo.clone() else {
             self.erro(
-                Codigo::FluxoAusente,
+                Code::MissingFlow,
                 "O arquivo não declara `fluxo(...)`. Um arquivo é um fluxo: comece por `fluxo(id = ..., nome = ..., inicio = ..., gatilho = gatilho(...))`.",
                 self.pos_fluxo,
             );
@@ -1473,14 +1473,14 @@ impl<'a> Forma<'a> {
                     inicio = id;
                 } else {
                     self.erro(
-                        Codigo::DestinoInexistente,
+                        Code::UnknownDestination,
                         format!("`inicio = \"{id}\"` não é uma etapa declarada. Use o id de uma `etapa(...)` do arquivo."),
                         pos,
                     );
                 }
             }
             None => self.erro(
-                Codigo::ArgumentoAusente,
+                Code::MissingArgument,
                 "`fluxo` não recebeu `inicio`: indique o id da etapa em que o atendimento começa.",
                 self.pos_fluxo,
             ),
@@ -1497,14 +1497,14 @@ impl<'a> Forma<'a> {
             for bruta in coletada.acoes {
                 let onde = format!("a ação `{id}.{}`", bruta.acao.id);
                 let destino = self.resolve(bruta.destino, &onde);
-                if let Some(alvo) = destino.aberto() {
+                if let Some(alvo) = destino.is_open() {
                     grafo.entry(id.clone()).or_default().push(alvo.to_owned());
                 }
                 let mut acao = bruta.acao;
-                acao.vai_para = destino;
+                acao.goes_to = destino;
                 acoes.push(acao);
             }
-            etapa.acoes = acoes;
+            etapa.actions = acoes;
             etapas.push(etapa);
         }
 
@@ -1521,7 +1521,7 @@ impl<'a> Forma<'a> {
                 &format!("o ramo `senao` da decisão `{id}`"),
             );
             for destino in [&entao, &senao] {
-                if let Some(alvo) = destino.aberto() {
+                if let Some(alvo) = destino.is_open() {
                     grafo.entry(id.clone()).or_default().push(alvo.to_owned());
                 }
             }
@@ -1529,8 +1529,8 @@ impl<'a> Forma<'a> {
             decisoes.push(Decisao {
                 id,
                 se,
-                entao,
-                senao,
+                then_branch: entao,
+                else_branch: senao,
             });
         }
 
@@ -1549,32 +1549,32 @@ impl<'a> Forma<'a> {
             schema_versao: SCHEMA_VERSAO,
             fluxo,
             gatilho: self.gatilho.clone().unwrap_or(Gatilho {
-                quando: String::new(),
-                nao_quando: None,
-                exemplos: Vec::new(),
+                when: String::new(),
+                not_when: None,
+                examples: Vec::new(),
             }),
-            inicio,
-            etapas,
-            decisoes,
-            fins: self.fins.clone(),
+            start: inicio,
+            stages: etapas,
+            decisions: decisoes,
+            ends: self.fins.clone(),
             defs: self.defs.clone(),
         })
     }
 
-    fn resolve(&mut self, bruto: DestinoBruto, onde: &str) -> Destino {
+    fn resolve(&mut self, bruto: DestinoBruto, onde: &str) -> Destination {
         match bruto {
             DestinoBruto::Alvo { id, pos } => {
                 if self.idx_etapas.contains_key(&id) {
-                    Destino::Etapa { id }
+                    Destination::Etapa { id }
                 } else if self.idx_decisoes.contains_key(&id) {
-                    Destino::Decisao { id }
+                    Destination::Decisao { id }
                 } else {
                     self.erro(
-                        Codigo::DestinoInexistente,
+                        Code::UnknownDestination,
                         format!("{onde} aponta para `{id}`, que não é etapa nem decisão declarada. Use o id de uma `etapa(...)` ou de uma `decisao(...)`."),
                         pos,
                     );
-                    Destino::Etapa { id }
+                    Destination::Etapa { id }
                 }
             }
             DestinoBruto::Fim { fim, pos } => {
@@ -1583,7 +1583,7 @@ impl<'a> Forma<'a> {
                         let anterior = self.fins.iter().find(|f| f.id == fim.id).cloned();
                         if anterior.as_ref() != Some(&fim) {
                             self.erro(
-                                Codigo::FimDivergente,
+                                Code::DivergentEnd,
                                 format!(
                                     "O fim `{}` aparece com argumentos diferentes aqui e na linha {}: use o mesmo `fim(...)` nos dois lugares.",
                                     fim.id, pos_anterior.linha
@@ -1597,17 +1597,17 @@ impl<'a> Forma<'a> {
                         self.fins.push(fim.clone());
                     }
                 }
-                Destino::Fim {
+                Destination::Fim {
                     id: fim.id,
                     resultado: fim.resultado,
-                    encerra_atendimento: fim.encerra_atendimento,
+                    ends_service: fim.ends_service,
                 }
             }
-            DestinoBruto::Invalido => Destino::Etapa { id: String::new() },
+            DestinoBruto::Invalido => Destination::Etapa { id: String::new() },
         }
     }
 
-    fn fecha_regra(&mut self, bruta: &RegraBruta, onde: &str) -> Regra {
+    fn fecha_regra(&mut self, bruta: &RegraBruta, onde: &str) -> Rule {
         match bruta {
             RegraBruta::Folha { regra, pos } => {
                 if let Some(campo) = campo_da_regra(regra) {
@@ -1618,12 +1618,12 @@ impl<'a> Forma<'a> {
             RegraBruta::Funcao { nome, pos } => {
                 if !self.pos_defs.contains_key(nome) {
                     self.erro(
-                        Codigo::RegraOuAtorInvalido,
+                        Code::InvalidRuleOrActor,
                         format!("{onde} usa `funcao(\"{nome}\")`, mas não existe `def {nome}(dados)` no arquivo."),
                         *pos,
                     );
                 }
-                Regra::Funcao { nome: nome.clone() }
+                Rule::Funcao { nome: nome.clone() }
             }
             RegraBruta::Grupo { regra, filhos, pos } => {
                 self.confere_contradicao(regra, filhos, onde, *pos);
@@ -1632,21 +1632,21 @@ impl<'a> Forma<'a> {
                     args.push(self.fecha_regra(filho, onde));
                 }
                 match regra {
-                    Regra::E { .. } => Regra::E { args },
-                    Regra::Ou { .. } => Regra::Ou { args },
-                    _ => Regra::Nao { args },
+                    Rule::E { .. } => Rule::E { args },
+                    Rule::Ou { .. } => Rule::Ou { args },
+                    _ => Rule::Nao { args },
                 }
             }
-            RegraBruta::Invalida => Regra::Vazio {
+            RegraBruta::Invalida => Rule::Vazio {
                 campo: String::new(),
             },
         }
     }
 
-    fn confere_campo_da_regra(&mut self, campo: &str, regra: &Regra, onde: &str, pos: Pos) {
+    fn confere_campo_da_regra(&mut self, campo: &str, regra: &Rule, onde: &str, pos: Pos) {
         let Some((etapa, nome)) = campo.split_once('.') else {
             self.erro(
-                Codigo::CombinadorMalformado,
+                Code::MalformedCombinator,
                 format!(
                     "{onde} compara `{campo}`; use `etapa.campo`, por exemplo `coleta.endereco`."
                 ),
@@ -1656,7 +1656,7 @@ impl<'a> Forma<'a> {
         };
         if !id_valido(etapa) || !id_valido(nome) {
             self.erro(
-                Codigo::CombinadorMalformado,
+                Code::MalformedCombinator,
                 format!("{onde} compara `{campo}`; use `etapa.campo`, com ids em minúsculas (por exemplo `coleta.endereco`)."),
                 pos,
             );
@@ -1664,7 +1664,7 @@ impl<'a> Forma<'a> {
         }
         let Some(indice) = self.idx_etapas.get(etapa).copied() else {
             self.erro(
-                Codigo::CampoInexistente,
+                Code::UnknownField,
                 format!("{onde} compara `{campo}`, mas a etapa `{etapa}` não existe."),
                 pos,
             );
@@ -1678,7 +1678,7 @@ impl<'a> Forma<'a> {
             .cloned();
         let Some(campo_info) = campo_info else {
             self.erro(
-                Codigo::CampoInexistente,
+                Code::UnknownField,
                 format!(
                     "{onde} compara `{campo}`, mas a etapa `{etapa}` não tem o campo `{nome}`."
                 ),
@@ -1690,21 +1690,21 @@ impl<'a> Forma<'a> {
             uso.lidos.insert(nome.to_owned());
         }
         match regra {
-            Regra::Igual { valor, .. } | Regra::Diferente { valor, .. } => {
-                if !campo_info.opcoes.is_empty() && !campo_info.opcoes.iter().any(|o| o == valor) {
+            Rule::Igual { value: valor, .. } | Rule::Diferente { value: valor, .. } => {
+                if !campo_info.options.is_empty() && !campo_info.options.iter().any(|o| o == valor) {
                     self.aviso(
-                        Codigo::ForaDasOpcoes,
+                        Code::OutsideOptions,
                         format!(
                             "{onde} compara `{campo}` com `{valor}`, que não é uma das opções ({}): o teste nunca casa.",
-                            campo_info.opcoes.join(", ")
+                            campo_info.options.join(", ")
                         ),
                         pos,
                     );
                 }
             }
-            Regra::Maior { .. } | Regra::Menor { .. } if campo_info.tipo != FieldKind::Number => {
+            Rule::Maior { .. } | Rule::Menor { .. } if campo_info.tipo != FieldKind::Number => {
                 self.aviso(
-                    Codigo::ComparacaoDeTexto,
+                    Code::TextComparison,
                     format!(
                         "{onde} usa `maior`/`menor` com `{campo}`, mas o campo é `{}`: mude o tipo para `numero` ou use `igual`.",
                         campo_info.tipo.as_text()
@@ -1716,16 +1716,16 @@ impl<'a> Forma<'a> {
         }
     }
 
-    fn confere_contradicao(&mut self, regra: &Regra, filhos: &[RegraBruta], onde: &str, pos: Pos) {
-        let folhas: Vec<&Regra> = filhos
+    fn confere_contradicao(&mut self, regra: &Rule, filhos: &[RegraBruta], onde: &str, pos: Pos) {
+        let folhas: Vec<&Rule> = filhos
             .iter()
             .filter_map(|filho| match filho {
                 RegraBruta::Folha { regra, .. } => Some(regra),
                 _ => None,
             })
             .collect();
-        let eh_e = matches!(regra, Regra::E { .. });
-        let eh_ou = matches!(regra, Regra::Ou { .. });
+        let eh_e = matches!(regra, Rule::E { .. });
+        let eh_ou = matches!(regra, Rule::Ou { .. });
         let mut avisos: Vec<String> = Vec::new();
         for (i, a) in folhas.iter().enumerate() {
             for b in folhas.iter().skip(i + 1) {
@@ -1754,7 +1754,7 @@ impl<'a> Forma<'a> {
             }
         }
         for mensagem in avisos {
-            self.aviso(Codigo::CondicaoContraditoria, mensagem, pos);
+            self.aviso(Code::ContradictoryCondition, mensagem, pos);
         }
     }
 
@@ -1781,7 +1781,7 @@ impl<'a> Forma<'a> {
             })
             .unwrap_or(self.pos_fluxo);
         self.erro(
-            Codigo::CicloDeDecisao,
+            Code::DecisionCycle,
             format!(
                 "As decisões formam um ciclo ({}): um fluxo não pode voltar a uma decisão já avaliada.",
                 ciclo.join(" → ")
@@ -1851,12 +1851,12 @@ impl<'a> Forma<'a> {
         for etapa in &self.etapas {
             posicoes.insert(etapa.etapa.id.clone(), etapa.pos);
         }
-        let mut avisos: Vec<(Codigo, String, Pos)> = Vec::new();
+        let mut avisos: Vec<(Code, String, Pos)> = Vec::new();
         for etapa in etapas {
             let pos = posicoes.get(&etapa.id).copied().unwrap_or(self.pos_fluxo);
-            if etapa.acoes.is_empty() {
+            if etapa.actions.is_empty() {
                 avisos.push((
-                    Codigo::EtapaSemAcao,
+                    Code::StageWithoutAction,
                     format!(
                         "A etapa `{}` não tem nenhuma `acao(...)`: o atendimento não sai dela. Acrescente uma ação com `vai_para`.",
                         etapa.id
@@ -1866,7 +1866,7 @@ impl<'a> Forma<'a> {
             }
             if !inicio.is_empty() && !alcancados.contains(&etapa.id) {
                 avisos.push((
-                    Codigo::Inalcancavel,
+                    Code::Unreachable,
                     format!(
                         "A etapa `{}` não é alcançável a partir de `inicio = \"{inicio}\"`. Confira os `vai_para`.",
                         etapa.id
@@ -1878,7 +1878,7 @@ impl<'a> Forma<'a> {
         for decisao in decisoes {
             if !inicio.is_empty() && !alcancados.contains(&decisao.id) {
                 avisos.push((
-                    Codigo::Inalcancavel,
+                    Code::Unreachable,
                     format!(
                         "A decisão `{}` não é alcançável a partir de `inicio = \"{inicio}\"`.",
                         decisao.id
@@ -1923,7 +1923,7 @@ impl<'a> Forma<'a> {
             }
         }
         for (mensagem, pos) in avisos {
-            self.aviso(Codigo::CampoNaoUsado, mensagem, pos);
+            self.aviso(Code::UnusedField, mensagem, pos);
         }
     }
 
@@ -1949,7 +1949,7 @@ impl<'a> Forma<'a> {
                 continue;
             }
             self.aviso(
-                Codigo::DefNaoUsada,
+                Code::UnusedDef,
                 format!(
                     "A função `{nome}` está definida e nenhuma decisão usa `funcao(\"{nome}\")`. Chame ou apague."
                 ),
@@ -1971,11 +1971,11 @@ impl<'a> Forma<'a> {
             .iter()
             .filter_map(|coletado| {
                 let (texto, o_que) = match &coletado.efeito {
-                    Efeito::MensagemAoCliente { texto } => (texto.clone(), "mensagem ao cliente"),
-                    Efeito::NotificarWhatsapp { mensagem, .. } => {
+                    Effect::MessageToCustomer { texto } => (texto.clone(), "mensagem ao cliente"),
+                    Effect::NotifyWhatsApp { mensagem, .. } => {
                         (mensagem.clone(), "notificação para a equipe")
                     }
-                    Efeito::Encaminhar { .. } => return None,
+                    Effect::Encaminhar { .. } => return None,
                 };
                 Some((
                     texto,
@@ -1986,7 +1986,7 @@ impl<'a> Forma<'a> {
                 ))
             })
             .collect();
-        let mut avisos: Vec<(Codigo, String, Pos)> = Vec::new();
+        let mut avisos: Vec<(Code, String, Pos)> = Vec::new();
         for (texto, o_que, pos, etapa_do_efeito, ao_entrar) in pendentes {
             for variavel in variaveis(&texto) {
                 let Some((nome_etapa, nome_campo)) = variavel.split_once('.') else {
@@ -2001,7 +2001,7 @@ impl<'a> Forma<'a> {
                     .unwrap_or(false);
                 if !existe {
                     avisos.push((
-                        Codigo::VariavelSemCampo,
+                        Code::VariableWithoutField,
                         format!(
                             "A {o_que} usa `{{{variavel}}}`, mas a etapa `{nome_etapa}` não tem o campo `{nome_campo}`: no atendimento sai vazio."
                         ),
@@ -2011,7 +2011,7 @@ impl<'a> Forma<'a> {
                 }
                 if ao_entrar && nome_etapa == etapa_do_efeito {
                     avisos.push((
-                        Codigo::VariavelDoProprioPasso,
+                        Code::VariableFromOwnStep,
                         format!(
                             "`ao_entrar` da etapa `{etapa_do_efeito}` usa `{{{variavel}}}`, que só é preenchido dentro da própria etapa: a mensagem sai com o texto vazio."
                         ),
@@ -2030,7 +2030,7 @@ impl<'a> Forma<'a> {
         if nos > MAX_NOS {
             let pos = self.pos_fluxo;
             self.erro(
-                Codigo::NosDemais,
+                Code::NodeLimit,
                 format!("O fluxo tem {nos} nós e o limite é {MAX_NOS}. Junte etapas parecidas ou divida o fluxo."),
                 pos,
             );
@@ -2178,7 +2178,7 @@ impl<'a> Forma<'a> {
         }
         let pos = self.pos(ident.span);
         self.erro(
-            Codigo::NomeInexistente,
+            Code::UnknownName,
             format!(
                 "`{nome}` não existe na linguagem de fluxos: o script não tem relógio, rede, arquivo nem aleatório. Use as etapas, os campos e os combinadores do fluxo."
             ),
@@ -2203,7 +2203,7 @@ impl<'a> Forma<'a> {
                 continue;
             }
             self.erro(
-                Codigo::VariavelInvalida,
+                Code::InvalidVariable,
                 format!(
                     "{onde} usa `{{{variavel}}}`, que não existe. As variáveis são `{{etapa.campo}}`, `{{ficha.id}}` e `{{cliente.peer}}`."
                 ),
@@ -2215,7 +2215,7 @@ impl<'a> Forma<'a> {
 
 /// Efeito lido da árvore, ainda sem saber de qual etapa veio.
 struct EfeitoLido {
-    efeito: Efeito,
+    efeito: Effect,
     pos_texto: Pos,
 }
 
@@ -2279,14 +2279,14 @@ fn expr_calculada(expr: &AstExpr) -> bool {
     )
 }
 
-fn campo_da_regra(regra: &Regra) -> Option<String> {
+fn campo_da_regra(regra: &Rule) -> Option<String> {
     match regra {
-        Regra::Igual { campo, .. }
-        | Regra::Diferente { campo, .. }
-        | Regra::Maior { campo, .. }
-        | Regra::Menor { campo, .. }
-        | Regra::Contem { campo, .. }
-        | Regra::Vazio { campo } => Some(campo.clone()),
+        Rule::Igual { campo, .. }
+        | Rule::Diferente { campo, .. }
+        | Rule::Maior { campo, .. }
+        | Rule::Menor { campo, .. }
+        | Rule::Contem { campo, .. }
+        | Rule::Vazio { campo } => Some(campo.clone()),
         _ => None,
     }
 }
@@ -2305,24 +2305,24 @@ fn clone_bruto(bruto: &DestinoBruto) -> DestinoBruto {
     }
 }
 
-fn folha_chave(regra: &Regra) -> (Option<&str>, Option<&str>, &'static str) {
+fn folha_chave(regra: &Rule) -> (Option<&str>, Option<&str>, &'static str) {
     match regra {
-        Regra::Igual { campo, valor } => (Some(campo), Some(valor), "igual"),
-        Regra::Diferente { campo, valor } => (Some(campo), Some(valor), "diferente"),
-        Regra::Maior { campo, valor } => (Some(campo), Some(valor), "maior"),
-        Regra::Menor { campo, valor } => (Some(campo), Some(valor), "menor"),
-        Regra::Contem { campo, valor } => (Some(campo), Some(valor), "contem"),
-        Regra::Vazio { campo } => (Some(campo), None, "vazio"),
+        Rule::Igual { campo, value: valor } => (Some(campo), Some(valor), "igual"),
+        Rule::Diferente { campo, value: valor } => (Some(campo), Some(valor), "diferente"),
+        Rule::Maior { campo, value: valor } => (Some(campo), Some(valor), "maior"),
+        Rule::Menor { campo, value: valor } => (Some(campo), Some(valor), "menor"),
+        Rule::Contem { campo, value: valor } => (Some(campo), Some(valor), "contem"),
+        Rule::Vazio { campo } => (Some(campo), None, "vazio"),
         _ => (None, None, ""),
     }
 }
 
-fn coleta_funcoes(regra: &Regra, saida: &mut BTreeSet<String>) {
+fn coleta_funcoes(regra: &Rule, saida: &mut BTreeSet<String>) {
     match regra {
-        Regra::Funcao { nome } => {
+        Rule::Funcao { nome } => {
             saida.insert(nome.clone());
         }
-        Regra::E { args } | Regra::Ou { args } | Regra::Nao { args } => {
+        Rule::E { args } | Rule::Ou { args } | Rule::Nao { args } => {
             for filho in args {
                 coleta_funcoes(filho, saida);
             }
@@ -2469,7 +2469,7 @@ impl<'a> Leitor<'a> {
                 ),
                 None => format!("{onde} não aceita esse argumento posicional a mais.{conhecidos}"),
             };
-            forma.erro(Codigo::ArgumentoDesconhecido, mensagem, pos);
+            forma.erro(Code::UnknownArgument, mensagem, pos);
         }
     }
 }

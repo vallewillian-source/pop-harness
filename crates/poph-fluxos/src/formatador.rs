@@ -62,8 +62,8 @@ use poph_types::ActionActor;
 use starlark::syntax::ast::{Argument, AstLiteral, AstNoPayload, AstStmt, CallArgsP, Expr, Stmt};
 
 use crate::compilador::{Limites, compilar};
-use crate::diagnostico::Diagnostico;
-use crate::ir::{Acao, Campo, Decisao, Destino, Efeito, Etapa, Gatilho, Ir, Regra};
+use crate::diagnostico::Diagnostic;
+use crate::ir::{Acao, Campo, Decisao, Destination, Effect, Etapa, Gatilho, Ir, Rule};
 use crate::linguagem::analisa;
 
 /// Largura máxima, em colunas, de uma linha da forma canônica.
@@ -81,7 +81,7 @@ const RECUO: usize = 4;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FalhaDeFormato {
     /// Todos os diagnósticos do script (erros e avisos), na ordem em que o compilador os achou.
-    pub diagnosticos: Vec<Diagnostico>,
+    pub diagnosticos: Vec<Diagnostic>,
 }
 
 impl FalhaDeFormato {
@@ -91,8 +91,8 @@ impl FalhaDeFormato {
     }
 
     /// Só os erros, na ordem do compilador.
-    pub fn erros(&self) -> impl Iterator<Item = &Diagnostico> {
-        self.diagnosticos.iter().filter(|d| d.e_erro())
+    pub fn erros(&self) -> impl Iterator<Item = &Diagnostic> {
+        self.diagnosticos.iter().filter(|d| d.is_error())
     }
 }
 
@@ -102,7 +102,7 @@ impl fmt::Display for FalhaDeFormato {
         match erros.next() {
             Some(primeiro) => {
                 f.write_str("- ")?;
-                if let (Some(linha), Some(coluna)) = (primeiro.linha, primeiro.coluna) {
+                if let (Some(linha), Some(coluna)) = (primeiro.line, primeiro.column) {
                     write!(f, "{linha}:{coluna} ")?;
                 }
                 f.write_str(&primeiro.mensagem)
@@ -169,7 +169,7 @@ enum Chave {
 
 /// Monta o texto: uma declaração por bloco, separadas por linha em branco, terminando em `\n`.
 fn montar(ir: &Ir, comentarios: &BTreeMap<Chave, Vec<String>>) -> String {
-    let mut partes: Vec<String> = Vec::with_capacity(ir.etapas.len() + ir.decisoes.len() + 2);
+    let mut partes: Vec<String> = Vec::with_capacity(ir.stages.len() + ir.decisions.len() + 2);
     partes.push(bloco(Chave::Fluxo, corpo(&valor_do_fluxo(ir)), comentarios));
     for definicao in &ir.defs {
         partes.push(bloco(
@@ -178,14 +178,14 @@ fn montar(ir: &Ir, comentarios: &BTreeMap<Chave, Vec<String>>) -> String {
             comentarios,
         ));
     }
-    for etapa in &ir.etapas {
+    for etapa in &ir.stages {
         partes.push(bloco(
             Chave::Etapa(etapa.id.clone()),
             corpo(&valor_da_etapa(etapa)),
             comentarios,
         ));
     }
-    for decisao in &ir.decisoes {
+    for decisao in &ir.decisions {
         partes.push(bloco(
             Chave::Decisao(decisao.id.clone()),
             corpo(&valor_da_decisao(decisao)),
@@ -410,18 +410,18 @@ fn valor_do_fluxo(ir: &Ir) -> Valor {
     if let Some(descricao) = &ir.fluxo.descricao {
         args.push(nomeado("descricao", literal(descricao)));
     }
-    args.push(nomeado("inicio", literal(&ir.inicio)));
+    args.push(nomeado("inicio", literal(&ir.start)));
     args.push(nomeado("gatilho", valor_do_gatilho(&ir.gatilho)));
     chamada("fluxo", args)
 }
 
 fn valor_do_gatilho(gatilho: &Gatilho) -> Valor {
-    let mut args = vec![nomeado("quando", literal(&gatilho.quando))];
-    if let Some(nao_quando) = &gatilho.nao_quando {
+    let mut args = vec![nomeado("quando", literal(&gatilho.when))];
+    if let Some(nao_quando) = &gatilho.not_when {
         args.push(nomeado("nao_quando", literal(nao_quando)));
     }
-    if !gatilho.exemplos.is_empty() {
-        args.push(nomeado("exemplos", lista_de_textos(&gatilho.exemplos)));
+    if !gatilho.examples.is_empty() {
+        args.push(nomeado("exemplos", lista_de_textos(&gatilho.examples)));
     }
     chamada("gatilho", args)
 }
@@ -431,15 +431,15 @@ fn valor_da_etapa(etapa: &Etapa) -> Valor {
         nomeado("id", literal(&etapa.id)),
         nomeado("nome", literal(&etapa.nome)),
     ];
-    if let Some(instrucao) = &etapa.instrucao {
+    if let Some(instrucao) = &etapa.instruction {
         args.push(nomeado("instrucao", literal(instrucao)));
     }
-    if etapa.atores_acao != [ActionActor::Agent] {
+    if etapa.action_actors != [ActionActor::Agent] {
         args.push(nomeado(
             "atores",
             lista(
                 etapa
-                    .atores_acao
+                    .action_actors
                     .iter()
                     .map(|ator| literal(ator.as_text()))
                     .collect(),
@@ -452,16 +452,16 @@ fn valor_da_etapa(etapa: &Etapa) -> Valor {
             lista_aberta(etapa.campos.iter().map(valor_do_campo).collect()),
         ));
     }
-    if !etapa.ao_entrar.is_empty() {
+    if !etapa.on_enter.is_empty() {
         args.push(nomeado(
             "ao_entrar",
-            lista_aberta(etapa.ao_entrar.iter().map(valor_do_efeito).collect()),
+            lista_aberta(etapa.on_enter.iter().map(valor_do_efeito).collect()),
         ));
     }
-    if !etapa.acoes.is_empty() {
+    if !etapa.actions.is_empty() {
         args.push(nomeado(
             "acoes",
-            lista_aberta(etapa.acoes.iter().map(valor_da_acao).collect()),
+            lista_aberta(etapa.actions.iter().map(valor_da_acao).collect()),
         ));
     }
     chamada("etapa", args)
@@ -470,16 +470,16 @@ fn valor_da_etapa(etapa: &Etapa) -> Valor {
 fn valor_do_campo(campo: &Campo) -> Valor {
     let mut args = vec![
         posicional(literal(&campo.id)),
-        posicional(literal(&campo.rotulo)),
+        posicional(literal(&campo.label)),
         nomeado("tipo", literal(campo.tipo.as_text())),
     ];
-    if !campo.opcoes.is_empty() {
-        args.push(nomeado("opcoes", lista_de_textos(&campo.opcoes)));
+    if !campo.options.is_empty() {
+        args.push(nomeado("opcoes", lista_de_textos(&campo.options)));
     }
-    if campo.obrigatorio {
+    if campo.required {
         args.push(nomeado("obrigatorio", booleano(true)));
     }
-    if let Some(ajuda) = &campo.ajuda {
+    if let Some(ajuda) = &campo.help {
         args.push(nomeado("ajuda", literal(ajuda)));
     }
     chamada("campo", args)
@@ -488,31 +488,31 @@ fn valor_do_campo(campo: &Campo) -> Valor {
 fn valor_da_acao(acao: &Acao) -> Valor {
     let mut args = vec![
         posicional(literal(&acao.id)),
-        posicional(literal(&acao.rotulo)),
+        posicional(literal(&acao.label)),
     ];
-    if !acao.exige.is_empty() {
-        args.push(nomeado("exige", lista_de_textos(&acao.exige)));
+    if !acao.requires.is_empty() {
+        args.push(nomeado("exige", lista_de_textos(&acao.requires)));
     }
-    args.push(nomeado("vai_para", valor_do_destino(&acao.vai_para)));
-    if let Some(ator) = acao.ator {
+    args.push(nomeado("vai_para", valor_do_destino(&acao.goes_to)));
+    if let Some(ator) = acao.actor {
         args.push(nomeado("ator", literal(ator.as_text())));
     }
-    if !acao.efeitos.is_empty() {
+    if !acao.effects.is_empty() {
         args.push(nomeado(
             "efeitos",
-            lista(acao.efeitos.iter().map(valor_do_efeito).collect()),
+            lista(acao.effects.iter().map(valor_do_efeito).collect()),
         ));
     }
     chamada("acao", args)
 }
 
-fn valor_do_destino(destino: &Destino) -> Valor {
+fn valor_do_destino(destino: &Destination) -> Valor {
     match destino {
-        Destino::Etapa { id } | Destino::Decisao { id } => literal(id),
-        Destino::Fim {
+        Destination::Etapa { id } | Destination::Decisao { id } => literal(id),
+        Destination::Fim {
             id,
             resultado,
-            encerra_atendimento,
+            ends_service: encerra_atendimento,
         } => valor_do_fim(id, resultado.as_deref(), *encerra_atendimento),
     }
 }
@@ -537,24 +537,24 @@ fn valor_da_decisao(decisao: &Decisao) -> Valor {
         vec![
             nomeado("id", literal(&decisao.id)),
             nomeado("se", valor_da_regra(&decisao.se)),
-            nomeado("entao", valor_do_destino(&decisao.entao)),
-            nomeado("senao", valor_do_destino(&decisao.senao)),
+            nomeado("entao", valor_do_destino(&decisao.then_branch)),
+            nomeado("senao", valor_do_destino(&decisao.else_branch)),
         ],
     )
 }
 
-fn valor_da_regra(regra: &Regra) -> Valor {
+fn valor_da_regra(regra: &Rule) -> Valor {
     match regra {
-        Regra::Igual { campo, valor } => dois_textos("igual", campo, valor),
-        Regra::Diferente { campo, valor } => dois_textos("diferente", campo, valor),
-        Regra::Maior { campo, valor } => dois_textos("maior", campo, valor),
-        Regra::Menor { campo, valor } => dois_textos("menor", campo, valor),
-        Regra::Contem { campo, valor } => dois_textos("contem", campo, valor),
-        Regra::Vazio { campo } => chamada("vazio", vec![posicional(literal(campo))]),
-        Regra::E { args } => combinador("e", args),
-        Regra::Ou { args } => combinador("ou", args),
-        Regra::Nao { args } => combinador("nao", args),
-        Regra::Funcao { nome } => chamada("funcao", vec![posicional(literal(nome))]),
+        Rule::Igual { campo, value: valor } => dois_textos("igual", campo, valor),
+        Rule::Diferente { campo, value: valor } => dois_textos("diferente", campo, valor),
+        Rule::Maior { campo, value: valor } => dois_textos("maior", campo, valor),
+        Rule::Menor { campo, value: valor } => dois_textos("menor", campo, valor),
+        Rule::Contem { campo, value: valor } => dois_textos("contem", campo, valor),
+        Rule::Vazio { campo } => chamada("vazio", vec![posicional(literal(campo))]),
+        Rule::E { args } => combinador("e", args),
+        Rule::Ou { args } => combinador("ou", args),
+        Rule::Nao { args } => combinador("nao", args),
+        Rule::Funcao { nome } => chamada("funcao", vec![posicional(literal(nome))]),
     }
 }
 
@@ -565,7 +565,7 @@ fn dois_textos(nome: &'static str, campo: &str, valor: &str) -> Valor {
     )
 }
 
-fn combinador(nome: &'static str, regras: &[Regra]) -> Valor {
+fn combinador(nome: &'static str, regras: &[Rule]) -> Valor {
     chamada(
         nome,
         regras
@@ -575,19 +575,19 @@ fn combinador(nome: &'static str, regras: &[Regra]) -> Valor {
     )
 }
 
-fn valor_do_efeito(efeito: &Efeito) -> Valor {
+fn valor_do_efeito(efeito: &Effect) -> Valor {
     match efeito {
-        Efeito::MensagemAoCliente { texto } => {
+        Effect::MessageToCustomer { texto } => {
             chamada("mensagem_ao_cliente", vec![posicional(literal(texto))])
         }
-        Efeito::NotificarWhatsapp { para, mensagem } => chamada(
+        Effect::NotifyWhatsApp { para, mensagem } => chamada(
             "notificar_whatsapp",
             vec![
                 nomeado("para", literal(para)),
                 nomeado("mensagem", literal(mensagem)),
             ],
         ),
-        Efeito::Encaminhar { departamento } => {
+        Effect::Encaminhar { departamento } => {
             chamada("encaminhar", vec![posicional(literal(departamento))])
         }
     }
@@ -779,11 +779,11 @@ mod testes {
     fn os_booleanos_e_os_numeros_do_campo_saem_do_jeito_do_script() {
         let campo = Campo {
             id: "idade".to_owned(),
-            rotulo: "Idade".to_owned(),
+            label: "Idade".to_owned(),
             tipo: FieldKind::Number,
-            obrigatorio: false,
-            opcoes: Vec::new(),
-            ajuda: None,
+            required: false,
+            options: Vec::new(),
+            help: None,
         };
         assert_eq!(
             valor_em_uma_linha(&valor_do_campo(&campo)),
@@ -801,36 +801,36 @@ mod testes {
                 descricao: None,
             },
             gatilho: Gatilho {
-                quando: "quando".to_owned(),
-                nao_quando: None,
-                exemplos: Vec::new(),
+                when: "quando".to_owned(),
+                not_when: None,
+                examples: Vec::new(),
             },
-            inicio: "unica".to_owned(),
-            etapas: vec![Etapa {
+            start: "unica".to_owned(),
+            stages: vec![Etapa {
                 id: "unica".to_owned(),
                 nome: "Única".to_owned(),
-                instrucao: None,
-                atores_acao: vec![ActionActor::Agent],
+                instruction: None,
+                action_actors: vec![ActionActor::Agent],
                 campos: Vec::new(),
-                acoes: vec![Acao {
+                actions: vec![Acao {
                     id: "seguir".to_owned(),
-                    rotulo: "Seguir".to_owned(),
-                    exige: Vec::new(),
-                    ator: None,
-                    vai_para: Destino::Fim {
+                    label: "Seguir".to_owned(),
+                    requires: Vec::new(),
+                    actor: None,
+                    goes_to: Destination::Fim {
                         id: "fim".to_owned(),
                         resultado: None,
-                        encerra_atendimento: false,
+                        ends_service: false,
                     },
-                    efeitos: Vec::new(),
+                    effects: Vec::new(),
                 }],
-                ao_entrar: Vec::new(),
+                on_enter: Vec::new(),
             }],
-            decisoes: Vec::new(),
-            fins: vec![Fim {
+            decisions: Vec::new(),
+            ends: vec![Fim {
                 id: "fim".to_owned(),
                 resultado: None,
-                encerra_atendimento: false,
+                ends_service: false,
             }],
             defs: vec![crate::ir::Def {
                 nome: "regra".to_owned(),
@@ -853,13 +853,13 @@ mod testes {
         let fim = Fim {
             id: "desistiu".to_owned(),
             resultado: Some("Cliente desistiu".to_owned()),
-            encerra_atendimento: true,
+            ends_service: true,
         };
         assert_eq!(
             valor_em_uma_linha(&valor_do_fim(
                 &fim.id,
                 fim.resultado.as_deref(),
-                fim.encerra_atendimento
+                fim.ends_service
             )),
             "fim(\"desistiu\", resultado = \"Cliente desistiu\", encerra_atendimento = True)"
         );

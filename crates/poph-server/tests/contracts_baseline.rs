@@ -429,7 +429,7 @@ impl Scenario {
                         definicao_json: compilar(&script, &Limites::default())
                             .ir()
                             .expect("valid flow script")
-                            .para_json(),
+                            .to_json(),
                         schema_versao: Some(ir.schema_versao),
                         resolucoes_json: String::new(),
                         ator_tipo: "cli".to_owned(),
@@ -857,7 +857,7 @@ async fn capture_contracts() {
             compiled.diagnosticos
         );
         let ir = compiled.ir().expect("ir");
-        let value: Value = serde_json::from_str(&ir.para_json()).expect("ir json");
+        let value: Value = serde_json::from_str(&ir.to_json()).expect("ir json");
         write_json(
             &output.join("flows").join(format!("{example}.ir.json")),
             &value,

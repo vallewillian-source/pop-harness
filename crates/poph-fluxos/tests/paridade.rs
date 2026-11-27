@@ -17,7 +17,7 @@
 use std::sync::OnceLock;
 
 use poph_fluxos::ir::{
-    Acao, Campo, Decisao, Destino, Efeito, Etapa, Fim, Fluxo, Gatilho, Ir, Regra,
+    Acao, Campo, Decisao, Destination, Effect, Etapa, Fim, Fluxo, Gatilho, Ir, Rule,
 };
 use poph_fluxos::motor::{
     Campos, Contexto, atores_exigidos, efeitos_de_entrada, executar_acao, iniciar,
@@ -37,33 +37,33 @@ fn contexto() -> Contexto<'static> {
 fn campo(id: &str, tipo: FieldKind, obrigatorio: bool) -> Campo {
     Campo {
         id: id.to_owned(),
-        rotulo: id.to_uppercase(),
+        label: id.to_uppercase(),
         tipo,
-        obrigatorio,
-        opcoes: Vec::new(),
-        ajuda: None,
+        required: obrigatorio,
+        options: Vec::new(),
+        help: None,
     }
 }
 
 fn campo_opcao(id: &str, opcoes: &[&str]) -> Campo {
     Campo {
         id: id.to_owned(),
-        rotulo: id.to_uppercase(),
+        label: id.to_uppercase(),
         tipo: FieldKind::Option,
-        obrigatorio: true,
-        opcoes: opcoes.iter().map(|opcao| (*opcao).to_owned()).collect(),
-        ajuda: None,
+        required: true,
+        options: opcoes.iter().map(|opcao| (*opcao).to_owned()).collect(),
+        help: None,
     }
 }
 
-fn acao(id: &str, ator: Option<ActionActor>, exige: &[&str], destino: Destino) -> Acao {
+fn acao(id: &str, ator: Option<ActionActor>, exige: &[&str], destino: Destination) -> Acao {
     Acao {
         id: id.to_owned(),
-        rotulo: id.to_uppercase(),
-        exige: exige.iter().map(|nome| (*nome).to_owned()).collect(),
-        ator,
-        vai_para: destino,
-        efeitos: Vec::new(),
+        label: id.to_uppercase(),
+        requires: exige.iter().map(|nome| (*nome).to_owned()).collect(),
+        actor: ator,
+        goes_to: destino,
+        effects: Vec::new(),
     }
 }
 
@@ -72,7 +72,7 @@ fn acao_para_etapa(id: &str, ator: Option<ActionActor>, exige: &[&str], vai_para
         id,
         ator,
         exige,
-        Destino::Etapa {
+        Destination::Etapa {
             id: vai_para.to_owned(),
         },
     )
@@ -88,10 +88,10 @@ fn acao_para_fim(
         id,
         ator,
         &[],
-        Destino::Fim {
+        Destination::Fim {
             id: "concluido".to_owned(),
             resultado: Some(resultado.to_owned()),
-            encerra_atendimento,
+            ends_service: encerra_atendimento,
         },
     )
 }
@@ -100,11 +100,11 @@ fn etapa(id: &str, atores: &[ActionActor], campos: Vec<Campo>, acoes: Vec<Acao>)
     Etapa {
         id: id.to_owned(),
         nome: id.to_uppercase(),
-        instrucao: None,
-        atores_acao: atores.to_vec(),
+        instruction: None,
+        action_actors: atores.to_vec(),
         campos,
-        acoes,
-        ao_entrar: Vec::new(),
+        actions: acoes,
+        on_enter: Vec::new(),
     }
 }
 
@@ -113,25 +113,25 @@ fn etapa_com_entrada(
     atores: &[ActionActor],
     campos: Vec<Campo>,
     acoes: Vec<Acao>,
-    ao_entrar: Vec<Efeito>,
+    ao_entrar: Vec<Effect>,
 ) -> Etapa {
     Etapa {
-        ao_entrar,
+        on_enter: ao_entrar,
         ..etapa(id, atores, campos, acoes)
     }
 }
 
-fn decisao(id: &str, se: Regra, entao: Destino, senao: Destino) -> Decisao {
+fn decisao(id: &str, se: Rule, entao: Destination, senao: Destination) -> Decisao {
     Decisao {
         id: id.to_owned(),
         se,
-        entao,
-        senao,
+        then_branch: entao,
+        else_branch: senao,
     }
 }
 
-fn vai_para(id: &str) -> Destino {
-    Destino::Etapa { id: id.to_owned() }
+fn vai_para(id: &str) -> Destination {
+    Destination::Etapa { id: id.to_owned() }
 }
 
 fn fluxo(inicio: &str, etapas: Vec<Etapa>, decisoes: Vec<Decisao>) -> Ir {
@@ -143,23 +143,23 @@ fn fluxo(inicio: &str, etapas: Vec<Etapa>, decisoes: Vec<Decisao>) -> Ir {
             descricao: None,
         },
         gatilho: Gatilho {
-            quando: "o cliente pede um orçamento".to_owned(),
-            nao_quando: None,
-            exemplos: vec!["quero um orçamento".to_owned()],
+            when: "o cliente pede um orçamento".to_owned(),
+            not_when: None,
+            examples: vec!["quero um orçamento".to_owned()],
         },
-        inicio: inicio.to_owned(),
-        etapas,
-        decisoes,
-        fins: vec![
+        start: inicio.to_owned(),
+        stages: etapas,
+        decisions: decisoes,
+        ends: vec![
             Fim {
                 id: "concluido".to_owned(),
                 resultado: Some("Concluído".to_owned()),
-                encerra_atendimento: false,
+                ends_service: false,
             },
             Fim {
                 id: "encerrado".to_owned(),
                 resultado: Some("Atendimento encerrado".to_owned()),
-                encerra_atendimento: true,
+                ends_service: true,
             },
         ],
         defs: Vec::new(),
@@ -307,7 +307,7 @@ fn auto_fica_parcial_quando_falta_o_outro_ator_restrito() {
     );
     assert_eq!(tipos(&resultado), vec![RecordEventKind::ActionExecuted]);
     assert_eq!(
-        atores_exigidos(ir.etapas.first().expect("há etapa")),
+        atores_exigidos(ir.stages.first().expect("há etapa")),
         vec![ActionActor::Agent, ActionActor::Attendant]
     );
 }
@@ -719,68 +719,68 @@ fn condicional_com_os_operadores_do_pop_atende_escolhe_o_ramo() {
         }
     }));
 
-    let casos: Vec<(&str, Regra, bool)> = vec![
+    let casos: Vec<(&str, Rule, bool)> = vec![
         (
             "`tipo == \"hidraulica\"`",
-            Regra::Igual {
+            Rule::Igual {
                 campo: "orcamento.tipo".to_owned(),
-                valor: "hidraulica".to_owned(),
+                value: "hidraulica".to_owned(),
             },
             true,
         ),
         (
             "`tipo == \"eletrica\"`",
-            Regra::Igual {
+            Rule::Igual {
                 campo: "orcamento.tipo".to_owned(),
-                valor: "eletrica".to_owned(),
+                value: "eletrica".to_owned(),
             },
             false,
         ),
         (
             "`valor > 500`",
-            Regra::Maior {
+            Rule::Maior {
                 campo: "orcamento.valor".to_owned(),
-                valor: "500".to_owned(),
+                value: "500".to_owned(),
             },
             true,
         ),
         (
             "`valor > 1000`",
-            Regra::Maior {
+            Rule::Maior {
                 campo: "orcamento.valor".to_owned(),
-                valor: "1000".to_owned(),
+                value: "1000".to_owned(),
             },
             false,
         ),
         (
             "`valor >= 800`, montado como `nao(menor(...))`",
-            Regra::Nao {
-                args: vec![Regra::Menor {
+            Rule::Nao {
+                args: vec![Rule::Menor {
                     campo: "orcamento.valor".to_owned(),
-                    valor: "800".to_owned(),
+                    value: "800".to_owned(),
                 }],
             },
             true,
         ),
         (
             "`confirmou == true`",
-            Regra::Igual {
+            Rule::Igual {
                 campo: "orcamento.confirmou".to_owned(),
-                valor: "sim".to_owned(),
+                value: "sim".to_owned(),
             },
             true,
         ),
         (
             "`a > 5 and b > 15`",
-            Regra::E {
+            Rule::E {
                 args: vec![
-                    Regra::Maior {
+                    Rule::Maior {
                         campo: "orcamento.a".to_owned(),
-                        valor: "5".to_owned(),
+                        value: "5".to_owned(),
                     },
-                    Regra::Maior {
+                    Rule::Maior {
                         campo: "orcamento.b".to_owned(),
-                        valor: "15".to_owned(),
+                        value: "15".to_owned(),
                     },
                 ],
             },
@@ -788,15 +788,15 @@ fn condicional_com_os_operadores_do_pop_atende_escolhe_o_ramo() {
         ),
         (
             "`a > 15 and b > 5`",
-            Regra::E {
+            Rule::E {
                 args: vec![
-                    Regra::Maior {
+                    Rule::Maior {
                         campo: "orcamento.a".to_owned(),
-                        valor: "15".to_owned(),
+                        value: "15".to_owned(),
                     },
-                    Regra::Maior {
+                    Rule::Maior {
                         campo: "orcamento.b".to_owned(),
-                        valor: "5".to_owned(),
+                        value: "5".to_owned(),
                     },
                 ],
             },
@@ -804,15 +804,15 @@ fn condicional_com_os_operadores_do_pop_atende_escolhe_o_ramo() {
         ),
         (
             "`a > 15 or b > 15`",
-            Regra::Ou {
+            Rule::Ou {
                 args: vec![
-                    Regra::Maior {
+                    Rule::Maior {
                         campo: "orcamento.a".to_owned(),
-                        valor: "15".to_owned(),
+                        value: "15".to_owned(),
                     },
-                    Regra::Maior {
+                    Rule::Maior {
                         campo: "orcamento.b".to_owned(),
-                        valor: "15".to_owned(),
+                        value: "15".to_owned(),
                     },
                 ],
             },
@@ -820,27 +820,27 @@ fn condicional_com_os_operadores_do_pop_atende_escolhe_o_ramo() {
         ),
         (
             "`not ativo`",
-            Regra::Nao {
-                args: vec![Regra::Igual {
+            Rule::Nao {
+                args: vec![Rule::Igual {
                     campo: "orcamento.ativo".to_owned(),
-                    valor: "sim".to_owned(),
+                    value: "sim".to_owned(),
                 }],
             },
             true,
         ),
         (
             "`\"agua\" in servicos`",
-            Regra::Contem {
+            Rule::Contem {
                 campo: "orcamento.servicos".to_owned(),
-                valor: "agua".to_owned(),
+                value: "agua".to_owned(),
             },
             true,
         ),
         (
             "`\"eletrica\" in servicos`",
-            Regra::Contem {
+            Rule::Contem {
                 campo: "orcamento.servicos".to_owned(),
-                valor: "eletrica".to_owned(),
+                value: "eletrica".to_owned(),
             },
             false,
         ),
@@ -872,7 +872,7 @@ fn duas_condicionais_encadeadas_escolhem_a_etapa_final() {
                     "seguir",
                     None,
                     &["tipo", "valor"],
-                    Destino::Decisao {
+                    Destination::Decisao {
                         id: "tipo_define".to_owned(),
                     },
                 )],
@@ -893,20 +893,20 @@ fn duas_condicionais_encadeadas_escolhem_a_etapa_final() {
         vec![
             decisao(
                 "tipo_define",
-                Regra::Igual {
+                Rule::Igual {
                     campo: "triagem.tipo".to_owned(),
-                    valor: "hidraulica".to_owned(),
+                    value: "hidraulica".to_owned(),
                 },
-                Destino::Decisao {
+                Destination::Decisao {
                     id: "valor_define".to_owned(),
                 },
                 vai_para("barato"),
             ),
             decisao(
                 "valor_define",
-                Regra::Maior {
+                Rule::Maior {
                     campo: "triagem.valor".to_owned(),
-                    valor: "500".to_owned(),
+                    value: "500".to_owned(),
                 },
                 vai_para("caro"),
                 vai_para("barato"),
@@ -980,7 +980,7 @@ fn condicional_com_def_escolhe_o_ramo() {
                     "seguir",
                     None,
                     &["relato"],
-                    Destino::Decisao {
+                    Destination::Decisao {
                         id: "grave_ou_simples".to_owned(),
                     },
                 )],
@@ -1000,7 +1000,7 @@ fn condicional_com_def_escolhe_o_ramo() {
         ],
         vec![decisao(
             "grave_ou_simples",
-            Regra::Funcao {
+            Rule::Funcao {
                 nome: "grave".to_owned(),
             },
             vai_para("grave"),
@@ -1049,14 +1049,14 @@ fn condicional_que_vai_para_etapa_inexistente_falha_fechado() {
                 "seguir",
                 None,
                 &[],
-                Destino::Decisao {
+                Destination::Decisao {
                     id: "bifurcar".to_owned(),
                 },
             )],
         )],
         vec![decisao(
             "bifurcar",
-            Regra::Vazio {
+            Rule::Vazio {
                 campo: "triagem.nada".to_owned(),
             },
             vai_para("fantasma"),
@@ -1518,12 +1518,12 @@ fn so_existem_dois_atores_de_acao() {
 #[test]
 fn notificacao_e_encaminhamento_saem_como_efeito_da_acao() {
     let mut avisar = acao_para_fim("concluir", None, "Concluído", false);
-    avisar.efeitos = vec![
-        Efeito::NotificarWhatsapp {
+    avisar.effects = vec![
+        Effect::NotifyWhatsApp {
             para: "5521999990000".to_owned(),
             mensagem: "O atendimento do cliente {cliente.peer} foi concluído".to_owned(),
         },
-        Efeito::Encaminhar {
+        Effect::Encaminhar {
             departamento: "financeiro".to_owned(),
         },
     ];
@@ -1557,7 +1557,7 @@ fn notificacao_e_encaminhamento_saem_como_efeito_da_acao() {
     assert_eq!(resultado.efeitos[0].tipo(), "notificar_whatsapp");
     assert_eq!(
         resultado.efeitos[0].efeito,
-        Efeito::NotificarWhatsapp {
+        Effect::NotifyWhatsApp {
             para: "5521999990000".to_owned(),
             mensagem: "O atendimento do cliente cli_ficticio foi concluído".to_owned(),
         }
@@ -1566,7 +1566,7 @@ fn notificacao_e_encaminhamento_saem_como_efeito_da_acao() {
     assert_eq!(resultado.efeitos[1].tipo(), "encaminhar");
     assert_eq!(
         resultado.efeitos[1].efeito,
-        Efeito::Encaminhar {
+        Effect::Encaminhar {
             departamento: "financeiro".to_owned(),
         }
     );
@@ -1589,7 +1589,7 @@ fn mensagem_de_entrada_da_etapa_sai_ao_iniciar_a_execucao() {
                 &[ActionActor::Agent],
                 Vec::new(),
                 vec![acao_para_fim("fechar", None, "Feito", false)],
-                vec![Efeito::MensagemAoCliente {
+                vec![Effect::MessageToCustomer {
                     texto: "Olá, {cliente.peer}! Já vou te atender.".to_owned(),
                 }],
             ),
@@ -1613,7 +1613,7 @@ fn mensagem_de_entrada_da_etapa_sai_ao_iniciar_a_execucao() {
     assert_eq!(efeitos[0].chave, "etapa:abertura/0");
     assert_eq!(
         efeitos[0].efeito,
-        Efeito::MensagemAoCliente {
+        Effect::MessageToCustomer {
             texto: "Olá, cli_ficticio! Já vou te atender.".to_owned(),
         }
     );
@@ -1636,10 +1636,10 @@ fn variavel_inexistente_no_texto_sai_vazia() {
             Vec::new(),
             vec![acao_para_fim("fechar", None, "Feito", false)],
             vec![
-                Efeito::MensagemAoCliente {
+                Effect::MessageToCustomer {
                     texto: "Endereço registrado: {triagem.cep}.".to_owned(),
                 },
-                Efeito::MensagemAoCliente {
+                Effect::MessageToCustomer {
                     texto: "Chave sem par: {triagem.cep".to_owned(),
                 },
             ],
@@ -1655,14 +1655,14 @@ fn variavel_inexistente_no_texto_sai_vazia() {
 
     assert_eq!(
         efeitos[0].efeito,
-        Efeito::MensagemAoCliente {
+        Effect::MessageToCustomer {
             texto: "Endereço registrado: .".to_owned(),
         },
         "a variável que não existe sai vazia, sem quebrar o texto"
     );
     assert_eq!(
         efeitos[1].efeito,
-        Efeito::MensagemAoCliente {
+        Effect::MessageToCustomer {
             texto: "Chave sem par: {triagem.cep".to_owned(),
         },
         "`{{` sem fechamento é texto do autor, não variável"

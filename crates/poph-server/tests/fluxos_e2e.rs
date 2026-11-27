@@ -667,7 +667,7 @@ async fn revisao_antiga_acao_humana_e_dois_fluxos_na_mesma_ficha() {
             RevisionPublication {
                 expected: versao,
                 fonte: nova_fonte,
-                definicao_json: ir.para_json(),
+                definicao_json: ir.to_json(),
                 schema_versao: Some(ir.schema_versao),
                 resolucoes_json: "{}".into(),
                 ator_tipo: "system".into(),

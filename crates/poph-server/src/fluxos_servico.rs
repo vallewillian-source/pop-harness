@@ -19,7 +19,7 @@ use poph_fluxos::{
 
 // Tipos que a CLI precisa para mostrar o resultado. Reexportados para o `poph` não depender de
 // `poph-fluxos` diretamente.
-pub use poph_fluxos::{CacheRevisoes, Diagnostico, Mudanca, Resolucao};
+pub use poph_fluxos::{CacheRevisoes, Diagnostic, Mudanca, Resolucao};
 use poph_store::{
     FlowRevision, Fluxo, NewAuditEntry, NewFlow, Page, RevisionPublication, Store, StoreError,
 };
@@ -68,7 +68,7 @@ pub enum FalhaFluxo {
     /// Script em branco: não há o que publicar.
     ScriptVazio,
     /// Script com erro do compilador ou da validação semântica. A lista vai junto, com linha e coluna.
-    ScriptInvalido(Vec<Diagnostico>),
+    ScriptInvalido(Vec<Diagnostic>),
     /// O fluxo só tem rascunho: ainda não há revisão publicada.
     SemRevisao,
     /// A IR gravada não confere com o texto publicado. O código é o do cache (`ir_divergente` ou
@@ -101,7 +101,7 @@ impl fmt::Display for FalhaFluxo {
             ),
             Self::ScriptVazio => write!(f, "o script está vazio: não há o que publicar"),
             Self::ScriptInvalido(diagnosticos) => {
-                let erros = diagnosticos.iter().filter(|d| d.e_erro()).count();
+                let erros = diagnosticos.iter().filter(|d| d.is_error()).count();
                 write!(
                     f,
                     "o script não passa na validação: {erros} erro(s) a corrigir; nada foi gravado"
@@ -132,14 +132,14 @@ impl fmt::Display for FalhaFluxo {
 #[derive(Debug)]
 pub struct Validacao {
     pub ir: Option<Ir>,
-    pub diagnosticos: Vec<Diagnostico>,
+    pub diagnosticos: Vec<Diagnostic>,
     pub resolucoes: Vec<Resolucao>,
 }
 
 impl Validacao {
     /// `true` quando nenhum diagnóstico é erro (avisos não impedem).
     pub fn valido(&self) -> bool {
-        !self.diagnosticos.iter().any(Diagnostico::e_erro)
+        !self.diagnosticos.iter().any(Diagnostic::is_error)
     }
 }
 
@@ -147,7 +147,7 @@ impl Validacao {
 #[derive(Debug)]
 pub struct PublicacaoFeita {
     pub revisao: FlowRevision,
-    pub avisos: Vec<Diagnostico>,
+    pub avisos: Vec<Diagnostic>,
     pub versao_do_fluxo: u64,
 }
 
@@ -336,8 +336,8 @@ impl<'a> Operacoes<'a> {
         };
         // Segunda porta: a IR compilada passa de novo pelo validador semântico. Hoje isto nunca
         // recusa (o compilador já confere), mas a publicação não depende de o compilador ter razão.
-        let erros_da_ir: Vec<Diagnostico> =
-            validar(&ir).into_iter().filter(|d| d.e_erro()).collect();
+        let erros_da_ir: Vec<Diagnostic> =
+            validar(&ir).into_iter().filter(|d| d.is_error()).collect();
         if !erros_da_ir.is_empty() {
             return Err(FalhaFluxo::ScriptInvalido(erros_da_ir));
         }
@@ -363,10 +363,10 @@ impl<'a> Operacoes<'a> {
             },
         )?;
         let versao_do_fluxo = self.store.flows().get(org, fluxo.id)?.version;
-        let mut avisos: Vec<Diagnostico> = compilado
+        let mut avisos: Vec<Diagnostic> = compilado
             .diagnosticos
             .into_iter()
-            .filter(|d| !d.e_erro())
+            .filter(|d| !d.is_error())
             .collect();
         avisos.extend(avisos_de_departamento);
         Ok(PublicacaoFeita {
@@ -458,7 +458,7 @@ impl<'a> Operacoes<'a> {
         let ir = self.ir_da_revisao(fluxo, &revisao)?;
         let etapa = etapa
             .filter(|texto| !texto.is_empty())
-            .map_or_else(|| ir.inicio.clone(), str::to_owned);
+            .map_or_else(|| ir.start.clone(), str::to_owned);
         let bloco = bloco_da_etapa(&ir, &etapa)
             .map_err(|erro: DomainError| FalhaFluxo::Banco(StoreError::Domain(erro)))?;
         Ok(Previa {

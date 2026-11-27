@@ -7,7 +7,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use poph_fluxos::{ChaveRevisao, Codigo, FalhaCarregamento, Limites, Severidade, compilar};
+use poph_fluxos::{ChaveRevisao, Code, FalhaCarregamento, Limites, Severity, compilar};
 use poph_server::Estado;
 use poph_store::Store;
 use poph_types::HarnessConfig;
@@ -64,7 +64,7 @@ fn servidor_recusa_40_kib_com_o_padrao_de_32_kib() {
         compilado
             .diagnosticos
             .iter()
-            .any(|d| d.codigo == Codigo::FonteGrande),
+            .any(|d| d.code == Code::SourceTooLarge),
         "padrão de 32 KiB: tem de sair FLX02"
     );
 }
@@ -79,7 +79,7 @@ fn servidor_recusa_40_kib_quando_a_configuracao_diz_32_kib() {
         compilado
             .diagnosticos
             .iter()
-            .any(|d| d.codigo == Codigo::FonteGrande && d.severidade == Severidade::Erro),
+            .any(|d| d.code == Code::SourceTooLarge && d.severity == Severity::Error),
         "tem de sair FLX02: {:?}",
         compilado.diagnosticos
     );
@@ -117,7 +117,7 @@ fn cache_carrega_40_kib_com_o_teto_padrao_e_recusa_com_32_kib() {
     let _ = fs::remove_dir_all(&pasta_apertado);
     match recusada {
         Err(FalhaCarregamento::Forma(diagnosticos)) => assert!(
-            diagnosticos.iter().any(|d| d.codigo == Codigo::FonteGrande),
+            diagnosticos.iter().any(|d| d.code == Code::SourceTooLarge),
             "a carga recusada tem de citar FLX02: {diagnosticos:?}"
         ),
         outro => panic!("com teto de 32 KiB a carga tem de falhar com FLX02, veio {outro:?}"),
@@ -133,7 +133,7 @@ fn cache_carrega_40_kib_com_o_teto_padrao_e_recusa_com_32_kib() {
 fn teto_de_nos_da_configuracao_vale_no_servidor() {
     let nos = {
         let ir = compilar(FLUXO, &Limites::default()).ir.expect("compila");
-        ir.etapas.len() + ir.decisoes.len() + ir.fins.len()
+        ir.stages.len() + ir.decisions.len() + ir.ends.len()
     };
     let (apertado, pasta) = estado("nos", |config| {
         config.flows.max_nodes = u32::try_from(nos - 1).unwrap();
@@ -144,7 +144,7 @@ fn teto_de_nos_da_configuracao_vale_no_servidor() {
         compilado
             .diagnosticos
             .iter()
-            .any(|d| d.codigo == Codigo::NosDemais),
+            .any(|d| d.code == Code::NodeLimit),
         "um nó acima do teto da configuração tem de cair em FLX27"
     );
 }

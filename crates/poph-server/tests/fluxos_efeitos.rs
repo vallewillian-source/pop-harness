@@ -35,7 +35,7 @@ use axum::routing::post;
 use poph_agent::Backoff;
 use poph_evolution::{ATTACHMENT_CAP, ConfigEvolution, EvolutionClient};
 use poph_fluxos::EfeitoProduzido;
-use poph_fluxos::ir::Efeito;
+use poph_fluxos::ir::Effect;
 use poph_server::evolution::CanalEvolution;
 use poph_server::fluxos_efeitos::{
     EfeitosFluxo, MOTIVO_TENTATIVAS_ESGOTADAS, OpcoesEfeitosFluxo, RelatoEfeitos,
@@ -522,7 +522,7 @@ fn ao_cliente(texto: &str) -> TransitionEffect {
         chave: "etapa:boas_vindas/0".to_owned(),
         no: "etapa:boas_vindas".to_owned(),
         indice: 0,
-        efeito: Efeito::MensagemAoCliente {
+        efeito: Effect::MessageToCustomer {
             texto: texto.to_owned(),
         },
     })
@@ -534,7 +534,7 @@ fn notificar(mensagem: &str) -> TransitionEffect {
         chave: "acao:boas_vindas.registrar/0".to_owned(),
         no: "acao:boas_vindas.registrar".to_owned(),
         indice: 0,
-        efeito: Efeito::NotificarWhatsapp {
+        efeito: Effect::NotifyWhatsApp {
             para: TELEFONE_EQUIPE.to_owned(),
             mensagem: mensagem.to_owned(),
         },
@@ -547,7 +547,7 @@ fn encaminhar(departamento: &str) -> TransitionEffect {
         chave: "acao:boas_vindas.transferir/0".to_owned(),
         no: "acao:boas_vindas.transferir".to_owned(),
         indice: 0,
-        efeito: Efeito::Encaminhar {
+        efeito: Effect::Encaminhar {
             departamento: departamento.to_owned(),
         },
     })

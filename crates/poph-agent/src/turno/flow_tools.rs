@@ -2,7 +2,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use poph_fluxos::ir::{Destino, Ir};
+use poph_fluxos::ir::{Destination, Ir};
 use poph_fluxos::motor::{self, Contexto as ContextEngine, Estado as StateEngine, executar_acao};
 use poph_store::{Execution, Ficha, Store, StoreError, TransitionExtras};
 use poph_types::{ActionActor, FlowsConfig, RecordStatus};
@@ -458,19 +458,19 @@ fn response_of_action(
     let new = &resultado.novo_estado;
     let advanced = new.no_atual.id() != previous.no_atual.id();
     match &new.no_atual {
-        Destino::Etapa { .. } if advanced => {
+        Destination::Etapa { .. } if advanced => {
             saida.push_str(&format!(
                 "Ação registrada: o fluxo \"{}\" avançou.\n",
                 ir.fluxo.nome
             ));
         }
-        Destino::Etapa { .. } => {
+        Destination::Etapa { .. } => {
             saida.push_str(&format!(
                 "Ação registrada: o fluxo \"{}\" continua na mesma etapa.\n",
                 ir.fluxo.nome
             ));
         }
-        Destino::Fim { .. } | Destino::Decisao { .. } => {
+        Destination::Fim { .. } | Destination::Decisao { .. } => {
             saida.push_str(&format!(
                 "Ação registrada: o fluxo \"{}\" chegou ao desfecho.\n",
                 ir.fluxo.nome
@@ -487,8 +487,8 @@ fn response_of_action(
 fn describe(ir: &Ir, estado: &StateEngine) -> String {
     let mut saida = String::new();
     match &estado.no_atual {
-        Destino::Etapa { id } => {
-            let Some(etapa) = ir.etapas.iter().find(|etapa| &etapa.id == id) else {
+        Destination::Etapa { id } => {
+            let Some(etapa) = ir.stages.iter().find(|etapa| &etapa.id == id) else {
                 return format!(
                     "Fluxo \"{}\": a etapa atual não existe na revisão publicada.",
                     ir.fluxo.nome
@@ -496,7 +496,7 @@ fn describe(ir: &Ir, estado: &StateEngine) -> String {
             };
             saida.push_str(&format!("Etapa atual: \"{}\".", etapa.nome));
             if let Some(instruction) = etapa
-                .instrucao
+                .instruction
                 .as_deref()
                 .map(str::trim)
                 .filter(|texto| !texto.is_empty())
@@ -518,12 +518,12 @@ fn describe(ir: &Ir, estado: &StateEngine) -> String {
             }
             saida.push_str(&format!("\nAções válidas: {}.", list_of_actions(etapa)));
         }
-        Destino::Decisao { .. } => {
+        Destination::Decisao { .. } => {
             saida.push_str(
                 "A execução está numa decisão do fluxo: o sistema resolve antes de qualquer ação.",
             );
         }
-        Destino::Fim { resultado, .. } => {
+        Destination::Fim { resultado, .. } => {
             let desfecho = match resultado {
                 Some(texto) => format!(" com o resultado \"{texto}\""),
                 None => String::new(),
@@ -557,13 +557,13 @@ fn list_of_actors(actors: &[ActionActor]) -> String {
 }
 
 fn list_of_actions(etapa: &poph_fluxos::ir::Etapa) -> String {
-    if etapa.acoes.is_empty() {
+    if etapa.actions.is_empty() {
         return "nenhuma (a etapa não tem saída)".to_owned();
     }
     etapa
-        .acoes
+        .actions
         .iter()
-        .map(|acao| format!("`{}` (\"{}\")", acao.id, acao.rotulo))
+        .map(|acao| format!("`{}` (\"{}\")", acao.id, acao.label))
         .collect::<Vec<_>>()
         .join(", ")
 }

@@ -27,7 +27,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
 };
 use poph_fluxos::cache::ChaveRevisao;
-use poph_fluxos::ir::Destino;
+use poph_fluxos::ir::Destination;
 use poph_fluxos::motor::{
     Campos, Contexto, Estado as EstadoMotor, abandonar as abandonar_motor, efeitos_de_entrada,
     executar_acao, iniciar,
@@ -762,7 +762,7 @@ fn execucao_da_ficha(
 /// A IR publicada da revisão, pelo cache de revisões (FX-19). A carga recompila o texto e confere
 /// que dá a IR gravada; se não der, a revisão não entra e a resposta é `500` (a revisão está ruim).
 fn ir_da_revisao(e: &Estado, revisao: &FlowRevision) -> Result<Arc<Ir>, ApiError> {
-    let gravada = Ir::de_json(&revisao.definicao_json).map_err(|erro| {
+    let gravada = Ir::from_json(&revisao.definicao_json).map_err(|erro| {
         tracing::error!(erro = ?erro, "IR gravada de revisão de fluxo não lê");
         ApiError::interno()
     })?;
@@ -841,18 +841,18 @@ fn estado_para_agir(
 
 /// Reconstrói o destino tipado do motor a partir do id gravado. Id que não existe na IR da revisão
 /// é divergência entre o banco e a publicação: `500`, sem chutar.
-fn destino_do_id(ir: &Ir, id: &str) -> Result<Destino, ApiError> {
-    if ir.etapas.iter().any(|etapa| etapa.id == id) {
-        return Ok(Destino::Etapa { id: id.to_owned() });
+fn destino_do_id(ir: &Ir, id: &str) -> Result<Destination, ApiError> {
+    if ir.stages.iter().any(|etapa| etapa.id == id) {
+        return Ok(Destination::Etapa { id: id.to_owned() });
     }
-    if ir.decisoes.iter().any(|decisao| decisao.id == id) {
-        return Ok(Destino::Decisao { id: id.to_owned() });
+    if ir.decisions.iter().any(|decisao| decisao.id == id) {
+        return Ok(Destination::Decisao { id: id.to_owned() });
     }
-    if let Some(fim) = ir.fins.iter().find(|fim| fim.id == id) {
-        return Ok(Destino::Fim {
+    if let Some(fim) = ir.ends.iter().find(|fim| fim.id == id) {
+        return Ok(Destination::Fim {
             id: fim.id.clone(),
             resultado: fim.resultado.clone(),
-            encerra_atendimento: fim.encerra_atendimento,
+            ends_service: fim.ends_service,
         });
     }
     tracing::error!(no = id, "nó da execução não existe na IR da revisão");

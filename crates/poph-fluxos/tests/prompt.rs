@@ -7,7 +7,7 @@
 //! entrega). A IR de `agendar_visita` é a dourada que passou pelo compilador (FX-10); as outras
 //! são montadas à mão para o teste criar o caso exato.
 
-use poph_fluxos::ir::{Acao, Campo, Destino, Etapa, Fim, Fluxo, Gatilho, Ir};
+use poph_fluxos::ir::{Acao, Campo, Destination, Etapa, Fim, Fluxo, Gatilho, Ir};
 use poph_fluxos::motor::{Campos, Contexto, Estado, executar_acao, iniciar};
 use poph_fluxos::prompt::{TETO_DO_BLOCO, bloco_da_etapa, renderizar_bloco};
 use poph_fluxos::regras::Avaliador;
@@ -27,32 +27,32 @@ fn ir_dourada_agendar_visita() -> Ir {
     );
     let texto =
         std::fs::read_to_string(&caminho).unwrap_or_else(|erro| panic!("{caminho}: {erro}"));
-    Ir::de_json(&texto).expect("a IR dourada é JSON válido")
+    Ir::from_json(&texto).expect("a IR dourada é JSON válido")
 }
 
 fn campo(id: &str, rotulo: &str, tipo: FieldKind, obrigatorio: bool, opcoes: &[&str]) -> Campo {
     Campo {
         id: id.to_owned(),
-        rotulo: rotulo.to_owned(),
+        label: rotulo.to_owned(),
         tipo,
-        obrigatorio,
-        opcoes: opcoes.iter().map(|opcao| (*opcao).to_owned()).collect(),
-        ajuda: None,
+        required: obrigatorio,
+        options: opcoes.iter().map(|opcao| (*opcao).to_owned()).collect(),
+        help: None,
     }
 }
 
-fn ir_para_etapa(id: &str) -> Destino {
-    Destino::Etapa { id: id.to_owned() }
+fn ir_para_etapa(id: &str) -> Destination {
+    Destination::Etapa { id: id.to_owned() }
 }
 
-fn acao(id: &str, rotulo: &str, ator: Option<ActionActor>, vai_para: Destino) -> Acao {
+fn acao(id: &str, rotulo: &str, ator: Option<ActionActor>, vai_para: Destination) -> Acao {
     Acao {
         id: id.to_owned(),
-        rotulo: rotulo.to_owned(),
-        exige: Vec::new(),
-        ator,
-        vai_para,
-        efeitos: Vec::new(),
+        label: rotulo.to_owned(),
+        requires: Vec::new(),
+        actor: ator,
+        goes_to: vai_para,
+        effects: Vec::new(),
     }
 }
 
@@ -67,11 +67,11 @@ fn etapa(
     Etapa {
         id: id.to_owned(),
         nome: nome.to_owned(),
-        instrucao: instrucao.map(str::to_owned),
-        atores_acao: atores.to_vec(),
+        instruction: instrucao.map(str::to_owned),
+        action_actors: atores.to_vec(),
         campos,
-        acoes,
-        ao_entrar: Vec::new(),
+        actions: acoes,
+        on_enter: Vec::new(),
     }
 }
 
@@ -84,17 +84,17 @@ fn ir_com(nome: &str, inicio: &str, etapas: Vec<Etapa>) -> Ir {
             descricao: None,
         },
         gatilho: Gatilho {
-            quando: "Quando o cliente pedir.".to_owned(),
-            nao_quando: None,
-            exemplos: Vec::new(),
+            when: "Quando o cliente pedir.".to_owned(),
+            not_when: None,
+            examples: Vec::new(),
         },
-        inicio: inicio.to_owned(),
-        etapas,
-        decisoes: Vec::new(),
-        fins: vec![Fim {
+        start: inicio.to_owned(),
+        stages: etapas,
+        decisions: Vec::new(),
+        ends: vec![Fim {
             id: "ok".to_owned(),
             resultado: Some("Pedido aprovado".to_owned()),
-            encerra_atendimento: true,
+            ends_service: true,
         }],
         defs: Vec::new(),
     }
@@ -192,10 +192,10 @@ fn etapa_parcial_diz_quem_falta_agir() {
                     "concluir",
                     "Concluir",
                     None,
-                    Destino::Fim {
+                    Destination::Fim {
                         id: "ok".to_owned(),
                         resultado: Some("Pedido aprovado".to_owned()),
-                        encerra_atendimento: true,
+                        ends_service: true,
                     },
                 )],
             ),
@@ -352,10 +352,10 @@ fn execucao_no_fim_ou_fora_de_etapa_diz_que_nao_ha_acao() {
     let ir = ir_dourada_agendar_visita();
 
     let mut no_fim = iniciar(&ir).expect("início");
-    no_fim.no_atual = Destino::Fim {
+    no_fim.no_atual = Destination::Fim {
         id: "concluida".to_owned(),
         resultado: Some("Visita agendada".to_owned()),
-        encerra_atendimento: false,
+        ends_service: false,
     };
     let texto = renderizar_bloco(&ir, &no_fim);
     assert!(
@@ -711,10 +711,10 @@ fn acao_que_encerra_o_atendimento_diz_isso_em_palavras() {
                 "concluir",
                 "Concluir",
                 None,
-                Destino::Fim {
+                Destination::Fim {
                     id: "ok".to_owned(),
                     resultado: Some("Pedido aprovado".to_owned()),
-                    encerra_atendimento: true,
+                    ends_service: true,
                 },
             )],
         )],

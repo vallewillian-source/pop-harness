@@ -6,7 +6,7 @@
 //! `agendar_visita` (a mesma do bloco do prompt, FX-18); cada caso altera só o que precisa.
 
 use poph_fluxos::ir::{
-    Acao, Campo, Decisao, Def, Destino, Efeito, Etapa, Fim, Fluxo, Gatilho, Ir, Regra,
+    Acao, Campo, Decisao, Def, Destination, Effect, Etapa, Fim, Fluxo, Gatilho, Ir, Rule,
 };
 use poph_fluxos::{Impacto, Mudanca, TipoMudanca, diferenca};
 use poph_types::{ActionActor, FieldKind};
@@ -20,7 +20,7 @@ fn base() -> Ir {
     );
     let texto =
         std::fs::read_to_string(&caminho).unwrap_or_else(|erro| panic!("{caminho}: {erro}"));
-    Ir::de_json(&texto).expect("a IR dourada é JSON válido")
+    Ir::from_json(&texto).expect("a IR dourada é JSON válido")
 }
 
 /// Cópia da IR com a alteração aplicada.
@@ -31,7 +31,7 @@ fn com(ir: &Ir, alterar: impl FnOnce(&mut Ir)) -> Ir {
 }
 
 fn em_etapa<'a>(ir: &'a mut Ir, id: &str) -> &'a mut Etapa {
-    ir.etapas
+    ir.stages
         .iter_mut()
         .find(|etapa| etapa.id == id)
         .expect("a etapa existe na base")
@@ -39,7 +39,7 @@ fn em_etapa<'a>(ir: &'a mut Ir, id: &str) -> &'a mut Etapa {
 
 fn em_acao<'a>(ir: &'a mut Ir, etapa: &str, acao: &str) -> &'a mut Acao {
     em_etapa(ir, etapa)
-        .acoes
+        .actions
         .iter_mut()
         .find(|candidata| candidata.id == acao)
         .expect("a ação existe na base")
@@ -48,11 +48,11 @@ fn em_acao<'a>(ir: &'a mut Ir, etapa: &str, acao: &str) -> &'a mut Acao {
 fn campo(id: &str, rotulo: &str, tipo: FieldKind, obrigatorio: bool, opcoes: &[&str]) -> Campo {
     Campo {
         id: id.to_owned(),
-        rotulo: rotulo.to_owned(),
+        label: rotulo.to_owned(),
         tipo,
-        obrigatorio,
-        opcoes: opcoes.iter().map(|opcao| (*opcao).to_owned()).collect(),
-        ajuda: None,
+        required: obrigatorio,
+        options: opcoes.iter().map(|opcao| (*opcao).to_owned()).collect(),
+        help: None,
     }
 }
 
@@ -61,15 +61,15 @@ fn acao(
     rotulo: &str,
     exige: &[&str],
     ator: Option<ActionActor>,
-    vai_para: Destino,
+    vai_para: Destination,
 ) -> Acao {
     Acao {
         id: id.to_owned(),
-        rotulo: rotulo.to_owned(),
-        exige: exige.iter().map(|campo| (*campo).to_owned()).collect(),
-        ator,
-        vai_para,
-        efeitos: Vec::new(),
+        label: rotulo.to_owned(),
+        requires: exige.iter().map(|campo| (*campo).to_owned()).collect(),
+        actor: ator,
+        goes_to: vai_para,
+        effects: Vec::new(),
     }
 }
 
@@ -77,23 +77,23 @@ fn etapa(id: &str, nome: &str, instrucao: Option<&str>, acoes: Vec<Acao>) -> Eta
     Etapa {
         id: id.to_owned(),
         nome: nome.to_owned(),
-        instrucao: instrucao.map(str::to_owned),
-        atores_acao: vec![ActionActor::Agent],
+        instruction: instrucao.map(str::to_owned),
+        action_actors: vec![ActionActor::Agent],
         campos: Vec::new(),
-        acoes,
-        ao_entrar: Vec::new(),
+        actions: acoes,
+        on_enter: Vec::new(),
     }
 }
 
-fn no_etapa(id: &str) -> Destino {
-    Destino::Etapa { id: id.to_owned() }
+fn no_etapa(id: &str) -> Destination {
+    Destination::Etapa { id: id.to_owned() }
 }
 
-fn no_fim(id: &str, resultado: Option<&str>, encerra_atendimento: bool) -> Destino {
-    Destino::Fim {
+fn no_fim(id: &str, resultado: Option<&str>, encerra_atendimento: bool) -> Destination {
+    Destination::Fim {
         id: id.to_owned(),
         resultado: resultado.map(str::to_owned),
-        encerra_atendimento,
+        ends_service: encerra_atendimento,
     }
 }
 
@@ -101,23 +101,23 @@ fn fim(id: &str, resultado: Option<&str>, encerra_atendimento: bool) -> Fim {
     Fim {
         id: id.to_owned(),
         resultado: resultado.map(str::to_owned),
-        encerra_atendimento,
+        ends_service: encerra_atendimento,
     }
 }
 
-fn decisao(id: &str, se: Regra, entao: Destino, senao: Destino) -> Decisao {
+fn decisao(id: &str, se: Rule, entao: Destination, senao: Destination) -> Decisao {
     Decisao {
         id: id.to_owned(),
         se,
-        entao,
-        senao,
+        then_branch: entao,
+        else_branch: senao,
     }
 }
 
-fn igual(campo: &str, valor: &str) -> Regra {
-    Regra::Igual {
+fn igual(campo: &str, valor: &str) -> Rule {
+    Rule::Igual {
         campo: campo.to_owned(),
-        valor: valor.to_owned(),
+        value: valor.to_owned(),
     }
 }
 
@@ -180,7 +180,7 @@ fn fluxos_identicos_devolvem_lista_vazia() {
 #[test]
 fn a_ida_e_volta_pelo_json_nao_gera_mudanca() {
     let ir = base();
-    let volta = Ir::de_json(&ir.para_json()).expect("a IR gravada volta a ser lida");
+    let volta = Ir::from_json(&ir.to_json()).expect("a IR gravada volta a ser lida");
     assert!(diferenca(&ir, &volta).is_empty());
 }
 
@@ -189,9 +189,9 @@ fn a_mesma_entrada_da_sempre_a_mesma_lista_na_mesma_ordem() {
     let a = base();
     let b = com(&a, |ir| {
         em_etapa(ir, "coleta").nome = "Colher dados".to_owned();
-        em_acao(ir, "coleta", "confirmar").vai_para =
+        em_acao(ir, "coleta", "confirmar").goes_to =
             no_fim("concluida", Some("Visita agendada"), false);
-        ir.gatilho.quando = "Quando o cliente pedir remarcação.".to_owned();
+        ir.gatilho.when = "Quando o cliente pedir remarcação.".to_owned();
     });
     let primeira = diferenca(&a, &b);
     let segunda = diferenca(&a, &b);
@@ -210,7 +210,7 @@ fn a_mesma_entrada_da_sempre_a_mesma_lista_na_mesma_ordem() {
 #[test]
 fn a_ordem_dos_itens_no_script_nao_gera_mudanca() {
     let a = base();
-    let b = com(&a, |ir| ir.etapas.reverse());
+    let b = com(&a, |ir| ir.stages.reverse());
     assert!(diferenca(&a, &b).is_empty());
 }
 
@@ -242,7 +242,7 @@ fn codigos_de_tipo_e_impacto_batem_com_o_json_da_api() {
 fn etapa_nova_sem_chegada_nao_muda_o_atendimento() {
     let a = base();
     let b = com(&a, |ir| {
-        ir.etapas
+        ir.stages
             .push(etapa("revisao", "Revisar dados", None, Vec::new()));
     });
     let lista = diferenca(&a, &b);
@@ -261,9 +261,9 @@ fn etapa_nova_sem_chegada_nao_muda_o_atendimento() {
 fn etapa_nova_que_recebe_chegada_muda_a_rota() {
     let a = base();
     let b = com(&a, |ir| {
-        ir.etapas
+        ir.stages
             .push(etapa("revisao", "Revisar dados", None, Vec::new()));
-        em_acao(ir, "coleta", "confirmar").vai_para = no_etapa("revisao");
+        em_acao(ir, "coleta", "confirmar").goes_to = no_etapa("revisao");
     });
     let lista = diferenca(&a, &b);
     let nova = unica(&lista, TipoMudanca::EtapaNova);
@@ -279,8 +279,8 @@ fn etapa_nova_que_recebe_chegada_muda_a_rota() {
 fn etapa_removida_que_era_alcancada_muda_a_rota() {
     let a = base();
     let b = com(&a, |ir| {
-        ir.etapas.retain(|etapa| etapa.id != "confirmacao");
-        em_acao(ir, "coleta", "confirmar").vai_para =
+        ir.stages.retain(|etapa| etapa.id != "confirmacao");
+        em_acao(ir, "coleta", "confirmar").goes_to =
             no_fim("concluida", Some("Visita agendada"), false);
     });
     let lista = diferenca(&a, &b);
@@ -297,7 +297,7 @@ fn etapa_removida_que_era_alcancada_muda_a_rota() {
 #[test]
 fn etapa_removida_sem_chegada_nao_muda_o_atendimento() {
     let a = com(&base(), |ir| {
-        ir.etapas.push(etapa("sobra", "Sobra", None, Vec::new()));
+        ir.stages.push(etapa("sobra", "Sobra", None, Vec::new()));
     });
     let b = base();
     let lista = diferenca(&a, &b);
@@ -315,7 +315,7 @@ fn etapa_removida_sem_chegada_nao_muda_o_atendimento() {
 fn instrucao_mudou_vale_so_para_atendimentos_novos() {
     let a = base();
     let b = com(&a, |ir| {
-        em_etapa(ir, "coleta").instrucao = Some("Pergunte só o endereço.".to_owned());
+        em_etapa(ir, "coleta").instruction = Some("Pergunte só o endereço.".to_owned());
     });
     let lista = diferenca(&a, &b);
     let mudou = unica(&lista, TipoMudanca::InstrucaoMudou);
@@ -332,7 +332,7 @@ fn instrucao_mudou_vale_so_para_atendimentos_novos() {
 fn atores_da_etapa_mudou_muda_a_rota() {
     let a = base();
     let b = com(&a, |ir| {
-        em_etapa(ir, "coleta").atores_acao = vec![ActionActor::Agent, ActionActor::Attendant];
+        em_etapa(ir, "coleta").action_actors = vec![ActionActor::Agent, ActionActor::Attendant];
     });
     let lista = diferenca(&a, &b);
     let mudou = unica(&lista, TipoMudanca::AtoresDaEtapaMudou);
@@ -348,7 +348,7 @@ fn renomear_etapa_e_campo_nao_muda_o_atendimento() {
     let a = base();
     let b = com(&a, |ir| {
         em_etapa(ir, "coleta").nome = "Colher dados".to_owned();
-        em_etapa(ir, "coleta").campos[0].rotulo = "Endereço".to_owned();
+        em_etapa(ir, "coleta").campos[0].label = "Endereço".to_owned();
     });
     let lista = diferenca(&a, &b);
     assert_eq!(lista.len(), 2, "{lista:#?}");
@@ -406,7 +406,7 @@ fn campo_removido_deixa_de_ser_pedido_nos_atendimentos_novos() {
         em_etapa(ir, "coleta")
             .campos
             .retain(|campo| campo.id != "periodo");
-        em_acao(ir, "coleta", "confirmar").exige = vec!["endereco".to_owned()];
+        em_acao(ir, "coleta", "confirmar").requires = vec!["endereco".to_owned()];
     });
     let lista = diferenca(&a, &b);
     let removido = unica(&lista, TipoMudanca::CampoRemovido);
@@ -422,7 +422,7 @@ fn campo_removido_deixa_de_ser_pedido_nos_atendimentos_novos() {
 #[test]
 fn campo_que_fica_obrigatorio_pede_dado_novo() {
     let a = com(&base(), |ir| {
-        em_etapa(ir, "coleta").campos[0].obrigatorio = false;
+        em_etapa(ir, "coleta").campos[0].required = false;
     });
     let b = base();
     let lista = diferenca(&a, &b);
@@ -440,7 +440,7 @@ fn campo_que_fica_obrigatorio_pede_dado_novo() {
 fn campo_que_deixa_de_ser_obrigatorio_vale_para_atendimentos_novos() {
     let a = base();
     let b = com(&a, |ir| {
-        em_etapa(ir, "coleta").campos[0].obrigatorio = false;
+        em_etapa(ir, "coleta").campos[0].required = false;
     });
     let lista = diferenca(&a, &b);
     let deixou = unica(&lista, TipoMudanca::CampoDeixouDeSerObrigatorio);
@@ -473,7 +473,7 @@ fn campo_de_opcao_com_outras_opcoes_pede_dado_novo() {
     let a = base();
     let b = com(&a, |ir| {
         em_etapa(ir, "coleta").campos[1]
-            .opcoes
+            .options
             .push("noite".to_owned());
     });
     let lista = diferenca(&a, &b);
@@ -492,7 +492,7 @@ fn campo_de_opcao_com_outras_opcoes_pede_dado_novo() {
 fn acao_nova_muda_a_rota() {
     let a = base();
     let b = com(&a, |ir| {
-        em_etapa(ir, "coleta").acoes.push(acao(
+        em_etapa(ir, "coleta").actions.push(acao(
             "remarcar",
             "Cliente quer remarcar",
             &[],
@@ -514,7 +514,7 @@ fn acao_nova_muda_a_rota() {
 #[test]
 fn acao_removida_muda_a_rota() {
     let a = com(&base(), |ir| {
-        em_etapa(ir, "coleta").acoes.push(acao(
+        em_etapa(ir, "coleta").actions.push(acao(
             "remarcar",
             "Cliente quer remarcar",
             &[],
@@ -538,7 +538,7 @@ fn acao_removida_muda_a_rota() {
 fn destino_de_acao_mudou_muda_a_rota() {
     let a = base();
     let b = com(&a, |ir| {
-        em_acao(ir, "coleta", "confirmar").vai_para =
+        em_acao(ir, "coleta", "confirmar").goes_to =
             no_fim("concluida", Some("Visita agendada"), false);
     });
     let lista = diferenca(&a, &b);
@@ -560,7 +560,7 @@ fn acao_que_passa_a_exigir_campo_pede_o_dado() {
             .campos
             .push(campo("cep", "CEP", FieldKind::Text, false, &[]));
         em_acao(ir, "coleta", "confirmar")
-            .exige
+            .requires
             .push("cep".to_owned());
     });
     let lista = diferenca(&a, &b);
@@ -583,7 +583,7 @@ fn acao_que_deixa_de_exigir_campo_vale_para_atendimentos_novos() {
     let a = base();
     let b = com(&a, |ir| {
         em_acao(ir, "coleta", "confirmar")
-            .exige
+            .requires
             .retain(|campo| campo != "endereco");
     });
     let lista = diferenca(&a, &b);
@@ -600,7 +600,7 @@ fn acao_que_deixa_de_exigir_campo_vale_para_atendimentos_novos() {
 fn ator_da_acao_mudou_muda_a_rota() {
     let a = base();
     let b = com(&a, |ir| {
-        em_acao(ir, "coleta", "confirmar").ator = Some(ActionActor::Attendant);
+        em_acao(ir, "coleta", "confirmar").actor = Some(ActionActor::Attendant);
     });
     let lista = diferenca(&a, &b);
     let ator = unica(&lista, TipoMudanca::AtorDaAcaoMudou);
@@ -615,9 +615,9 @@ fn ator_da_acao_mudou_muda_a_rota() {
 
 #[test]
 fn regra_de_decisao_mudou_muda_a_rota() {
-    let com_decisao = |se: Regra| {
+    let com_decisao = |se: Rule| {
         com(&base(), |ir| {
-            ir.decisoes.push(decisao(
+            ir.decisions.push(decisao(
                 "classificar",
                 se,
                 no_etapa("confirmacao"),
@@ -626,9 +626,9 @@ fn regra_de_decisao_mudou_muda_a_rota() {
         })
     };
     let a = com_decisao(igual("coleta.periodo", "manhã"));
-    let b = com_decisao(Regra::Diferente {
+    let b = com_decisao(Rule::Diferente {
         campo: "coleta.periodo".to_owned(),
-        valor: "manhã".to_owned(),
+        value: "manhã".to_owned(),
     });
     let lista = diferenca(&a, &b);
     let regra = unica(&lista, TipoMudanca::RegraMudou);
@@ -643,9 +643,9 @@ fn regra_de_decisao_mudou_muda_a_rota() {
 
 #[test]
 fn ramo_de_decisao_que_muda_de_destino_muda_a_rota() {
-    let com_decisao = |senao: Destino| {
+    let com_decisao = |senao: Destination| {
         com(&base(), |ir| {
-            ir.decisoes.push(decisao(
+            ir.decisions.push(decisao(
                 "classificar",
                 igual("coleta.periodo", "manhã"),
                 no_etapa("confirmacao"),
@@ -668,9 +668,9 @@ fn ramo_de_decisao_que_muda_de_destino_muda_a_rota() {
 
 #[test]
 fn ramo_verdadeiro_de_decisao_que_muda_de_destino_muda_a_rota() {
-    let com_decisao = |entao: Destino| {
+    let com_decisao = |entao: Destination| {
         com(&base(), |ir| {
-            ir.decisoes.push(decisao(
+            ir.decisions.push(decisao(
                 "classificar",
                 igual("coleta.periodo", "manhã"),
                 entao,
@@ -695,7 +695,7 @@ fn ramo_verdadeiro_de_decisao_que_muda_de_destino_muda_a_rota() {
 fn decisao_nova_sem_chegada_nao_muda_o_atendimento() {
     let a = base();
     let b = com(&a, |ir| {
-        ir.decisoes.push(decisao(
+        ir.decisions.push(decisao(
             "classificar",
             igual("coleta.periodo", "manhã"),
             no_etapa("confirmacao"),
@@ -717,13 +717,13 @@ fn decisao_nova_sem_chegada_nao_muda_o_atendimento() {
 fn decisao_nova_que_recebe_chegada_muda_a_rota() {
     let a = base();
     let b = com(&a, |ir| {
-        ir.decisoes.push(decisao(
+        ir.decisions.push(decisao(
             "classificar",
             igual("coleta.periodo", "manhã"),
             no_etapa("confirmacao"),
             no_fim("desistencia", Some("Cliente desistiu"), false),
         ));
-        em_acao(ir, "coleta", "confirmar").vai_para = Destino::Decisao {
+        em_acao(ir, "coleta", "confirmar").goes_to = Destination::Decisao {
             id: "classificar".to_owned(),
         };
     });
@@ -740,7 +740,7 @@ fn decisao_nova_que_recebe_chegada_muda_a_rota() {
 #[test]
 fn decisao_removida_sem_chegada_nao_muda_o_atendimento() {
     let a = com(&base(), |ir| {
-        ir.decisoes.push(decisao(
+        ir.decisions.push(decisao(
             "classificar",
             igual("coleta.periodo", "manhã"),
             no_etapa("confirmacao"),
@@ -761,7 +761,7 @@ fn decisao_removida_sem_chegada_nao_muda_o_atendimento() {
 #[test]
 fn fim_novo_sem_chegada_nao_muda_o_atendimento() {
     let a = base();
-    let b = com(&a, |ir| ir.fins.push(fim("nova_saida", None, false)));
+    let b = com(&a, |ir| ir.ends.push(fim("nova_saida", None, false)));
     let lista = diferenca(&a, &b);
     let novo = unica(&lista, TipoMudanca::FimNovo);
     assert_eq!(novo.impacto, Impacto::Nenhum);
@@ -775,7 +775,7 @@ fn fim_novo_sem_chegada_nao_muda_o_atendimento() {
 
 #[test]
 fn fim_removido_sem_chegada_nao_muda_o_atendimento() {
-    let a = com(&base(), |ir| ir.fins.push(fim("extra", None, false)));
+    let a = com(&base(), |ir| ir.ends.push(fim("extra", None, false)));
     let b = base();
     let lista = diferenca(&a, &b);
     let removido = unica(&lista, TipoMudanca::FimRemovido);
@@ -790,11 +790,11 @@ fn fim_removido_sem_chegada_nao_muda_o_atendimento() {
 fn fim_que_passa_a_encerrar_o_atendimento_muda_a_rota() {
     let a = base();
     let b = com(&a, |ir| {
-        ir.fins
+        ir.ends
             .iter_mut()
             .find(|fim| fim.id == "desistencia")
             .expect("o fim existe")
-            .encerra_atendimento = true;
+            .ends_service = true;
     });
     let lista = diferenca(&a, &b);
     let mudou = unica(&lista, TipoMudanca::FimMudou);
@@ -811,7 +811,7 @@ fn fim_que_passa_a_encerrar_o_atendimento_muda_a_rota() {
 fn resumo_de_fim_mudou_nao_muda_o_atendimento() {
     let a = base();
     let b = com(&a, |ir| {
-        ir.fins
+        ir.ends
             .iter_mut()
             .find(|fim| fim.id == "concluida")
             .expect("o fim existe")
@@ -830,9 +830,9 @@ fn resumo_de_fim_mudou_nao_muda_o_atendimento() {
 fn regra_especial_usada_por_decisao_muda_a_rota_quando_o_texto_muda() {
     let com_def = |fonte: &str| {
         com(&base(), |ir| {
-            ir.decisoes.push(decisao(
+            ir.decisions.push(decisao(
                 "classificar",
-                Regra::Funcao {
+                Rule::Funcao {
                     nome: "afinidade".to_owned(),
                 },
                 no_etapa("confirmacao"),
@@ -883,8 +883,8 @@ fn efeito_novo_numa_acao_dispara_efeito() {
     let a = base();
     let b = com(&a, |ir| {
         em_acao(ir, "coleta", "confirmar")
-            .efeitos
-            .push(Efeito::MensagemAoCliente {
+            .effects
+            .push(Effect::MessageToCustomer {
                 texto: "Visita marcada!".to_owned(),
             });
     });
@@ -902,8 +902,8 @@ fn efeito_novo_numa_acao_dispara_efeito() {
 fn efeito_removido_de_uma_acao_dispara_efeito() {
     let a = com(&base(), |ir| {
         em_acao(ir, "coleta", "confirmar")
-            .efeitos
-            .push(Efeito::MensagemAoCliente {
+            .effects
+            .push(Effect::MessageToCustomer {
                 texto: "Visita marcada!".to_owned(),
             });
     });
@@ -922,14 +922,14 @@ fn efeito_de_entrada_e_aviso_a_equipe_tem_texto_proprio() {
     let a = base();
     let b = com(&a, |ir| {
         em_etapa(ir, "confirmacao")
-            .ao_entrar
-            .push(Efeito::NotificarWhatsapp {
+            .on_enter
+            .push(Effect::NotifyWhatsApp {
                 para: "+55 11 90000-0000".to_owned(),
                 mensagem: "Nova visita".to_owned(),
             });
         em_etapa(ir, "confirmacao")
-            .ao_entrar
-            .push(Efeito::Encaminhar {
+            .on_enter
+            .push(Effect::Encaminhar {
                 departamento: "Comercial".to_owned(),
             });
     });
@@ -956,10 +956,10 @@ fn efeito_de_etapa_nova_sem_chegada_nao_dispara() {
     let a = base();
     let b = com(&a, |ir| {
         let mut sobra = etapa("sobra", "Sobra", None, Vec::new());
-        sobra.ao_entrar.push(Efeito::MensagemAoCliente {
+        sobra.on_enter.push(Effect::MessageToCustomer {
             texto: "Oi".to_owned(),
         });
-        ir.etapas.push(sobra);
+        ir.stages.push(sobra);
     });
     let lista = diferenca(&a, &b);
     assert_eq!(tipos(&lista), vec![TipoMudanca::EtapaNova], "{lista:#?}");
@@ -970,16 +970,16 @@ fn efeito_de_etapa_nova_sem_chegada_nao_dispara() {
 fn efeito_que_ja_existia_nao_aparece_de_novo() {
     let com_efeito_1 = |ir: &mut Ir| {
         em_acao(ir, "coleta", "confirmar")
-            .efeitos
-            .push(Efeito::MensagemAoCliente {
+            .effects
+            .push(Effect::MessageToCustomer {
                 texto: "Visita marcada!".to_owned(),
             });
     };
     let a = com(&base(), com_efeito_1);
     let b = com(&a, |ir| {
         em_acao(ir, "coleta", "confirmar")
-            .efeitos
-            .push(Efeito::Encaminhar {
+            .effects
+            .push(Effect::Encaminhar {
                 departamento: "Comercial".to_owned(),
             });
     });
@@ -999,9 +999,9 @@ fn gatilho_mudou_vale_para_atendimentos_novos() {
     let a = base();
     let b = com(&a, |ir| {
         ir.gatilho = Gatilho {
-            quando: "Quando o cliente pedir remarcação.".to_owned(),
-            nao_quando: None,
-            exemplos: Vec::new(),
+            when: "Quando o cliente pedir remarcação.".to_owned(),
+            not_when: None,
+            examples: Vec::new(),
         };
     });
     let lista = diferenca(&a, &b);
@@ -1018,7 +1018,7 @@ fn gatilho_mudou_vale_para_atendimentos_novos() {
 #[test]
 fn etapa_inicial_mudou_vale_para_atendimentos_novos() {
     let a = base();
-    let b = com(&a, |ir| ir.inicio = "confirmacao".to_owned());
+    let b = com(&a, |ir| ir.start = "confirmacao".to_owned());
     let lista = diferenca(&a, &b);
     let inicio = unica(&lista, TipoMudanca::InicioMudou);
     assert_eq!(inicio.impacto, Impacto::AtendimentosNovos);
@@ -1056,17 +1056,17 @@ fn nome_do_fluxo_mudou_nao_muda_o_atendimento() {
 fn ordem_da_lista_numa_mudanca_grande_e_sempre_a_mesma() {
     let a = base();
     let b = com(&a, |ir| {
-        ir.inicio = "confirmacao".to_owned();
-        em_etapa(ir, "coleta").campos[0].obrigatorio = false;
+        ir.start = "confirmacao".to_owned();
+        em_etapa(ir, "coleta").campos[0].required = false;
         em_etapa(ir, "coleta")
             .campos
             .push(campo("cep", "CEP", FieldKind::Text, false, &[]));
         em_acao(ir, "coleta", "confirmar")
-            .exige
+            .requires
             .push("cep".to_owned());
-        em_acao(ir, "coleta", "confirmar").vai_para =
+        em_acao(ir, "coleta", "confirmar").goes_to =
             no_fim("concluida", Some("Visita agendada"), false);
-        ir.etapas.retain(|etapa| etapa.id != "confirmacao");
+        ir.stages.retain(|etapa| etapa.id != "confirmacao");
     });
     let lista = diferenca(&a, &b);
     assert_eq!(

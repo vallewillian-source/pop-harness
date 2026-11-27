@@ -7,7 +7,7 @@
 use std::time::{Duration, Instant};
 
 use poph_fluxos::compilador::Limites;
-use poph_fluxos::ir::Regra;
+use poph_fluxos::ir::Rule;
 use poph_fluxos::regras::{
     Avaliador, Dados, ErroRegra, LimitesRegra, MAX_PROFUNDIDADE, PRAZO_DA_REGRA,
     TOLERANCIA_DO_PRAZO, avaliar, dados_de_json,
@@ -92,104 +92,104 @@ fn igual_compara_texto_numero_booleano_e_anexo() {
     let casos = [
         // texto: tira espaço das pontas
         (
-            Regra::Igual {
+            Rule::Igual {
                 campo: "relato.nome".into(),
-                valor: "Maria".into(),
+                value: "Maria".into(),
             },
             true,
         ),
         (
-            Regra::Igual {
+            Rule::Igual {
                 campo: "relato.nome".into(),
-                valor: " maria ".into(),
+                value: " maria ".into(),
             },
             false,
         ),
         // número: comparação em texto canônico
         (
-            Regra::Igual {
+            Rule::Igual {
                 campo: "relato.idade".into(),
-                valor: "42".into(),
+                value: "42".into(),
             },
             true,
         ),
         (
-            Regra::Igual {
+            Rule::Igual {
                 campo: "relato.idade".into(),
-                valor: "42.0".into(),
+                value: "42.0".into(),
             },
             false,
         ),
         // booleano: sim/nao, true/false e 1/0 são a mesma coisa (§5)
         (
-            Regra::Igual {
+            Rule::Igual {
                 campo: "relato.aceitou".into(),
-                valor: "sim".into(),
+                value: "sim".into(),
             },
             true,
         ),
         (
-            Regra::Igual {
+            Rule::Igual {
                 campo: "relato.aceitou".into(),
-                valor: "true".into(),
+                value: "true".into(),
             },
             true,
         ),
         (
-            Regra::Igual {
+            Rule::Igual {
                 campo: "relato.aceitou".into(),
-                valor: "1".into(),
+                value: "1".into(),
             },
             true,
         ),
         (
-            Regra::Igual {
+            Rule::Igual {
                 campo: "relato.outro".into(),
-                valor: "nao".into(),
+                value: "nao".into(),
             },
             true,
         ),
         (
-            Regra::Igual {
+            Rule::Igual {
                 campo: "relato.outro".into(),
-                valor: "0".into(),
+                value: "0".into(),
             },
             true,
         ),
         (
-            Regra::Igual {
+            Rule::Igual {
                 campo: "relato.aceitou".into(),
-                valor: "nao".into(),
+                value: "nao".into(),
             },
             false,
         ),
         (
-            Regra::Igual {
+            Rule::Igual {
                 campo: "relato.aceitou".into(),
-                valor: "talvez".into(),
+                value: "talvez".into(),
             },
             false,
         ),
         // opção: o id da opção
         (
-            Regra::Igual {
+            Rule::Igual {
                 campo: "relato.periodo".into(),
-                valor: "tarde".into(),
+                value: "tarde".into(),
             },
             true,
         ),
         (
-            Regra::Igual {
+            Rule::Igual {
                 campo: "relato.periodo".into(),
-                valor: "Tarde".into(),
+                value: "Tarde".into(),
             },
             false,
         ),
         // anexo: o nome do arquivo
         (
-            Regra::Igual {
+            Rule::Igual {
                 campo: "relato.anexo".into(),
-                valor: "foto.jpg".into(),
+                value: "foto.jpg".into(),
             },
             true,
         ),
@@ -204,9 +204,9 @@ fn diferente_e_o_inverso_de_igual() {
     let base = dados(r#"{"relato": {"periodo": "manha"}}"#);
     assert!(
         avaliar(
-            &Regra::Diferente {
+            &Rule::Diferente {
                 campo: "relato.periodo".into(),
-                valor: "tarde".into()
+                value: "tarde".into()
             },
             &base
         )
@@ -214,9 +214,9 @@ fn diferente_e_o_inverso_de_igual() {
     );
     assert!(
         !avaliar(
-            &Regra::Diferente {
+            &Rule::Diferente {
                 campo: "relato.periodo".into(),
-                valor: "manha".into()
+                value: "manha".into()
             },
             &base
         )
@@ -231,9 +231,9 @@ fn maior_e_menor_comparam_numero_e_texto_numerico() {
     // número × número
     assert!(
         avaliar(
-            &Regra::Maior {
+            &Rule::Maior {
                 campo: "coleta.dias".into(),
-                valor: "10".into()
+                value: "10".into()
             },
             &base
         )
@@ -241,9 +241,9 @@ fn maior_e_menor_comparam_numero_e_texto_numerico() {
     );
     assert!(
         !avaliar(
-            &Regra::Menor {
+            &Rule::Menor {
                 campo: "coleta.dias".into(),
-                valor: "10".into()
+                value: "10".into()
             },
             &base
         )
@@ -252,9 +252,9 @@ fn maior_e_menor_comparam_numero_e_texto_numerico() {
     // texto que é número compara pelo número: "12" > "9", o que não aconteceria em texto
     assert!(
         avaliar(
-            &Regra::Maior {
+            &Rule::Maior {
                 campo: "coleta.dias_texto".into(),
-                valor: "9".into()
+                value: "9".into()
             },
             &base
         )
@@ -263,9 +263,9 @@ fn maior_e_menor_comparam_numero_e_texto_numerico() {
     // texto que não é número: falso, sem erro (é o FLX60 avisado na publicação)
     assert!(
         !avaliar(
-            &Regra::Maior {
+            &Rule::Maior {
                 campo: "coleta.nome".into(),
-                valor: "9".into()
+                value: "9".into()
             },
             &base
         )
@@ -274,9 +274,9 @@ fn maior_e_menor_comparam_numero_e_texto_numerico() {
     // nulo: falso
     assert!(
         !avaliar(
-            &Regra::Maior {
+            &Rule::Maior {
                 campo: "coleta.nulo".into(),
-                valor: "9".into()
+                value: "9".into()
             },
             &base
         )
@@ -286,9 +286,9 @@ fn maior_e_menor_comparam_numero_e_texto_numerico() {
     let decimal = dados(r#"{"coleta": {"dias": 10.5}}"#);
     assert!(
         avaliar(
-            &Regra::Maior {
+            &Rule::Maior {
                 campo: "coleta.dias".into(),
-                valor: "10.25".into()
+                value: "10.25".into()
             },
             &decimal
         )
@@ -300,9 +300,9 @@ fn maior_e_menor_comparam_numero_e_texto_numerico() {
 fn comparar_com_literal_que_nao_e_numero_e_regra_invalida() {
     let base = dados(r#"{"coleta": {"dias": 12}}"#);
     let erro = avaliar(
-        &Regra::Maior {
+        &Rule::Maior {
             campo: "coleta.dias".into(),
-            valor: "dez".into(),
+            value: "dez".into(),
         },
         &base,
     )
@@ -319,9 +319,9 @@ fn contem_ignora_caixa_e_acento_em_texto_e_em_lista() {
     // texto, com acento e maiúscula do outro lado
     assert!(
         avaliar(
-            &Regra::Contem {
+            &Rule::Contem {
                 campo: "relato.resumo".into(),
-                valor: "nao abre".into()
+                value: "nao abre".into()
             },
             &base
         )
@@ -329,9 +329,9 @@ fn contem_ignora_caixa_e_acento_em_texto_e_em_lista() {
     );
     assert!(
         avaliar(
-            &Regra::Contem {
+            &Rule::Contem {
                 campo: "relato.resumo".into(),
-                valor: "NÃO".into()
+                value: "NÃO".into()
             },
             &base
         )
@@ -339,9 +339,9 @@ fn contem_ignora_caixa_e_acento_em_texto_e_em_lista() {
     );
     assert!(
         !avaliar(
-            &Regra::Contem {
+            &Rule::Contem {
                 campo: "relato.resumo".into(),
-                valor: "fechou".into()
+                value: "fechou".into()
             },
             &base
         )
@@ -350,9 +350,9 @@ fn contem_ignora_caixa_e_acento_em_texto_e_em_lista() {
     // lista: qualquer item que contenha o trecho
     assert!(
         avaliar(
-            &Regra::Contem {
+            &Rule::Contem {
                 campo: "relato.tags".into(),
-                valor: "urgen".into()
+                value: "urgen".into()
             },
             &base
         )
@@ -360,9 +360,9 @@ fn contem_ignora_caixa_e_acento_em_texto_e_em_lista() {
     );
     assert!(
         avaliar(
-            &Regra::Contem {
+            &Rule::Contem {
                 campo: "relato.tags".into(),
-                valor: "fatura".into()
+                value: "fatura".into()
             },
             &base
         )
@@ -370,9 +370,9 @@ fn contem_ignora_caixa_e_acento_em_texto_e_em_lista() {
     );
     assert!(
         !avaliar(
-            &Regra::Contem {
+            &Rule::Contem {
                 campo: "relato.tags".into(),
-                valor: "cobranca".into()
+                value: "cobranca".into()
             },
             &base
         )
@@ -397,7 +397,7 @@ fn vazio_cobre_ausente_nulo_espacos_e_lista() {
     for (campo, esperado) in casos {
         assert_eq!(
             avaliar(
-                &Regra::Vazio {
+                &Rule::Vazio {
                     campo: campo.into()
                 },
                 &base
@@ -413,28 +413,28 @@ fn vazio_cobre_ausente_nulo_espacos_e_lista() {
 fn e_ou_nao_aninhados() {
     let base =
         dados(r#"{"relato": {"afeta_agora": "sim", "resumo": "está parado", "aceitou": true}}"#);
-    let afeta = Regra::Igual {
+    let afeta = Rule::Igual {
         campo: "relato.afeta_agora".into(),
-        valor: "sim".into(),
+        value: "sim".into(),
     };
-    let vazio = Regra::Vazio {
+    let vazio = Rule::Vazio {
         campo: "relato.resumo".into(),
     };
-    let parado = Regra::Contem {
+    let parado = Rule::Contem {
         campo: "relato.resumo".into(),
-        valor: "parado".into(),
+        value: "parado".into(),
     };
-    let aceitou = Regra::Igual {
+    let aceitou = Rule::Igual {
         campo: "relato.aceitou".into(),
-        valor: "sim".into(),
+        value: "sim".into(),
     };
 
     // e(igual, nao(vazio), ou(contem, igual)) — a regra do exemplo do documento
-    let regra = Regra::E {
+    let regra = Rule::E {
         args: vec![
             afeta,
-            Regra::Nao { args: vec![vazio] },
-            Regra::Ou {
+            Rule::Nao { args: vec![vazio] },
+            Rule::Ou {
                 args: vec![parado, aceitou],
             },
         ],
@@ -442,13 +442,13 @@ fn e_ou_nao_aninhados() {
     assert!(avaliar(&regra, &base).unwrap());
 
     // e() com uma condição falsa derruba o conjunto
-    let falso = Regra::E {
+    let falso = Rule::E {
         args: vec![
-            Regra::Igual {
+            Rule::Igual {
                 campo: "relato.resumo".into(),
-                valor: "outro".into(),
+                value: "outro".into(),
             },
-            Regra::Vazio {
+            Rule::Vazio {
                 campo: "relato.resumo".into(),
             },
         ],
@@ -456,26 +456,26 @@ fn e_ou_nao_aninhados() {
     assert!(!avaliar(&falso, &base).unwrap());
 
     // ou() com todas falsas
-    let nenhuma = Regra::Ou {
+    let nenhuma = Rule::Ou {
         args: vec![
-            Regra::Vazio {
+            Rule::Vazio {
                 campo: "relato.resumo".into(),
             },
-            Regra::Igual {
+            Rule::Igual {
                 campo: "relato.aceitou".into(),
-                valor: "nao".into(),
+                value: "nao".into(),
             },
         ],
     };
     assert!(!avaliar(&nenhuma, &base).unwrap());
 
     // nao() com dois argumentos é regra malformada
-    let malformada = Regra::Nao {
+    let malformada = Rule::Nao {
         args: vec![
-            Regra::Vazio {
+            Rule::Vazio {
                 campo: "relato.resumo".into(),
             },
-            Regra::Vazio {
+            Rule::Vazio {
                 campo: "relato.aceitou".into(),
             },
         ],
@@ -491,56 +491,56 @@ fn campo_ausente_segue_a_tabela_do_documento() {
     let base = dados(r#"{"relato": {}}"#);
     let casos = [
         (
-            Regra::Igual {
+            Rule::Igual {
                 campo: "relato.x".into(),
-                valor: "y".into(),
+                value: "y".into(),
             },
             false,
         ),
         (
-            Regra::Igual {
+            Rule::Igual {
                 campo: "relato.x".into(),
-                valor: "".into(),
+                value: "".into(),
             },
             false,
         ),
         (
-            Regra::Diferente {
+            Rule::Diferente {
                 campo: "relato.x".into(),
-                valor: "y".into(),
+                value: "y".into(),
             },
             true,
         ),
         (
-            Regra::Diferente {
+            Rule::Diferente {
                 campo: "relato.x".into(),
-                valor: "".into(),
+                value: "".into(),
             },
             true,
         ),
         (
-            Regra::Maior {
+            Rule::Maior {
                 campo: "relato.x".into(),
-                valor: "1".into(),
+                value: "1".into(),
             },
             false,
         ),
         (
-            Regra::Menor {
+            Rule::Menor {
                 campo: "relato.x".into(),
-                valor: "1".into(),
+                value: "1".into(),
             },
             false,
         ),
         (
-            Regra::Contem {
+            Rule::Contem {
                 campo: "relato.x".into(),
-                valor: "".into(),
+                value: "".into(),
             },
             false,
         ),
         (
-            Regra::Vazio {
+            Rule::Vazio {
                 campo: "relato.x".into(),
             },
             true,
@@ -553,11 +553,11 @@ fn campo_ausente_segue_a_tabela_do_documento() {
 
 #[test]
 fn regra_aninhada_alem_do_teto_e_recusada_sem_derrubar_a_pilha() {
-    let mut regra = Regra::Vazio {
+    let mut regra = Rule::Vazio {
         campo: "relato.x".into(),
     };
     for _ in 0..(MAX_PROFUNDIDADE + 5) {
-        regra = Regra::Nao { args: vec![regra] };
+        regra = Rule::Nao { args: vec![regra] };
     }
     let erro = avaliar(&regra, &dados(r#"{"relato": {"x": "1"}}"#))
         .expect_err("aninhamento acima do teto tem de ser recusado");
@@ -574,7 +574,7 @@ fn funcao_le_os_dados_e_decide() {
     let avaliador = avaliador();
     let urgente = dados(r#"{"relato": {"resumo": "o sistema está PARADO"}}"#);
     let normal = dados(r#"{"relato": {"resumo": "gostaria de um orçamento"}}"#);
-    let regra = Regra::Funcao {
+    let regra = Rule::Funcao {
         nome: "grave".into(),
     };
     assert!(avaliador.avaliar(&regra, &urgente).unwrap());
@@ -584,7 +584,7 @@ fn funcao_le_os_dados_e_decide() {
 #[test]
 fn funcao_recebe_o_dicionario_inteiro_inclusive_anexo_e_nulo() {
     let avaliador = avaliador();
-    let regra = Regra::Funcao {
+    let regra = Rule::Funcao {
         nome: "viu_anexo".into(),
     };
     assert!(
@@ -608,7 +608,7 @@ fn funcao_que_devolve_texto_e_regra_invalida() {
     let avaliador = avaliador();
     let erro = avaliador
         .avaliar(
-            &Regra::Funcao {
+            &Rule::Funcao {
                 nome: "devolve_texto".into(),
             },
             &dados("{}"),
@@ -623,7 +623,7 @@ fn funcao_que_devolve_none_e_regra_invalida() {
     let avaliador = avaliador();
     let erro = avaliador
         .avaliar(
-            &Regra::Funcao {
+            &Rule::Funcao {
                 nome: "devolve_nada".into(),
             },
             &dados("{}"),
@@ -637,7 +637,7 @@ fn funcao_que_le_dado_inexistente_falha_sem_panico() {
     let avaliador = avaliador();
     let erro = avaliador
         .avaliar(
-            &Regra::Funcao {
+            &Rule::Funcao {
                 nome: "le_ausente".into(),
             },
             &dados(r#"{"relato": {}}"#),
@@ -652,7 +652,7 @@ fn funcao_que_estoura_ticks_e_regra_limite() {
     let inicio = Instant::now();
     let erro = avaliador
         .avaliar(
-            &Regra::Funcao {
+            &Rule::Funcao {
                 nome: "estoura_ticks".into(),
             },
             &dados("{}"),
@@ -669,7 +669,7 @@ fn funcao_recursiva_e_regra_limite() {
     let inicio = Instant::now();
     let erro = avaliador
         .avaliar(
-            &Regra::Funcao {
+            &Rule::Funcao {
                 nome: "recursiva".into(),
             },
             &dados("{}"),
@@ -692,7 +692,7 @@ fn funcao_que_aloca_gigante_responde_no_prazo() {
         let inicio = Instant::now();
         let erro = avaliador
             .avaliar(
-                &Regra::Funcao {
+                &Rule::Funcao {
                     nome: "aloca_gigante".into(),
                 },
                 &base,
@@ -757,7 +757,7 @@ fn funcao_sem_def_e_regra_invalida() {
     let avaliador = avaliador();
     let erro = avaliador
         .avaliar(
-            &Regra::Funcao {
+            &Rule::Funcao {
                 nome: "nao_existe".into(),
             },
             &dados("{}"),
@@ -770,7 +770,7 @@ fn funcao_sem_def_e_regra_invalida() {
 #[test]
 fn funcao_sem_modulo_carregado_e_regra_invalida() {
     let erro = avaliar(
-        &Regra::Funcao {
+        &Rule::Funcao {
             nome: "grave".into(),
         },
         &dados("{}"),
@@ -792,7 +792,7 @@ fn os_limites_da_regra_estao_ligados_de_verdade() {
         .expect("o script carrega com os limites de carga");
     let erro = avaliador
         .avaliar(
-            &Regra::Funcao {
+            &Rule::Funcao {
                 nome: "estoura_ticks".into(),
             },
             &dados("{}"),
@@ -808,7 +808,7 @@ fn os_limites_da_regra_estao_ligados_de_verdade() {
     let avaliador = Avaliador::novo_com(SCRIPT, &Limites::default(), sem_heap).expect("carrega");
     let erro = avaliador
         .avaliar(
-            &Regra::Funcao {
+            &Rule::Funcao {
                 nome: "grave".into(),
             },
             &dados("{}"),
@@ -824,7 +824,7 @@ fn os_limites_da_regra_estao_ligados_de_verdade() {
     let avaliador = Avaliador::novo_com(SCRIPT, &Limites::default(), sem_pilha).expect("carrega");
     let erro = avaliador
         .avaliar(
-            &Regra::Funcao {
+            &Rule::Funcao {
                 nome: "recursiva".into(),
             },
             &dados("{}"),
@@ -848,7 +848,7 @@ fn o_dado_do_cliente_entra_como_valor_e_nunca_como_codigo() {
     assert!(
         avaliador
             .avaliar(
-                &Regra::Funcao {
+                &Rule::Funcao {
                     nome: "ecoa".into()
                 },
                 &base
@@ -858,9 +858,9 @@ fn o_dado_do_cliente_entra_como_valor_e_nunca_como_codigo() {
     // E os combinadores tratam igual: o trecho é procurado no texto, não avaliado.
     assert!(
         avaliar(
-            &Regra::Contem {
+            &Rule::Contem {
                 campo: "relato.resumo".into(),
-                valor: "system('ls')".into()
+                value: "system('ls')".into()
             },
             &base
         )
@@ -871,7 +871,7 @@ fn o_dado_do_cliente_entra_como_valor_e_nunca_como_codigo() {
     assert!(
         avaliador
             .avaliar(
-                &Regra::Funcao {
+                &Rule::Funcao {
                     nome: "ecoa".into()
                 },
                 &perigoso
@@ -888,14 +888,14 @@ fn o_dado_do_cliente_entra_como_valor_e_nunca_como_codigo() {
 fn a_mesma_regra_com_os_mesmos_dados_da_o_mesmo_resultado() {
     let avaliador = avaliador();
     let base = dados(r#"{"relato": {"resumo": "está parado", "aceitou": true}}"#);
-    let regra = Regra::E {
+    let regra = Rule::E {
         args: vec![
-            Regra::Funcao {
+            Rule::Funcao {
                 nome: "grave".into(),
             },
-            Regra::Igual {
+            Rule::Igual {
                 campo: "relato.aceitou".into(),
-                valor: "sim".into(),
+                value: "sim".into(),
             },
         ],
     };
@@ -908,23 +908,23 @@ fn a_mesma_regra_com_os_mesmos_dados_da_o_mesmo_resultado() {
 #[test]
 fn p95_dos_combinadores_fica_dentro_da_meta() {
     let base = dados(r#"{"relato": {"resumo": "está parado", "aceitou": true, "dias": 12}}"#);
-    let regra = Regra::E {
+    let regra = Rule::E {
         args: vec![
-            Regra::Igual {
+            Rule::Igual {
                 campo: "relato.aceitou".into(),
-                valor: "sim".into(),
+                value: "sim".into(),
             },
-            Regra::Contem {
+            Rule::Contem {
                 campo: "relato.resumo".into(),
-                valor: "parado".into(),
+                value: "parado".into(),
             },
-            Regra::Ou {
+            Rule::Ou {
                 args: vec![
-                    Regra::Maior {
+                    Rule::Maior {
                         campo: "relato.dias".into(),
-                        valor: "10".into(),
+                        value: "10".into(),
                     },
-                    Regra::Vazio {
+                    Rule::Vazio {
                         campo: "relato.resumo".into(),
                     },
                 ],
@@ -954,7 +954,7 @@ fn p95_dos_combinadores_fica_dentro_da_meta() {
 fn p95_da_funcao_fica_dentro_do_prazo() {
     let avaliador = avaliador();
     let base = dados(r#"{"relato": {"resumo": "está parado"}}"#);
-    let regra = Regra::Funcao {
+    let regra = Rule::Funcao {
         nome: "grave".into(),
     };
     for _ in 0..50 {
@@ -977,9 +977,9 @@ fn p95_da_funcao_fica_dentro_do_prazo() {
 fn cada_erro_de_regra_tem_codigo_de_api() {
     let base = dados(r#"{"relato": {}}"#);
     let invalida = avaliar(
-        &Regra::Maior {
+        &Rule::Maior {
             campo: "relato.x".into(),
-            valor: "abc".into(),
+            value: "abc".into(),
         },
         &base,
     )

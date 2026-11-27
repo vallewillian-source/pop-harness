@@ -48,7 +48,7 @@ use axum::{
     extract::{Path, Query, State, rejection::JsonRejection},
     http::{HeaderMap, StatusCode},
 };
-use poph_fluxos::Diagnostico;
+use poph_fluxos::Diagnostic;
 use poph_store::{FlowChange, FlowFilter};
 use poph_types::{FlowId, OrgId};
 use serde::Deserialize;
@@ -173,8 +173,8 @@ pub struct ConsultaExclusao {
 // para o status HTTP e o código que a API já devolvia.
 
 /// Recusa `422` com a lista de diagnósticos (código, gravidade, mensagem, linha, coluna, caminho).
-fn recusa_de_fluxo(diagnosticos: &[Diagnostico]) -> ApiError {
-    let erros = diagnosticos.iter().filter(|d| d.e_erro()).count();
+fn recusa_de_fluxo(diagnosticos: &[Diagnostic]) -> ApiError {
+    let erros = diagnosticos.iter().filter(|d| d.is_error()).count();
     ApiError::novo(
         StatusCode::UNPROCESSABLE_ENTITY,
         "fluxo_invalido",
