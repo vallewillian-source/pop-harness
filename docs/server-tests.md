@@ -11,8 +11,12 @@ Where a comment made a claim that the test does not fully check, the section say
 | `teste_chat_encaminhado.rs` | `forwarded_chat_test.rs` |
 | `produto_exclusao.rs` | `product_deletion.rs` |
 | `orgs_agentes_ativos.rs` | `orgs_active_agents.rs` |
+| `resiliencia_queda.rs` | `crash_resilience.rs` |
+| `conteudo_arquivo.rs` | `file_content.rs` |
+| `manifestos_plugins.rs` | `plugin_manifests.rs` |
+| `teste_chat.rs` | `test_chat.rs` |
 
-`console.rs` and `site_chat.rs` keep their names.
+`console.rs`, `site_chat.rs`, `cluster_reload.rs` and `backup_http.rs` keep their names.
 
 ## `site_chat.rs`
 
@@ -186,3 +190,108 @@ Notes from the removed comments:
 
 - The PNG used in the tests is a minimal file (signature and IHDR), the same one the other tests use.
 - The attachment helper uses the same path format the inbound receiver writes.
+
+## `plugin_manifests.rs` (was `manifestos_plugins.rs`)
+
+Covers the plugin manifest and the integration configuration and secret (HR-44c), end to end. The server runs on an ephemeral port with a temporary database and a real HTTP client. The fake plugin runs as an external process and speaks the protocol over stdio, the same path as `poph-plugin-eco`. There is no external network.
+
+What it checks:
+
+- The manifest route returns what the plugin declared in the handshake, and the plugin is not started again on each request (the fake plugin counts its starts). Test: `manifest_comes_from_handshake_and_is_cached`.
+- A type with no declared plugin returns `404`. A declared plugin that does not answer the handshake returns `503`, and the body has no program path or system error. Test: `type_without_plugin_is_404_and_broken_plugin_is_503`.
+- Configuration is validated field by field against the manifest schema: required field, type, enum, and a field outside the schema (`400`, with the field name). Test: `config_and_secret_are_validated_field_by_field`.
+- The secret is stored encrypted: the data folder does not contain the value in clear text, the create response, the detail route and the list route never return it, and the process log never receives it. Test: `create_stores_config_and_encrypted_secret_without_exposing_it`.
+- Without a manifest, a type with configuration is refused with `422`. A type without a manifest and without configuration is still created as before. Test: `config_without_manifest_stays_refused`.
+- `PATCH` replaces the configuration, merges the secret, and requires `If-Match`: `428` without it and `412` with an old version. Removing the required secret is refused by the schema (`400`), and the stored state stays at the last valid write. Test: `patch_replaces_config_merges_secret_and_requires_if_match`.
+- A token from another organization gets `403` and does not start the plugin. Test: `other_org_token_cannot_read_manifest`.
+- The list route returns the declared types ordered by `kind`. The broken type is marked as unavailable, with no name or version, and the list still returns. Its message carries the operation phrase, and the body does not contain the program path, arguments or secret. A second listing reuses the cache and does not start the plugin again. Test: `list_returns_declared_types_and_flags_broken_one`.
+- The list route requires a token and respects the token's organization (`403` for another organization). Test: `list_requires_token_and_respects_token_org`.
+- The public manifest types serialize, so the screen and the CLI can use them from outside. Test: `public_manifest_types_serialize`.
+
+Gaps:
+
+- The `428` and `412` rules are checked only for `PATCH`. The creation route is not checked for `If-Match`.
+- The order of the list is checked with two types only.
+- The log check reads what this process wrote to its captured log. It does not check other log sinks.
+
+Notes from the removed comments:
+
+- The test token is global to the tests. The server stores only its hash.
+- The cipher key is for the test only and never goes into a configuration file.
+- The secret value is a fixed test value that must not appear in a response, in the database or in the log.
+- The log capture helper exists to prove what does NOT leave the process.
+- The fake plugin's manifest declares a configuration with a required field, an enum and a number, and a required secret. The fake plugin writes its own script, answers the handshake with the manifest, and counts its starts in a file.
+- The data folder reader reads every file in the folder, not only `harness.db`, because SQLite writes to a WAL file first. Reading only the main file would give a false negative.
+- The "broken" plugin is declared but does not speak the protocol. This is the fixture that proves the `503`.
+- The Python script embedded in the fake plugin has one comment of its own, inside the fixture text. It was kept unchanged because it is part of the fixture content, not a comment of the test code.
+
+## `backup_http.rs`
+
+Covers the export and import routes of an organization (HR-48e-1), end to end: a real server on an ephemeral port, a database, a blob folder and a real HTTP client. The tests do not call the handlers directly.
+
+What it checks:
+
+- Export returns the same format as the CLI (`poph-backup-org` version 2, source organization, `tables`, `blobs`) as an attachment. Conversations are left out by default and included with `com_conversas=true`. An invalid value is refused with `400`. Tests: `export_returns_org_file_without_secret_or_path` (with the `export_source` helper).
+- The export has no integration secret, neither in clear text nor encrypted, and no blob path. Test: `export_returns_org_file_without_secret_or_path`.
+- Import rebuilds the target organization, keeps the SHA-256 of each blob (the download returns the same bytes), asks for the secrets again, and does not duplicate anything on a second import with `?sobrescrever=true`. Test: `import_rebuilds_org_keeps_blob_and_does_not_duplicate`.
+- A natural-key conflict (same slug, different id) returns `409` and writes nothing, even with `?sobrescrever=true`. Test: `slug_conflict_is_409_and_writes_nothing`.
+- Importing into the same instance for another organization returns `409`, because the ids are preserved. Test: `import_same_instance_other_org_is_409`.
+- A second import that would update rows returns `409` with what would change, and writes nothing, unless `?sobrescrever=true` is given. With the flag, the agent goes back to the file's state. A non-boolean value returns `400`. Test: `import_that_would_update_rows_is_refused_without_overwrite`.
+- A corrupt file and an unknown version both return `400` without writing. Test: `corrupt_file_and_unknown_version_are_400_without_writing`.
+- Without a token, `401`. With a token of another organization, `403`. This holds on both routes. Test: `requires_token_and_respects_token_org`.
+- A body over the limit returns `413` and is refused without loading the whole body. Test: `body_over_limit_is_413`.
+- Without an embedding model, import ends with an explicit warning and a pending index, never a silent empty index. With the model installed, the imported knowledge base is searchable. Tests: the warning check is inside `import_rebuilds_org_keeps_blob_and_does_not_duplicate`; the search check is `with_model_installed_imported_base_is_searchable`.
+
+Gaps:
+
+- `with_model_installed_imported_base_is_searchable` returns without checking anything on a machine where the model is not installed. On such a machine, the search claim is not verified.
+- The warning and pending-index check runs only on the branch without the model. The branch with the model is checked only by the test above.
+
+Notes from the removed comments:
+
+- The test token is global. The server stores only its hash.
+- The scenario cipher key lets the integration secret be decrypted in the scenario. It is used for the field names only.
+- The secret that must not appear in the file or in a response is a fixed sentinel value.
+- The PNG used in the library is a minimal file (signature only), because content detection uses the signature.
+- Each scenario server has its own database, blob folder and configuration. Dropping the scenario stops the server and removes the folder.
+- `com_modelo` links the repository model folder into the data folder, only when that folder exists, as the CLI tests do.
+- The organization helper builds the material a backup must carry: an agent with instructions, a category, a department, a product, a group and a base item, a library file (a real blob), and an integration with a secret.
+- The group link is created on purpose. Without it, the agent cannot see the group, and the base has no chunks to reindex.
+- Importing into another instance (another database) is the real use: restoring a file on a new install. Importing into the same instance for another organization is refused on purpose, because the ids are preserved.
+- Importing back into the same organization would revert what changed after the file was made. By default the import refuses; only `?sobrescrever=true` authorizes it.
+- One case changes the agent's name after the export. That is the adjustment that a reimport would revert.
+- The byte-limit test sends one byte above the cap and expects a refusal, instead of loading the body.
+- Without the model, the test on the model path returns early, as noted in the gaps.
+
+## `test_chat.rs` (was `teste_chat.rs`)
+
+Covers the test chat of the Console (HR-22): server-sent events (SSE), attachments, cancellation and concurrency. Each test starts a real server on an ephemeral port, with the turn running over a fake LLM provider and a fake extractor script. There is no external network and no key. The database is temporary.
+
+What it checks:
+
+- Events arrive in order (message confirmed, turn opens, deltas, end). An attachment is stored, and its extracted text reaches the prompt as untrusted content. The turn is over and the reply is confirmed in the outbound queue. Test: `test_conversation_gets_sse_in_order_and_attachment_text_in_prompt`.
+- Two connections on the same conversation do not create two turns: the second gets `409`, and the second tab's message does not enter the turn. The first turn is then cancelled, leaves no reply, and the conversation accepts a new message, which completes. Test: `two_connections_same_conversation_do_not_make_two_turns`.
+- Closing the stream cancels the turn: its state becomes `failed` with an error mentioning the cancellation, and no reply is left in the conversation or in the outbound queue. Test: `disconnect_cancels_turn_without_stuck_queue`.
+- Without a turn engine, the route returns `503`. Test: `route_without_turn_responds_503`.
+- A token of another organization returns `403` on the three routes. A conversation of one agent does not open through the other agent. Reopening: no `If-Match` gives `428`, an old version gives `412`, the right version gives `200`. Test: `org_isolation_and_reopen_with_if_match`.
+- The list of test conversations returns the newest first, with a cursor. Test: `test_conversation_list_newest_first_with_cursor`.
+- A refused file returns `400` with the error in the `file` field, and no message is written. The conversation stays free for the next message. Test: `refused_file_returns_in_file_field_and_writes_no_message`.
+- When the agent sends a file, the history says which file it is without leaking the blob path, and the download returns the same bytes. Another organization cannot read this history. A conversation with no file has an empty list, not null. Test: `history_shows_agent_file_and_download_returns_bytes`.
+- The tool call record separates executed calls from refused ones, with summarized arguments and results. `tools` stays a list of names. A turn with no tool call has an empty list, never null. Test: `history_carries_tool_call_record`.
+
+Gaps:
+
+- The header said a new conversation starts with empty memory. No assertion in the file checks that.
+- The grouping window of the turn is disabled in this scenario, so the test does not cover grouping.
+
+Notes from the removed comments:
+
+- The fake extractor is a script that imitates `poph-extrator`: it returns the document text without reading it.
+- The multipart body is built by hand, because the test client does not have the multipart feature.
+- The helper that waits for the last turn to leave the running state is `wait_turn_finish`.
+- The scenario can put a file in the agent's library with the `send_file` tool enabled. The scripts receive the id of that file, so the model can ask for it. The tool list comes from the agent's instructions, which is how the turn knows which tools to offer the model.
+- The scenario disables the grouping window ("the test does not wait 2 s per turn").
+- The read limit of the outbound queue in the checks is 200 (`POPH_BATCH`).
+- The outbound state is the real state of the queue: the console transport confirms the output before the end event.
+- The default script is a turn that asks the model to send a file and then answers in text.
+- The SSE test reads until the first piece of the model's text, then closes the connection. This is how the cancel test starts the turn.

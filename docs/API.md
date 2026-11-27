@@ -621,7 +621,7 @@ responderam 200". Todos os testes abaixo estão em `crates/poph-server/tests/api
 | Biblioteca de arquivos | `library_cli_api_upload_parity`, `library_cli_api_lookup_and_delete_parity` | envio: nome, descrição, mime, tamanho, `sha256` e caminho do blob iguais; consulta e exclusão: mesmos campos e ausência no banco |
 | Integrações | não se aplica (exceção) | a CLI não tem o recurso; a API é a referência (`integration_lifecycle_isolation_and_secrets`) |
 | Conversas, mensagens, turnos e `reopen` | não se aplica (exceção) | a CLI não tem comando de conversa; provado por `conversations_messages_and_turns_expose_org_scoped_data` |
-| Chat de teste (SSE, anexos, cancelamento, duas abas) | não se aplica (exceção) | a CLI não tem comando de chat de teste; provado por `crates/poph-server/tests/teste_chat.rs` |
+| Chat de teste (SSE, anexos, cancelamento, duas abas) | não se aplica (exceção) | a CLI não tem comando de chat de teste; provado por `crates/poph-server/tests/test_chat.rs` |
 | Conteúdo de arquivo (biblioteca e anexo) | não se aplica (exceção) | a CLI lê o blob local e não tem comando de chat de teste; provado por `crates/poph-server/tests/file_content.rs` |
 
 Outras provas exigidas pela HR-21, cada uma num teste só:
