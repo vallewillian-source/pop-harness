@@ -1306,17 +1306,15 @@ impl TurnEngine {
                     self.execute_tool(target, hot_agent, usage, call).await
                 };
                 let duration = call_started_at.elapsed();
+                let result = desfecho.texto();
+                let http_result = http_tool.map(|tool| tool.audit_result(&call.nome, result));
                 turn_calls.register(
                     &call.nome,
                     round,
                     desfecho.for_record(),
                     duration,
                     audit_arguments,
-                    if http_tool.is_some() {
-                        ""
-                    } else {
-                        desfecho.texto()
-                    },
+                    http_result.as_deref().unwrap_or(result),
                 );
                 conversa.push(Message::Resultado {
                     id: call.id.clone(),

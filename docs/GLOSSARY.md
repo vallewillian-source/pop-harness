@@ -49,19 +49,19 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 <!-- glossario:tabela:inicio -->
 | termo_pt | termo_en | decisão | onde | ocorrências |
 | --- | --- | --- | --- | --- |
-| texto | text | traduz | poph-agent, poph | 2443 |
+| texto | text | traduz | poph-agent, poph | 2444 |
 | agente | agent | traduz | poph-agent, console | 1443 |
 | conversa | conversation | traduz | poph-agent, poph-server | 1345 |
-| nome | name | traduz | poph-flows, console | 1286 |
+| nome | name | traduz | poph-flows, console | 1289 |
 | estado | state | traduz | poph-flows, poph-jev | 1283 |
-| resultado | result | traduz | poph-store, poph-flows | 1082 |
-| fluxo | flow | traduz | poph-agent, poph-server | 938 |
+| resultado | result | traduz | poph-store, poph-flows | 1083 |
+| fluxo | flow | traduz | poph-agent, poph-server | 940 |
 | saida | output | traduz | poph, poph-agent | 816 |
 | campo | field | traduz | poph-flows, console | 722 |
 | tipo | kind | traduz | poph-store, poph-server | 702 |
 | mensagem | message | traduz | poph-agent, poph-store | 696 |
 | servidor | server | traduz | console, poph-server | 667 |
-| turno | turn | traduz | poph-agent, console | 651 |
+| turno | turn | traduz | poph-agent, console | 652 |
 | evento | event | traduz | console, poph-agent | 608 |
 | cenario | scenario | traduz | poph | 584 |
 | dados | data | traduz | poph-flows, console | 569 |
@@ -78,7 +78,7 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | ficha | case | traduz | poph-server, poph-agent | 347 |
 | departamento | department | traduz | poph, poph-agent | 330 |
 | de | of | traduz | poph, poph-store | 316 |
-| fim | end | traduz | poph-flows, poph-agent | 305 |
+| fim | end | traduz | poph-flows, poph-agent | 306 |
 | provedor | provider | traduz | poph-agent, poph-server | 303 |
 | situacao | situation | traduz | console, poph-retention | 284 |
 | integracao | integration | traduz | poph-server, console | 282 |
@@ -86,13 +86,13 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | whatsapp | whatsapp | traduz | console, poph-server | 258 |
 | desligar | disable | traduz | poph-server, poph | 251 |
 | canal | channel | traduz | poph-store, poph-server | 246 |
-| limites | limits | traduz | poph-flows, poph-agent | 234 |
+| limites | limits | traduz | poph-flows, poph-agent | 235 |
 | modelo | model | traduz | poph-agent, poph | 230 |
 | numero | number | traduz | console, poph-store | 228 |
 | campos | fields | traduz | poph-flows, console | 193 |
 | em | in | traduz | poph-store, console | 190 |
 | arquivo | file | traduz | poph, console | 189 |
-| descricao | description | traduz | console, poph-agent | 182 |
+| descricao | description | traduz | console, poph-agent | 183 |
 | ator | actor | traduz | poph-store, poph-server | 180 |
 | atual | current | traduz | poph-flows, poph-store | 178 |
 | externo | external | traduz | poph-agent, poph-server | 176 |
@@ -100,7 +100,7 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | resolve | resolves | traduz | poph, scripts | 164 |
 | ambiente | environment | traduz | poph | 161 |
 | configuracao | configuration | traduz | console, poph | 161 |
-| validar | validate | traduz | poph-types, poph-server | 148 |
+| validar | validate | traduz | poph-types, poph-server | 150 |
 | instancia | instance | traduz | poph-server, poph-evolution | 143 |
 | caminho | path | traduz | poph, console | 134 |
 | codigo | code | traduz | poph, console | 132 |
@@ -155,9 +155,9 @@ per line. Terms below the current cut-off are listed by `--medir --candidatos` f
 | fichas | cases | traduz | poph-store, poph-server | 37 |
 | segredo | secret | traduz | console, poph | 37 |
 | conteudo | content | traduz | poph, console | 36 |
+| globais | globals | traduz | poph-server, poph-types | 36 |
 | publicar | publish | traduz | poph-server, poph | 36 |
 | conexao | connection | traduz | poph, console | 35 |
-| globais | globals | traduz | poph-server, poph-types | 35 |
 | maior | bigger | traduz | poph-flows, poph-rag | 35 |
 | titulo | title | traduz | console | 35 |
 | listar | list | traduz | poph, poph-server | 34 |

@@ -1,8 +1,10 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::time::Duration;
 
 use poph_core::llm::{Tool, ToolCall};
 use poph_types::config::{HttpToolConfig, HttpToolMethod, HttpToolsConfig};
+use poph_types::instructions::REGISTER_LEAD;
 use poph_types::{AgentId, ConversationId, MessageId, OrgId, Secret, TurnId};
 use reqwest::header::{AUTHORIZATION, HeaderValue};
 use reqwest::{Client, Method, Url};
@@ -87,6 +89,16 @@ impl HttpTool {
             nome: name.to_owned(),
             descricao: self.definition.description.clone(),
             parameters: self.definition.parameters.clone(),
+        }
+    }
+
+    pub(super) fn audit_result<'a>(&self, name: &str, result: &'a str) -> Cow<'a, str> {
+        if name == REGISTER_LEAD {
+            return Cow::Borrowed("");
+        }
+        match serde_json::from_str(result) {
+            Ok(value) => Cow::Owned(super::tools::summary_of_arguments(&value)),
+            Err(_) => Cow::Borrowed(result),
         }
     }
 

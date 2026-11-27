@@ -83,7 +83,8 @@ fn prepare(
         (Some(value), None) => {
             let data = StructuredInstructions::from_tolerant_json(&value.to_string())
                 .map_err(|err| ApiError::validation("structured", err.to_string()))?;
-            data.validar()
+            e.config
+                .validate_agent_instructions(org, &data)
                 .map_err(|err| ApiError::validation("structured", err.to_string()))?;
             Ok((
                 data.to_json(),

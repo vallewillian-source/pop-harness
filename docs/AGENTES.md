@@ -11,7 +11,7 @@ The administrative endpoints are implemented in [`api/agents.rs`](../crates/poph
 
 | Piece | Where | What it does |
 |---|---|---|
-| Instruction types | `crates/poph-types/src/instructions.rs` | `StructuredInstructions` with the same names, defaults and tolerances as POP Atende (HR-03 §9.1); closed list of V1 tools; validation on write. |
+| Instruction types | `crates/poph-types/src/instructions.rs` | `StructuredInstructions` with the same names, defaults and tolerances as POP Atende (HR-03 §9.1). Tool names are validated on write against the standard list and the organization's HTTP declarations. |
 | Composer | `crates/poph-core/src/compositor.rs` | Faithful port of `core/agent/instructions_composer.py`: same output, byte for byte. |
 | Repositories | `crates/poph-store/src/repos/agentes.rs` and `instrucoes.rs` | Agent (`V1` fields), agent↔category link, instructions with `If-Match`. |
 | CLI | `crates/poph/src/agent.rs` | `poph agent ...` and `poph instructions ...` (text and `--json`). |
@@ -46,15 +46,17 @@ it); it only leaves the turn path.
 
 ### D-04 — enabled tool filters for real
 
-`StructuredInstructions::enabled_tools()` is the agent's toolset. The list is closed
-(`TOOLS_V1`): `consultar_base`, `buscar_produto`, `enviar_arquivo`, `transferir`,
+`StructuredInstructions::enabled_tools()` is the agent's toolset. The standard list
+(`TOOLS_V1`) contains `consultar_base`, `buscar_produto`, `enviar_arquivo`, `transferir`,
 `cart_add_item`, `cart_remove_item`, `cart_summary`, `cart_clear`, `fluxo_executar_acao`,
 `fluxo_abandonar`, `fluxo_iniciar`, `atendimento_encerrar` and `register_lead`.
-The last tool requires an [HTTP declaration for the organization](CONFIGURACAO.md#internal-http-tools).
+An agent can also enable tools from its organization's [HTTP declarations](CONFIGURACAO.md#internal-http-tools).
+`register_lead` requires a declaration to run. It is the only HTTP tool available to site conversations
+and must be explicitly allowed for that channel.
 
-`validar()` runs **on write** (CLI/API): a name outside the list is refused, with the engine's list in the
-message. It does not run on read: legacy POP Atende JSON, with names such as `search_knowledge_base`, must
-be read and mapped by the importer (HR-52), not refused.
+The CLI and API validate names **on write** against the standard list and the organization's declarations.
+Legacy POP Atende JSON with names such as `search_knowledge_base` can still be read and mapped by the
+importer (HR-52).
 
 ### Hand-edited text is preserved
 

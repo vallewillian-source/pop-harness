@@ -346,17 +346,19 @@ pub fn run_instructions(
     org: Option<&str>,
     action: InstructionsAction,
 ) -> ExitCode {
-    let (store, org, _) = match open(flag, environment, org) {
+    let (store, org, configuration) = match open(flag, environment, org) {
         Ok(pair) => pair,
         Err(error) => return failure(&error),
     };
     match action {
-        InstructionsAction::Create(args) => write_instructions(&store, org, args, 0),
+        InstructionsAction::Create(args) => {
+            write_instructions(&store, org, &configuration, args, 0)
+        }
         InstructionsAction::Update(args) => {
             let Some(expected) = args.if_match else {
                 return failure("informe --if-match com a versão lida das instruções");
             };
-            write_instructions(&store, org, args, expected)
+            write_instructions(&store, org, &configuration, args, expected)
         }
         InstructionsAction::Show(args) => show_instructions(&store, org, args),
         InstructionsAction::Delete(args) => delete_instructions(&store, org, args),
@@ -621,6 +623,7 @@ fn delete(store: &Store, org: OrgId, args: AgentReference) -> ExitCode {
 fn write_instructions(
     store: &Store,
     org: OrgId,
+    configuration: &HarnessConfig,
     args: WriteInstructions,
     expected: u64,
 ) -> ExitCode {
@@ -640,7 +643,7 @@ fn write_instructions(
                 Ok(data) => data,
                 Err(error) => return failure(format!("JSON de instruções inválido: {error}")),
             };
-            if let Err(error) = data.validar() {
+            if let Err(error) = configuration.validate_agent_instructions(org, &data) {
                 return failure(error.to_string());
             }
             let markdown = compose_instructions(&data);

@@ -109,8 +109,10 @@ See [Site conversations](API.md#site-conversations) for the HTTP contract.
 ### Internal HTTP tools
 
 Declare a tool under `[http_tools."<organization UUID>".<tool name>]` in the server's `poph.toml`.
-The agent must enable the same name in its structured instructions. Site agents also need the name
-in `[site_chat].allowed_tools`. The current HTTP tool name is `register_lead`.
+The agent must enable the same name in its structured instructions. Names must match
+`^[a-z][a-z0-9_]{2,40}$`. Built-in tool names and variants of `register_lead` are reserved.
+The exact name `register_lead` remains available as an HTTP tool, including on the site when explicitly
+allowed by `[site_chat].allowed_tools`. Other HTTP tools are available only outside site conversations.
 
 ~~~toml
 [http_tools."0199a11d-2000-7000-8000-000000000001".register_lead]
@@ -136,7 +138,10 @@ resolves the organization from the credential and verifies the supplied context.
 `arguments` as untrusted input. The message ID identifies the message that triggered the turn.
 
 The tool returns the selected response fields as JSON. Each configured field maps to a JSON Pointer
-in the service response. Missing fields are omitted. A non-success status, timeout, malformed
+in the service response. Missing fields are omitted. The turn history records the call and a bounded
+summary of the selected fields, with values redacted for keys such as `token` and `password`.
+Select fields suitable for storage in the turn history. For `register_lead`, the result remains omitted.
+HTTP arguments are omitted for all HTTP tools. A non-success status, timeout, malformed
 response or response with no selected fields returns a stable tool error and lets the model
 finish the turn. JSON responses may be up to 64 KiB.
 

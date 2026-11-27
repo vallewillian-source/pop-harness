@@ -3,7 +3,7 @@ use serde_json::Value;
 
 use crate::error::DomainError;
 
-pub(crate) const REGISTER_LEAD: &str = "register_lead";
+pub const REGISTER_LEAD: &str = "register_lead";
 
 pub const TOOLS_V1: &[&str] = &[
     "consultar_base",
@@ -176,8 +176,15 @@ impl StructuredInstructions {
     }
 
     pub fn validar(&self) -> Result<(), DomainError> {
+        self.validate_with_tools(|_| false)
+    }
+
+    pub(crate) fn validate_with_tools(
+        &self,
+        is_declared: impl Fn(&str) -> bool,
+    ) -> Result<(), DomainError> {
         for tool in &self.tools {
-            if !TOOLS_V1.contains(&tool.name.as_str()) {
+            if !TOOLS_V1.contains(&tool.name.as_str()) && !is_declared(&tool.name) {
                 return Err(DomainError::Validation {
                     field: "tools[].name",
                     reason: format!(
