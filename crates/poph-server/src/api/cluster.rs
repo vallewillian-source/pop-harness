@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use crate::auth::Identity;
 use crate::cluster;
 use crate::error::ApiError;
-use crate::estado::Estado;
+use crate::state::ServerState;
 
 #[utoipa::path(
     post,
@@ -20,14 +20,17 @@ use crate::estado::Estado;
         (status = 403, description = "token de org (a recarga exige token global)", body = crate::error::ErrorResponse)
     )
 )]
-pub async fn reload(State(state): State<Estado>, ident: Identity) -> Result<Json<Value>, ApiError> {
+pub async fn reload(
+    State(state): State<ServerState>,
+    ident: Identity,
+) -> Result<Json<Value>, ApiError> {
     ident.require_global()?;
-    match cluster::recarregar(&state) {
+    match cluster::reload(&state) {
         Ok(report) => Ok(Json(
             serde_json::to_value(report).unwrap_or_else(|_| json!({})),
         )),
         Err(error) => {
-            let problem = error.problemas();
+            let problem = error.problems();
             let first = problem
                 .first()
                 .cloned()
@@ -38,7 +41,7 @@ pub async fn reload(State(state): State<Estado>, ident: Identity) -> Result<Json
                 format!("cluster.toml inválido: {first}"),
             )
             .with_details(json!({
-                "arquivo": state.cluster().caminho.display().to_string(),
+                "arquivo": state.cluster().path.display().to_string(),
                 "problemas": problem,
             })))
         }

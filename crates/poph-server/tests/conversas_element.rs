@@ -19,7 +19,7 @@ use std::time::Duration;
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
 use axum::http::StatusCode;
-use poph_server::Estado;
+use poph_server::ServerState;
 use poph_store::{Agente, Conversa, NewAgent, NewConversation, NewOrg, Org, Store};
 use poph_types::{AgentId, ConversationId, HarnessConfig, OrgId};
 use rand_core::OsRng;
@@ -58,8 +58,8 @@ impl Cenario {
         }
     }
 
-    fn estado(&self) -> Estado {
-        Estado::novo(Arc::clone(&self.store), self.config.clone()).expect("estado do servidor")
+    fn estado(&self) -> ServerState {
+        ServerState::new(Arc::clone(&self.store), self.config.clone()).expect("estado do servidor")
     }
 
     fn org(&self, slug: &str) -> Org {
@@ -141,7 +141,7 @@ impl Drop for Cenario {
 }
 
 /// Sobe o router numa porta efêmera.
-async fn servir(estado: Estado) -> (String, oneshot::Sender<()>) {
+async fn servir(estado: ServerState) -> (String, oneshot::Sender<()>) {
     let app = poph_server::router(estado);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await

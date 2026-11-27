@@ -25,8 +25,8 @@ use poph_agent::limites::{LimitOptions, Limiter};
 use poph_agent::metrics::{MetricsMemory, MetricsTurn};
 use poph_agent::turno::{TurnEngine, TurnOptions, TurnProcessor};
 use poph_core::llm::{FakeProvider, FinishReason, LlmError, LlmEvent, LlmProvider, Script};
-use poph_server::Estado;
-use poph_server::entrada_turno::MOTIVO_INTERROMPIDO;
+use poph_server::ServerState;
+use poph_server::turn_input::INTERRUPTED_REASON;
 use poph_store::{
     Direction, NewAgent, NewConversation, NewMessage, NewOrg, Page, Role, Store, TurnState,
 };
@@ -223,12 +223,12 @@ impl Servidor {
         let fluxo = Fluxo::new(Arc::clone(&store), atores, FlowOptions::default());
         processador.attach_io(fluxo.clone());
 
-        let mut estado = Estado::novo(Arc::clone(&store), config)
+        let mut estado = ServerState::new(Arc::clone(&store), config)
             .expect("estado do servidor")
-            .com_motor(motor)
-            .com_turno(fluxo, Duration::from_millis(20));
+            .with_engine(motor)
+            .with_turn(fluxo, Duration::from_millis(20));
         if let Some(validade) = validade_da_reserva {
-            estado = estado.com_validade_da_reserva(validade);
+            estado = estado.with_reservation_ttl(validade);
         }
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -396,7 +396,7 @@ async fn turno_interrompido_vira_falha_na_subida_e_a_conversa_aceita_a_proxima_m
         .get(servidor.org, turno)
         .expect("turno gravado");
     assert_eq!(gravado.state, TurnState::Failed);
-    assert_eq!(gravado.error.as_deref(), Some(MOTIVO_INTERROMPIDO));
+    assert_eq!(gravado.error.as_deref(), Some(INTERRUPTED_REASON));
     assert!(
         gravado.finished_at.is_some(),
         "o turno órfão ganha hora de fim"
@@ -615,21 +615,21 @@ async fn reserva_de_turno_de_teste_vence() {
     let (store, config) = abrir_store(&pasta);
     let (org, agente) = semear_org_e_agente(&store);
     let conversa = abrir_conversa(&store, org, agente, "test");
-    let estado = Estado::novo(store, config)
+    let estado = ServerState::new(store, config)
         .expect("estado")
-        .com_validade_da_reserva(Duration::from_millis(60));
+        .with_reservation_ttl(Duration::from_millis(60));
 
-    assert!(estado.reservar_turno_de_teste(conversa));
+    assert!(estado.reserve_test_turn(conversa));
     assert!(
-        !estado.reservar_turno_de_teste(conversa),
+        !estado.reserve_test_turn(conversa),
         "enquanto vale, a segunda aba recebe 409"
     );
     tokio::time::sleep(Duration::from_millis(90)).await;
     assert!(
-        estado.reservar_turno_de_teste(conversa),
+        estado.reserve_test_turn(conversa),
         "vencida a reserva, a conversa volta a aceitar mensagem"
     );
-    estado.liberar_turno_de_teste(conversa);
-    assert!(estado.reservar_turno_de_teste(conversa));
+    estado.release_test_turn(conversa);
+    assert!(estado.reserve_test_turn(conversa));
     let _ = fs::remove_dir_all(&pasta);
 }

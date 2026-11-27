@@ -28,8 +28,8 @@ use poph_agent::limites::{LimitOptions, Limiter};
 use poph_agent::metrics::{MetricsMemory, MetricsTurn};
 use poph_agent::turno::{TurnEngine, TurnOptions, TurnProcessor};
 use poph_core::llm::{FakeProvider, LlmError, LlmEvent, LlmProvider, Script};
-use poph_server::Estado;
-use poph_server::cluster::ClusterVivo;
+use poph_server::ServerState;
+use poph_server::cluster::LiveCluster;
 use poph_store::{Direction, NewAgent, NewOrg, Page, Store, TurnState};
 use poph_types::config::{ClusterConfig, ClusterInstance, GlobalTokenConfig};
 use poph_types::{AgentId, ConversationId, HarnessConfig, OrgId, Secret};
@@ -120,12 +120,12 @@ async fn iniciar(
         ],
         orgs: BTreeMap::from([(org.to_owned(), "b".to_owned())]),
     };
-    let mut estado = Estado::novo(Arc::clone(&store), config)
+    let mut estado = ServerState::new(Arc::clone(&store), config)
         .expect("estado do servidor")
-        .com_cluster(ClusterVivo {
-            caminho: pasta.join("cluster.toml"),
+        .with_cluster(LiveCluster {
+            path: pasta.join("cluster.toml"),
             config: mapa,
-            segredo: Some(Secret::new(SEGREDO.to_owned())),
+            secret: Some(Secret::new(SEGREDO.to_owned())),
         });
 
     if com_turno {
@@ -158,8 +158,8 @@ async fn iniciar(
         let fluxo = Fluxo::new(Arc::clone(&store), atores, FlowOptions::default());
         processador.attach_io(fluxo.clone());
         estado = estado
-            .com_motor(motor)
-            .com_turno(fluxo, Duration::from_millis(20));
+            .with_engine(motor)
+            .with_turn(fluxo, Duration::from_millis(20));
     }
 
     let endereco = listener.local_addr().expect("endereço local");

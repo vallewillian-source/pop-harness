@@ -17,7 +17,7 @@ use poph_matrix::rooms::{ConversationToRoom, RoomError};
 use poph_matrix::users::GhostIds;
 use poph_server::matrix_metrics::MetricsMatrix;
 use poph_server::matrix_mirror::{MatrixMirror, MatrixTarget, PublishedAsset};
-use poph_server::{AttendantResponse, Estado, EventDelivery, HarnessResponsePort};
+use poph_server::{AttendantResponse, EventDelivery, HarnessResponsePort, ServerState};
 use poph_store::{Direction, NewAgent, NewConversation, NewMessage, NewOrg, Origin, Role, Store};
 use poph_types::{AgentId, ConversationId, HarnessConfig, MatrixConfig, OrgId, Registry};
 use serde_json::{Value, json};
@@ -617,7 +617,7 @@ async fn contadores_da_resposta_do_atendente_viram_metrica() {
 // ───────────────────────────── /metrics ─────────────────────────────
 
 /// Sobe o servidor com o estado dado e devolve o texto de `/metrics`.
-async fn metricas_http(state: Estado) -> String {
+async fn metricas_http(state: ServerState) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("porta efêmera");
@@ -650,7 +650,7 @@ async fn metricas_http(state: Estado) -> String {
     body.expect("o /metrics respondeu")
 }
 
-fn estado_com_modulo(rotulo: &str, ligado: bool) -> (Estado, PathBuf) {
+fn estado_com_modulo(rotulo: &str, ligado: bool) -> (ServerState, PathBuf) {
     let pasta = std::env::temp_dir().join(format!(
         "poph-metricas-http-{rotulo}-{}",
         std::process::id()
@@ -664,7 +664,7 @@ fn estado_com_modulo(rotulo: &str, ligado: bool) -> (Estado, PathBuf) {
         ..config()
     });
     let store = Arc::new(Store::open(&cfg).expect("abre o banco"));
-    let state = Estado::novo(store, cfg).expect("estado do servidor");
+    let state = ServerState::new(store, cfg).expect("estado do servidor");
     (state, pasta)
 }
 

@@ -3,7 +3,7 @@ use super::{ListJson, PageQuery, if_match_version, next_cursor, request_status};
 use crate::{
     auth::Identity,
     error::{ApiError, id_from_url as parse_path_id},
-    estado::Estado,
+    state::ServerState,
 };
 use axum::{
     Json,
@@ -98,7 +98,7 @@ fn dep(s: Option<String>) -> Result<Option<DepartmentId>, ApiError> {
 
 #[utoipa::path(operation_id = "listar", get,path="/admin/v1/orgs/{org_id}/agents",tag="agents",params(("org_id"=String,Path),("limit"=Option<u32>,Query),("cursor"=Option<String>,Query)),security(("bearer"=[])),responses((status=200,description="Agentes",body=ListJson<Value>)))]
 pub async fn list(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<OrgPath>,
     Query(q): Query<PageQuery>,
@@ -120,7 +120,7 @@ pub async fn list(
 }
 #[utoipa::path(operation_id = "mostrar", get,path="/admin/v1/orgs/{org_id}/agents/{agent_id}",tag="agents",params(("org_id"=String,Path),("agent_id"=String,Path)),security(("bearer"=[])),responses((status=200,description="Agente",body=Value)))]
 pub async fn show(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<AgentPath>,
 ) -> Result<Json<Value>, ApiError> {
@@ -149,7 +149,7 @@ pub async fn show(
 }
 #[utoipa::path(operation_id = "criar", post,path="/admin/v1/orgs/{org_id}/agents",tag="agents",params(("org_id"=String,Path)),security(("bearer"=[])),request_body=AgentData,responses((status=201,description="Agente criado",body=Value)))]
 pub async fn create(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<OrgPath>,
     body: Result<Json<AgentData>, JsonRejection>,
@@ -251,7 +251,7 @@ pub async fn create(
 }
 #[utoipa::path(operation_id = "atualizar", patch,path="/admin/v1/orgs/{org_id}/agents/{agent_id}",tag="agents",params(("org_id"=String,Path),("agent_id"=String,Path),("If-Match"=String,Header)),security(("bearer"=[])),request_body=AgentData,responses((status=200,description="Agente alterado",body=Value),(status=412,description="Conflito",body=crate::error::ErrorResponse)))]
 pub async fn update(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<AgentPath>,
     h: HeaderMap,
@@ -351,7 +351,7 @@ pub async fn update(
 }
 #[utoipa::path(operation_id = "excluir", delete,path="/admin/v1/orgs/{org_id}/agents/{agent_id}",tag="agents",params(("org_id"=String,Path),("agent_id"=String,Path)),security(("bearer"=[])),responses((status=200,description="Agente excluído",body=Value)))]
 pub async fn delete(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<AgentPath>,
 ) -> Result<Json<Value>, ApiError> {

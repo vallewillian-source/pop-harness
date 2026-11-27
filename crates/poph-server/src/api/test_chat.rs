@@ -24,7 +24,7 @@ use super::{ListJson, PageQuery, if_match_version, next_cursor};
 use crate::{
     auth::Identity,
     error::{ApiError, id_from_url as parse_path_id},
-    estado::Estado,
+    state::ServerState,
 };
 
 pub const CHANNEL_OF_TEST: &str = "test";
@@ -70,13 +70,13 @@ impl TurnObserver for SseObserver {
 }
 
 struct SseGuard {
-    state: Estado,
+    state: ServerState,
     conversation: ConversationId,
     entry: Option<TurnInput>,
 }
 
 impl SseGuard {
-    fn new(state: Estado, conversation: ConversationId) -> Self {
+    fn new(state: ServerState, conversation: ConversationId) -> Self {
         Self {
             state,
             conversation,
@@ -90,7 +90,7 @@ impl Drop for SseGuard {
         if let Some(entry) = &self.entry {
             entry.cancellation.cancel();
         }
-        self.state.liberar_turno_de_teste(self.conversation);
+        self.state.release_test_turn(self.conversation);
     }
 }
 
@@ -173,7 +173,7 @@ fn sent_file_json(item: &OutboxItem) -> Value {
 }
 
 fn agent_and_conversation(
-    state: &Estado,
+    state: &ServerState,
     org: OrgId,
     agent_id: AgentId,
     conversation: ConversationId,
@@ -191,7 +191,7 @@ fn agent_and_conversation(
 
 #[utoipa::path(post, path="/admin/v1/orgs/{org_id}/agents/{agent_id}/test-chat", tag="test-chat", operation_id="teste_chat_criar", security(("bearer"=[])), params(("org_id"=String, Path), ("agent_id"=String, Path)), responses((status=201, description="Conversa de teste criada", body=Value), (status=404, description="Agente não encontrado", body=crate::error::ErrorResponse)))]
 pub async fn create(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     ident: Identity,
     Path(c): Path<AgentPath>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
@@ -226,7 +226,7 @@ pub async fn create(
 
 #[utoipa::path(get, path="/admin/v1/orgs/{org_id}/agents/{agent_id}/test-chat", tag="test-chat", operation_id="teste_chat_listar", security(("bearer"=[])), params(("org_id"=String, Path), ("agent_id"=String, Path), ("limit"=Option<u32>, Query), ("cursor"=Option<String>, Query)), responses((status=200, description="Conversas de teste do agente, mais recentes primeiro", body=ListJson<Value>)))]
 pub async fn list(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     ident: Identity,
     Path(c): Path<AgentPath>,
     Query(q): Query<PageQuery>,
@@ -268,7 +268,7 @@ pub async fn list(
 
 #[utoipa::path(get, path="/admin/v1/orgs/{org_id}/agents/{agent_id}/test-chat/{conversation_id}", tag="test-chat", operation_id="teste_chat_historico", security(("bearer"=[])), params(("org_id"=String, Path), ("agent_id"=String, Path), ("conversation_id"=String, Path)), responses((status=200, description="Conversa, mensagens e turnos (com o que o painel do porquê lê)", body=Value), (status=404, description="Não encontrado", body=crate::error::ErrorResponse)))]
 pub async fn history(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     ident: Identity,
     Path(c): Path<ConversationPath>,
 ) -> Result<Json<Value>, ApiError> {
@@ -349,7 +349,7 @@ pub struct AttachmentPath {
 #[doc = " escopo. Blob ausente no disco também dá `404` com a mesma mensagem genérica."]
 #[utoipa::path(get, path="/admin/v1/orgs/{org_id}/agents/{agent_id}/test-chat/{conversation_id}/messages/{message_id}/attachments/{attachment_id}/content", tag="test-chat", operation_id="teste_chat_anexo_conteudo", security(("bearer"=[])), params(("org_id"=String, Path), ("agent_id"=String, Path), ("conversation_id"=String, Path), ("message_id"=String, Path), ("attachment_id"=String, Path)), responses((status=200, description="Conteúdo do anexo (bytes com o MIME gravado e o sha256 no cabeçalho `x-content-sha256`)", body=Vec<u8>, content_type="application/octet-stream"), (status=403, description="Org de outro token", body=crate::error::ErrorResponse), (status=404, description="Anexo ou conteúdo não encontrado", body=crate::error::ErrorResponse)))]
 pub async fn attachment_content(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     ident: Identity,
     Path(c): Path<AttachmentPath>,
 ) -> Result<axum::response::Response, ApiError> {
@@ -382,7 +382,7 @@ pub async fn attachment_content(
 
 #[utoipa::path(post, path="/admin/v1/orgs/{org_id}/agents/{agent_id}/test-chat/{conversation_id}/reopen", tag="test-chat", operation_id="teste_chat_reabrir", security(("bearer"=[])), params(("org_id"=String, Path), ("agent_id"=String, Path), ("conversation_id"=String, Path), ("If-Match"=String, Header)), responses((status=200, description="Conversa reaberta", body=Value), (status=412, description="Versão desatualizada", body=crate::error::ErrorResponse)))]
 pub async fn reopen(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     ident: Identity,
     Path(c): Path<ConversationPath>,
     headers: HeaderMap,
@@ -409,7 +409,7 @@ pub async fn reopen(
 
 #[utoipa::path(post, path="/admin/v1/orgs/{org_id}/agents/{agent_id}/test-chat/{conversation_id}/messages", tag="test-chat", operation_id="teste_chat_mensagem", security(("bearer"=[])), params(("org_id"=String, Path), ("agent_id"=String, Path), ("conversation_id"=String, Path)), request_body(content = inline(TestMessageData), content_type = "multipart/form-data"), responses((status=200, description="Turno em `text/event-stream`: `mensagem`, `inicio`, `texto`, `base`, `ferramenta`, `transferencia`, `fim` ou `erro`", body=String, content_type="text/event-stream"), (status=409, description="Já existe turno em voo nesta conversa", body=crate::error::ErrorResponse), (status=503, description="Turno indisponível (sem chave do modelo)", body=crate::error::ErrorResponse)))]
 pub async fn send_message(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     ident: Identity,
     Path(c): Path<ConversationPath>,
     multipart: Result<Multipart, axum::extract::multipart::MultipartRejection>,
@@ -419,7 +419,7 @@ pub async fn send_message(
     let agent_id = parse_path_id::<AgentId>(&c.agent_id)?;
     let conversation_id = parse_path_id::<ConversationId>(&c.conversation_id)?;
     agent_and_conversation(&state, org, agent_id, conversation_id)?;
-    let engine = state.motor.clone().ok_or_else(|| {
+    let engine = state.engine.clone().ok_or_else(|| {
         ApiError::new(
             StatusCode::SERVICE_UNAVAILABLE,
             "turno_indisponivel",
@@ -436,7 +436,7 @@ pub async fn send_message(
         )
     })?;
 
-    if !state.reservar_turno_de_teste(conversation_id) {
+    if !state.reserve_test_turn(conversation_id) {
         return Err(ApiError::new(
             StatusCode::CONFLICT,
             "turno_em_andamento",
@@ -486,7 +486,7 @@ pub async fn send_message(
     guard.entry = Some(entry.clone());
 
     let (tx, rx) = mpsc::unbounded_channel::<StreamOutput>();
-    let delivery = state.turno.clone();
+    let delivery = state.turn.clone();
     tokio::spawn(async move {
         let mut observer = SseObserver { tx: tx.clone() };
         let result = engine.run(entry, &mut observer).await;
@@ -606,14 +606,14 @@ async fn read_field(
 }
 
 async fn receive_files(
-    state: &Estado,
+    state: &ServerState,
     org: OrgId,
     file: Vec<(String, Vec<u8>)>,
 ) -> Result<(Vec<NewChannelAttachment>, Vec<Value>), ApiError> {
     if file.is_empty() {
         return Ok((Vec::new(), Vec::new()));
     }
-    let config = std::sync::Arc::clone(&state.arquivos);
+    let config = std::sync::Arc::clone(&state.files);
     let folder_blobs = state.config.blobs();
     let processed = tokio::task::spawn_blocking(move || {
         file.into_iter()

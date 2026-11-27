@@ -41,7 +41,7 @@ one that is a non-empty string. There is no synthetic ID: if none comes back, th
 - **The generic channel contract does not change:** `Integration::send_text`/`send_file` still return
   `Result<(), ErroIntegracao>` and discard the ID, because the same contract serves a plugin in an external process,
   which may not return any.
-- **What Harness stores:** the WhatsApp output (`crates/poph-server/src/saida_whatsapp.rs`) records the ID in
+- **What Harness stores:** the WhatsApp output (`crates/poph-server/src/whatsapp_output.rs`) records the ID in
   `outbox.external_message_id` when it confirms the send (migration `0011`). A send that fails, or a channel that
   returns no ID, leaves the column null — and that is not a send error.
 
@@ -185,7 +185,7 @@ channel refuses the delivery before reading the body.
 
 The reply is written by the turn (which does not yet run in `poph serve`). It records the agent's message as `out` in
 the conversation and enqueues a `text` item (or `file`, for a library file) in the output queue. The consumer lives in
-`crates/poph-server/src/saida_whatsapp.rs`, runs as a 1 s loop inside `poph serve` (only when an Evolution instance is
+`crates/poph-server/src/whatsapp_output.rs`, runs as a 1 s loop inside `poph serve` (only when an Evolution instance is
 configured) and follows these rules:
 
 - **Only picks up what belongs to the configured WhatsApp.** An item whose conversation is from the console, another
@@ -216,6 +216,11 @@ Limits of this delivery:
 - `poph chat` confirms only the items of console conversations (fixed in HR-26f). WhatsApp ones are left for the output
   loop.
 - The order between messages of the same conversation can flip when one of them is waiting for a new attempt.
+
+The worker leaves outbox entries for other channels or unconfigured integrations for their own delivery path.
+A configured WhatsApp channel with missing credentials also leaves its entries pending. A delivery attempt is
+recorded before calling Evolution. If the process stops after that call and before recording success, the pending
+delivery may be attempted again on restart. The Evolution client sends only once per recorded attempt.
 
 ## Turn on the server (HR-26h)
 

@@ -185,6 +185,14 @@ the file itself), in parallel, with a 3 s limit each, and reports:
 It exits with code 1 when there is any problem. Without `--remoto`, the command keeps validating only the file, as
 before. In JSON, the report includes `remoto` (one item per instance) and `problemas_remotos`.
 
+### Request body and response streaming
+
+The receiving owner applies the original authorization with its usual scope checks. The forwarding middleware reads
+the full request body before sending it because the signature covers its SHA-256 digest. It uses the same body cap
+as the receiving route: 1 MiB for the Evolution webhook, 24 MiB for test chat, 64 MiB for backup import, and 2 MiB
+for the other org routes. An oversized request receives `413 payload_too_large`. The owner's response body is
+streamed back to the caller.
+
 ## What does NOT exist yet
 
 - **Automatically moving an org to another instance:** changing the map and reloading only changes routing; the

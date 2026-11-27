@@ -17,9 +17,9 @@ use utoipa::ToSchema;
 
 use crate::auth::Identity;
 use crate::error::id_from_url as parse_path_id;
-use crate::{ApiError, Estado};
+use crate::{ApiError, ServerState};
 
-pub fn routes() -> Router<Estado> {
+pub fn routes() -> Router<ServerState> {
     use axum::routing::{get, post};
     Router::new()
         .route(
@@ -121,7 +121,7 @@ fn scoped_org(identity: &Identity, raw: &str) -> Result<OrgId, ApiError> {
     Ok(org)
 }
 
-fn allowed_agent(state: &Estado, org: OrgId, agent: AgentId) -> Result<(), ApiError> {
+fn allowed_agent(state: &ServerState, org: OrgId, agent: AgentId) -> Result<(), ApiError> {
     state.store.agents().get(org, agent)?;
     let configured = match state.store.instructions().get(org, agent) {
         Ok(instructions) => {
@@ -146,7 +146,7 @@ fn allowed_agent(state: &Estado, org: OrgId, agent: AgentId) -> Result<(), ApiEr
 }
 
 fn scoped_conversation(
-    state: &Estado,
+    state: &ServerState,
     identity: &Identity,
     raw_org: &str,
     raw_id: &str,
@@ -162,7 +162,7 @@ fn scoped_conversation(
 }
 
 fn scoped_turn(
-    state: &Estado,
+    state: &ServerState,
     identity: &Identity,
     path: &TurnPath,
 ) -> Result<SiteTurnKey, ApiError> {
@@ -198,7 +198,7 @@ fn limit(raw: Option<&str>, max: u32, default: u32) -> Result<u32, ApiError> {
 
 #[utoipa::path(operation_id = "create", post, path="/admin/v1/orgs/{org_id}/agents/{agent_id}/site-conversations", tag="site-conversations", security(("bearer"=[])), params(("org_id"=String, Path), ("agent_id"=String, Path)), request_body=CreateBody, responses((status=201, description="Conversa criada", body=Value), (status=200, description="Conversa existente", body=Value), (status=422, description="Agente ou dados recusados", body=crate::ErrorResponse)))]
 pub async fn create(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(path): Path<AgentPath>,
     json: Result<Json<CreateBody>, JsonRejection>,
@@ -234,7 +234,7 @@ pub async fn create(
 
 #[utoipa::path(operation_id = "submit", post, path="/admin/v1/orgs/{org_id}/site-conversations/{id}/messages", tag="site-conversations", security(("bearer"=[])), params(("org_id"=String, Path), ("id"=String, Path)), request_body=MessageBody, responses((status=202, description="Mensagem aceita", body=Value), (status=200, description="Repetição da mensagem", body=Value), (status=409, description="Turno ativo ou chave já usada para outro texto", body=crate::ErrorResponse), (status=422, description="Agente ou dados recusados", body=crate::ErrorResponse)))]
 pub async fn submit(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(path): Path<ConversationPath>,
     json: Result<Json<MessageBody>, JsonRejection>,
@@ -302,7 +302,7 @@ pub async fn submit(
 
 #[utoipa::path(operation_id = "turn", get, path="/admin/v1/orgs/{org_id}/site-conversations/{id}/turns/{turn_id}", tag="site-conversations", security(("bearer"=[])), params(("org_id"=String, Path), ("id"=String, Path), ("turn_id"=String, Path)), responses((status=200, description="Estado do turno", body=Value), (status=404, description="Turno não encontrado", body=crate::ErrorResponse)))]
 pub async fn turn(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(path): Path<TurnPath>,
 ) -> Result<Json<Value>, ApiError> {
@@ -312,7 +312,7 @@ pub async fn turn(
 
 #[utoipa::path(operation_id = "cancel", post, path="/admin/v1/orgs/{org_id}/site-conversations/{id}/turns/{turn_id}/cancel", tag="site-conversations", security(("bearer"=[])), params(("org_id"=String, Path), ("id"=String, Path), ("turn_id"=String, Path)), responses((status=200, description="Estado final do turno", body=Value), (status=404, description="Turno não encontrado", body=crate::ErrorResponse)))]
 pub async fn cancel(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(path): Path<TurnPath>,
 ) -> Result<Json<Value>, ApiError> {
@@ -338,7 +338,7 @@ pub async fn cancel(
 
 #[utoipa::path(operation_id = "history", get, path="/admin/v1/orgs/{org_id}/site-conversations/{id}/messages", tag="site-conversations", security(("bearer"=[])), params(("org_id"=String, Path), ("id"=String, Path), ("before"=Option<String>, Query), ("limit"=Option<u32>, Query)), responses((status=200, description="Mensagens de visitante e agente, da mais nova para a mais antiga", body=Value), (status=404, description="Conversa não encontrada", body=crate::ErrorResponse)))]
 pub async fn history(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(path): Path<ConversationPath>,
     parsed: Result<Query<HistoryQuery>, QueryRejection>,
@@ -360,7 +360,7 @@ pub async fn history(
 
 #[utoipa::path(operation_id = "events", get, path="/admin/v1/orgs/{org_id}/site-conversations/{id}/events", tag="site-conversations", security(("bearer"=[])), params(("org_id"=String, Path), ("id"=String, Path), ("after"=Option<i64>, Query), ("limit"=Option<u32>, Query)), responses((status=200, description="Eventos ordenados após o cursor", body=Value), (status=404, description="Conversa não encontrada", body=crate::ErrorResponse)))]
 pub async fn events(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(path): Path<ConversationPath>,
     parsed: Result<Query<EventsQuery>, QueryRejection>,
@@ -376,7 +376,7 @@ pub async fn events(
 
 #[utoipa::path(operation_id = "events_stream", get, path="/admin/v1/orgs/{org_id}/site-conversations/{id}/events/stream", tag="site-conversations", security(("bearer"=[])), params(("org_id"=String, Path), ("id"=String, Path), ("after"=Option<i64>, Query), ("Last-Event-ID"=Option<String>, Header)), responses((status=200, description="Eventos do site em SSE", body=String, content_type="text/event-stream"), (status=404, description="Conversa não encontrada", body=crate::ErrorResponse)))]
 pub async fn events_stream(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(path): Path<ConversationPath>,
     headers: HeaderMap,

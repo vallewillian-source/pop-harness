@@ -3,7 +3,7 @@ use super::{ListJson, PageQuery, next_cursor};
 use crate::{
     auth::Identity,
     error::{ApiError, id_from_url as parse_path_id},
-    estado::Estado,
+    state::ServerState,
 };
 use axum::{
     Json,
@@ -29,7 +29,7 @@ struct Complements {
 }
 
 fn complements_of(
-    e: &Estado,
+    e: &ServerState,
     org: OrgId,
     conversations: &[poph_store::Conversa],
 ) -> Result<Complements, ApiError> {
@@ -118,7 +118,7 @@ fn query_order(q: &ConversationsQuery) -> Result<OrderConversations, ApiError> {
 
 #[utoipa::path(get, path="/admin/v1/orgs/{org_id}/conversations", tag="conversations", operation_id="conversas_listar", security(("bearer"=[])), params(("org_id"=String, Path), ("limit"=Option<u32>, Query), ("cursor"=Option<String>, Query), ("external_peer"=Option<String>, Query), ("status"=Option<String>, Query), ("sort"=Option<String>, Query), ("last_activity_before"=Option<i64>, Query)), responses((status=200, description="Conversas", body=ListJson<Value>), (status=400, description="Parâmetro inválido", body=crate::error::ErrorResponse)))]
 pub async fn list(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<OrgPath>,
     Query(q): Query<ConversationsQuery>,
@@ -166,7 +166,7 @@ pub async fn list(
 }
 #[utoipa::path(get, path="/admin/v1/orgs/{org_id}/conversations/{conversation_id}", tag="conversations", operation_id="conversas_mostrar", security(("bearer"=[])), params(("org_id"=String, Path), ("conversation_id"=String, Path)), responses((status=200, description="Conversa", body=Value)))]
 pub async fn show(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<ConversationPath>,
 ) -> Result<Json<Value>, ApiError> {
@@ -179,7 +179,7 @@ pub async fn show(
 }
 #[utoipa::path(get, path="/admin/v1/orgs/{org_id}/conversations/{conversation_id}/messages", tag="conversations", operation_id="mensagens_listar", security(("bearer"=[])), params(("org_id"=String, Path), ("conversation_id"=String, Path), ("limit"=Option<u32>, Query), ("cursor"=Option<String>, Query)), responses((status=200, description="Mensagens", body=ListJson<Value>)))]
 pub async fn messages(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<ConversationPath>,
     Query(q): Query<PageQuery>,
@@ -197,7 +197,7 @@ pub async fn messages(
 }
 #[utoipa::path(get, path="/admin/v1/orgs/{org_id}/conversations/{conversation_id}/turns", tag="conversations", operation_id="turnos_listar", security(("bearer"=[])), params(("org_id"=String, Path), ("conversation_id"=String, Path), ("limit"=Option<u32>, Query), ("cursor"=Option<String>, Query)), responses((status=200, description="Turnos", body=ListJson<Value>)))]
 pub async fn turns(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<ConversationPath>,
     Query(q): Query<PageQuery>,
@@ -240,7 +240,7 @@ pub async fn turns(
 
 #[utoipa::path(post, path="/admin/v1/orgs/{org_id}/conversations/{conversation_id}/reopen", tag="conversations", operation_id="conversas_reabrir", security(("bearer"=[])), params(("org_id"=String, Path), ("conversation_id"=String, Path), ("If-Match"=String, Header)), responses((status=200, description="Conversa reaberta", body=Value), (status=409, description="Conversa encerrada (`conversa_encerrada`): não reabre; nada muda", body=crate::error::ErrorResponse), (status=412, description="Versão desatualizada", body=crate::error::ErrorResponse)))]
 pub async fn reopen(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<ConversationPath>,
     headers: axum::http::HeaderMap,
@@ -259,7 +259,7 @@ pub async fn reopen(
 
 #[utoipa::path(post, path="/admin/v1/orgs/{org_id}/conversations/{conversation_id}/close", tag="conversations", operation_id="conversas_fechar", security(("bearer"=[])), params(("org_id"=String, Path), ("conversation_id"=String, Path), ("If-Match"=String, Header)), responses((status=200, description="Conversa fechada", body=Value), (status=404, description="Conversa não encontrada na org", body=crate::error::ErrorResponse), (status=409, description="Conversa já fechada", body=crate::error::ErrorResponse), (status=412, description="Versão desatualizada", body=crate::error::ErrorResponse), (status=428, description="Faltou If-Match", body=crate::error::ErrorResponse)))]
 pub async fn close(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<ConversationPath>,
     headers: axum::http::HeaderMap,
@@ -285,7 +285,7 @@ pub struct BodyTransfer {
 
 #[utoipa::path(post, path="/admin/v1/orgs/{org_id}/conversations/{conversation_id}/transfer", tag="conversations", operation_id="conversas_transferir", security(("bearer"=[])), params(("org_id"=String, Path), ("conversation_id"=String, Path)), request_body = BodyTransfer, responses((status=200, description="Conversa transferida para o departamento", body=Value), (status=400, description="Corpo inválido, motivo vazio ou departamento malformado", body=crate::error::ErrorResponse), (status=404, description="Conversa ou departamento fora da org", body=crate::error::ErrorResponse), (status=409, description="Conversa encerrada (`conversa_encerrada`): não transfere; nada muda", body=crate::error::ErrorResponse)))]
 pub async fn transfer(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<ConversationPath>,
     body: Result<Json<BodyTransfer>, JsonRejection>,

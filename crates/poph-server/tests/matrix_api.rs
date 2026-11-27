@@ -33,7 +33,7 @@ use axum::response::{IntoResponse, Response};
 use poph_matrix::config::MatrixModule;
 use poph_matrix::config::MatrixSecrets;
 use poph_matrix::spaces::Spaces;
-use poph_server::Estado;
+use poph_server::ServerState;
 use poph_server::matrix_beginning::{self, ModuleSpaces, SpaceStorePort, StartupSettings};
 use poph_store::{
     Direction, NewAgent, NewConversation, NewDepartment, NewMessage, NewOrg, Origin, Role, Store,
@@ -471,8 +471,8 @@ impl Cenario {
         }
     }
 
-    fn state(&self) -> Estado {
-        Estado::novo(Arc::clone(&self.store), self.config.clone()).expect("estado do servidor")
+    fn state(&self) -> ServerState {
+        ServerState::new(Arc::clone(&self.store), self.config.clone()).expect("estado do servidor")
     }
 
     fn modulo(&self) -> MatrixModule {
@@ -604,7 +604,7 @@ impl Drop for Cenario {
 // ───────────────────────────── HTTP ─────────────────────────────
 
 /// Sobe o router do servidor numa porta efêmera.
-async fn servir(state: Estado) -> (String, oneshot::Sender<()>) {
+async fn servir(state: ServerState) -> (String, oneshot::Sender<()>) {
     let app = poph_server::router(state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -786,7 +786,7 @@ async fn estado_da_org_diz_conectado_quando_a_sonda_fala_com_o_synapse() {
     .expect("módulo ligado");
     let (base, desligar) = servir(state.clone()).await;
     esperar_ate("sonda falar com o Synapse falso", || {
-        state.matrix_conectado() == Some(true)
+        state.matrix_connected() == Some(true)
     })
     .await;
 
@@ -1182,7 +1182,7 @@ async fn modulo_desligado_recusa_espaco_e_mostra_conectado_nulo() {
 
     let mut config = cenario.config.clone();
     config.matrix = None;
-    let state = Estado::novo(Arc::clone(&cenario.store), config).expect("estado sem módulo");
+    let state = ServerState::new(Arc::clone(&cenario.store), config).expect("estado sem módulo");
     let (base, desligar) = servir(state).await;
 
     let rota = format!("/admin/v1/orgs/{org}/matrix");

@@ -6,7 +6,7 @@ use poph_store::{SiteOutcome, SiteTurnKey, Store};
 use poph_types::{ConversationId, OrgId, TurnId};
 use tokio::sync::broadcast;
 
-use crate::Estado;
+use crate::ServerState;
 
 pub(crate) struct SiteWorkers {
     active: Mutex<HashMap<TurnId, TurnInput>>,
@@ -40,14 +40,14 @@ impl SiteWorkers {
     }
 }
 
-pub(crate) fn recover(state: &Estado) -> Result<(), poph_store::StoreError> {
+pub(crate) fn recover(state: &ServerState) -> Result<(), poph_store::StoreError> {
     for key in state.store.site_chat().recover()? {
         launch(state.clone(), key);
     }
     Ok(())
 }
 
-pub(crate) fn launch(state: Estado, key: SiteTurnKey) {
+pub(crate) fn launch(state: ServerState, key: SiteTurnKey) {
     state.site_workers.signal(key);
     tokio::spawn(async move {
         let (job, entry) = {
@@ -85,9 +85,9 @@ pub(crate) fn launch(state: Estado, key: SiteTurnKey) {
             entry: &entry,
             failed: false,
         };
-        let result = match &state.motor {
-            Some(motor) => {
-                motor
+        let result = match &state.engine {
+            Some(engine) => {
+                engine
                     .run_site(
                         job,
                         &state.config.site_chat,
@@ -114,7 +114,7 @@ pub(crate) fn launch(state: Estado, key: SiteTurnKey) {
     });
 }
 
-fn finish(state: &Estado, key: SiteTurnKey, outcome: SiteOutcome) {
+fn finish(state: &ServerState, key: SiteTurnKey, outcome: SiteOutcome) {
     match state.store.site_chat().finish(key, outcome) {
         Ok(_) => state.site_workers.signal(key),
         Err(error) => {

@@ -3,7 +3,7 @@ use super::{ListJson, PageQuery, next_cursor};
 use crate::{
     auth::Identity,
     error::{ApiError, id_from_url as parse_path_id},
-    estado::Estado,
+    state::ServerState,
 };
 use axum::{
     Json,
@@ -40,7 +40,7 @@ fn product_json(p: &poph_store::Product) -> Value {
 
 #[utoipa::path(get, path="/admin/v1/orgs/{org_id}/products", tag="products", operation_id="produtos_listar", security(("bearer"=[])), params(("org_id"=String, Path), ("limit"=Option<u32>, Query), ("cursor"=Option<String>, Query), ("all"=Option<bool>, Query)), responses((status=200, description="Produtos", body=ListJson<Value>)))]
 pub async fn list(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<OrgPath>,
     query: Result<Query<ProductsQuery>, QueryRejection>,
@@ -63,7 +63,7 @@ pub async fn list(
 
 #[utoipa::path(get, path="/admin/v1/orgs/{org_id}/products/{product_id}", tag="products", operation_id="produtos_mostrar", security(("bearer"=[])), params(("org_id"=String, Path), ("product_id"=String, Path)), responses((status=200, description="Produto", body=Value), (status=404, description="Não encontrado", body=crate::error::ErrorResponse)))]
 pub async fn show(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<ProductPath>,
 ) -> Result<Json<Value>, ApiError> {
@@ -94,7 +94,7 @@ pub struct ProductData {
 
 #[utoipa::path(operation_id = "criar", post,path="/admin/v1/orgs/{org_id}/products",tag="products",security(("bearer"=[])),params(("org_id"=String,Path)),request_body=ProductData,responses((status=201,description="Produto criado",body=Value)))]
 pub async fn create(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<OrgPath>,
     body: Result<Json<ProductData>, JsonRejection>,
@@ -134,7 +134,7 @@ pub async fn create(
 
 #[utoipa::path(operation_id = "atualizar", patch,path="/admin/v1/orgs/{org_id}/products/{product_id}",tag="products",security(("bearer"=[])),params(("org_id"=String,Path),("product_id"=String,Path),("If-Match"=String,Header)),request_body=ProductData,responses((status=200,description="Produto alterado",body=Value),(status=412,description="Conflito",body=crate::error::ErrorResponse)))]
 pub async fn update(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<ProductPath>,
     headers: axum::http::HeaderMap,
@@ -203,7 +203,7 @@ pub struct ExclusionProduct {
     )
 )]
 pub async fn delete(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<ProductPath>,
     Query(deletion): Query<ExclusionProduct>,
@@ -240,7 +240,7 @@ pub async fn delete(
     Ok(Json(json!({"deleted": true, "index_warning": notice})))
 }
 
-async fn synchronise_catalog(e: &Estado, org: OrgId) -> Option<&'static str> {
+async fn synchronise_catalog(e: &ServerState, org: OrgId) -> Option<&'static str> {
     use poph_rag::{Embedder, Index, IndexConfig, ModelConfig, OrtEmbedder};
     use std::sync::Arc;
     static SINCRONIZACAO: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());

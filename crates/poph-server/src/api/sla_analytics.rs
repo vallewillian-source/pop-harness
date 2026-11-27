@@ -1,7 +1,7 @@
 use crate::{
     auth::Identity,
     error::{ApiError, id_from_url as parse_path_id},
-    estado::Estado,
+    state::ServerState,
 };
 use axum::{
     Json,
@@ -50,7 +50,7 @@ pub struct SlaReportJson {
 
 #[utoipa::path(get, path = "/admin/v1/orgs/{org_id}/analytics/sla", tag = "analytics", operation_id = "sla_analytics", security(("bearer" = [])), params(("org_id" = String, Path), ("to" = i64, Query), ("now" = Option<i64>, Query), ("limit" = Option<i64>, Query), ("age_bounds_minutes" = Option<String>, Query)), responses((status = 200, body = SlaReportJson), (status = 422, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]
 pub async fn report(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(path): Path<OrgPath>,
     Query(query): Query<SlaQuery>,

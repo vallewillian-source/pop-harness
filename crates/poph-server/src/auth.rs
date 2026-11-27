@@ -6,7 +6,7 @@ use axum::http::request::Parts;
 use poph_types::{AdminTokenId, OrgId};
 
 use crate::error::ApiError;
-use crate::estado::Estado;
+use crate::state::ServerState;
 
 pub const ORG_PREFIX: &str = "poph_";
 pub const GLOBAL_PREFIX: &str = "pophg_";
@@ -50,12 +50,12 @@ impl Identity {
     }
 }
 
-impl FromRequestParts<Estado> for Identity {
+impl FromRequestParts<ServerState> for Identity {
     type Rejection = ApiError;
 
     async fn from_request_parts(
         parts: &mut Parts,
-        estado: &Estado,
+        estado: &ServerState,
     ) -> Result<Self, Self::Rejection> {
         let header = parts
             .headers
@@ -74,7 +74,7 @@ impl FromRequestParts<Estado> for Identity {
     }
 }
 
-pub async fn autenticar(value: &str, estado: &Estado) -> Result<Identity, ApiError> {
+pub async fn autenticar(value: &str, estado: &ServerState) -> Result<Identity, ApiError> {
     if value.starts_with(GLOBAL_PREFIX) {
         return autenticar_global(value, estado).await;
     }
@@ -104,12 +104,12 @@ pub async fn autenticar(value: &str, estado: &Estado) -> Result<Identity, ApiErr
     })
 }
 
-async fn autenticar_global(value: &str, estado: &Estado) -> Result<Identity, ApiError> {
-    if estado.tokens_globais.is_empty() {
+async fn autenticar_global(value: &str, estado: &ServerState) -> Result<Identity, ApiError> {
+    if estado.global_tokens.is_empty() {
         return Err(ApiError::unauthorized());
     }
     let hashes: Vec<String> = estado
-        .tokens_globais
+        .global_tokens
         .iter()
         .map(|token| token.hash.clone())
         .collect();
@@ -130,7 +130,7 @@ async fn autenticar_global(value: &str, estado: &Estado) -> Result<Identity, Api
     let Some(position) = checked else {
         return Err(ApiError::unauthorized());
     };
-    let token = &estado.tokens_globais[position];
+    let token = &estado.global_tokens[position];
     Ok(Identity {
         token_id: None,
         label: token.label.clone(),

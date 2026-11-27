@@ -38,8 +38,8 @@ use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use poph_evolution::{ATTACHMENT_CAP, ConfigEvolution, EvolutionClient};
 use poph_matrix::{ClientConfig, GhostIds, MatrixClient};
-use poph_server::evolution::CanalEvolution;
-use poph_server::{AsReceiver, AttendantResponse, Estado, HarnessResponsePort};
+use poph_server::evolution::EvolutionChannel;
+use poph_server::{AsReceiver, AttendantResponse, HarnessResponsePort, ServerState};
 use poph_store::{NewAgent, NewConversation, NewOrg, Origin, OutboxState, Page, Store};
 use poph_types::{ConversationId, HarnessConfig, IntegrationId, OrgId, Secret};
 use reqwest::{Client, StatusCode as StatusHttp};
@@ -460,7 +460,7 @@ impl Cenario {
         format!("mxc://{SERVER_NAME}/{id}")
     }
 
-    fn channel(&self) -> CanalEvolution {
+    fn channel(&self) -> EvolutionChannel {
         let client = EvolutionClient::new(
             ConfigEvolution::new(
                 self.url_evo.clone(),
@@ -477,13 +477,13 @@ impl Cenario {
             .expect("lê a conversa")
             .integration_id
             .expect("a conversa tem integração");
-        CanalEvolution {
+        EvolutionChannel {
             org: self.org,
-            instancia: INSTANCIA.to_owned(),
-            integracao,
-            segredo: Some(Secret::new(SEGREDO_WEBHOOK.to_owned())),
-            cliente: Some(client),
-            teto_midia: ATTACHMENT_CAP,
+            instance: INSTANCIA.to_owned(),
+            integration: integracao,
+            secret: Some(Secret::new(SEGREDO_WEBHOOK.to_owned())),
+            client: Some(client),
+            attachment_limit: ATTACHMENT_CAP,
         }
     }
 
@@ -509,10 +509,10 @@ impl Cenario {
 
         let mut config = HarnessConfig::default();
         config.data.directory = self.diretorio.clone();
-        let state = Estado::novo(Arc::clone(&self.store), config)
+        let state = ServerState::new(Arc::clone(&self.store), config)
             .expect("estado do servidor")
-            .com_canais_evolution(vec![self.channel()])
-            .com_matrix_as(Arc::new(AsReceiver::new(
+            .with_evolution_channels(vec![self.channel()])
+            .with_matrix_as(Arc::new(AsReceiver::new(
                 PREFIXO,
                 SERVER_NAME,
                 Secret::new(HS_TOKEN.to_owned()),

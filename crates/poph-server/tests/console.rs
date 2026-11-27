@@ -14,7 +14,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime};
 
-use poph_server::Estado;
+use poph_server::ServerState;
 use poph_store::Store;
 use poph_types::HarnessConfig;
 use reqwest::{Client, Method, StatusCode};
@@ -50,7 +50,7 @@ impl Cenario {
         config.validar().expect("configuração válida");
 
         let store = std::sync::Arc::new(Store::open(&config).expect("abre o banco"));
-        let estado = Estado::novo(store, config).expect("estado do servidor");
+        let estado = ServerState::new(store, config).expect("estado do servidor");
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await

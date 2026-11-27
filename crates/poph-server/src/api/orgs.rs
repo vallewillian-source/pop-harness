@@ -11,7 +11,7 @@ use super::pagination::{ListJson, PageQuery, next_cursor};
 use super::{if_match_version, request_status, status_text};
 use crate::auth::Identity;
 use crate::error::{ApiError, id_from_url as parse_path_id};
-use crate::estado::Estado;
+use crate::state::ServerState;
 
 #[doc = " Org na resposta da API."]
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -77,7 +77,7 @@ impl OrgJson {
 }
 
 fn items_with_active_agents(
-    state: &Estado,
+    state: &ServerState,
     orgs: &[Org],
     instancia: Option<&str>,
 ) -> Result<Vec<OrgJson>, ApiError> {
@@ -217,7 +217,7 @@ const PAGE_OF_LIST_REMOTE: u32 = 20;
     )
 )]
 pub async fn list(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Query(query): Query<OrgsQuery>,
     header: HeaderMap,
@@ -239,7 +239,10 @@ pub async fn list(
     Ok(Json(OrgsListJson::local(ListJson { items, next_cursor })))
 }
 
-async fn list_in_cluster(state: &Estado, header: &HeaderMap) -> Result<OrgsListJson, ApiError> {
+async fn list_in_cluster(
+    state: &ServerState,
+    header: &HeaderMap,
+) -> Result<OrgsListJson, ApiError> {
     let cluster = state.cluster();
     let local = cluster.config.instance_id.trim().to_owned();
     let mut all = Vec::new();
@@ -407,7 +410,7 @@ async fn instance_orgs(
     )
 )]
 pub async fn create(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Json(body): Json<CreateOrg>,
 ) -> Result<(StatusCode, Json<OrgJson>), ApiError> {
@@ -470,7 +473,7 @@ pub async fn create(
     )
 )]
 pub async fn show(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(path): Path<OrgPath>,
 ) -> Result<Json<OrgJson>, ApiError> {
@@ -502,7 +505,7 @@ pub async fn show(
     )
 )]
 pub async fn update(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(path): Path<OrgPath>,
     headers: HeaderMap,
@@ -555,7 +558,7 @@ pub async fn update(
     )
 )]
 pub async fn delete(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(path): Path<OrgPath>,
     Query(deletion): Query<ExclusionOrg>,

@@ -11,7 +11,7 @@ use poph_types::OrgId;
 
 use crate::auth::Identity;
 use crate::error::{ApiError, id_from_url as parse_path_id};
-use crate::estado::Estado;
+use crate::state::ServerState;
 
 #[derive(Deserialize)]
 pub struct OrgPath {
@@ -57,7 +57,7 @@ pub struct OperationalSummaryJson {
     )
 )]
 pub async fn operational_summary(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(path): Path<OrgPath>,
     Query(query): Query<SummaryQuery>,

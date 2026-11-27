@@ -8,7 +8,7 @@ use poph_store::{OutboxState, Page};
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use crate::estado::Estado;
+use crate::state::ServerState;
 
 #[doc = " Resposta do `/healthz`."]
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -67,7 +67,7 @@ pub struct MetricsJson {
         (status = 503, description = "Banco indisponível", body = HealthJson)
     )
 )]
-pub async fn healthz(State(state): State<Estado>) -> Response {
+pub async fn healthz(State(state): State<ServerState>) -> Response {
     let harness = poph_store::file_version(state.store.harness_path())
         .ok()
         .flatten()
@@ -78,7 +78,7 @@ pub async fn healthz(State(state): State<Estado>) -> Response {
         .unwrap_or(0);
     let database_ok = state.store.tables().is_ok();
     let cluster = state.cluster();
-    let (instance_id, cluster_map_fingerprint) = if cluster.declara_cluster() {
+    let (instance_id, cluster_map_fingerprint) = if cluster.declares_cluster() {
         (
             Some(cluster.config.instance_id.trim().to_owned()),
             Some(cluster.config.map_fingerprint()),
@@ -110,9 +110,9 @@ pub async fn healthz(State(state): State<Estado>) -> Response {
     operation_id = "operacao_metrics",
     responses((status = 200, description = "Métricas em texto Prometheus", body = String))
 )]
-pub async fn metrics(State(state): State<Estado>) -> Response {
+pub async fn metrics(State(state): State<ServerState>) -> Response {
     refresh_meters(&state);
-    let text = state.registro.render();
+    let text = state.registry.render();
     (
         StatusCode::OK,
         [(
@@ -141,20 +141,20 @@ pub async fn openapi() -> Response {
     (StatusCode::OK, Json(json)).into_response()
 }
 
-fn refresh_meters(state: &Estado) {
-    if let Some(fluxos) = state.metricas_fluxos() {
-        fluxos.sincronizar_cache(state.cache_fluxos.metrics());
+fn refresh_meters(state: &ServerState) {
+    if let Some(fluxos) = state.flow_metrics() {
+        fluxos.sync_cache(state.flow_cache.metrics());
     }
     state
-        .metricas
+        .metrics
         .process_memory_bytes
         .set(resident_memory_bytes() as i64);
     state
-        .metricas
+        .metrics
         .harness_db_bytes
         .set(size(state.store.harness_path()) as i64);
     state
-        .metricas
+        .metrics
         .rag_db_bytes
         .set(size(state.store.rag_path()) as i64);
 
@@ -174,13 +174,13 @@ fn refresh_meters(state: &Estado) {
             Err(error) => tracing::warn!(error = %error, "métrica: não contei a saída"),
         }
     }
-    state.metricas.turn_queue.set(pending_entry);
-    state.metricas.outbox_queue.set(pending_output);
+    state.metrics.turn_queue.set(pending_entry);
+    state.metrics.outbox_queue.set(pending_output);
 
-    state.metricas.loaded_agents.set(0);
+    state.metrics.loaded_agents.set(0);
 }
 
-fn all_orgs(state: &Estado) -> Vec<poph_types::OrgId> {
+fn all_orgs(state: &ServerState) -> Vec<poph_types::OrgId> {
     let mut ids = Vec::new();
     let mut after = None;
     loop {
@@ -205,9 +205,9 @@ fn all_orgs(state: &Estado) -> Vec<poph_types::OrgId> {
     ids
 }
 
-fn seconds_up(state: &Estado) -> u64 {
+fn seconds_up(state: &ServerState) -> u64 {
     SystemTime::now()
-        .duration_since(state.inicio)
+        .duration_since(state.started_at)
         .map(|duration| duration.as_secs())
         .unwrap_or(0)
 }
@@ -235,12 +235,12 @@ fn resident_memory_bytes() -> u64 {
 }
 
 #[allow(dead_code)]
-pub(crate) fn summary(state: &Estado) -> MetricsJson {
+pub(crate) fn summary(state: &ServerState) -> MetricsJson {
     MetricsJson {
         memory_bytes: resident_memory_bytes() as i64,
-        queued_turns: state.metricas.turn_queue.value(),
-        queued_outbox: state.metricas.outbox_queue.value(),
-        loaded_agents: state.metricas.loaded_agents.value(),
+        queued_turns: state.metrics.turn_queue.value(),
+        queued_outbox: state.metrics.outbox_queue.value(),
+        loaded_agents: state.metrics.loaded_agents.value(),
         uptime_seconds: seconds_up(state),
     }
 }

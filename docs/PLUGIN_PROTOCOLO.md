@@ -266,10 +266,17 @@ What validates the operator's configuration against the schemas is the API (`doc
 Schema described there: `type`, `required`, `enum`, `minLength`/`maxLength`, `minimum`/`maximum` and nested
 `properties`.
 
+The catalogue serializes manifest resolution under a mutex so concurrent requests cannot start the same plugin
+twice. A successful handshake is cached for the lifetime of the server. The list uses the same cache as an
+individual lookup and returns items in kind order. One failed plugin appears as unavailable without failing
+the list. Responses contain the declared kind, availability, and public manifest metadata or an operator-facing
+message. The server does not send integration configuration or secrets to this handshake. Program paths and
+system errors stay in the server log.
+
 ## 9. What does not exist yet
 
 - **External plugin as a channel in `poph serve`**: the server starts the plugin only to read the manifest
-  (`[plugins].integracoes`, `poph-server/src/manifestos.rs`). Receiving and sending customer messages through an
+  (`[plugins].integracoes`, `poph-server/src/manifests.rs`). Receiving and sending customer messages through an
   external plugin inside the server is not connected; the link between the contract and the queues exists
   (`poph-agent/src/fila_integracao.rs`, `docs/PLUGIN_EXEMPLO.md`) and is exercised by a test.
 - **Re-encryption of secrets** (`integrations.secrets_enc`) when `POPH_CHAVE_CIFRA` changes.

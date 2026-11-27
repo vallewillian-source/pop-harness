@@ -5,7 +5,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
-use poph_server::Estado;
+use poph_server::ServerState;
 use poph_store::Store;
 use poph_types::HarnessConfig;
 use poph_types::config::GlobalTokenConfig;
@@ -55,7 +55,7 @@ impl Scenario {
         config.validar().expect("valid configuration");
 
         let store = Arc::new(Store::open(&config).expect("opens the database"));
-        let estado = Estado::novo(Arc::clone(&store), config).expect("server state");
+        let estado = ServerState::new(Arc::clone(&store), config).expect("server state");
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await

@@ -1,20 +1,3 @@
-//! Roteamento estático entre instâncias (HR-50a): leitura, validação e recarga do `cluster.toml`.
-//!
-//! O mapa é **configuração de arquivo**, separado do `poph.toml` e igual em todas as instâncias
-//! (PRD §12). O caminho vem da raiz de composição (`poph`): `POPH_CLUSTER` quando definido, senão
-//! `cluster.toml` no mesmo diretório do `poph.toml`. O formato e as regras vivem em
-//! [`poph_types::config::ClusterConfig`]; aqui ficam a leitura do arquivo, os erros com origem e
-//! chave, o estado vivo do processo e a troca atômica na recarga.
-//!
-//! **Segredo:** o `shared_secret` só existe em `POPH_CLUSTER_SECRET` (ambiente). Nesta rodada ele
-//! é lido na subida (ou injetado pelo teste) e guardado fora do tipo do mapa; nunca é lido do
-//! arquivo, impresso, publicado em resposta ou gravado em log.
-//!
-//! **Recarga:** relê o arquivo e troca o mapa **só se a leitura e a validação passarem**. Arquivo
-//! inválido mantém o mapa antigo em uso — o operador não perde o roteamento por um erro de
-//! digitação. Arquivo ausente volta para o modo instância única (é o que o operador pediu ao
-//! recarregar).
-
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -25,140 +8,115 @@ use poph_types::config::{ClusterConfig, ClusterInstance};
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::estado::Estado;
+use crate::state::ServerState;
 
-/// Variável de ambiente com o segredo compartilhado entre as instâncias.
-pub const VAR_SEGREDO: &str = "POPH_CLUSTER_SECRET";
+pub const SECRET_ENV: &str = "POPH_CLUSTER_SECRET";
 
-/// Erro de leitura/validação do `cluster.toml`. Diz o arquivo e, quando possível, a chave.
 #[derive(Debug, Error)]
-pub enum ErroCluster {
-    /// Arquivo existe mas não pode ser lido.
-    #[error("não consegui ler o arquivo do cluster {}: {motivo}", .arquivo.display())]
-    Leitura { arquivo: PathBuf, motivo: String },
-    /// Arquivo com erro de sintaxe TOML (linha e coluna na mensagem).
-    #[error("{}: erro de sintaxe no TOML: {motivo}", .arquivo.display())]
-    Sintaxe { arquivo: PathBuf, motivo: String },
-    /// Campo desconhecido ou com valor que não desserializa.
-    #[error("{}: chave `{chave}` inválida: {motivo}", .arquivo.display())]
-    Chave {
-        arquivo: PathBuf,
-        chave: String,
-        motivo: String,
+pub enum ClusterError {
+    #[error("não consegui ler o arquivo do cluster {}: {reason}", .file.display())]
+    Read { file: PathBuf, reason: String },
+    #[error("{}: erro de sintaxe no TOML: {reason}", .file.display())]
+    Syntax { file: PathBuf, reason: String },
+    #[error("{}: chave `{key}` inválida: {reason}", .file.display())]
+    InvalidKey {
+        file: PathBuf,
+        key: String,
+        reason: String,
     },
-    /// Mapa que não passa nas regras (uma linha por problema).
-    #[error("{}:\n{}", .arquivo.display(), .problemas.join("\n"))]
-    Validacao {
-        arquivo: PathBuf,
-        problemas: Vec<String>,
+    #[error("{}:\n{}", .file.display(), .problems.join("\n"))]
+    Validation {
+        file: PathBuf,
+        problems: Vec<String>,
     },
-    /// Cluster declarado sem o segredo compartilhado no ambiente.
     #[error(
-        "{}: o cluster declara instâncias, mas falta o segredo compartilhado; defina {VAR_SEGREDO} \
+        "{}: o cluster declara instâncias, mas falta o segredo compartilhado; defina {SECRET_ENV} \
          no ambiente (o segredo nunca vai no arquivo)",
-        .arquivo.display()
+        .file.display()
     )]
-    SegredoAusente { arquivo: PathBuf },
+    MissingSecret { file: PathBuf },
 }
 
-impl ErroCluster {
-    /// Lista de problemas pronta para o `details` de uma resposta de erro.
-    pub fn problemas(&self) -> Vec<String> {
+impl ClusterError {
+    pub fn problems(&self) -> Vec<String> {
         match self {
-            Self::Leitura { motivo, .. } | Self::Sintaxe { motivo, .. } => vec![motivo.clone()],
-            Self::Chave { chave, motivo, .. } => vec![format!("{chave}: {motivo}")],
-            Self::Validacao { problemas, .. } => problemas.clone(),
-            Self::SegredoAusente { .. } => vec![format!(
-                "defina {VAR_SEGREDO} no ambiente: o cluster declara instâncias e o segredo não \
+            Self::Read { reason, .. } | Self::Syntax { reason, .. } => vec![reason.clone()],
+            Self::InvalidKey { key, reason, .. } => vec![format!("{key}: {reason}")],
+            Self::Validation { problems, .. } => problems.clone(),
+            Self::MissingSecret { .. } => vec![format!(
+                "defina {SECRET_ENV} no ambiente: o cluster declara instâncias e o segredo não \
                  vai no arquivo"
             )],
         }
     }
 }
 
-/// Estado do cluster no processo: o caminho candidato, o mapa em uso e o segredo da subida.
-///
-/// O caminho é guardado mesmo quando o arquivo não existe, para a recarga poder encontrá-lo depois.
 #[derive(Debug, Clone)]
-pub struct ClusterVivo {
-    /// Caminho candidato do `cluster.toml` (`POPH_CLUSTER` ou o padrão ao lado do `poph.toml`).
-    pub caminho: PathBuf,
-    /// Mapa em uso (vazio = modo instância única).
+pub struct LiveCluster {
+    pub path: PathBuf,
     pub config: ClusterConfig,
-    /// Segredo compartilhado lido de `POPH_CLUSTER_SECRET` na subida (nunca serializado).
-    pub segredo: Option<Secret>,
+    pub secret: Option<Secret>,
 }
 
-impl ClusterVivo {
-    /// Modo instância única, sem arquivo lido: é o padrão de uma instalação sem cluster.
-    pub fn instancia_unica(caminho: PathBuf) -> Self {
+impl LiveCluster {
+    pub fn single_instance(path: PathBuf) -> Self {
         Self {
-            caminho,
+            path,
             config: ClusterConfig::default(),
-            segredo: None,
+            secret: None,
         }
     }
 
-    /// `true` quando o mapa declara um cluster.
-    pub fn declara_cluster(&self) -> bool {
+    pub fn declares_cluster(&self) -> bool {
         self.config.declares_cluster()
     }
 
-    /// `"cluster"` ou `"instancia_unica"`.
-    pub fn modo(&self) -> &'static str {
-        if self.declara_cluster() {
+    pub fn mode(&self) -> &'static str {
+        if self.declares_cluster() {
             "cluster"
         } else {
             "instancia_unica"
         }
     }
 
-    /// Impressão digital do mapa em uso (inclui a instância local).
     pub fn fingerprint(&self) -> String {
         self.config.fingerprint()
     }
 
-    /// Impressão digital do conteúdo compartilhado do mapa (sem a instância local): é a que vai no
-    /// cabeçalho `x-poph-mapa` do encaminhamento e a que duas instâncias comparam entre si.
-    pub fn fingerprint_do_mapa(&self) -> String {
+    pub fn map_fingerprint(&self) -> String {
         self.config.map_fingerprint()
     }
 
-    /// Resumo sem segredo, para `poph cluster show` e para a resposta da recarga.
-    pub fn resumo(&self) -> ResumoCluster {
-        ResumoCluster::de(self)
+    pub fn summary(&self) -> ClusterSummary {
+        ClusterSummary::from(self)
     }
 }
 
-/// Leitura do `cluster.toml`. Arquivo ausente **não é erro**: é o modo instância única.
-pub fn carregar(caminho: &Path, segredo: Option<&Secret>) -> Result<ClusterConfig, ErroCluster> {
-    if !caminho.exists() {
+pub fn load(path: &Path, secret: Option<&Secret>) -> Result<ClusterConfig, ClusterError> {
+    if !path.exists() {
         return Ok(ClusterConfig::default());
     }
-    let texto = fs::read_to_string(caminho).map_err(|erro| ErroCluster::Leitura {
-        arquivo: caminho.to_path_buf(),
-        motivo: erro.to_string(),
+    let text = fs::read_to_string(path).map_err(|error| ClusterError::Read {
+        file: path.to_path_buf(),
+        reason: error.to_string(),
     })?;
-    let tabela: toml::Table = toml::from_str(&texto).map_err(|erro| ErroCluster::Sintaxe {
-        arquivo: caminho.to_path_buf(),
-        motivo: erro.to_string(),
+    let table: toml::Table = toml::from_str(&text).map_err(|error| ClusterError::Syntax {
+        file: path.to_path_buf(),
+        reason: error.to_string(),
     })?;
-    // Arquivo vazio (só comentários, por exemplo) é o modo instância única. Arquivo com qualquer
-    // chave precisa se identificar: um `cluster.toml` sem `instance_id` é configuração quebrada,
-    // não um convite para a instância achar que é a dona de todas as orgs.
-    let arquivo_vazio = tabela.is_empty();
+    let empty_file = table.is_empty();
     let config: ClusterConfig =
-        toml::Value::Table(tabela)
+        toml::Value::Table(table)
             .try_into()
-            .map_err(|erro: toml::de::Error| {
-                let mensagem = erro.to_string();
-                ErroCluster::Chave {
-                    arquivo: caminho.to_path_buf(),
-                    chave: chave_do_erro_do_serde(&mensagem),
-                    motivo: mensagem,
+            .map_err(|error: toml::de::Error| {
+                let message = error.to_string();
+                ClusterError::InvalidKey {
+                    file: path.to_path_buf(),
+                    key: key_from_serde_error(&message),
+                    reason: message,
                 }
             })?;
-    let problemas = if arquivo_vazio {
+    let problems = if empty_file {
         Vec::new()
     } else if config.empty() {
         vec![
@@ -168,419 +126,386 @@ pub fn carregar(caminho: &Path, segredo: Option<&Secret>) -> Result<ClusterConfi
     } else {
         config.problems()
     };
-    if !problemas.is_empty() {
-        return Err(ErroCluster::Validacao {
-            arquivo: caminho.to_path_buf(),
-            problemas,
+    if !problems.is_empty() {
+        return Err(ClusterError::Validation {
+            file: path.to_path_buf(),
+            problems,
         });
     }
-    if config.declares_cluster() && segredo.is_none() {
-        return Err(ErroCluster::SegredoAusente {
-            arquivo: caminho.to_path_buf(),
+    if config.declares_cluster() && secret.is_none() {
+        return Err(ClusterError::MissingSecret {
+            file: path.to_path_buf(),
         });
     }
     Ok(config)
 }
 
-/// Extrai o nome do campo do erro do serde/toml (`unknown field \`x\``).
-fn chave_do_erro_do_serde(mensagem: &str) -> String {
-    if let Some(resto) = mensagem.split("unknown field `").nth(1)
-        && let Some((chave, _)) = resto.split_once('`')
+fn key_from_serde_error(message: &str) -> String {
+    if let Some(rest) = message.split("unknown field `").nth(1)
+        && let Some((key, _)) = rest.split_once('`')
     {
-        return chave.to_owned();
+        return key.to_owned();
     }
-    if let Some(resto) = mensagem.split("missing field `").nth(1)
-        && let Some((chave, _)) = resto.split_once('`')
+    if let Some(rest) = message.split("missing field `").nth(1)
+        && let Some((key, _)) = rest.split_once('`')
     {
-        return chave.to_owned();
+        return key.to_owned();
     }
     "(arquivo)".to_owned()
 }
 
-/// Resumo do mapa sem segredo: é o que sai na CLI e na resposta da recarga.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct ResumoCluster {
-    /// `cluster` ou `instancia_unica`.
-    pub modo: &'static str,
-    /// Nome desta instância no mapa (vazio no modo instância única sem `instance_id`).
+pub struct ClusterSummary {
+    #[serde(rename = "modo")]
+    pub mode: &'static str,
     pub instance_id: String,
-    /// Instância padrão declarada (a implícita de um cluster de uma instância só não aparece).
     pub default_instance: Option<String>,
-    /// `true` quando o segredo compartilhado está configurado (o valor nunca sai).
-    pub segredo_configurado: bool,
-    /// Instâncias declaradas, em ordem de id.
-    pub instancias: Vec<ResumoInstancia>,
-    /// Mapa org → instância, em ordem de chave.
+    #[serde(rename = "segredo_configurado")]
+    pub secret_configured: bool,
+    #[serde(rename = "instancias")]
+    pub instances: Vec<InstanceSummary>,
     pub orgs: BTreeMap<String, String>,
 }
 
-/// Uma instância no resumo: id, endereço e se é a local.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct ResumoInstancia {
-    /// Identificador da instância.
+pub struct InstanceSummary {
     pub id: String,
-    /// Endereço base.
     pub url: String,
-    /// `true` na instância em que este processo roda.
     pub local: bool,
 }
 
-impl ResumoCluster {
-    fn de(vivo: &ClusterVivo) -> Self {
-        let local = vivo.config.instance_id.trim();
-        let mut instancias: Vec<ResumoInstancia> = vivo
+impl ClusterSummary {
+    fn from(running: &LiveCluster) -> Self {
+        let local = running.config.instance_id.trim();
+        let mut instances: Vec<InstanceSummary> = running
             .config
             .instances
             .iter()
-            .map(|ClusterInstance { id, url }| ResumoInstancia {
+            .map(|ClusterInstance { id, url }| InstanceSummary {
                 id: id.trim().to_owned(),
                 url: url.trim().to_owned(),
                 local: !local.is_empty() && id.trim() == local,
             })
             .collect();
-        instancias.sort_by(|a, b| a.id.cmp(&b.id));
+        instances.sort_by(|a, b| a.id.cmp(&b.id));
         Self {
-            modo: vivo.modo(),
+            mode: running.mode(),
             instance_id: local.to_owned(),
-            default_instance: vivo
+            default_instance: running
                 .config
                 .default_instance
                 .as_deref()
                 .map(str::trim)
-                .filter(|valor| !valor.is_empty())
+                .filter(|value| !value.is_empty())
                 .map(str::to_owned),
-            segredo_configurado: vivo.segredo.is_some(),
-            instancias,
-            orgs: vivo
+            secret_configured: running.secret.is_some(),
+            instances,
+            orgs: running
                 .config
                 .orgs
                 .iter()
-                .map(|(org, destino)| (org.trim().to_owned(), destino.trim().to_owned()))
+                .map(|(org, destination)| (org.trim().to_owned(), destination.trim().to_owned()))
                 .collect(),
         }
     }
 }
 
-/// Uma org que mudou de instância na recarga.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct TrocaDeOrg {
-    /// Org que trocou de dona.
+pub struct OrgMove {
     pub org: String,
-    /// Instância anterior (`null` quando não tinha destino antes).
-    pub de: Option<String>,
-    /// Instância nova (`null` quando deixou de ter destino nomeado).
-    pub para: Option<String>,
+    #[serde(rename = "de")]
+    pub from: Option<String>,
+    #[serde(rename = "para")]
+    pub to: Option<String>,
 }
 
-/// Resultado da recarga: o antes, o depois e o que mudou.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct RelatoRecarga {
-    /// `true` quando a impressão digital mudou.
-    pub mudou: bool,
-    /// Impressão digital do mapa que estava em uso.
-    pub fingerprint_antes: String,
-    /// Impressão digital do mapa que passou a valer.
-    pub fingerprint_depois: String,
-    /// Resumo do mapa anterior.
-    pub antes: ResumoCluster,
-    /// Resumo do mapa novo.
-    pub depois: ResumoCluster,
-    /// Orgs cujo destino efetivo mudou (inclui as que saíram ou entraram no mapa).
-    pub orgs_que_trocaram: Vec<TrocaDeOrg>,
-    /// Instâncias que passaram a existir.
-    pub instancias_adicionadas: Vec<String>,
-    /// Instâncias que deixaram de existir.
-    pub instancias_removidas: Vec<String>,
+pub struct ReloadReport {
+    #[serde(rename = "mudou")]
+    pub changed: bool,
+    #[serde(rename = "fingerprint_antes")]
+    pub previous_fingerprint: String,
+    #[serde(rename = "fingerprint_depois")]
+    pub new_fingerprint: String,
+    #[serde(rename = "antes")]
+    pub before: ClusterSummary,
+    #[serde(rename = "depois")]
+    pub after: ClusterSummary,
+    #[serde(rename = "orgs_que_trocaram")]
+    pub moved_orgs: Vec<OrgMove>,
+    #[serde(rename = "instancias_adicionadas")]
+    pub added_instances: Vec<String>,
+    #[serde(rename = "instancias_removidas")]
+    pub removed_instances: Vec<String>,
 }
 
-impl RelatoRecarga {
-    fn entre(antes: &ClusterVivo, depois: &ClusterVivo) -> Self {
-        let fingerprint_antes = antes.fingerprint();
-        let fingerprint_depois = depois.fingerprint();
-        let ids_antes: Vec<&str> = antes
+impl ReloadReport {
+    fn between(before: &LiveCluster, after: &LiveCluster) -> Self {
+        let previous_fingerprint = before.fingerprint();
+        let new_fingerprint = after.fingerprint();
+        let previous_ids: Vec<&str> = before
             .config
             .instances
             .iter()
-            .map(|instancia| instancia.id.trim())
+            .map(|instance| instance.id.trim())
             .collect();
-        let ids_depois: Vec<&str> = depois
+        let new_ids: Vec<&str> = after
             .config
             .instances
             .iter()
-            .map(|instancia| instancia.id.trim())
+            .map(|instance| instance.id.trim())
             .collect();
-        let instancias_adicionadas = ids_depois
+        let added_instances = new_ids
             .iter()
-            .filter(|id| !ids_antes.contains(id))
+            .filter(|id| !previous_ids.contains(id))
             .map(|id| (*id).to_owned())
             .collect();
-        let instancias_removidas = ids_antes
+        let removed_instances = previous_ids
             .iter()
-            .filter(|id| !ids_depois.contains(id))
+            .filter(|id| !new_ids.contains(id))
             .map(|id| (*id).to_owned())
             .collect();
-        // O destino efetivo de uma org considera o mapa, o padrão e a instância única: uma org
-        // que não estava em nenhum dos dois mapas pode passar a ser atendida pela padrão.
-        let mut orgs: Vec<String> = antes
+        let mut orgs: Vec<String> = before
             .config
             .orgs
             .keys()
-            .chain(depois.config.orgs.keys())
+            .chain(after.config.orgs.keys())
             .cloned()
             .collect();
         orgs.sort();
         orgs.dedup();
-        let orgs_que_trocaram = orgs
+        let moved_orgs = orgs
             .into_iter()
             .filter_map(|org| {
-                let de = antes.config.org_instance(&org).map(str::to_owned);
-                let para = depois.config.org_instance(&org).map(str::to_owned);
-                (de != para).then_some(TrocaDeOrg { org, de, para })
+                let from = before.config.org_instance(&org).map(str::to_owned);
+                let to = after.config.org_instance(&org).map(str::to_owned);
+                (from != to).then_some(OrgMove { org, from, to })
             })
             .collect();
         Self {
-            mudou: fingerprint_antes != fingerprint_depois,
-            fingerprint_antes,
-            fingerprint_depois,
-            antes: antes.resumo(),
-            depois: depois.resumo(),
-            orgs_que_trocaram,
-            instancias_adicionadas,
-            instancias_removidas,
+            changed: previous_fingerprint != new_fingerprint,
+            previous_fingerprint,
+            new_fingerprint,
+            before: before.summary(),
+            after: after.summary(),
+            moved_orgs,
+            added_instances,
+            removed_instances,
         }
     }
 }
 
-/// Relê o arquivo do cluster e troca o mapa em uso. Arquivo inválido mantém o mapa antigo.
-pub fn recarregar(estado: &Estado) -> Result<RelatoRecarga, ErroCluster> {
-    let anterior = estado.cluster();
-    let config = carregar(&anterior.caminho, anterior.segredo.as_ref())?;
-    let novo = ClusterVivo {
-        caminho: anterior.caminho.clone(),
+pub fn reload(state: &ServerState) -> Result<ReloadReport, ClusterError> {
+    let previous = state.cluster();
+    let config = load(&previous.path, previous.secret.as_ref())?;
+    let new = LiveCluster {
+        path: previous.path.clone(),
         config,
-        segredo: anterior.segredo.clone(),
+        secret: previous.secret.clone(),
     };
-    let relato = RelatoRecarga::entre(&anterior, &novo);
-    estado.trocar_cluster(novo);
-    Ok(relato)
+    let report = ReloadReport::between(&previous, &new);
+    state.replace_cluster(new);
+    Ok(report)
 }
 
-// ───────────────────── conferência remota do mapa (`poph cluster check --remoto`, HR-50b-2) ──────
+pub const REMOTE_CHECK_TIMEOUT: Duration = Duration::from_secs(3);
 
-/// Prazo de cada consulta ao `/healthz` de uma instância no `poph cluster check --remoto`.
-///
-/// Curto de propósito: o comando é diagnóstico e não pode ficar pendurado numa instância fora do
-/// ar. As consultas saem em paralelo, então o pior caso é este prazo, não a soma.
-pub const PRAZO_DA_CONSULTA_REMOTA: Duration = Duration::from_secs(3);
-
-/// Resultado da conferência remota de uma instância.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct DiagnosticoRemoto {
-    /// Id da instância como está no mapa.
-    pub instancia: String,
-    /// Endereço base declarado no mapa.
+pub struct RemoteDiagnostic {
+    #[serde(rename = "instancia")]
+    pub instance: String,
     pub url: String,
-    /// `ok`, `inacessivel`, `mapa_divergente` ou `identidade_divergente`.
-    pub situacao: &'static str,
-    /// Frase de operação quando há problema (`null` quando está tudo certo).
-    pub mensagem: Option<String>,
-    /// Impressão digital do mapa que a instância declarou (quando ela respondeu).
-    pub fingerprint_mapa: Option<String>,
-    /// Nome que a instância declarou para si mesma (quando respondeu).
-    pub instancia_declarada: Option<String>,
+    #[serde(rename = "situacao")]
+    pub status: &'static str,
+    #[serde(rename = "mensagem")]
+    pub message: Option<String>,
+    #[serde(rename = "fingerprint_mapa")]
+    pub map_fingerprint: Option<String>,
+    #[serde(rename = "instancia_declarada")]
+    pub declared_instance: Option<String>,
 }
 
-impl DiagnosticoRemoto {
-    /// `true` quando a instância respondeu com o mesmo mapa e o mesmo nome.
+impl RemoteDiagnostic {
     pub fn ok(&self) -> bool {
-        self.situacao == "ok"
+        self.status == "ok"
     }
 
-    /// Uma linha para o relatório em texto.
-    pub fn linha(&self) -> String {
-        let detalhe = match self.situacao {
+    pub fn line(&self) -> String {
+        let detail = match self.status {
             "ok" => format!(
                 "ok (mapa {})",
-                self.fingerprint_mapa.as_deref().unwrap_or("não informado")
+                self.map_fingerprint.as_deref().unwrap_or("não informado")
             ),
             "inacessivel" => format!(
                 "inacessível — {}",
-                self.mensagem.as_deref().unwrap_or("sem resposta")
+                self.message.as_deref().unwrap_or("sem resposta")
             ),
             "mapa_divergente" => format!(
                 "mapa divergente — ela usa {}",
-                self.fingerprint_mapa
-                    .as_deref()
-                    .unwrap_or("(não informado)")
+                self.map_fingerprint.as_deref().unwrap_or("(não informado)")
             ),
             _ => format!(
                 "identidade divergente — declarou `{}`, o mapa diz `{}`",
-                self.instancia_declarada.as_deref().unwrap_or("(nada)"),
-                self.instancia
+                self.declared_instance.as_deref().unwrap_or("(nada)"),
+                self.instance
             ),
         };
-        format!("  {} ({}): {detalhe}", self.instancia, self.url)
+        format!("  {} ({}): {detail}", self.instance, self.url)
     }
 }
 
-/// Consulta o `/healthz` de cada instância declarada no mapa (menos a local) e compara o mapa.
-///
-/// Não muda nada no processo: é leitura. A instância local fica de fora porque o mapa em uso é
-/// ela mesma — quem quiser conferir o arquivo usa o `poph cluster check` sem `--remoto`. O segredo
-/// compartilhado não é usado nem enviado: `/healthz` é público na rede interna.
-pub async fn conferir_remoto(config: &ClusterConfig) -> Vec<DiagnosticoRemoto> {
+pub async fn check_remote_instances(config: &ClusterConfig) -> Vec<RemoteDiagnostic> {
     let local = config.instance_id.trim().to_owned();
     let local_fingerprint = config.map_fingerprint();
-    let cliente = match reqwest::Client::builder()
-        .connect_timeout(PRAZO_DA_CONSULTA_REMOTA)
-        .timeout(PRAZO_DA_CONSULTA_REMOTA)
+    let client = match reqwest::Client::builder()
+        .connect_timeout(REMOTE_CHECK_TIMEOUT)
+        .timeout(REMOTE_CHECK_TIMEOUT)
         .build()
     {
-        Ok(cliente) => cliente,
-        Err(erro) => {
+        Ok(client) => client,
+        Err(error) => {
             return config
                 .instances
                 .iter()
-                .filter(|instancia| instancia.id.trim() != local)
-                .map(|instancia| DiagnosticoRemoto {
-                    instancia: instancia.id.trim().to_owned(),
-                    url: instancia.url.trim().to_owned(),
-                    situacao: "inacessivel",
-                    mensagem: Some(format!("não consegui montar o cliente HTTP: {erro}")),
-                    fingerprint_mapa: None,
-                    instancia_declarada: None,
+                .filter(|instance| instance.id.trim() != local)
+                .map(|instance| RemoteDiagnostic {
+                    instance: instance.id.trim().to_owned(),
+                    url: instance.url.trim().to_owned(),
+                    status: "inacessivel",
+                    message: Some(format!("não consegui montar o cliente HTTP: {error}")),
+                    map_fingerprint: None,
+                    declared_instance: None,
                 })
                 .collect();
         }
     };
-    let consultas = config
+    let requests = config
         .instances
         .iter()
-        .filter(|instancia| instancia.id.trim() != local)
-        .map(|instancia| {
-            let cliente = cliente.clone();
-            let id = instancia.id.trim().to_owned();
-            let url = instancia.url.trim().to_owned();
+        .filter(|instance| instance.id.trim() != local)
+        .map(|instance| {
+            let client = client.clone();
+            let id = instance.id.trim().to_owned();
+            let url = instance.url.trim().to_owned();
             let local_fingerprint = local_fingerprint.clone();
             async move {
-                let endereco = format!("{}/healthz", url.trim_end_matches('/'));
-                let resposta = cliente.get(&endereco).send().await;
-                let corpo = match resposta {
-                    Ok(resposta) if resposta.status().is_success() => {
-                        // Texto + `serde_json`: o cliente desta crate não liga a feature `json`.
-                        resposta
+                let address = format!("{}/healthz", url.trim_end_matches('/'));
+                let response = client.get(&address).send().await;
+                let body = match response {
+                    Ok(response) if response.status().is_success() => {
+                        response
                             .text()
                             .await
                             .ok()
-                            .and_then(|texto| serde_json::from_str::<serde_json::Value>(&texto).ok())
+                            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
                     }
-                    Ok(resposta) => {
-                        return DiagnosticoRemoto {
-                            instancia: id,
+                    Ok(response) => {
+                        return RemoteDiagnostic {
+                            instance: id,
                             url,
-                            situacao: "inacessivel",
-                            mensagem: Some(format!(
+                            status: "inacessivel",
+                            message: Some(format!(
                                 "o /healthz respondeu {}",
-                                resposta.status().as_u16()
+                                response.status().as_u16()
                             )),
-                            fingerprint_mapa: None,
-                            instancia_declarada: None,
+                            map_fingerprint: None,
+                            declared_instance: None,
                         };
                     }
-                    Err(erro) => {
-                        return DiagnosticoRemoto {
-                            instancia: id,
+                    Err(error) => {
+                        return RemoteDiagnostic {
+                            instance: id,
                             url,
-                            situacao: "inacessivel",
-                            mensagem: Some(erro.to_string()),
-                            fingerprint_mapa: None,
-                            instancia_declarada: None,
+                            status: "inacessivel",
+                            message: Some(error.to_string()),
+                            map_fingerprint: None,
+                            declared_instance: None,
                         };
                     }
                 };
-                let remoto = corpo
+                let remote_fingerprint = body
                     .as_ref()
-                    .and_then(|corpo| corpo.get("cluster_map_fingerprint"))
-                    .and_then(|valor| valor.as_str())
+                    .and_then(|body| body.get("cluster_map_fingerprint"))
+                    .and_then(|value| value.as_str())
                     .map(str::to_owned);
-                let declarada = corpo
+                let declared = body
                     .as_ref()
-                    .and_then(|corpo| corpo.get("instance_id"))
-                    .and_then(|valor| valor.as_str())
+                    .and_then(|body| body.get("instance_id"))
+                    .and_then(|value| value.as_str())
                     .map(str::to_owned);
-                let Some(remoto) = remoto else {
-                    return DiagnosticoRemoto {
-                        instancia: id,
+                let Some(remote_fingerprint) = remote_fingerprint else {
+                    return RemoteDiagnostic {
+                        instance: id,
                         url,
-                        situacao: "inacessivel",
-                        mensagem: Some(
+                        status: "inacessivel",
+                        message: Some(
                             "a instância respondeu sem dizer o mapa (versão anterior a HR-50b-2?)"
                                 .to_owned(),
                         ),
-                        fingerprint_mapa: None,
-                        instancia_declarada: declarada,
+                        map_fingerprint: None,
+                        declared_instance: declared,
                     };
                 };
-                let situacao = if remoto != local_fingerprint {
+                let status = if remote_fingerprint != local_fingerprint {
                     "mapa_divergente"
-                } else if declarada.as_deref() != Some(id.as_str()) {
+                } else if declared.as_deref() != Some(id.as_str()) {
                     "identidade_divergente"
                 } else {
                     "ok"
                 };
-                let mensagem = match situacao {
+                let message = match status {
                     "mapa_divergente" => Some(format!(
-                        "o mapa desta instância é {local_fingerprint} e o dela é {remoto}; atualize \
+                        "o mapa desta instância é {local_fingerprint} e o dela é {remote_fingerprint}; atualize \
                          o cluster.toml dos dois lados e recarregue"
                     )),
                     "identidade_divergente" => Some(format!(
                         "a instância declarou o nome `{}`, mas o mapa desta instância a chama de \
                          `{id}`; corrija o `instance_id` dela",
-                        declarada.as_deref().unwrap_or("(nada)")
+                        declared.as_deref().unwrap_or("(nada)")
                     )),
                     _ => None,
                 };
-                DiagnosticoRemoto {
-                    instancia: id,
+                RemoteDiagnostic {
+                    instance: id,
                     url,
-                    situacao,
-                    mensagem,
-                    fingerprint_mapa: Some(remoto),
-                    instancia_declarada: declarada,
+                    status,
+                    message,
+                    map_fingerprint: Some(remote_fingerprint),
+                    declared_instance: declared,
                 }
             }
         })
         .collect::<Vec<_>>();
-    futures::future::join_all(consultas).await
+    futures::future::join_all(requests).await
 }
 
 #[cfg(test)]
-mod testes {
+mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
 
-    fn pasta() -> PathBuf {
-        static CONTADOR: AtomicUsize = AtomicUsize::new(0);
-        let n = CONTADOR.fetch_add(1, Ordering::Relaxed);
-        let pasta =
+    fn folder() -> PathBuf {
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let folder =
             std::env::temp_dir().join(format!("poph-cluster-teste-{}-{n}", std::process::id()));
-        let _ = fs::remove_dir_all(&pasta);
-        fs::create_dir_all(&pasta).expect("pasta de teste");
-        pasta
+        let _ = fs::remove_dir_all(&folder);
+        fs::create_dir_all(&folder).expect("pasta de teste");
+        folder
     }
 
-    fn arquivo(texto: &str) -> PathBuf {
-        let caminho = pasta().join("cluster.toml");
-        fs::write(&caminho, texto).expect("escreve cluster.toml");
-        caminho
+    fn file(text: &str) -> PathBuf {
+        let path = folder().join("cluster.toml");
+        fs::write(&path, text).expect("escreve cluster.toml");
+        path
     }
 
-    fn segredo() -> Secret {
+    fn secret() -> Secret {
         Secret::new("segredo-compartilhado-de-teste".to_owned())
     }
 
-    const BOM: &str = r#"
+    const VALID_CONFIG: &str = r#"
 instance_id = "a"
 default_instance = "b"
 
@@ -598,17 +523,17 @@ org_02 = "b"
 "#;
 
     #[test]
-    fn arquivo_ausente_e_modo_instancia_unica() {
-        let caminho = pasta().join("nao-existe.toml");
-        let config = carregar(&caminho, None).expect("sem arquivo não é erro");
+    fn missing_file_uses_single_instance_mode() {
+        let path = folder().join("nao-existe.toml");
+        let config = load(&path, None).expect("sem arquivo não é erro");
         assert!(config.empty());
         assert!(!config.declares_cluster());
     }
 
     #[test]
-    fn arquivo_bom_carrega_com_o_mapa() {
-        let caminho = arquivo(BOM);
-        let config = carregar(&caminho, Some(&segredo())).expect("carrega");
+    fn valid_file_loads_cluster_map() {
+        let path = file(VALID_CONFIG);
+        let config = load(&path, Some(&secret())).expect("carrega");
         assert_eq!(config.instance_id, "a");
         assert_eq!(config.default_instance.as_deref(), Some("b"));
         assert_eq!(config.instances.len(), 2);
@@ -618,29 +543,29 @@ org_02 = "b"
     }
 
     #[test]
-    fn toml_invalido_diz_o_arquivo() {
-        let caminho = arquivo("[orgs\norg_01 = \"a\"\n");
-        match carregar(&caminho, Some(&segredo())) {
-            Err(ErroCluster::Sintaxe { arquivo, motivo }) => {
-                assert_eq!(arquivo, caminho);
-                assert!(!motivo.is_empty());
+    fn invalid_toml_reports_file() {
+        let path = file("[orgs\norg_01 = \"a\"\n");
+        match load(&path, Some(&secret())) {
+            Err(ClusterError::Syntax { file, reason }) => {
+                assert_eq!(file, path);
+                assert!(!reason.is_empty());
             }
-            outro => panic!("esperado erro de sintaxe, veio {outro:?}"),
+            other => panic!("esperado erro de sintaxe, veio {other:?}"),
         }
     }
 
     #[test]
-    fn campo_desconhecido_diz_a_chave() {
-        let caminho = arquivo("instance_id = \"a\"\ninstancias = []\n");
-        match carregar(&caminho, Some(&segredo())) {
-            Err(ErroCluster::Chave { chave, .. }) => assert_eq!(chave, "instancias"),
-            outro => panic!("esperado erro de chave, veio {outro:?}"),
+    fn unknown_field_reports_its_key() {
+        let path = file("instance_id = \"a\"\ninstancias = []\n");
+        match load(&path, Some(&secret())) {
+            Err(ClusterError::InvalidKey { key, .. }) => assert_eq!(key, "instancias"),
+            other => panic!("esperado erro de chave, veio {other:?}"),
         }
     }
 
     #[test]
-    fn cada_regra_violada_vira_um_problema_com_a_chave() {
-        let mut casos: Vec<(String, &str)> = vec![
+    fn each_violation_reports_its_key() {
+        let mut cases: Vec<(String, &str)> = vec![
             ("instance_id = \"\"\n".to_owned(), "instance_id"),
             (
                 "instance_id = \"a\"\n[[instances]]\nid = \"a\"\nurl = \"ftp://x\"\n".to_owned(),
@@ -662,44 +587,43 @@ org_02 = "b"
                 "aparece duas vezes",
             ),
         ];
-        for (texto, esperado) in casos.drain(..) {
-            let caminho = arquivo(&texto);
-            match carregar(&caminho, Some(&segredo())) {
-                Err(ErroCluster::Validacao { problemas, .. }) => {
-                    let juntos = problemas.join("\n");
+        for (text, expected) in cases.drain(..) {
+            let path = file(&text);
+            match load(&path, Some(&secret())) {
+                Err(ClusterError::Validation { problems, .. }) => {
+                    let joined = problems.join("\n");
                     assert!(
-                        juntos.contains(esperado),
-                        "esperado `{esperado}` nos problemas: {juntos}"
+                        joined.contains(expected),
+                        "esperado `{expected}` nos problemas: {joined}"
                     );
                 }
-                outro => panic!("esperado erro de validação para {esperado}, veio {outro:?}"),
+                other => panic!("esperado erro de validação para {expected}, veio {other:?}"),
             }
         }
     }
 
     #[test]
-    fn cluster_sem_o_segredo_no_ambiente_e_recusado() {
-        let caminho = arquivo(BOM);
-        match carregar(&caminho, None) {
-            Err(ErroCluster::SegredoAusente { .. }) => {}
-            outro => panic!("esperado erro de segredo ausente, veio {outro:?}"),
+    fn cluster_requires_environment_secret() {
+        let path = file(VALID_CONFIG);
+        match load(&path, None) {
+            Err(ClusterError::MissingSecret { .. }) => {}
+            other => panic!("esperado erro de segredo ausente, veio {other:?}"),
         }
-        // Com segredo, carrega.
-        assert!(carregar(&caminho, Some(&segredo())).is_ok());
+        assert!(load(&path, Some(&secret())).is_ok());
     }
 
     #[test]
-    fn resumo_nao_traz_o_valor_do_segredo() {
-        let caminho = arquivo(BOM);
-        let config = carregar(&caminho, Some(&segredo())).expect("carrega");
-        let vivo = ClusterVivo {
-            caminho: caminho.clone(),
+    fn summary_omits_secret_value() {
+        let path = file(VALID_CONFIG);
+        let config = load(&path, Some(&secret())).expect("carrega");
+        let running = LiveCluster {
+            path: path.clone(),
             config,
-            segredo: Some(segredo()),
+            secret: Some(secret()),
         };
-        let texto = serde_json::to_string(&vivo.resumo()).expect("json do resumo");
-        assert!(texto.contains("\"segredo_configurado\":true"));
-        assert!(!texto.contains("segredo-compartilhado-de-teste"));
-        assert!(!format!("{vivo:?}").contains("segredo-compartilhado-de-teste"));
+        let text = serde_json::to_string(&running.summary()).expect("json do resumo");
+        assert!(text.contains("\"segredo_configurado\":true"));
+        assert!(!text.contains("segredo-compartilhado-de-teste"));
+        assert!(!format!("{running:?}").contains("segredo-compartilhado-de-teste"));
     }
 }

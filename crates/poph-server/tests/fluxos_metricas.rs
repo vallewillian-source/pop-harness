@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use poph_flows::{Limites, RevisionKey, compile};
-use poph_server::Estado;
+use poph_server::ServerState;
 use poph_store::Store;
 use poph_types::HarnessConfig;
 
@@ -44,7 +44,7 @@ const SERIES: [&str; 22] = [
 ];
 
 /// Estado do processo com a configuração dada, numa pasta própria do teste.
-fn estado(rotulo: &str, cfg: impl FnOnce(&mut HarnessConfig)) -> (Estado, PathBuf) {
+fn estado(rotulo: &str, cfg: impl FnOnce(&mut HarnessConfig)) -> (ServerState, PathBuf) {
     let pasta = std::env::temp_dir().join(format!(
         "poph-fluxos-metricas-{rotulo}-{}",
         std::process::id()
@@ -55,12 +55,12 @@ fn estado(rotulo: &str, cfg: impl FnOnce(&mut HarnessConfig)) -> (Estado, PathBu
     config.data.directory = pasta.join("dados");
     cfg(&mut config);
     let store = Arc::new(Store::open(&config).expect("abre o banco"));
-    let estado = Estado::novo(store, config).expect("estado do servidor");
+    let estado = ServerState::new(store, config).expect("estado do servidor");
     (estado, pasta)
 }
 
 /// Sobe o servidor com o estado dado e devolve o texto de `/metrics`.
-async fn metricas_http(estado: Estado) -> String {
+async fn metricas_http(estado: ServerState) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("porta efêmera");
@@ -94,7 +94,7 @@ async fn metricas_http(estado: Estado) -> String {
 }
 
 /// Carrega a revisão pelo cache, como o motor faz: a IR vem da compilação do script.
-fn carregar(estado: &Estado, fluxo: &str, numero: u32) {
+fn carregar(estado: &ServerState, fluxo: &str, numero: u32) {
     let limites = Limites::default();
     let compilado = compile(FLUXO, &limites);
     let ir = compilado
@@ -103,7 +103,7 @@ fn carregar(estado: &Estado, fluxo: &str, numero: u32) {
         .clone();
     let chave = RevisionKey::new(fluxo, numero, FLUXO);
     estado
-        .cache_fluxos
+        .flow_cache
         .load(&chave, &ir, FLUXO, &limites)
         .unwrap_or_else(|falha| panic!("carga falhou: {falha:?}"));
 }
@@ -112,7 +112,7 @@ fn carregar(estado: &Estado, fluxo: &str, numero: u32) {
 async fn series_de_fluxos_aparecem_uma_vez_com_o_motor_ligado() {
     let (estado, pasta) = estado("ligado", |_| {});
     assert!(
-        estado.metricas_fluxos().is_some(),
+        estado.flow_metrics().is_some(),
         "motor ligado declara as métricas"
     );
     let texto = metricas_http(estado).await;
@@ -158,11 +158,11 @@ async fn revisao_carregada_pelo_motor_aparece_nas_series_do_cache() {
 #[tokio::test]
 async fn teto_do_cache_vem_da_configuracao() {
     let (padrao, pasta_padrao) = estado("teto-padrao", |_| {});
-    assert_eq!(padrao.cache_fluxos.byte_cap(), 16 * 1024 * 1024);
+    assert_eq!(padrao.flow_cache.byte_cap(), 16 * 1024 * 1024);
     let _ = fs::remove_dir_all(&pasta_padrao);
 
     let (trocado, pasta_trocado) = estado("teto-3", |cfg| cfg.flows.revision_cache_mb = 3);
-    assert_eq!(trocado.cache_fluxos.byte_cap(), 3 * 1024 * 1024);
+    assert_eq!(trocado.flow_cache.byte_cap(), 3 * 1024 * 1024);
     let _ = fs::remove_dir_all(&pasta_trocado);
 }
 
@@ -187,7 +187,7 @@ async fn cache_zero_nao_guarda_e_conta_nao_cacheada() {
 async fn motor_desligado_nao_declara_nenhuma_serie_de_fluxos() {
     let (estado, pasta) = estado("desligado", |cfg| cfg.flows.enabled = false);
     assert!(
-        estado.metricas_fluxos().is_none(),
+        estado.flow_metrics().is_none(),
         "motor desligado não declara as métricas"
     );
     let texto = metricas_http(estado).await;

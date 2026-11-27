@@ -79,17 +79,17 @@ pub struct FluxosDoProcesso {
 
 impl FluxosDoProcesso {
     /// Os do servidor: o cache da API de fluxos e os contadores que o `/metrics` publica.
-    pub fn do_servidor(estado: &poph_server::Estado) -> Self {
+    pub fn do_servidor(estado: &poph_server::ServerState) -> Self {
         let g9 = estado
-            .metricas_fluxos()
+            .flow_metrics()
             .map(|metricas| poph_agent::metrics::MetricsG9 {
-                start: metricas.g9_iniciou.clone(),
-                none: metricas.g9_nenhum.clone(),
-                below_threshold: metricas.g9_abaixo_do_limiar.clone(),
+                start: metricas.g9_started.clone(),
+                none: metricas.g9_none.clone(),
+                below_threshold: metricas.g9_below_threshold.clone(),
                 fallback: metricas.g9_fallback.clone(),
             });
         Self {
-            cache: Some(Arc::clone(&estado.cache_fluxos)),
+            cache: Some(Arc::clone(&estado.flow_cache)),
             g9,
         }
     }

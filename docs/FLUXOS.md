@@ -98,6 +98,25 @@ Efeitos são o que sai do atendimento para fora da conversa. O motor só **produ
 
 **Testes.** Laço de entrega em `poph-server/tests/fluxos_efeitos.rs` (`mensagem_ao_cliente_chega_ao_cliente_uma_vez`, `notificar_whatsapp_vai_para_a_equipe_e_nao_para_o_cliente`, `sem_integracao_o_efeito_fica_pendente_e_nao_trava_o_laco`, `queda_entre_enfileirar_e_confirmar_reenvia_e_aceita_duplicata`, `falha_definitiva_vira_falhou_com_evento_e_metrica`); transição, efeitos na mesma escrita e falha no meio sem evento órfão em `poph-store/tests/flow_executions.rs` (`transition_writes_state_step_event_and_effect_in_one_write`, `failure_midway_leaves_no_event_without_state`); os três exemplos com efeitos em `fluxos_e2e.rs`.
 
+### Server delivery and representations
+
+The server and the turn use the same adapter in `poph-agent` to turn engine output into atomic store transitions.
+The delivery worker reads the corresponding effect payloads: customer text has `texto`, a WhatsApp notice has
+`para` and `mensagem`, and a transfer has `departamento`. A busy turn or unavailable Evolution credentials
+delays the effect without consuming an attempt. The worker uses internal IDs in logs and leaves phone numbers out
+of logs, metrics, and errors.
+
+The API and CLI share the same service for publication and formatting. A publication checks the requested
+flow version before compilation, and the store rejects a concurrent version change when committing the revision.
+Case detail also shares one JSON representation. It is scoped to the organization, includes up to 500 executions
+with their stages and answered fields, and lists the flows the case's agent may start. Timeline entries carry event
+metadata and omit idempotency keys. Conversation message text is excluded.
+
+The server registers flow metrics only when flows are enabled. Scrapes add the difference since the previous
+revision-cache snapshot to the cumulative counters. The store updates execution counters where it writes the
+changes, and the turn and delivery worker record gate and effect outcomes. The series carry no customer data
+or per-case labels.
+
 ## 5. Operação
 
 ### 5.1 Configuração `[fluxos]`

@@ -26,13 +26,13 @@ use serde_json::{Value, json};
 use utoipa::ToSchema;
 
 use super::{ListJson, PageQuery, if_match_version, next_cursor};
-use crate::fichas_servico::{detalhe as detail, evento_json, execucao_json, ficha_json};
+use crate::case_service::{case_json, detail, event_json, execution_json};
 use crate::{
     auth::Identity,
     error::{ApiError, id_from_url as parse_path_id},
-    estado::Estado,
-    fluxos_efeitos::efeito_da_transicao,
-    fluxos_transicao::{estado_para_banco, transicao_do_motor},
+    flow_effects::effect_of_transition,
+    flow_transition::{state_for_database, transition_engine},
+    state::ServerState,
 };
 
 const REASON_CLOSING_BY_API: &str = "encerrada pelo administrador";
@@ -92,7 +92,7 @@ pub struct EventsQuery {
     )
 )]
 pub async fn list(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<OrgPath>,
     Query(q): Query<CasesQuery>,
@@ -107,7 +107,7 @@ pub async fn list(
     .page()?;
     let cases = e.store.cases().list(org, &filter, page)?;
     let next_cursor = next_cursor(&cases, page.limit, |case| case.id.to_string());
-    let items: Vec<Value> = cases.iter().map(ficha_json).collect();
+    let items: Vec<Value> = cases.iter().map(case_json).collect();
     Ok(Json(ListJson { items, next_cursor }))
 }
 
@@ -129,7 +129,7 @@ pub async fn list(
     )
 )]
 pub async fn show(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<CasePath>,
 ) -> Result<Json<Value>, ApiError> {
@@ -160,7 +160,7 @@ pub async fn show(
     )
 )]
 pub async fn events(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<CasePath>,
     Query(q): Query<EventsQuery>,
@@ -172,7 +172,7 @@ pub async fn events(
     let after = seq_cursor(q.cursor.as_deref())?;
     let events = e.store.cases().events(org, case_id, after, limit)?;
     let next_cursor = next_cursor(&events, limit, |event| event.seq.to_string());
-    let items: Vec<Value> = events.iter().map(evento_json).collect();
+    let items: Vec<Value> = events.iter().map(event_json).collect();
     Ok(Json(ListJson { items, next_cursor }))
 }
 
@@ -296,7 +296,7 @@ pub struct AbandonmentData {
     )
 )]
 pub async fn start_flow(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<CasePath>,
     h: HeaderMap,
@@ -361,8 +361,8 @@ pub async fn start_flow(
             actor: EventActor::Attendant,
             ator_ref: Some(&token),
             jev_decision: None,
-            initial_state: estado_para_banco(&state),
-            inbound_effects: effect.iter().map(efeito_da_transicao).collect(),
+            initial_state: state_for_database(&state),
+            inbound_effects: effect.iter().map(effect_of_transition).collect(),
             chave_idempotencia: Some(&key),
         },
     )?;
@@ -414,7 +414,7 @@ pub async fn start_flow(
     )
 )]
 pub async fn apply_action(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<ExecutionPath>,
     h: HeaderMap,
@@ -474,7 +474,7 @@ pub async fn apply_action(
         org,
         run,
         version,
-        &transicao_do_motor(&result),
+        &transition_engine(&result),
         &key,
         TransitionExtras {
             ator_ref: Some(&token),
@@ -527,7 +527,7 @@ pub async fn apply_action(
     )
 )]
 pub async fn abandon(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<ExecutionPath>,
     h: HeaderMap,
@@ -571,7 +571,7 @@ pub async fn abandon(
         org,
         run,
         version,
-        &transicao_do_motor(&result),
+        &transition_engine(&result),
         &key,
         TransitionExtras {
             ator_ref: Some(&token),
@@ -624,7 +624,7 @@ pub async fn abandon(
     )
 )]
 pub async fn close(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<CasePath>,
     h: HeaderMap,
@@ -667,7 +667,7 @@ pub async fn close(
         }
     }
     let current = e.store.cases().get(org, case_id)?;
-    Ok(Json(ficha_json(&current)))
+    Ok(Json(case_json(&current)))
 }
 
 fn domain(error: DomainError) -> ApiError {
@@ -697,7 +697,7 @@ fn body_fields(fields: Option<Value>) -> Result<Campos, ApiError> {
 }
 
 fn case_execution(
-    e: &Estado,
+    e: &ServerState,
     org: OrgId,
     case: RecordId,
     run: ExecutionId,
@@ -709,7 +709,7 @@ fn case_execution(
     Ok(execution)
 }
 
-fn revision_ir(e: &Estado, revision: &FlowRevision) -> Result<Arc<Ir>, ApiError> {
+fn revision_ir(e: &ServerState, revision: &FlowRevision) -> Result<Arc<Ir>, ApiError> {
     let stored = Ir::from_json(&revision.definicao_json).map_err(|error| {
         tracing::error!(error = ?error, "IR gravada de revisão de fluxo não lê");
         ApiError::internal()
@@ -719,7 +719,7 @@ fn revision_ir(e: &Estado, revision: &FlowRevision) -> Result<Arc<Ir>, ApiError>
         u32::try_from(revision.numero).unwrap_or(u32::MAX),
         revision.fonte_sha256.clone(),
     );
-    e.cache_fluxos
+    e.flow_cache
         .load(
             &key,
             &stored,
@@ -733,7 +733,7 @@ fn revision_ir(e: &Estado, revision: &FlowRevision) -> Result<Arc<Ir>, ApiError>
 }
 
 fn revision_evaluator(
-    e: &Estado,
+    e: &ServerState,
     revision: &FlowRevision,
     ir: &Ir,
 ) -> Result<RuleEvaluator, ApiError> {
@@ -752,7 +752,7 @@ fn revision_evaluator(
 }
 
 fn action_state(
-    e: &Estado,
+    e: &ServerState,
     org: OrgId,
     execution: &Execution,
 ) -> Result<(Arc<Ir>, RuleEvaluator, EngineState), ApiError> {
@@ -802,16 +802,16 @@ fn destination_id(ir: &Ir, id: &str) -> Result<Destination, ApiError> {
 }
 
 fn execution_response(
-    e: &Estado,
+    e: &ServerState,
     org: OrgId,
     execution: &Execution,
     repeated: bool,
     events: &[RecordEvent],
 ) -> Result<Value, ApiError> {
     let step: Vec<ExecutionStep> = e.store.executions().stages(org, execution.id)?;
-    let mut body = execucao_json(execution, &step);
+    let mut body = execution_json(execution, &step);
     body["repetida"] = json!(repeated);
-    body["eventos"] = Value::Array(events.iter().map(evento_json).collect());
+    body["eventos"] = Value::Array(events.iter().map(event_json).collect());
     Ok(body)
 }
 

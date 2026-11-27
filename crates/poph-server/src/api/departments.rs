@@ -11,7 +11,7 @@ use super::pagination::{ListJson, PageQuery, next_cursor};
 use super::{if_match_version, request_status, status_text};
 use crate::auth::Identity;
 use crate::error::{ApiError, id_from_url as parse_path_id};
-use crate::estado::Estado;
+use crate::state::ServerState;
 
 #[doc = " Departamento na resposta da API."]
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -96,7 +96,7 @@ pub struct DepartmentPath {
     )
 )]
 pub async fn list(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(path): Path<OrgPath>,
     Query(query): Query<PageQuery>,
@@ -128,7 +128,7 @@ pub async fn list(
     )
 )]
 pub async fn create(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(path): Path<OrgPath>,
     Json(body): Json<CreateDepartment>,
@@ -174,7 +174,7 @@ pub async fn create(
     )
 )]
 pub async fn show(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(path): Path<DepartmentPath>,
 ) -> Result<Json<DepartmentJson>, ApiError> {
@@ -204,7 +204,7 @@ pub async fn show(
     )
 )]
 pub async fn update(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(path): Path<DepartmentPath>,
     headers: HeaderMap,
@@ -255,7 +255,7 @@ pub async fn update(
     )
 )]
 pub async fn delete(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(path): Path<DepartmentPath>,
 ) -> Result<StatusCode, ApiError> {

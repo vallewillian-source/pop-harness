@@ -15,7 +15,7 @@ use super::pagination::{ListJson, PageQuery, next_cursor};
 use crate::auth::Identity;
 use crate::auth::ORG_PREFIX;
 use crate::error::{ApiError, id_from_url as parse_path_id};
-use crate::estado::Estado;
+use crate::state::ServerState;
 
 #[doc = " Token na resposta da API (nunca traz o segredo)."]
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -93,7 +93,7 @@ pub struct TokenPath {
     )
 )]
 pub async fn list(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(path): Path<super::orgs::OrgPath>,
     Query(query): Query<PageQuery>,
@@ -123,7 +123,7 @@ pub async fn list(
     )
 )]
 pub async fn create(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(path): Path<super::orgs::OrgPath>,
     Json(body): Json<CreateToken>,
@@ -176,7 +176,7 @@ pub async fn create(
     )
 )]
 pub async fn show(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(path): Path<TokenPath>,
 ) -> Result<Json<TokenJson>, ApiError> {
@@ -204,7 +204,7 @@ pub async fn show(
     )
 )]
 pub async fn revoke(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(path): Path<TokenPath>,
 ) -> Result<StatusCode, ApiError> {

@@ -17,7 +17,7 @@ use poph_types::Secret;
 use serde_json::{Value, json};
 
 use crate::error::ApiError;
-use crate::estado::Estado;
+use crate::state::ServerState;
 
 pub const CAP_BODY: usize = 1024 * 1024;
 
@@ -221,7 +221,7 @@ impl Processed {
     }
 }
 
-pub fn routes() -> Router<Estado> {
+pub fn routes() -> Router<ServerState> {
     let mut routes = Router::new();
     let base_paths = [BASE_V1, BASE_WITHOUT_VERSION, ""]
         .into_iter()
@@ -237,7 +237,7 @@ pub fn routes() -> Router<Estado> {
 }
 
 async fn transaction(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     Path(txn_id): Path<String>,
     header: HeaderMap,
     body: Body,
@@ -246,7 +246,7 @@ async fn transaction(
 }
 
 async fn user(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     Path(user): Path<String>,
     header: HeaderMap,
 ) -> Response {
@@ -254,14 +254,14 @@ async fn user(
 }
 
 async fn alias(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     Path(alias): Path<String>,
     header: HeaderMap,
 ) -> Response {
     handle_alias(state.matrix_as.as_deref(), &alias, &header)
 }
 
-async fn ping(State(state): State<Estado>, header: HeaderMap) -> Response {
+async fn ping(State(state): State<ServerState>, header: HeaderMap) -> Response {
     handle_ping(state.matrix_as.as_deref(), &header)
 }
 

@@ -6,7 +6,7 @@ use std::time::Duration;
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
 use poph_flows::{Ir, Limites, compile};
-use poph_server::Estado;
+use poph_server::ServerState;
 use poph_store::{
     Direction, NewAgent, NewCategory, NewConversation, NewDepartment, NewFlow, NewKnowledgeGroup,
     NewKnowledgeItem, NewLibraryFile, NewMessage, NewOrg, NewProduct, NewRecord, Origin,
@@ -208,7 +208,7 @@ impl Scenario {
                 .expect("open store")
                 .with_clock(Arc::new(|| FIXED_NOW_MS)),
         );
-        let state = Estado::novo(Arc::clone(&store), config).expect("server state");
+        let state = ServerState::new(Arc::clone(&store), config).expect("server state");
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await

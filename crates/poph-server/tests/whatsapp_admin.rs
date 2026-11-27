@@ -25,8 +25,8 @@ use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{delete, get, post};
-use poph_server::Estado;
-use poph_server::evolution::{CanalEvolution, canais_da_configuracao};
+use poph_server::ServerState;
+use poph_server::evolution::{EvolutionChannel, channels_from_config};
 use poph_store::{NewAgent, NewOrg, Page, Store};
 use poph_types::config::{EvolutionConfig, EvolutionInstanceConfig, GlobalTokenConfig};
 use poph_types::{AgentId, HarnessConfig, IntegrationId, OrgId, Secret};
@@ -364,7 +364,7 @@ impl Cenario {
         config.validar().expect("configuração com Evolution válida");
 
         // O caminho de verdade da subida: configuração + `EVOLUTION_API_KEY` do ambiente.
-        let canais: Vec<CanalEvolution> = canais_da_configuracao(
+        let canais: Vec<EvolutionChannel> = channels_from_config(
             &config,
             Some(Secret::new(CHAVE_EVO.to_owned())),
             &|variavel| (variavel == VARIAVEL_SEGREDO).then(|| SEGREDO_WEBHOOK.to_owned()),
@@ -372,9 +372,9 @@ impl Cenario {
         .expect("canais da configuração");
         assert_eq!(canais.len(), 1, "só a instância declarada vira canal");
 
-        let estado = Estado::novo(Arc::clone(&store), config)
+        let estado = ServerState::new(Arc::clone(&store), config)
             .expect("estado do servidor")
-            .com_canais_evolution(canais);
+            .with_evolution_channels(canais);
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await

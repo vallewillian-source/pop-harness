@@ -401,7 +401,7 @@ Output from the verification, with the example plugin and a second type delibera
 ### Limits
 
 - **Changing a plugin only takes effect after restarting the server.** The manifest stays cached until the process ends.
-  This behavior is written in the comment in `crates/poph-server/src/manifestos.rs`. I did not repeat the test in this run.
+  The behavior is described in [the plugin protocol](PLUGIN_PROTOCOLO.md#81-the-manifest-on-the-server-hr-44c). I did not repeat the test in this run.
 - **A failure stays cached for a while.** A fixed plugin remains unavailable for up to 30 s (figure from the plugin
   list delivery; not re-measured here).
 - **Removing a plugin:** delete the block and restart. **Not verified.**

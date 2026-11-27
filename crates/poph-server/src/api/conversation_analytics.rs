@@ -1,7 +1,7 @@
 use crate::{
     auth::Identity,
     error::{ApiError, id_from_url as parse_path_id},
-    estado::Estado,
+    state::ServerState,
 };
 use axum::{
     Json,
@@ -66,7 +66,7 @@ pub struct ConversationReportJson {
 
 #[utoipa::path(get, path = "/admin/v1/orgs/{org_id}/analytics/conversations", tag = "analytics", operation_id = "conversation_analytics", security(("bearer" = [])), params(("org_id" = String, Path), ("from" = i64, Query), ("to" = i64, Query), ("agent_id" = Option<String>, Query), ("channel" = Option<String>, Query), ("tz_offset_minutes" = Option<i64>, Query)), responses((status = 200, body = ConversationReportJson), (status = 422, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]
 pub async fn report(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(path): Path<OrgPath>,
     Query(query): Query<ConversationQuery>,

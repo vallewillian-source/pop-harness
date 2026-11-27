@@ -5,7 +5,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use clap::Args;
-use poph_server::Estado;
+use poph_server::ServerState;
 use poph_store::Store;
 use poph_store::harness_target_version;
 
@@ -57,11 +57,11 @@ pub fn executar(flag: Option<PathBuf>, ambiente: &config::Ambiente, args: ServeA
     // operador vê o problema agora, em vez de descobrir o roteamento errado no primeiro pedido.
     let caminho_cluster = config::caminho_cluster(ambiente, arquivo.as_deref(), &pasta);
     let segredo_cluster = config::segredo_cluster(ambiente);
-    let cluster = match poph_server::cluster::carregar(&caminho_cluster, segredo_cluster.as_ref()) {
-        Ok(config) => poph_server::cluster::ClusterVivo {
-            caminho: caminho_cluster.clone(),
+    let cluster = match poph_server::cluster::load(&caminho_cluster, segredo_cluster.as_ref()) {
+        Ok(config) => poph_server::cluster::LiveCluster {
+            path: caminho_cluster.clone(),
             config,
-            segredo: segredo_cluster,
+            secret: segredo_cluster,
         },
         Err(erro) => {
             eprintln!("cluster: {erro}");
@@ -69,8 +69,8 @@ pub fn executar(flag: Option<PathBuf>, ambiente: &config::Ambiente, args: ServeA
         }
     };
     tracing::info!(
-        modo = cluster.modo(),
-        arquivo = %cluster.caminho.display(),
+        modo = cluster.mode(),
+        arquivo = %cluster.path.display(),
         instancias = cluster.config.instances.len(),
         orgs_no_mapa = cluster.config.orgs.len(),
         fingerprint = %cluster.fingerprint(),
@@ -79,7 +79,7 @@ pub fn executar(flag: Option<PathBuf>, ambiente: &config::Ambiente, args: ServeA
     // Instâncias da Evolution (HR-26b): segredos de webhook e a chave da Evolution vêm do ambiente,
     // nunca do arquivo. O valor de nenhum deles é impresso.
     let segredos = config::segredos(ambiente);
-    let canais = match poph_server::evolution::canais_da_configuracao(
+    let canais = match poph_server::evolution::channels_from_config(
         &configuracao,
         segredos.evolution.clone(),
         &|nome: &str| {
@@ -115,8 +115,8 @@ pub fn executar(flag: Option<PathBuf>, ambiente: &config::Ambiente, args: ServeA
                 return ExitCode::from(1);
             }
         };
-        let estado = match Estado::novo(Arc::clone(&store), configuracao.clone()) {
-            Ok(estado) => estado.com_canais_evolution(canais).com_cluster(cluster),
+        let estado = match ServerState::new(Arc::clone(&store), configuracao.clone()) {
+            Ok(estado) => estado.with_evolution_channels(canais).with_cluster(cluster),
             Err(erro) => {
                 eprintln!("{erro}");
                 return ExitCode::from(1);
@@ -171,15 +171,15 @@ pub fn executar(flag: Option<PathBuf>, ambiente: &config::Ambiente, args: ServeA
 /// recebendo: as mensagens ficam na fila e são respondidas quando ele subir com a chave. Com ela, a
 /// base e o catálogo dos agentes das instâncias configuradas são conferidos antes de atender.
 async fn ligar_turno(
-    estado: Estado,
+    estado: ServerState,
     configuracao: &poph_types::HarnessConfig,
     ambiente: &config::Ambiente,
     store: &Arc<Store>,
-) -> Result<Estado, String> {
+) -> Result<ServerState, String> {
     let segredos = config::segredos(ambiente);
     let nome_da_chave = &configuracao.llm.api_key_env;
     let Some(chave) = config::chave_llm(ambiente, nome_da_chave) else {
-        if !estado.canais_evolution.is_empty() {
+        if !estado.evolution_channels.is_empty() {
             tracing::warn!(
                 target: "poph_server::turno",
                 %nome_da_chave,
@@ -188,7 +188,7 @@ async fn ligar_turno(
         }
         return Ok(estado);
     };
-    let metricas = montagem::Metricas::registradas(estado.metricas.clone(), &estado.registro)?;
+    let metricas = montagem::Metricas::registradas(estado.metrics.clone(), &estado.registry)?;
     let montagem = montagem::montar(
         configuracao,
         Arc::clone(store),
@@ -203,14 +203,14 @@ async fn ligar_turno(
 
     // Rede de segurança, como no chat: a base pode ter sido escrita fora do servidor. Sincronizar
     // só reembeda o que mudou.
-    for canal in estado.canais_evolution.iter() {
-        let agente = match store.channel_integration(canal.org, canal.integracao) {
+    for canal in estado.evolution_channels.iter() {
+        let agente = match store.channel_integration(canal.org, canal.integration) {
             Ok(Some(integracao)) => integracao.agent_id,
             Ok(None) => continue,
             Err(erro) => {
                 eprintln!(
                     "[aviso] não consegui ler a integração de {}: {erro}",
-                    canal.instancia
+                    canal.instance
                 );
                 continue;
             }
@@ -230,8 +230,8 @@ async fn ligar_turno(
     let intervalo = std::time::Duration::from_millis(configuracao.turn.dispatch_interval_ms);
     // HR-22: o chat de teste do Console roda o mesmo motor do turno, com observador próprio.
     Ok(estado
-        .com_motor(Arc::clone(&montagem.motor))
-        .com_turno(montagem.fluxo, intervalo))
+        .with_engine(Arc::clone(&montagem.motor))
+        .with_turn(montagem.fluxo, intervalo))
 }
 
 /// Executa `poph openapi`.

@@ -12,7 +12,7 @@ use super::{ListJson, PageQuery, next_cursor};
 use crate::{
     auth::Identity,
     error::{ApiError, id_from_url as parse_path_id},
-    estado::Estado,
+    state::ServerState,
 };
 
 #[derive(Debug, Deserialize)]
@@ -59,7 +59,7 @@ impl From<&LibraryFile> for FileJson {
 
 #[utoipa::path(get, path = "/admin/v1/orgs/{org_id}/agents/{agent_id}/files", tag = "files", operation_id = "arquivos_listar", security(("bearer" = [])), params(("org_id" = String, Path), ("agent_id" = String, Path), ("limit" = Option<u32>, Query), ("cursor" = Option<String>, Query)), responses((status = 200, description = "Arquivos", body = ListJson<FileJson>), (status = 403, description = "Org de outro token", body = crate::error::ErrorResponse)))]
 pub async fn list(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(c): Path<AgentPath>,
     Query(query): Query<PageQuery>,
@@ -77,7 +77,7 @@ pub async fn list(
 
 #[utoipa::path(get, path = "/admin/v1/orgs/{org_id}/agents/{agent_id}/files/{file_id}", tag = "files", operation_id = "arquivos_mostrar", security(("bearer" = [])), params(("org_id" = String, Path), ("agent_id" = String, Path), ("file_id" = String, Path)), responses((status = 200, description = "Arquivo", body = FileJson), (status = 404, description = "Não encontrado", body = crate::error::ErrorResponse)))]
 pub async fn show(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(c): Path<FilePath>,
 ) -> Result<Json<FileJson>, ApiError> {
@@ -97,7 +97,7 @@ pub async fn show(
 #[doc = " nunca diz o caminho do blob."]
 #[utoipa::path(get, path = "/admin/v1/orgs/{org_id}/agents/{agent_id}/files/{file_id}/content", tag = "files", operation_id = "arquivos_conteudo", security(("bearer" = [])), params(("org_id" = String, Path), ("agent_id" = String, Path), ("file_id" = String, Path)), responses((status = 200, description = "Conteúdo do arquivo (bytes com o MIME gravado e o sha256 no cabeçalho `x-content-sha256`)", body = Vec<u8>, content_type = "application/octet-stream"), (status = 403, description = "Org de outro token", body = crate::error::ErrorResponse), (status = 404, description = "Arquivo ou conteúdo não encontrado", body = crate::error::ErrorResponse)))]
 pub async fn content(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(c): Path<FilePath>,
 ) -> Result<axum::response::Response, ApiError> {
@@ -123,7 +123,7 @@ pub async fn content(
 #[doc = " Exclui um arquivo da biblioteca e registra o autor da mudança."]
 #[utoipa::path(delete, path = "/admin/v1/orgs/{org_id}/agents/{agent_id}/files/{file_id}", tag = "files", operation_id = "arquivos_excluir", security(("bearer" = [])), params(("org_id" = String, Path), ("agent_id" = String, Path), ("file_id" = String, Path)), responses((status = 200, description = "Arquivo excluído", body = serde_json::Value), (status = 404, description = "Não encontrado", body = crate::error::ErrorResponse)))]
 pub async fn delete(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(c): Path<FilePath>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
@@ -151,7 +151,7 @@ pub struct UploadParameters {
 #[doc = " 16 MB, tipo real pelo conteúdo, blob por hash), com auditoria da criação."]
 #[utoipa::path(post, path = "/admin/v1/orgs/{org_id}/agents/{agent_id}/files", tag = "files", operation_id = "arquivos_criar", security(("bearer" = [])), params(("org_id" = String, Path), ("agent_id" = String, Path), ("filename" = String, Query), ("name" = Option<String>, Query), ("description" = Option<String>, Query)), request_body(content = Vec<u8>, content_type = "application/octet-stream"), responses((status = 201, description = "Arquivo criado", body = FileJson), (status = 400, description = "Arquivo ou parâmetro inválido", body = crate::error::ErrorResponse), (status = 403, description = "Org de outro token", body = crate::error::ErrorResponse)))]
 pub async fn create(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(c): Path<AgentPath>,
     params: Result<Query<UploadParameters>, QueryRejection>,

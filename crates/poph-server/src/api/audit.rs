@@ -1,9 +1,9 @@
-use crate::{auth::Identity, error::ApiError, estado::Estado};
+use crate::{auth::Identity, error::ApiError, state::ServerState};
 use poph_store::NewAuditEntry;
 use poph_types::OrgId;
 
 pub(super) fn register(
-    state: &Estado,
+    state: &ServerState,
     identity: &Identity,
     org: Option<OrgId>,
     acao: &str,

@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Args, Subcommand};
-use poph_server::fichas_servico::{detalhe, ficha_json};
+use poph_server::case_service::{case_json, detail};
 use poph_store::{RecordFilter, Store};
 use poph_types::{OrgId, RecordId, RecordStatus};
 use serde_json::{Value, json};
@@ -130,7 +130,7 @@ fn listar(store: &Store, org: OrgId, args: ListarArgs) -> Result<ExitCode, Strin
     } else {
         fichas.last().map(|ficha| ficha.id.to_string())
     };
-    let itens: Vec<Value> = fichas.iter().map(ficha_json).collect();
+    let itens: Vec<Value> = fichas.iter().map(case_json).collect();
     if args.json {
         imprimir_json(&json!({
             "versao_relatorio": VERSAO_RELATORIO,
@@ -160,7 +160,7 @@ fn listar(store: &Store, org: OrgId, args: ListarArgs) -> Result<ExitCode, Strin
 
 fn mostrar(store: &Store, org: OrgId, args: MostrarArgs) -> Result<ExitCode, String> {
     let ficha_id: RecordId = parse_id(&args.ficha)?;
-    let corpo = detalhe(store, org, ficha_id).map_err(|erro| {
+    let corpo = detail(store, org, ficha_id).map_err(|erro| {
         if erro.is_not_found() {
             format!("não existe Ficha `{}` nesta org", args.ficha)
         } else {

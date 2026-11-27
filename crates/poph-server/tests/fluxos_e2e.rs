@@ -341,7 +341,7 @@ async fn api(c: &Cenario) -> String {
         label: "teste".into(),
         hash,
     }];
-    let estado = poph_server::Estado::novo(Arc::clone(&c.store), config).unwrap();
+    let estado = poph_server::ServerState::new(Arc::clone(&c.store), config).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endereco = listener.local_addr().unwrap();
     tokio::spawn(async move {
@@ -477,9 +477,9 @@ async fn evolution_falsa() -> (String, Arc<std::sync::Mutex<Vec<Value>>>) {
 async fn exemplo_entrega_notificacao_unica_e_transferencia_com_ficha_aberta() {
     use poph_evolution::{ATTACHMENT_CAP, ConfigEvolution, EvolutionClient};
     use poph_server::{
-        evolution::CanalEvolution,
-        fluxos_efeitos::{EfeitosFluxo, OpcoesEfeitosFluxo},
-        saida_whatsapp::{OpcoesSaidaWhatsApp, SaidaWhatsApp},
+        evolution::EvolutionChannel,
+        flow_effects::{FlowEffectOptions, FlowEffects},
+        whatsapp_output::{WhatsAppOutput, WhatsAppOutputOptions},
     };
     use poph_types::{IntegrationId, Secret};
     let c = Cenario::novo("efeitos-fx35");
@@ -502,32 +502,32 @@ async fn exemplo_entrega_notificacao_unica_e_transferencia_com_ficha_aberta() {
         .parse()
         .unwrap();
     let (url, envios) = evolution_falsa().await;
-    let canal = CanalEvolution {
+    let canal = EvolutionChannel {
         org: c.org,
-        instancia: "teste".into(),
-        integracao,
-        segredo: None,
-        cliente: Some(
+        instance: "teste".into(),
+        integration: integracao,
+        secret: None,
+        client: Some(
             EvolutionClient::new(
                 ConfigEvolution::new(url, "teste", Secret::new("ficticia".into())).unwrap(),
             )
             .unwrap(),
         ),
-        teto_midia: ATTACHMENT_CAP,
+        attachment_limit: ATTACHMENT_CAP,
     };
     let canais = vec![canal];
-    let efeitos = EfeitosFluxo::novo(
+    let efeitos = FlowEffects::new(
         Arc::clone(&c.store),
         &canais,
         c.pasta.join("blobs"),
         None,
-        OpcoesEfeitosFluxo::default(),
+        FlowEffectOptions::default(),
     );
-    let saida = SaidaWhatsApp::novo(
+    let saida = WhatsAppOutput::new(
         Arc::clone(&c.store),
         &canais,
         c.pasta.join("blobs"),
-        OpcoesSaidaWhatsApp::default(),
+        WhatsAppOutputOptions::default(),
     );
     let conversa = |peer: &str| {
         c.store
@@ -559,8 +559,8 @@ async fn exemplo_entrega_notificacao_unica_e_transferencia_com_ficha_aberta() {
         ],
     )
     .await;
-    efeitos.ciclo_da_org(c.org).await.unwrap();
-    saida.ciclo().await.unwrap();
+    efeitos.cycle_for_org(c.org).await.unwrap();
+    saida.cycle().await.unwrap();
     executar(
         &c,
         primeira,
@@ -574,11 +574,11 @@ async fn exemplo_entrega_notificacao_unica_e_transferencia_com_ficha_aberta() {
         ],
     )
     .await;
-    efeitos.ciclo_da_org(c.org).await.unwrap();
-    saida.ciclo().await.unwrap();
+    efeitos.cycle_for_org(c.org).await.unwrap();
+    saida.cycle().await.unwrap();
     // Um ciclo a mais não reenvia o que já saiu (a notificação é uma só).
-    efeitos.ciclo_da_org(c.org).await.unwrap();
-    saida.ciclo().await.unwrap();
+    efeitos.cycle_for_org(c.org).await.unwrap();
+    saida.cycle().await.unwrap();
     let enviados = envios.lock().unwrap().clone();
     assert_eq!(
         enviados
@@ -616,7 +616,7 @@ async fn exemplo_entrega_notificacao_unica_e_transferencia_com_ficha_aberta() {
         ],
     )
     .await;
-    efeitos.ciclo_da_org(c.org).await.unwrap();
+    efeitos.cycle_for_org(c.org).await.unwrap();
     assert_eq!(
         c.store.conversations().get(c.org, segunda).unwrap().status,
         ConversationStatus::Transferred
@@ -829,9 +829,10 @@ async fn encerramento_do_agente_e_proxima_mensagem_abrem_nova_ficha() {
 async fn contadores_do_turno_contam_uma_abertura_e_uma_conclusao() {
     let c = Cenario::novo("fx40-turno");
     let registro = poph_types::Registry::new();
-    let metricas = poph_server::fluxos_metricas::MetricasFluxos::registrar(&registro)
+    let metricas = poph_server::flow_metrics::FlowMetrics::register(&registro)
         .expect("o catálogo de fluxos registra");
-    c.store.publish_execution_metrics(metricas.das_execucoes());
+    c.store
+        .publish_execution_metrics(metricas.execution_metrics());
 
     c.criar_fluxo("agendar_visita", "Agendar visita", VISITA, true);
     let conversa = c.conversa();
@@ -851,16 +852,16 @@ async fn contadores_do_turno_contam_uma_abertura_e_uma_conclusao() {
     .await;
 
     assert_eq!(
-        metricas.execucoes_iniciadas.value(),
+        metricas.started_executions.value(),
         1,
         "o turno abriu uma execução (G9 antes do modelo)"
     );
     assert_eq!(
-        metricas.execucoes_concluidas.value(),
+        metricas.completed_executions.value(),
         1,
         "as ações do agente concluíram a mesma execução"
     );
-    assert_eq!(metricas.execucoes_abandonadas.value(), 0);
-    assert_eq!(metricas.execucoes_falhas.value(), 0);
-    assert_eq!(metricas.erros_regra.value(), 0);
+    assert_eq!(metricas.abandoned_executions.value(), 0);
+    assert_eq!(metricas.failed_executions.value(), 0);
+    assert_eq!(metricas.rule_errors.value(), 0);
 }

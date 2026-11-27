@@ -53,7 +53,7 @@ use poph_core::llm::{
 };
 use poph_files::FileConfig;
 use poph_rag::{FakeEmbedder, Index, IndexConfig};
-use poph_server::Estado;
+use poph_server::ServerState;
 use poph_store::{
     AuditEntry, Direction, NewChannelAttachment, NewMessage, OutboxState, Page, Role, Store,
 };
@@ -108,7 +108,7 @@ struct Servidor {
 impl Servidor {
     async fn novo(
         rotulo: &str,
-        estado: impl FnOnce(&Arc<Store>, &HarnessConfig, &PathBuf) -> Estado,
+        estado: impl FnOnce(&Arc<Store>, &HarnessConfig, &PathBuf) -> ServerState,
     ) -> Self {
         let carimbo = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -1489,7 +1489,7 @@ fn vazamento_sem_eco(r: &Resposta, alvo: &Org, eco: &str) -> Option<String> {
 #[tokio::test]
 async fn isolamento_gerado_do_openapi() {
     let s = Servidor::novo("matriz", |store, config, _| {
-        Estado::novo(Arc::clone(store), config.clone()).expect("estado do servidor")
+        ServerState::new(Arc::clone(store), config.clone()).expect("estado do servidor")
     })
     .await;
     let doc = s
@@ -1799,9 +1799,9 @@ async fn subir_com_turno(
     let mut saida: Option<(Arc<KnowledgeBase>, Arc<ProductCatalog>)> = None;
     let servidor = Servidor::novo(rotulo, |store, config, pasta| {
         let blobs = pasta.join("dados").join("blobs");
-        let estado = Estado::novo(Arc::clone(store), config.clone())
+        let estado = ServerState::new(Arc::clone(store), config.clone())
             .expect("estado do servidor")
-            .com_arquivos(FileConfig::default(blobs.clone()));
+            .with_files(FileConfig::default(blobs.clone()));
         let config_quente = ConfigHot::new(
             Arc::clone(store),
             HotConfigOptions::default(),
@@ -1847,8 +1847,8 @@ async fn subir_com_turno(
         processador.attach_io(fluxo.clone());
         saida = Some((base, catalogo));
         estado
-            .com_motor(motor)
-            .com_turno(fluxo, Duration::from_millis(20))
+            .with_engine(motor)
+            .with_turn(fluxo, Duration::from_millis(20))
     })
     .await;
     let (base, catalogo) = saida.expect("base e catálogo montados");
@@ -2281,7 +2281,7 @@ fn detector_de_vazamento_so_usa_id_em_sucesso() {
 #[tokio::test]
 async fn comparacao_de_estado_acusa_escrita() {
     let s = Servidor::novo("estado", |store, config, _| {
-        Estado::novo(Arc::clone(store), config.clone()).expect("estado do servidor")
+        ServerState::new(Arc::clone(store), config.clone()).expect("estado do servidor")
     })
     .await;
     let b = montar_org(&s, "estado-b", MARCADOR_B).await;

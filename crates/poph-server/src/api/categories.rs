@@ -12,7 +12,7 @@ use super::pagination::{ListJson, PageQuery, next_cursor};
 use super::{if_match_version, request_status, status_text};
 use crate::auth::Identity;
 use crate::error::{ApiError, id_from_url as parse_path_id};
-use crate::estado::Estado;
+use crate::state::ServerState;
 
 #[doc = " Categoria na resposta da API."]
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -97,7 +97,7 @@ pub struct CategoryPath {
     )
 )]
 pub async fn list(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(path): Path<OrgPath>,
     Query(query): Query<PageQuery>,
@@ -127,7 +127,7 @@ pub async fn list(
     )
 )]
 pub async fn create(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(path): Path<OrgPath>,
     Json(body): Json<CreateCategory>,
@@ -171,7 +171,7 @@ pub async fn create(
     )
 )]
 pub async fn show(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(path): Path<CategoryPath>,
 ) -> Result<Json<CategoryJson>, ApiError> {
@@ -202,7 +202,7 @@ pub async fn show(
     )
 )]
 pub async fn update(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(path): Path<CategoryPath>,
     headers: HeaderMap,
@@ -241,7 +241,11 @@ pub struct ExclusionCategory {
     pub force: Option<bool>,
 }
 
-fn count_links(state: &Estado, org: OrgId, id: ProductCategoryId) -> Result<(u64, u64), ApiError> {
+fn count_links(
+    state: &ServerState,
+    org: OrgId,
+    id: ProductCategoryId,
+) -> Result<(u64, u64), ApiError> {
     const BATCH: u32 = 200;
     let mut products = 0u64;
     let mut after = None;
@@ -306,7 +310,7 @@ fn count_links(state: &Estado, org: OrgId, id: ProductCategoryId) -> Result<(u64
     )
 )]
 pub async fn delete(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(path): Path<CategoryPath>,
     Query(deletion): Query<ExclusionCategory>,

@@ -5,8 +5,8 @@ use crate::{
     auth::Identity,
     cipher::CipherKey,
     error::{ApiError, id_from_url as parse_path_id},
-    estado::Estado,
-    manifestos::{FalhaManifesto, validar_objeto},
+    manifests::{ManifestFailure, validate_object},
+    state::ServerState,
 };
 use axum::{
     Json,
@@ -98,18 +98,18 @@ fn check(
     let Some(values) = values else {
         return Ok(());
     };
-    validar_objeto(values, &schema.0, field)
-        .map_err(|failure| ApiError::validation(failure.campo, failure.motivo))
+    validate_object(values, &schema.0, field)
+        .map_err(|failure| ApiError::validation(failure.field, failure.reason))
 }
 
-async fn kind_manifest(e: &Estado, kind: &str) -> Result<Option<Manifest>, ApiError> {
-    match e.manifestos.manifesto(kind).await {
+async fn kind_manifest(e: &ServerState, kind: &str) -> Result<Option<Manifest>, ApiError> {
+    match e.manifests.manifest(kind).await {
         Ok(manifesto) => Ok(Some(manifesto)),
-        Err(FalhaManifesto::NaoDeclarado) => Ok(None),
-        Err(failure @ FalhaManifesto::Indisponivel { .. }) => Err(ApiError::new(
+        Err(ManifestFailure::Undeclared) => Ok(None),
+        Err(failure @ ManifestFailure::Unavailable { .. }) => Err(ApiError::new(
             StatusCode::SERVICE_UNAVAILABLE,
             "manifesto_indisponivel",
-            failure.mensagem(),
+            failure.message(),
         )
         .with_details(json!({ "kind": kind }))),
     }
@@ -130,7 +130,7 @@ struct Prepared {
 }
 
 fn prepare(
-    e: &Estado,
+    e: &ServerState,
     manifesto: &Manifest,
     configuration: Option<&Value>,
     secrets: Option<BTreeMap<String, String>>,
@@ -166,7 +166,7 @@ fn prepare(
             secrets: Some(None),
         });
     }
-    let key = e.chave_de_cifra.as_deref().ok_or_else(|| {
+    let key = e.encryption_key.as_deref().ok_or_else(|| {
         ApiError::new(
             StatusCode::SERVICE_UNAVAILABLE,
             "cifra_indisponivel",
@@ -189,14 +189,14 @@ fn prepare(
 }
 
 fn merge_secrets(
-    e: &Estado,
+    e: &ServerState,
     new: BTreeMap<String, String>,
     previous: Option<&[u8]>,
 ) -> Result<BTreeMap<String, String>, ApiError> {
     let mut merged = match previous {
         None => BTreeMap::new(),
         Some(blob) => {
-            let key = e.chave_de_cifra.as_deref().ok_or_else(|| {
+            let key = e.encryption_key.as_deref().ok_or_else(|| {
                 ApiError::new(
                     StatusCode::SERVICE_UNAVAILABLE,
                     "cifra_indisponivel",
@@ -226,7 +226,7 @@ fn merge_secrets(
 
 #[utoipa::path(operation_id = "listar", get,path="/admin/v1/orgs/{org_id}/agents/{agent_id}/integrations",tag="integrations",params(("org_id"=String,Path),("agent_id"=String,Path),("limit"=Option<u32>,Query),("cursor"=Option<String>,Query)),security(("bearer"=[])),responses((status=200,description="Integrações",body=ListJson<Value>)))]
 pub async fn list(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<PathParams>,
     query: Result<Query<PageQuery>, QueryRejection>,
@@ -238,7 +238,7 @@ pub async fn list(
         .store
         .list_integrations(org, agent_id, page)?
         .into_iter()
-        .map(|v| value(v, e.chave_de_cifra.as_deref()))
+        .map(|v| value(v, e.encryption_key.as_deref()))
         .collect();
     let next_cursor = next_cursor(&items, page.limit, |v| {
         v["id"].as_str().unwrap_or_default().to_owned()
@@ -248,7 +248,7 @@ pub async fn list(
 
 #[utoipa::path(operation_id = "mostrar", get,path="/admin/v1/orgs/{org_id}/agents/{agent_id}/integrations/{integration_id}",tag="integrations",params(("org_id"=String,Path),("agent_id"=String,Path),("integration_id"=String,Path)),security(("bearer"=[])),responses((status=200,description="Integração",body=Value)))]
 pub async fn show(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<ItemPath>,
 ) -> Result<Json<Value>, ApiError> {
@@ -256,13 +256,13 @@ pub async fn show(
     let id = parse_path_id::<IntegrationId>(&c.integration_id)?;
     Ok(Json(value(
         e.store.get_integration(org, agent_id, id)?,
-        e.chave_de_cifra.as_deref(),
+        e.encryption_key.as_deref(),
     )))
 }
 
 #[utoipa::path(operation_id = "criar", post,path="/admin/v1/orgs/{org_id}/agents/{agent_id}/integrations",tag="integrations",params(("org_id"=String,Path),("agent_id"=String,Path)),security(("bearer"=[])),request_body=Dados,responses((status=201,description="Integração criada",body=Value)))]
 pub async fn create(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<PathParams>,
     body: Result<Json<Dados>, JsonRejection>,
@@ -309,13 +309,13 @@ pub async fn create(
     super::audit::register(&e, &ident, Some(org), "create", "integration", v.id.clone())?;
     Ok((
         StatusCode::CREATED,
-        Json(value(v, e.chave_de_cifra.as_deref())),
+        Json(value(v, e.encryption_key.as_deref())),
     ))
 }
 
 #[utoipa::path(operation_id = "atualizar", patch,path="/admin/v1/orgs/{org_id}/agents/{agent_id}/integrations/{integration_id}",tag="integrations",params(("org_id"=String,Path),("agent_id"=String,Path),("integration_id"=String,Path),("If-Match"=String,Header)),security(("bearer"=[])),request_body=Dados,responses((status=200,description="Integração alterada",body=Value),(status=412,description="Conflito",body=crate::error::ErrorResponse)))]
 pub async fn update(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<ItemPath>,
     h: HeaderMap,
@@ -376,12 +376,12 @@ pub async fn update(
         "integration",
         id.to_string(),
     )?;
-    Ok(Json(value(v, e.chave_de_cifra.as_deref())))
+    Ok(Json(value(v, e.encryption_key.as_deref())))
 }
 
 #[utoipa::path(operation_id = "excluir", delete,path="/admin/v1/orgs/{org_id}/agents/{agent_id}/integrations/{integration_id}",tag="integrations",params(("org_id"=String,Path),("agent_id"=String,Path),("integration_id"=String,Path)),security(("bearer"=[])),responses((status=200,description="Integração excluída",body=Value)))]
 pub async fn delete(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<ItemPath>,
 ) -> Result<Json<Value>, ApiError> {

@@ -25,7 +25,7 @@ use poph_agent::metrics::{MetricsMemory, MetricsTurn};
 use poph_agent::turno::{DefaultRegistry, ToolRegistry, TurnEngine, TurnOptions, TurnProcessor};
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, LlmProvider, Request, Script};
 use poph_files::FileConfig;
-use poph_server::Estado;
+use poph_server::ServerState;
 use poph_server::api::test_chat::CHANNEL_OF_TEST;
 use poph_store::{ConversationStatus, Direction, NewAgent, NewOrg, Page, Store, TurnState};
 use poph_types::config::GlobalTokenConfig;
@@ -270,10 +270,10 @@ impl Cenario {
         });
 
         let fake = Arc::new(FakeProvider::with_scripts(roteiros(arquivo)));
-        let mut estado = Estado::novo(Arc::clone(&store), config).expect("estado do servidor");
+        let mut estado = ServerState::new(Arc::clone(&store), config).expect("estado do servidor");
         let mut arquivos = FileConfig::default(pasta.join("dados").join("blobs"));
         arquivos.extractor_path = Some(extrator_falso(&pasta));
-        estado = estado.com_arquivos(arquivos);
+        estado = estado.with_files(arquivos);
 
         if ligar_turno {
             let provedor: Arc<dyn LlmProvider> = fake.clone();
@@ -304,8 +304,8 @@ impl Cenario {
             let fluxo = Fluxo::new(Arc::clone(&store), atores, FlowOptions::default());
             processador.attach_io(fluxo.clone());
             estado = estado
-                .com_motor(motor)
-                .com_turno(fluxo, Duration::from_millis(20));
+                .with_engine(motor)
+                .with_turn(fluxo, Duration::from_millis(20));
         }
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

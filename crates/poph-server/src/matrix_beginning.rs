@@ -10,7 +10,7 @@ use poph_store::{SpaceOrigin as StoredOrigin, Store, StoreError};
 use poph_types::{ConversationId, DepartmentId, OrgId};
 use tokio::sync::watch;
 
-use crate::Estado as ServerState;
+use crate::ServerState;
 use crate::api::matrix_as::AsReceiver;
 use crate::matrix_expiry::AssetExpiry;
 use crate::matrix_failure_notice::{

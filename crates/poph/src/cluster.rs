@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Args, Subcommand};
-use poph_server::cluster::{ClusterVivo, ErroCluster, ResumoCluster};
+use poph_server::cluster::{ClusterError, ClusterSummary, LiveCluster};
 use poph_types::Secret;
 use serde_json::json;
 
@@ -63,12 +63,12 @@ pub fn executar(flag: Option<PathBuf>, ambiente: &config::Ambiente, acao: AcaoCl
 }
 
 /// Lê o mapa e devolve o estado vivo; erro continua sendo erro para os dois comandos.
-fn carregar_vivo(caminho: &Path, segredo: Option<&Secret>) -> Result<ClusterVivo, ErroCluster> {
-    let config = poph_server::cluster::carregar(caminho, segredo)?;
-    Ok(ClusterVivo {
-        caminho: caminho.to_path_buf(),
+fn carregar_vivo(caminho: &Path, segredo: Option<&Secret>) -> Result<LiveCluster, ClusterError> {
+    let config = poph_server::cluster::load(caminho, segredo)?;
+    Ok(LiveCluster {
+        path: caminho.to_path_buf(),
         config,
-        segredo: segredo.cloned(),
+        secret: segredo.cloned(),
     })
 }
 
@@ -85,7 +85,7 @@ fn mostrar(caminho: &Path, segredo: Option<&Secret>, args: MostrarCluster) -> Ex
         }
         Err(erro) => {
             if args.json {
-                println!("{}", json_check(caminho, None, &erro.problemas(), None));
+                println!("{}", json_check(caminho, None, &erro.problems(), None));
             }
             eprintln!("{erro}");
             ExitCode::from(1)
@@ -119,13 +119,13 @@ fn conferir(caminho: &Path, segredo: Option<&Secret>, args: ConferirCluster) -> 
                         args.remoto.then_some(remoto.as_slice()),
                     )
                 );
-            } else if vivo.declara_cluster() {
+            } else if vivo.declares_cluster() {
                 println!("Mapa do cluster válido: {}", caminho.display());
                 println!("  {} instância(s)", vivo.config.instances.len());
                 println!("  fingerprint: {}", vivo.fingerprint());
                 println!(
                     "  segredo compartilhado: {}",
-                    if vivo.segredo.is_some() {
+                    if vivo.secret.is_some() {
                         format!("definido ({})", config::VAR_CLUSTER_SECRET)
                     } else {
                         "não definido".to_owned()
@@ -150,10 +150,10 @@ fn conferir(caminho: &Path, segredo: Option<&Secret>, args: ConferirCluster) -> 
         }
         Err(erro) => {
             if args.json {
-                println!("{}", json_check(caminho, None, &erro.problemas(), None));
+                println!("{}", json_check(caminho, None, &erro.problems(), None));
             } else {
                 println!("Mapa do cluster com problema em {}:", caminho.display());
-                for problema in erro.problemas() {
+                for problema in erro.problems() {
                     println!("  - {problema}");
                 }
             }
@@ -163,9 +163,9 @@ fn conferir(caminho: &Path, segredo: Option<&Secret>, args: ConferirCluster) -> 
     }
 }
 
-fn orgs_por_instancia(resumo: &ResumoCluster) -> BTreeMap<String, Vec<String>> {
+fn orgs_por_instancia(resumo: &ClusterSummary) -> BTreeMap<String, Vec<String>> {
     let mut por_instancia: BTreeMap<String, Vec<String>> = resumo
-        .instancias
+        .instances
         .iter()
         .map(|instancia| (instancia.id.clone(), Vec::new()))
         .collect();
@@ -181,23 +181,20 @@ fn orgs_por_instancia(resumo: &ResumoCluster) -> BTreeMap<String, Vec<String>> {
     por_instancia
 }
 
-fn texto_show(vivo: &ClusterVivo) -> String {
-    let resumo = vivo.resumo();
+fn texto_show(vivo: &LiveCluster) -> String {
+    let resumo = vivo.summary();
     let mut saida = String::from("POP Harness: cluster\n");
-    if resumo.modo == "instancia_unica" {
+    if resumo.mode == "instancia_unica" {
         saida.push_str(
             "modo: instância única (sem cluster.toml: todas as orgs vivem nesta instância)\n",
         );
-        saida.push_str(&format!(
-            "arquivo: {} (não existe)\n",
-            vivo.caminho.display()
-        ));
+        saida.push_str(&format!("arquivo: {} (não existe)\n", vivo.path.display()));
     } else {
         saida.push_str(&format!(
             "modo: cluster ({} instância(s))\n",
-            resumo.instancias.len()
+            resumo.instances.len()
         ));
-        saida.push_str(&format!("arquivo: {}\n", vivo.caminho.display()));
+        saida.push_str(&format!("arquivo: {}\n", vivo.path.display()));
         saida.push_str(&format!(
             "instância local: {}\n",
             if resumo.instance_id.is_empty() {
@@ -213,7 +210,7 @@ fn texto_show(vivo: &ClusterVivo) -> String {
             ),
         }
         saida.push_str("instâncias:\n");
-        for instancia in &resumo.instancias {
+        for instancia in &resumo.instances {
             saida.push_str(&format!(
                 "  {}{}  {}\n",
                 if instancia.local { "* " } else { "  " },
@@ -235,7 +232,7 @@ fn texto_show(vivo: &ClusterVivo) -> String {
     }
     saida.push_str(&format!(
         "segredo compartilhado: {}\n",
-        if resumo.segredo_configurado {
+        if resumo.secret_configured {
             format!("definido ({})", config::VAR_CLUSTER_SECRET)
         } else {
             "não definido".to_owned()
@@ -244,27 +241,27 @@ fn texto_show(vivo: &ClusterVivo) -> String {
     saida.push_str(&format!("fingerprint: {}\n", vivo.fingerprint()));
     saida.push_str(&format!(
         "fingerprint do mapa (sem a instância local): {}\n",
-        vivo.fingerprint_do_mapa()
+        vivo.map_fingerprint()
     ));
     saida
 }
 
-fn json_show(vivo: &ClusterVivo) -> String {
+fn json_show(vivo: &LiveCluster) -> String {
     let valor = json!({
         "versao_relatorio": 1,
-        "arquivo": vivo.caminho.display().to_string(),
+        "arquivo": vivo.path.display().to_string(),
         "fingerprint": vivo.fingerprint(),
-        "fingerprint_mapa": vivo.fingerprint_do_mapa(),
-        "mapa": vivo.resumo(),
+        "fingerprint_mapa": vivo.map_fingerprint(),
+        "mapa": vivo.summary(),
     });
     serde_json::to_string_pretty(&valor).unwrap_or_else(|_| valor.to_string())
 }
 
 fn json_check(
     caminho: &Path,
-    vivo: Option<&ClusterVivo>,
+    vivo: Option<&LiveCluster>,
     problemas: &[String],
-    remoto: Option<&[poph_server::cluster::DiagnosticoRemoto]>,
+    remoto: Option<&[poph_server::cluster::RemoteDiagnostic]>,
 ) -> String {
     let problemas_remotos = remoto.map(problemas_do_remoto).unwrap_or_default();
     let (ok, fingerprint, instancias, orgs) = match vivo {
@@ -281,7 +278,7 @@ fn json_check(
         "ok": ok,
         "arquivo": caminho.display().to_string(),
         "fingerprint": fingerprint,
-        "fingerprint_mapa": vivo.map(|vivo| vivo.fingerprint_do_mapa()),
+        "fingerprint_mapa": vivo.map(|vivo| vivo.map_fingerprint()),
         "instancias": instancias,
         "orgs_no_mapa": orgs,
         "problemas": problemas,
@@ -293,45 +290,45 @@ fn json_check(
 
 /// Consulta o mapa das instâncias vizinhas (`--remoto`). Sem cluster, não há o que consultar.
 fn consultar_remoto(
-    vivo: &ClusterVivo,
-) -> Result<Vec<poph_server::cluster::DiagnosticoRemoto>, String> {
-    if !vivo.declara_cluster() || vivo.config.instances.len() <= 1 {
+    vivo: &LiveCluster,
+) -> Result<Vec<poph_server::cluster::RemoteDiagnostic>, String> {
+    if !vivo.declares_cluster() || vivo.config.instances.len() <= 1 {
         return Ok(Vec::new());
     }
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|erro| format!("não consegui iniciar a consulta remota: {erro}"))?;
-    Ok(runtime.block_on(poph_server::cluster::conferir_remoto(&vivo.config)))
+    Ok(runtime.block_on(poph_server::cluster::check_remote_instances(&vivo.config)))
 }
 
 /// Problemas encontrados na consulta remota, um por linha (o que faz o código de saída ser 1).
-fn problemas_do_remoto(remoto: &[poph_server::cluster::DiagnosticoRemoto]) -> Vec<String> {
+fn problemas_do_remoto(remoto: &[poph_server::cluster::RemoteDiagnostic]) -> Vec<String> {
     remoto
         .iter()
         .filter(|diagnostico| !diagnostico.ok())
         .map(|diagnostico| {
             let motivo = diagnostico
-                .mensagem
+                .message
                 .clone()
-                .unwrap_or_else(|| diagnostico.situacao.to_owned());
-            format!("{} ({}): {motivo}", diagnostico.instancia, diagnostico.url)
+                .unwrap_or_else(|| diagnostico.status.to_owned());
+            format!("{} ({}): {motivo}", diagnostico.instance, diagnostico.url)
         })
         .collect()
 }
 
 /// Relatório em texto da consulta remota.
-fn texto_remoto(vivo: &ClusterVivo, remoto: &[poph_server::cluster::DiagnosticoRemoto]) -> String {
+fn texto_remoto(vivo: &LiveCluster, remoto: &[poph_server::cluster::RemoteDiagnostic]) -> String {
     let mut saida = format!(
         "consulta remota (mapa local: {}):\n",
-        vivo.fingerprint_do_mapa()
+        vivo.map_fingerprint()
     );
     if remoto.is_empty() {
         saida.push_str("  (nenhuma instância vizinha declarada)\n");
         return saida;
     }
     for diagnostico in remoto {
-        saida.push_str(&diagnostico.linha());
+        saida.push_str(&diagnostico.line());
         saida.push('\n');
     }
     let problemas = remoto.iter().filter(|d| !d.ok()).count();

@@ -14,11 +14,11 @@ use super::{ListJson, PageQuery, if_match_version, next_cursor, request_status};
 use crate::{
     auth::Identity,
     error::{ApiError, id_from_url as parse_path_id},
-    estado::Estado,
-    fluxos_servico::{
-        Ator, FalhaFluxo, Operacoes, json_comparacao, json_fluxo, json_fluxo_com_rascunho,
-        json_previa, json_revisao_completa, json_revisao_resumo, json_validacao,
+    flow_service::{
+        Actor, FlowError, FlowOperations, comparison_json, flow_json, flow_with_draft_json,
+        full_revision_json, preview_json, revision_summary_json, validation_json,
     },
+    state::ServerState,
 };
 
 const LIMIT_DEFAULT_REVISION: u32 = 50;
@@ -129,39 +129,39 @@ fn flow_refusal(diagnostic: &[Diagnostic]) -> ApiError {
     .with_details(json!({ "diagnostics": diagnostic }))
 }
 
-impl From<FalhaFluxo> for ApiError {
-    fn from(failure: FalhaFluxo) -> Self {
+impl From<FlowError> for ApiError {
+    fn from(failure: FlowError) -> Self {
         match failure {
-            FalhaFluxo::VersaoVelha {
+            FlowError::StaleVersion {
                 id,
-                esperada: expected_version,
-                atual: current_version,
+                expected: expected_version,
+                current: current_version,
             } => ApiError::version_conflict("fluxo", &id, expected_version, current_version),
-            FalhaFluxo::ScriptVazio => {
+            FlowError::EmptyScript => {
                 ApiError::validation("source", "o script está vazio: não há o que publicar")
             }
-            FalhaFluxo::ScriptInvalido(diagnostic) => flow_refusal(&diagnostic),
-            FalhaFluxo::SemRevisao => ApiError::new(
+            FlowError::InvalidScript(diagnostic) => flow_refusal(&diagnostic),
+            FlowError::MissingRevision => ApiError::new(
                 StatusCode::CONFLICT,
                 "fluxo_nao_publicado",
                 "o fluxo ainda não tem revisão publicada: publique o rascunho antes",
             ),
-            FalhaFluxo::IrDivergente(code) => ApiError::new(
+            FlowError::DivergentIr(code) => ApiError::new(
                 StatusCode::CONFLICT,
                 code,
                 "a revisão publicada não confere com o texto guardado: a leitura falha fechada",
             ),
-            FalhaFluxo::Interno => ApiError::internal(),
-            FalhaFluxo::TetoDeFluxos {
-                atual: count,
-                teto: limit,
+            FlowError::Internal => ApiError::internal(),
+            FlowError::FlowLimit {
+                current: count,
+                cap: limit,
             } => ApiError::new(
                 StatusCode::CONFLICT,
                 "teto_de_fluxos_por_org",
                 format!("a organização já tem {count} fluxos e o teto é {limit}"),
             )
             .with_details(json!({ "flows": count, "limit": limit })),
-            FalhaFluxo::Banco(error) => ApiError::from(error),
+            FlowError::Database(error) => ApiError::from(error),
         }
     }
 }
@@ -183,7 +183,7 @@ impl From<FalhaFluxo> for ApiError {
     )
 )]
 pub async fn validate_script(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<OrgPath>,
     body: Result<Json<ScriptData>, JsonRejection>,
@@ -199,9 +199,9 @@ pub async fn validate_script(
             "envie o texto do script em `source`",
         ));
     }
-    let ops = Operacoes::novo(&e.store, &e.cache_fluxos, &e.config);
-    let validation = ops.validar(Some(org), &d.source)?;
-    Ok(Json(json_validacao(&validation)))
+    let ops = FlowOperations::new(&e.store, &e.flow_cache, &e.config);
+    let validation = ops.validate(Some(org), &d.source)?;
+    Ok(Json(validation_json(&validation)))
 }
 
 #[doc = " `GET /flows`: lista da org, com filtro de situação e cursor."]
@@ -223,7 +223,7 @@ pub async fn validate_script(
     )
 )]
 pub async fn list(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<OrgPath>,
     Query(q): Query<FlowsQuery>,
@@ -241,7 +241,7 @@ pub async fn list(
     .page()?;
     let limit = page.limit;
     let flows = e.store.flows().list(org, &FlowFilter { status }, page)?;
-    let items: Vec<Value> = flows.iter().map(json_fluxo).collect();
+    let items: Vec<Value> = flows.iter().map(flow_json).collect();
     let next_cursor = next_cursor(&flows, limit, |f| f.id.to_string());
     Ok(Json(ListJson { items, next_cursor }))
 }
@@ -264,7 +264,7 @@ pub async fn list(
     )
 )]
 pub async fn create(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<OrgPath>,
     body: Result<Json<CreationData>, JsonRejection>,
@@ -282,15 +282,15 @@ pub async fn create(
             "envie o texto do script em `source`",
         ));
     }
-    let ops = Operacoes::novo(&e.store, &e.cache_fluxos, &e.config);
-    let creation = ops.criar(org, &d.source, d.publish, &Ator::token(ident.actor_id()))?;
-    let mut body = json_fluxo_com_rascunho(&creation.fluxo);
-    match creation.publicacao {
+    let ops = FlowOperations::new(&e.store, &e.flow_cache, &e.config);
+    let creation = ops.create(org, &d.source, d.publish, &Actor::token(ident.actor_id()))?;
+    let mut body = flow_with_draft_json(&creation.flow);
+    match creation.publication {
         Some(done) => {
-            body["current_revision"] = json!(done.revisao.numero);
-            body["revision"] = json_revisao_resumo(&done.revisao);
-            body["warnings"] = json!(done.avisos);
-            body["version"] = json!(done.versao_do_fluxo);
+            body["current_revision"] = json!(done.revision.numero);
+            body["revision"] = revision_summary_json(&done.revision);
+            body["warnings"] = json!(done.warnings);
+            body["version"] = json!(done.flow_version);
         }
         None => body["revision"] = Value::Null,
     }
@@ -314,7 +314,7 @@ pub async fn create(
     )
 )]
 pub async fn show(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<FlowPath>,
 ) -> Result<Json<Value>, ApiError> {
@@ -325,8 +325,8 @@ pub async fn show(
         .flows()
         .get(org, parse_path_id::<FlowId>(&c.flow_id)?)?;
     let current = e.store.revisions().current(org, flow.id)?;
-    let mut body = json_fluxo_com_rascunho(&flow);
-    body["revision"] = current.as_ref().map_or(Value::Null, json_revisao_resumo);
+    let mut body = flow_with_draft_json(&flow);
+    body["revision"] = current.as_ref().map_or(Value::Null, revision_summary_json);
     Ok(Json(body))
 }
 
@@ -352,7 +352,7 @@ pub async fn show(
     )
 )]
 pub async fn update(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<FlowPath>,
     h: HeaderMap,
@@ -383,7 +383,7 @@ pub async fn update(
         },
     )?;
     super::audit::register(&e, &ident, Some(org), "flow_update", "flow", id.to_string())?;
-    Ok(Json(json_fluxo_com_rascunho(&flow)))
+    Ok(Json(flow_with_draft_json(&flow)))
 }
 
 #[doc = " `DELETE /flows/{flow_id}?force=`: exclui o fluxo; com execução ativa, só com `force=true`."]
@@ -406,7 +406,7 @@ pub async fn update(
     )
 )]
 pub async fn delete(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<FlowPath>,
     Query(q): Query<ExclusionQuery>,
@@ -475,7 +475,7 @@ pub async fn delete(
     )
 )]
 pub async fn publish(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<FlowPath>,
     h: HeaderMap,
@@ -491,14 +491,20 @@ pub async fn publish(
     };
     let flow = e.store.flows().get(org, id)?;
     let source = data.source.unwrap_or_else(|| flow.rascunho_fonte.clone());
-    let ops = Operacoes::novo(&e.store, &e.cache_fluxos, &e.config);
-    let done = ops.publicar(org, &flow, version, &source, &Ator::token(ident.actor_id()))?;
+    let ops = FlowOperations::new(&e.store, &e.flow_cache, &e.config);
+    let done = ops.publish(
+        org,
+        &flow,
+        version,
+        &source,
+        &Actor::token(ident.actor_id()),
+    )?;
     Ok((
         StatusCode::CREATED,
         Json(json!({
-            "revision": json_revisao_resumo(&done.revisao),
-            "version": done.versao_do_fluxo,
-            "warnings": done.avisos,
+            "revision": revision_summary_json(&done.revision),
+            "version": done.flow_version,
+            "warnings": done.warnings,
         })),
     ))
 }
@@ -523,7 +529,7 @@ pub async fn publish(
     )
 )]
 pub async fn list_revisions(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<FlowPath>,
     Query(q): Query<RevisionsQuery>,
@@ -548,7 +554,7 @@ pub async fn list_revisions(
     } else {
         revision.last().map(|r| r.numero.to_string())
     };
-    let items: Vec<Value> = revision.iter().map(json_revisao_resumo).collect();
+    let items: Vec<Value> = revision.iter().map(revision_summary_json).collect();
     Ok(Json(ListJson { items, next_cursor }))
 }
 
@@ -571,7 +577,7 @@ pub async fn list_revisions(
     )
 )]
 pub async fn show_revision(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<RevisionPath>,
 ) -> Result<Json<Value>, ApiError> {
@@ -583,7 +589,7 @@ pub async fn show_revision(
             .with_details(json!({ "field": "revision", "value": c.number }))
     })?;
     let revision = e.store.revisions().get(org, id, number)?;
-    Ok(Json(json_revisao_completa(&revision)))
+    Ok(Json(full_revision_json(&revision)))
 }
 
 #[doc = " `GET /flows/{flow_id}/diff?de=&para=`: o que mudou, em português, e os atendimentos em cada"]
@@ -611,7 +617,7 @@ pub async fn show_revision(
     )
 )]
 pub async fn diff(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<FlowPath>,
     Query(q): Query<DiffQuery>,
@@ -634,9 +640,9 @@ pub async fn diff(
         Some(text) if !text.is_empty() => Some(number(text, "de")?),
         _ => None,
     };
-    let ops = Operacoes::novo(&e.store, &e.cache_fluxos, &e.config);
-    let comparison = ops.comparar(org, &flow, from, to)?;
-    Ok(Json(json_comparacao(id, &comparison)))
+    let ops = FlowOperations::new(&e.store, &e.flow_cache, &e.config);
+    let comparison = ops.compare(org, &flow, from, to)?;
+    Ok(Json(comparison_json(id, &comparison)))
 }
 
 #[doc = " `GET /flows/{flow_id}/preview?etapa=`: bloco de prompt que o agente veria naquela etapa."]
@@ -658,7 +664,7 @@ pub async fn diff(
     )
 )]
 pub async fn preview(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<FlowPath>,
     Query(q): Query<PreviewQuery>,
@@ -667,9 +673,9 @@ pub async fn preview(
     ident.require_org(org)?;
     let id = parse_path_id::<FlowId>(&c.flow_id)?;
     let flow = e.store.flows().get(org, id)?;
-    let ops = Operacoes::novo(&e.store, &e.cache_fluxos, &e.config);
+    let ops = FlowOperations::new(&e.store, &e.flow_cache, &e.config);
     let preview = ops.preview(org, &flow, q.step.as_deref())?;
-    Ok(Json(json_previa(&preview)))
+    Ok(Json(preview_json(&preview)))
 }
 
 #[doc = " `POST /flows/format`: devolve o script na forma canônica (ou os erros, se não compilar)."]
@@ -690,7 +696,7 @@ pub async fn preview(
     )
 )]
 pub async fn format(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<OrgPath>,
     body: Result<Json<ScriptData>, JsonRejection>,
@@ -706,7 +712,7 @@ pub async fn format(
             "envie o texto do script em `source`",
         ));
     }
-    let ops = Operacoes::novo(&e.store, &e.cache_fluxos, &e.config);
-    let text = ops.formatar(&d.source)?;
+    let ops = FlowOperations::new(&e.store, &e.flow_cache, &e.config);
+    let text = ops.format(&d.source)?;
     Ok(Json(json!({ "source": text })))
 }

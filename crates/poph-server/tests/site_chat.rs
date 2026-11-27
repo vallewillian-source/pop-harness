@@ -16,7 +16,7 @@ use poph_core::llm::{
     FakeProvider, FinishReason, LlmError, LlmEvent, LlmLimiter, LlmProvider, Message,
     OpenAiCompatibleClient, OpenAiCompatibleConfig, Part, Request, Script, ToolCall,
 };
-use poph_server::Estado;
+use poph_server::ServerState;
 use poph_store::{
     ConversationStatus, NewAgent, NewOrg, NewOutboxItem, NewRecord, SiteSubmission, SiteTurnKey,
     Store,
@@ -98,9 +98,9 @@ impl Fixture {
         })
         .expect("HTTP tools");
         let motor = motor.with_http_tools(http_tools);
-        let state = Estado::novo(self.store.clone(), self.config.clone())
+        let state = ServerState::new(self.store.clone(), self.config.clone())
             .expect("state")
-            .com_motor(Arc::new(motor));
+            .with_engine(Arc::new(motor));
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
         let url = format!("http://{}", listener.local_addr().expect("address"));
         let task = tokio::spawn(poph_server::serve_at(

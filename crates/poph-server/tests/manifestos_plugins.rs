@@ -19,7 +19,7 @@ use std::time::{Duration, SystemTime};
 
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
-use poph_server::{CipherKey, Estado};
+use poph_server::{CipherKey, ServerState};
 use poph_store::{NewAgent, NewOrg, Store};
 use poph_types::config::GlobalTokenConfig;
 use poph_types::{AgentId, DeclaredPlugin, HarnessConfig, OrgId};
@@ -218,9 +218,9 @@ impl Cenario {
             .expect("cria o agente")
             .id;
 
-        let estado = Estado::novo(Arc::clone(&store), config)
+        let estado = ServerState::new(Arc::clone(&store), config)
             .expect("estado do servidor")
-            .com_chave_de_cifra(Some(
+            .with_encryption_key(Some(
                 CipherKey::derive(CHAVE_CIFRA).expect("chave de cifra"),
             ));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

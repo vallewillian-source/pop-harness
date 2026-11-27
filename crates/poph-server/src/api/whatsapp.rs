@@ -13,7 +13,7 @@ use super::if_match_version;
 use crate::{
     auth::Identity,
     error::{ApiError, id_from_url as parse_path_id},
-    estado::Estado,
+    state::ServerState,
 };
 
 #[derive(Deserialize)]
@@ -47,7 +47,7 @@ impl Target {
     }
 }
 
-fn target(e: &Estado, ident: &Identity, c: &PathParams) -> Result<Target, ApiError> {
+fn target(e: &ServerState, ident: &Identity, c: &PathParams) -> Result<Target, ApiError> {
     let org: OrgId = parse_path_id(&c.org_id)?;
     ident.require_org(org)?;
     let agent_id: AgentId = parse_path_id(&c.agent_id)?;
@@ -64,16 +64,18 @@ fn target(e: &Estado, ident: &Identity, c: &PathParams) -> Result<Target, ApiErr
         )
         .with_details(json!({ "kind": integration.kind })));
     }
-    let channel = e.canal_evolution_da_integracao(org, id).ok_or_else(|| {
-        ApiError::new(
-            StatusCode::CONFLICT,
-            "whatsapp_nao_configurado",
-            "esta integração não tem instância da Evolution declarada na configuração \
+    let channel = e
+        .evolution_channel_for_integration(org, id)
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::CONFLICT,
+                "whatsapp_nao_configurado",
+                "esta integração não tem instância da Evolution declarada na configuração \
                  do servidor (`[evolution].instancias`: org, instância e integração)",
-        )
-        .with_details(json!({ "integration_id": id.to_string() }))
-    })?;
-    let client = channel.cliente.clone().ok_or_else(|| {
+            )
+            .with_details(json!({ "integration_id": id.to_string() }))
+        })?;
+    let client = channel.client.clone().ok_or_else(|| {
         ApiError::new(
             StatusCode::SERVICE_UNAVAILABLE,
             "evolution_indisponivel",
@@ -84,7 +86,7 @@ fn target(e: &Estado, ident: &Identity, c: &PathParams) -> Result<Target, ApiErr
         org,
         id,
         integration,
-        instancia: channel.instancia.clone(),
+        instancia: channel.instance.clone(),
         client,
     })
 }
@@ -102,7 +104,7 @@ fn check_version(target: &Target, h: &HeaderMap) -> Result<(), ApiError> {
     Ok(())
 }
 
-fn write_state(e: &Estado, target: &Target, state: &str) -> Result<(), ApiError> {
+fn write_state(e: &ServerState, target: &Target, state: &str) -> Result<(), ApiError> {
     e.store
         .set_integration_connection_state(target.org, target.id, state)?;
     Ok(())
@@ -166,7 +168,7 @@ async fn optional_state(client: &EvolutionClient) -> Option<String> {
 
 #[utoipa::path(operation_id = "qrcode", post,path="/admin/v1/orgs/{org_id}/agents/{agent_id}/integrations/{integration_id}/whatsapp/qrcode",tag="integrations",params(("org_id"=String,Path),("agent_id"=String,Path),("integration_id"=String,Path),("If-Match"=String,Header)),security(("bearer"=[])),request_body=PairingData,responses((status=200,description="QR de pareamento",body=Value),(status=412,description="Conflito de versão",body=crate::error::ErrorResponse)))]
 pub async fn qrcode(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<PathParams>,
     h: HeaderMap,
@@ -237,7 +239,7 @@ pub async fn qrcode(
 
 #[utoipa::path(operation_id = "estado", get,path="/admin/v1/orgs/{org_id}/agents/{agent_id}/integrations/{integration_id}/whatsapp/state",tag="integrations",params(("org_id"=String,Path),("agent_id"=String,Path),("integration_id"=String,Path)),security(("bearer"=[])),responses((status=200,description="Estado da conexão",body=Value)))]
 pub async fn status(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<PathParams>,
 ) -> Result<Json<Value>, ApiError> {
@@ -261,7 +263,7 @@ pub async fn status(
 
 #[utoipa::path(operation_id = "desconectar", post,path="/admin/v1/orgs/{org_id}/agents/{agent_id}/integrations/{integration_id}/whatsapp/disconnect",tag="integrations",params(("org_id"=String,Path),("agent_id"=String,Path),("integration_id"=String,Path),("If-Match"=String,Header)),security(("bearer"=[])),responses((status=200,description="Instância desconectada",body=Value),(status=412,description="Conflito de versão",body=crate::error::ErrorResponse)))]
 pub async fn disconnect(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<PathParams>,
     h: HeaderMap,

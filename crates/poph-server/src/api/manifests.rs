@@ -1,7 +1,7 @@
 use crate::{
     auth::Identity,
     error::{ApiError, id_from_url as parse_path_id},
-    estado::Estado,
+    state::ServerState,
 };
 use axum::{Json, extract::Path, extract::State, http::StatusCode};
 use poph_types::OrgId;
@@ -21,19 +21,19 @@ pub struct OrgPath {
 
 #[utoipa::path(get,operation_id="listar_manifests",path="/admin/v1/orgs/{org_id}/manifests",tag="manifests",params(("org_id"=String,Path)),security(("bearer"=[])),responses((status=200,description="Plugins declarados na configuração da instância: um item por tipo (`kind`) com nome, versão e situação (`ok`/`indisponivel`); plugin que não responde sai marcado e não derruba a lista",body=Value)))]
 pub async fn list(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<OrgPath>,
 ) -> Result<Json<Value>, ApiError> {
     let org = parse_path_id::<OrgId>(&c.org_id)?;
     ident.require_org(org)?;
-    let items = e.manifestos.listar().await;
+    let items = e.manifests.list().await;
     Ok(Json(json!({ "items": items })))
 }
 
 #[utoipa::path(operation_id = "mostrar", get,path="/admin/v1/orgs/{org_id}/manifests/{kind}",tag="manifests",params(("org_id"=String,Path),("kind"=String,Path)),security(("bearer"=[])),responses((status=200,description="Manifesto do plugin (nome, versão, capacidades, limites e JSON Schema de configuração e segredos)",body=Value),(status=404,description="Tipo sem plugin declarado",body=crate::error::ErrorResponse),(status=503,description="Plugin declarado que não respondeu ao handshake",body=crate::error::ErrorResponse)))]
 pub async fn show(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<PathParams>,
 ) -> Result<Json<Value>, ApiError> {
@@ -43,23 +43,21 @@ pub async fn show(
     if kind.is_empty() {
         return Err(ApiError::validation("kind", "obrigatório"));
     }
-    match e.manifestos.manifesto(kind).await {
+    match e.manifests.manifest(kind).await {
         Ok(manifesto) => Ok(Json(
             serde_json::to_value(&manifesto).unwrap_or_else(|_| json!({ "kind": kind })),
         )),
-        Err(failure @ crate::manifestos::FalhaManifesto::NaoDeclarado) => Err(ApiError::new(
+        Err(failure @ crate::manifests::ManifestFailure::Undeclared) => Err(ApiError::new(
             StatusCode::NOT_FOUND,
             "not_found",
-            format!("manifesto `{kind}` não encontrado: {}", failure.mensagem()),
+            format!("manifesto `{kind}` não encontrado: {}", failure.message()),
         )
         .with_details(json!({ "kind": kind }))),
-        Err(failure @ crate::manifestos::FalhaManifesto::Indisponivel { .. }) => {
-            Err(ApiError::new(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "manifesto_indisponivel",
-                failure.mensagem(),
-            )
-            .with_details(json!({ "kind": kind })))
-        }
+        Err(failure @ crate::manifests::ManifestFailure::Unavailable { .. }) => Err(ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "manifesto_indisponivel",
+            failure.message(),
+        )
+        .with_details(json!({ "kind": kind }))),
     }
 }

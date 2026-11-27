@@ -487,7 +487,7 @@ padrão, aditiva: itens já enviados ficam com `NULL` (o id deles nunca foi guar
 - **O que guarda:** o id que o canal deu à mensagem enviada — na Evolution, o `key.id` da resposta
   do `sendText`/`sendMedia`. É o que a fase 2 usa para reconhecer o eco do próprio envio (`fromMe`
   com este id = eco, descartar) e distinguir a mensagem digitada no aparelho.
-- **Quem grava:** a saída do WhatsApp (`crates/poph-server/src/saida_whatsapp.rs`) ao marcar o item como `sent`, na mesma
+- **Quem grava:** a saída do WhatsApp (`crates/poph-server/src/whatsapp_output.rs`) ao marcar o item como `sent`, na mesma
   escrita da confirmação (`confirm_send_with_id`). Envio que falha não deixa id: a coluna só é
   escrita quando o canal confirma.
 - **Canal sem id:** plugin em processo externo pode não devolver id, e a Evolution pode responder

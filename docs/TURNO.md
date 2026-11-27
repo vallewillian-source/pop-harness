@@ -213,7 +213,7 @@ The server answers WhatsApp messages. The path is the same as `poph chat`, with 
 instead of the terminal:
 
 1. The Evolution webhook records the customer's message in the incoming queue (`inbox`) and in the conversation.
-2. The dispatch loop (`crates/poph-server/src/entrada_turno.rs`) reads the pending queue every
+2. The dispatch loop (`crates/poph-server/src/turn_input.rs`) reads the pending queue every
    `[turno] intervalo_despacho_ms` (default 1000 ms; accepts 100 to 60000). It dispatches **only the input**: it
    sends nothing. The output is handled by the WhatsApp loop (`saida_whatsapp.rs`).
 3. The conversation actor runs the turn. One turn at a time per conversation is guaranteed by the actor itself.
@@ -467,6 +467,10 @@ not lost, the turn does not get stuck as "in progress", the conversation goes ba
   - `cargo test -p poph-store --test storage` — `orphan_turns_closes_only_those_started_before_boot` and
     `response_and_output_item_enter_same_write`;
   - run with the real binary, `kill -9` at six points, in `/tmp/hr57-run/queda.py`.
+
+The shared server state keeps test-chat reservations by conversation. The stream releases its reservation on
+completion, error, or disconnect. The 30-minute reservation TTL recovers a slot if that release is missed
+inside a live process. Reservations are in memory and disappear when the process ends.
 
 ## 15. Flows in the turn (FX-23, FX-24, FX-25)
 

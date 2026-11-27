@@ -36,13 +36,12 @@ use poph_agent::Backoff;
 use poph_evolution::{ATTACHMENT_CAP, ConfigEvolution, EvolutionClient};
 use poph_flows::ProducedEffect;
 use poph_flows::ir::Effect;
-use poph_server::evolution::CanalEvolution;
-use poph_server::fluxos_efeitos::{
-    EfeitosFluxo, MOTIVO_TENTATIVAS_ESGOTADAS, OpcoesEfeitosFluxo, RelatoEfeitos,
-    efeito_da_transicao,
+use poph_server::evolution::EvolutionChannel;
+use poph_server::flow_effects::{
+    FlowEffectOptions, FlowEffectReport, FlowEffects, RETRY_LIMIT_REASON, effect_of_transition,
 };
-use poph_server::fluxos_metricas::MetricasFluxos;
-use poph_server::saida_whatsapp::{OpcoesSaidaWhatsApp, SaidaWhatsApp};
+use poph_server::flow_metrics::FlowMetrics;
+use poph_server::whatsapp_output::{WhatsAppOutput, WhatsAppOutputOptions};
 use poph_store::ConversationStatus;
 use poph_store::{
     Agente, ExecutionStart, ExecutionState, FlowEffect, NewAgent, NewConversation, NewDepartment,
@@ -193,8 +192,8 @@ struct Cenario {
     fluxo: FlowId,
     revisao: RevisionId,
     evo: EvolucaoFalsa,
-    canais: Vec<CanalEvolution>,
-    metricas: Arc<MetricasFluxos>,
+    canais: Vec<EvolutionChannel>,
+    metricas: Arc<FlowMetrics>,
     blobs: PathBuf,
     pasta: PathBuf,
     tarefa_evo: tokio::task::JoinHandle<()>,
@@ -301,19 +300,19 @@ impl Cenario {
         };
         let canais = match (modo, integracao) {
             (Instancia::SemCanal, _) | (_, None) => Vec::new(),
-            (_, Some(integracao)) => vec![CanalEvolution {
+            (_, Some(integracao)) => vec![EvolutionChannel {
                 org,
-                instancia: "loja".to_owned(),
-                integracao,
-                segredo: None,
-                cliente,
-                teto_midia: TETO,
+                instance: "loja".to_owned(),
+                integration: integracao,
+                secret: None,
+                client: cliente,
+                attachment_limit: TETO,
             }],
         };
 
         let registro = RegistroDeMetricas::new();
         let metricas =
-            Arc::new(MetricasFluxos::registrar(&registro).expect("registra as métricas de fluxos"));
+            Arc::new(FlowMetrics::register(&registro).expect("registra as métricas de fluxos"));
 
         Self {
             store,
@@ -334,37 +333,37 @@ impl Cenario {
         }
     }
 
-    fn efeitos(&self) -> EfeitosFluxo {
-        EfeitosFluxo::novo(
+    fn efeitos(&self) -> FlowEffects {
+        FlowEffects::new(
             Arc::clone(&self.store),
             &self.canais,
             self.blobs.clone(),
             Some(Arc::clone(&self.metricas)),
-            OpcoesEfeitosFluxo {
+            FlowEffectOptions {
                 // Espera curta para o teste não depender de relógio de parede.
                 backoff: Backoff {
                     base: Duration::from_millis(1),
                     factor: 2,
                     cap: Duration::from_millis(5),
                 },
-                espera_sem_integracao: Duration::from_millis(10),
-                ..OpcoesEfeitosFluxo::default()
+                missing_integration_delay: Duration::from_millis(10),
+                ..FlowEffectOptions::default()
             },
         )
     }
 
-    fn saida(&self) -> SaidaWhatsApp {
-        SaidaWhatsApp::novo(
+    fn saida(&self) -> WhatsAppOutput {
+        WhatsAppOutput::new(
             Arc::clone(&self.store),
             &self.canais,
             self.blobs.clone(),
-            OpcoesSaidaWhatsApp {
+            WhatsAppOutputOptions {
                 backoff: Backoff {
                     base: Duration::from_millis(1),
                     factor: 2,
                     cap: Duration::from_millis(5),
                 },
-                ..OpcoesSaidaWhatsApp::default()
+                ..WhatsAppOutputOptions::default()
             },
         )
     }
@@ -518,7 +517,7 @@ fn fluxo_publicado(store: &Store, org: OrgId) -> (FlowId, RevisionId) {
 
 /// `mensagem_ao_cliente` como o motor descreve e como a fila grava.
 fn ao_cliente(texto: &str) -> TransitionEffect {
-    efeito_da_transicao(&ProducedEffect {
+    effect_of_transition(&ProducedEffect {
         chave: "etapa:boas_vindas/0".to_owned(),
         no: "etapa:boas_vindas".to_owned(),
         index: 0,
@@ -530,7 +529,7 @@ fn ao_cliente(texto: &str) -> TransitionEffect {
 
 /// `notificar_whatsapp` para a equipe.
 fn notificar(mensagem: &str) -> TransitionEffect {
-    efeito_da_transicao(&ProducedEffect {
+    effect_of_transition(&ProducedEffect {
         chave: "acao:boas_vindas.registrar/0".to_owned(),
         no: "acao:boas_vindas.registrar".to_owned(),
         index: 0,
@@ -543,7 +542,7 @@ fn notificar(mensagem: &str) -> TransitionEffect {
 
 /// `encaminhar` para o departamento pelo nome.
 fn encaminhar(departamento: &str) -> TransitionEffect {
-    efeito_da_transicao(&ProducedEffect {
+    effect_of_transition(&ProducedEffect {
         chave: "acao:boas_vindas.transferir/0".to_owned(),
         no: "acao:boas_vindas.transferir".to_owned(),
         index: 0,
@@ -582,8 +581,8 @@ async fn mensagem_ao_cliente_chega_ao_cliente_uma_vez() {
     );
 
     let efeitos = cenario.efeitos();
-    let relato = efeitos.ciclo_da_org(cenario.org).await.expect("ciclo");
-    assert_eq!(relato.enviados, 1, "um efeito entregue");
+    let relato = efeitos.cycle_for_org(cenario.org).await.expect("ciclo");
+    assert_eq!(relato.sent, 1, "um efeito entregue");
 
     let fila = cenario.efeitos_da_ficha(execucao);
     assert_eq!(fila[0].state, EffectState::Sent);
@@ -600,8 +599,8 @@ async fn mensagem_ao_cliente_chega_ao_cliente_uma_vez() {
 
     // Ponta a ponta: a saída do WhatsApp entrega ao cliente pela Evolution falsa.
     let saida = cenario.saida();
-    let enviados = saida.ciclo().await.expect("ciclo da saída");
-    assert_eq!(enviados.enviados, 1);
+    let enviados = saida.cycle().await.expect("ciclo da saída");
+    assert_eq!(enviados.sent, 1);
     let registros = cenario.registros();
     assert_eq!(registros.len(), 1, "uma chamada à Evolution");
     assert_eq!(registros[0].corpo["number"], TELEFONE);
@@ -613,16 +612,16 @@ async fn mensagem_ao_cliente_chega_ao_cliente_uma_vez() {
 
     // Segunda passagem: nada é reenviado.
     let relato = efeitos
-        .ciclo_da_org(cenario.org)
+        .cycle_for_org(cenario.org)
         .await
         .expect("segundo ciclo");
-    assert_eq!(relato.enviados, 0, "efeito entregue não volta para a fila");
+    assert_eq!(relato.sent, 0, "efeito entregue não volta para a fila");
     assert_eq!(cenario.total_de_itens(), 1, "sem segundo item na outbox");
 
     // Métricas: um efeito entrou na fila, um foi entregue, nenhuma falha.
-    assert_eq!(cenario.metricas.efeitos_pendentes.value(), 1);
-    assert_eq!(cenario.metricas.efeitos_enviados.value(), 1);
-    assert_eq!(cenario.metricas.efeitos_falhas.value(), 0);
+    assert_eq!(cenario.metricas.pending_effects.value(), 1);
+    assert_eq!(cenario.metricas.sent_effects.value(), 1);
+    assert_eq!(cenario.metricas.failed_effects.value(), 0);
 
     // Evento na linha do tempo da Ficha, uma vez.
     let enviados: Vec<_> = cenario
@@ -643,10 +642,10 @@ async fn notificar_whatsapp_vai_para_a_equipe_e_nao_para_o_cliente() {
 
     let relato = cenario
         .efeitos()
-        .ciclo_da_org(cenario.org)
+        .cycle_for_org(cenario.org)
         .await
         .expect("ciclo");
-    assert_eq!(relato.enviados, 1);
+    assert_eq!(relato.sent, 1);
 
     let registros = cenario.registros();
     assert_eq!(registros.len(), 1);
@@ -678,9 +677,9 @@ async fn sem_integracao_o_efeito_fica_pendente_e_nao_trava_o_laco() {
     let execucao = aberta.execution.id;
 
     let efeitos = cenario.efeitos();
-    let relato = efeitos.ciclo_da_org(cenario.org).await.expect("ciclo");
-    assert_eq!(relato.adiados, 1, "espera, não falha");
-    assert_eq!(relato.definitivos, 0);
+    let relato = efeitos.cycle_for_org(cenario.org).await.expect("ciclo");
+    assert_eq!(relato.deferred, 1, "espera, não falha");
+    assert_eq!(relato.permanent_failures, 0);
 
     let fila = cenario.efeitos_da_ficha(execucao);
     assert_eq!(fila[0].state, EffectState::Pending, "continua na fila");
@@ -689,17 +688,17 @@ async fn sem_integracao_o_efeito_fica_pendente_e_nao_trava_o_laco() {
     assert!(fila[0].proxima_tentativa.is_some(), "a espera fica marcada");
 
     // No ciclo seguinte, antes da espera vencer, o efeito nem é lido: nada de laço apertado.
-    let relato = efeitos.ciclo_da_org(cenario.org).await.expect("ciclo");
-    assert_eq!(relato.adiados, 0, "a espera segura o efeito");
+    let relato = efeitos.cycle_for_org(cenario.org).await.expect("ciclo");
+    assert_eq!(relato.deferred, 0, "a espera segura o efeito");
     assert_eq!(cenario.registros().len(), 0, "nenhuma chamada à Evolution");
 
     // E o laço não fica preso nele: um efeito de outra Ficha é entregue no mesmo ciclo.
     let outra = cenario.outra_ficha(None);
     cenario.abrir_na_ficha(outra, vec![ao_cliente("Mensagem de outra Ficha")]);
     cenario.avancar(60);
-    let relato = efeitos.ciclo_da_org(cenario.org).await.expect("ciclo");
-    assert_eq!(relato.enviados, 1, "o outro efeito foi entregue");
-    assert_eq!(relato.adiados, 1, "o da equipe continua esperando");
+    let relato = efeitos.cycle_for_org(cenario.org).await.expect("ciclo");
+    assert_eq!(relato.sent, 1, "o outro efeito foi entregue");
+    assert_eq!(relato.deferred, 1, "o da equipe continua esperando");
 }
 
 // ───────────────────────── 4. queda no meio: reenvia e aceita duplicata ─────────────────────────
@@ -742,10 +741,10 @@ async fn queda_entre_enfileirar_e_confirmar_reenvia_e_aceita_duplicata() {
     // A passagem seguinte encontra `enviando` e entrega de novo (pelo menos uma vez, D11).
     let relato = cenario
         .efeitos()
-        .ciclo_da_org(cenario.org)
+        .cycle_for_org(cenario.org)
         .await
         .expect("ciclo");
-    assert_eq!(relato.enviados, 1, "o reenvio acontece");
+    assert_eq!(relato.sent, 1, "o reenvio acontece");
     assert_eq!(
         cenario.efeitos_da_ficha(execucao)[0].state,
         EffectState::Sent
@@ -755,7 +754,7 @@ async fn queda_entre_enfileirar_e_confirmar_reenvia_e_aceita_duplicata() {
     // duas. Está documentado no PRD (entrega pelo menos uma vez).
     let itens = cenario.itens_da_saida();
     assert_eq!(itens.len(), 2, "a duplicata rara é aceita, não escondida");
-    cenario.saida().ciclo().await.expect("ciclo da saída");
+    cenario.saida().cycle().await.expect("ciclo da saída");
     assert_eq!(cenario.registros().len(), 2, "as duas chegam ao cliente");
 }
 
@@ -774,16 +773,16 @@ async fn falha_definitiva_vira_falhou_com_evento_e_metrica() {
 
     let relato = cenario
         .efeitos()
-        .ciclo_da_org(cenario.org)
+        .cycle_for_org(cenario.org)
         .await
         .expect("ciclo");
-    assert_eq!(relato.definitivos, 1, "4xx não repete");
+    assert_eq!(relato.permanent_failures, 1, "4xx não repete");
 
     let fila = cenario.efeitos_da_ficha(execucao);
     assert_eq!(fila[0].state, EffectState::Failed);
     assert!(fila[0].ultimo_erro.is_some(), "o motivo fica gravado");
     assert_eq!(fila[0].attempts, 1);
-    assert_eq!(cenario.metricas.efeitos_falhas.value(), 1);
+    assert_eq!(cenario.metricas.failed_effects.value(), 1);
 
     // A transição continua valendo (PRD L11): execução ativa, conversa aberta.
     let atual = cenario
@@ -804,10 +803,10 @@ async fn falha_definitiva_vira_falhou_com_evento_e_metrica() {
     // E o efeito não volta para a fila.
     let relato = cenario
         .efeitos()
-        .ciclo_da_org(cenario.org)
+        .cycle_for_org(cenario.org)
         .await
         .expect("ciclo");
-    assert_eq!(relato, RelatoEfeitos::default(), "nada mais a fazer");
+    assert_eq!(relato, FlowEffectReport::default(), "nada mais a fazer");
 }
 
 // ───────────────────────── 6. 5xx: tenta de novo e passa ─────────────────────────
@@ -827,22 +826,22 @@ async fn falha_transitoria_tenta_de_novo_e_passa() {
     let execucao = aberta.execution.id;
 
     let efeitos = cenario.efeitos();
-    let relato = efeitos.ciclo_da_org(cenario.org).await.expect("ciclo");
-    assert_eq!(relato.transitorios, 1);
+    let relato = efeitos.cycle_for_org(cenario.org).await.expect("ciclo");
+    assert_eq!(relato.transient_failures, 1);
     let fila = cenario.efeitos_da_ficha(execucao);
     assert_eq!(fila[0].state, EffectState::Pending, "volta para a fila");
     assert_eq!(fila[0].attempts, 1);
     assert!(fila[0].proxima_tentativa.is_some(), "espera marcada");
 
     // Antes da espera vencer, não tenta de novo (não é laço apertado).
-    let relato = efeitos.ciclo_da_org(cenario.org).await.expect("ciclo");
-    assert_eq!(relato, RelatoEfeitos::default());
+    let relato = efeitos.cycle_for_org(cenario.org).await.expect("ciclo");
+    assert_eq!(relato, FlowEffectReport::default());
     assert_eq!(cenario.registros().len(), 1, "uma tentativa até aqui");
 
     // Vencida a espera, a segunda tentativa passa.
     cenario.avancar(50);
-    let relato = efeitos.ciclo_da_org(cenario.org).await.expect("ciclo");
-    assert_eq!(relato.enviados, 1);
+    let relato = efeitos.cycle_for_org(cenario.org).await.expect("ciclo");
+    assert_eq!(relato.sent, 1);
     assert_eq!(cenario.registros().len(), 2);
     let fila = cenario.efeitos_da_ficha(execucao);
     assert_eq!(fila[0].state, EffectState::Sent);
@@ -860,10 +859,10 @@ async fn encaminhar_transfere_a_conversa_e_mantem_a_ficha_aberta() {
 
     let relato = cenario
         .efeitos()
-        .ciclo_da_org(cenario.org)
+        .cycle_for_org(cenario.org)
         .await
         .expect("ciclo");
-    assert_eq!(relato.enviados, 1);
+    assert_eq!(relato.sent, 1);
 
     // A conversa vai para o departamento e o agente para de responder (D12, guarda do turno).
     let conversa = cenario.conversa();
@@ -925,10 +924,10 @@ async fn departamento_inexistente_vira_falhou_sem_reverter_a_transicao() {
 
     let relato = cenario
         .efeitos()
-        .ciclo_da_org(cenario.org)
+        .cycle_for_org(cenario.org)
         .await
         .expect("ciclo");
-    assert_eq!(relato.definitivos, 1);
+    assert_eq!(relato.permanent_failures, 1);
 
     let fila = cenario.efeitos_da_ficha(execucao);
     assert_eq!(fila[0].state, EffectState::Failed);
@@ -958,10 +957,10 @@ async fn o_limite_de_4000_caracteres_do_whatsapp_e_respeitado() {
 
     let relato = cenario
         .efeitos()
-        .ciclo_da_org(cenario.org)
+        .cycle_for_org(cenario.org)
         .await
         .expect("ciclo");
-    assert_eq!(relato.enviados, 1);
+    assert_eq!(relato.sent, 1);
 
     let registros = cenario.registros();
     let enviado = registros[0].corpo["text"]
@@ -991,9 +990,9 @@ async fn o_telefone_nao_aparece_em_log_nem_no_motivo_gravado() {
     let outra = cenario.outra_ficha(cenario.integracao);
     let falha = cenario.abrir_na_ficha(outra, vec![notificar("aviso 2")]);
     let efeitos = cenario.efeitos();
-    let relato = efeitos.ciclo_da_org(cenario.org).await.expect("ciclo");
-    assert_eq!(relato.enviados, 1);
-    assert_eq!(relato.definitivos, 1);
+    let relato = efeitos.cycle_for_org(cenario.org).await.expect("ciclo");
+    assert_eq!(relato.sent, 1);
+    assert_eq!(relato.permanent_failures, 1);
 
     // O motivo gravado também não leva telefone.
     let motivo = cenario.efeitos_da_ficha(falha.execution.id)[0]
@@ -1039,8 +1038,8 @@ async fn a_mensagem_ao_cliente_espera_o_turno_da_conversa() {
         .expect("abre o turno");
 
     let efeitos = cenario.efeitos();
-    let relato = efeitos.ciclo_da_org(cenario.org).await.expect("ciclo");
-    assert_eq!(relato.adiados, 1);
+    let relato = efeitos.cycle_for_org(cenario.org).await.expect("ciclo");
+    assert_eq!(relato.deferred, 1);
     assert!(cenario.itens_da_saida().is_empty(), "nada na outbox ainda");
     let fila = cenario.efeitos_da_ficha(execucao);
     assert_eq!(fila[0].state, EffectState::Pending);
@@ -1060,8 +1059,8 @@ async fn a_mensagem_ao_cliente_espera_o_turno_da_conversa() {
         )
         .expect("fecha o turno");
     cenario.avancar(50);
-    let relato = efeitos.ciclo_da_org(cenario.org).await.expect("ciclo");
-    assert_eq!(relato.enviados, 1);
+    let relato = efeitos.cycle_for_org(cenario.org).await.expect("ciclo");
+    assert_eq!(relato.sent, 1);
     assert_eq!(cenario.itens_da_saida().len(), 1);
 }
 
@@ -1087,10 +1086,10 @@ async fn mensagem_ao_cliente_com_conversa_encerrada_vira_falhou() {
 
     let relato = cenario
         .efeitos()
-        .ciclo_da_org(cenario.org)
+        .cycle_for_org(cenario.org)
         .await
         .expect("ciclo");
-    assert_eq!(relato.definitivos, 1);
+    assert_eq!(relato.permanent_failures, 1);
 
     let fila = cenario.efeitos_da_ficha(execucao);
     assert_eq!(fila[0].state, EffectState::Failed);
@@ -1122,36 +1121,33 @@ async fn tentativas_esgotadas_viram_falhou_com_o_motivo_certo() {
     .await;
     let aberta = cenario.abrir(vec![notificar("aviso")]);
     let execucao = aberta.execution.id;
-    let efeitos = EfeitosFluxo::novo(
+    let efeitos = FlowEffects::new(
         Arc::clone(&cenario.store),
         &cenario.canais,
         cenario.blobs.clone(),
         Some(Arc::clone(&cenario.metricas)),
-        OpcoesEfeitosFluxo {
-            max_tentativas: 2,
+        FlowEffectOptions {
+            max_attempts: 2,
             backoff: Backoff {
                 base: Duration::from_millis(1),
                 factor: 2,
                 cap: Duration::from_millis(5),
             },
-            espera_sem_integracao: Duration::from_millis(10),
-            ..OpcoesEfeitosFluxo::default()
+            missing_integration_delay: Duration::from_millis(10),
+            ..FlowEffectOptions::default()
         },
     );
 
-    efeitos.ciclo_da_org(cenario.org).await.expect("1ª");
+    efeitos.cycle_for_org(cenario.org).await.expect("1ª");
     cenario.avancar(50);
-    efeitos.ciclo_da_org(cenario.org).await.expect("2ª");
+    efeitos.cycle_for_org(cenario.org).await.expect("2ª");
     cenario.avancar(50);
-    let relato = efeitos.ciclo_da_org(cenario.org).await.expect("3ª");
-    assert_eq!(relato.esgotados, 1);
+    let relato = efeitos.cycle_for_org(cenario.org).await.expect("3ª");
+    assert_eq!(relato.exhausted, 1);
 
     let fila = cenario.efeitos_da_ficha(execucao);
     assert_eq!(fila[0].state, EffectState::Failed);
     assert_eq!(fila[0].attempts, 2, "o teto de tentativas vale");
-    assert_eq!(
-        fila[0].ultimo_erro.as_deref(),
-        Some(MOTIVO_TENTATIVAS_ESGOTADAS)
-    );
-    assert_eq!(cenario.metricas.efeitos_falhas.value(), 1);
+    assert_eq!(fila[0].ultimo_erro.as_deref(), Some(RETRY_LIMIT_REASON));
+    assert_eq!(cenario.metricas.failed_effects.value(), 1);
 }

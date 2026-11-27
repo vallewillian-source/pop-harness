@@ -122,7 +122,7 @@ check it against the table. Two rules the table makes clear:
 
 | Subject | Code | Doc |
 |---|---|---|
-| Turn: from message to reply | `poph-agent/src/turno/`, `poph-server/src/entrada_turno.rs`, `saida_whatsapp.rs` | `docs/TURNO.md`, `docs/ENTRADA_E_SAIDA.md` |
+| Turn: from message to reply | `poph-agent/src/turno/`, `poph-server/src/turn_input.rs`, `whatsapp_output.rs` | `docs/TURNO.md`, `docs/ENTRADA_E_SAIDA.md` |
 | Concurrency: one actor per conversation, queues, limits | `poph-agent/src/atores.rs`, `limites.rs`, `config_quente.rs` | `docs/MEMORIA_E_CONCORRENCIA.md` |
 | Context and rolling summary | `poph-agent/src/contexto.rs`, `resumo.rs` | `docs/RESUMO.md` |
 | Knowledge base and hybrid search | `poph-agent/src/base_conhecimento.rs`, `poph-rag` | `docs/BASE_DE_CONHECIMENTO.md` |
@@ -132,7 +132,7 @@ check it against the table. Two rules the table makes clear:
 | Authentication: global and org token | `poph-server/src/auth.rs` | `docs/API.md` (Authentication section) |
 | Encryption of stored secrets | `poph-server/src/cipher.rs` | `docs/CONFIGURACAO.md` |
 | Cluster: map, fingerprint, reload | `poph-server/src/cluster.rs`, `poph/src/cluster.rs`, `poph-types/src/config.rs` | `docs/CLUSTER.md` |
-| Forwarding between instances | `poph-server/src/encaminhamento.rs` | `docs/CLUSTER.md` (Forwarding section) |
+| Forwarding between instances | `poph-server/src/forwarding.rs` | `docs/CLUSTER.md` (Forwarding section) |
 | History retention | `poph-retention/` | `docs/RETENCAO.md` |
 | Org backup | `poph-store/src/backup.rs`, `poph-server/src/api/backup.rs` | `docs/BACKUP.md` |
 | Integration plugins | `poph-plugins/`, `poph-plugin-eco/` | `docs/PLUGIN_PROTOCOLO.md`, `docs/PLUGIN_EXEMPLO.md` |

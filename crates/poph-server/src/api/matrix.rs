@@ -11,7 +11,7 @@ use super::if_match_version;
 use super::orgs::OrgPath;
 use crate::auth::Identity;
 use crate::error::{ApiError, id_from_url as parse_path_id};
-use crate::estado::Estado;
+use crate::state::ServerState;
 
 #[doc = " Como o módulo está numa org."]
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -130,7 +130,7 @@ pub struct SpaceDisabledJson {
     summary = "`GET /admin/v1/orgs/{org_id}/matrix`.",
 )]
 pub async fn show(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(path): Path<OrgPath>,
 ) -> Result<Response, ApiError> {
@@ -163,7 +163,7 @@ pub async fn show(
     summary = "`PUT /admin/v1/orgs/{org_id}/matrix` (exige `If-Match` com o `updated_at` lido antes).",
 )]
 pub async fn update(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(path): Path<OrgPath>,
     headers: HeaderMap,
@@ -199,7 +199,7 @@ pub async fn update(
     org_state(&state, org)
 }
 
-fn org_state(state: &Estado, org: OrgId) -> Result<Response, ApiError> {
+fn org_state(state: &ServerState, org: OrgId) -> Result<Response, ApiError> {
     state.store.orgs().get(org)?;
     let line = state.store.matrix().state(org)?;
     let cursors = state.store.matrix().read_cursors(org)?;
@@ -224,7 +224,7 @@ fn org_state(state: &Estado, org: OrgId) -> Result<Response, ApiError> {
         enabled: line.linked,
         enabled_at: line.linked_at,
         updated_at: line.updated_at,
-        connected: state.matrix_conectado(),
+        connected: state.matrix_connected(),
         backlog: DelayJson {
             messages: delay.pending,
             oldest_seconds: age_second,
@@ -260,7 +260,7 @@ fn with_etag(body: MatrixStateJson, etag: i64) -> Result<Response, ApiError> {
     summary = "`GET /admin/v1/orgs/{org_id}/matrix/spaces`.",
 )]
 pub async fn list_space(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(path): Path<OrgPath>,
 ) -> Result<Json<SpacesJson>, ApiError> {
@@ -312,7 +312,7 @@ pub async fn list_space(
     summary = "`PUT /admin/v1/orgs/{org_id}/matrix/spaces` — cria o espaço do departamento ou liga um existente.",
 )]
 pub async fn enable_space(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(path): Path<OrgPath>,
     Json(body): Json<EnableSpace>,
@@ -322,7 +322,7 @@ pub async fn enable_space(
     state.store.orgs().get(org)?;
     let department_id = parse_path_id::<DepartmentId>(&body.department_id)?;
     let department = state.store.departments().get(org, department_id)?;
-    let spaces = state.matrix_espacos().ok_or_else(module_disabled)?;
+    let spaces = state.matrix_spaces().ok_or_else(module_disabled)?;
     let target = DepartmentSpace {
         id: department.id,
         name: department.name.clone(),
@@ -379,7 +379,7 @@ pub async fn enable_space(
     summary = "`DELETE /admin/v1/orgs/{org_id}/matrix/spaces/{department_id}`.",
 )]
 pub async fn disable_space(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(path): Path<SpacePath>,
 ) -> Result<Json<SpaceDisabledJson>, ApiError> {

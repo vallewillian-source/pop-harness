@@ -37,7 +37,7 @@ use poph_store::Status;
 use serde_json::json;
 
 use crate::error::ApiError;
-use crate::estado::Estado;
+use crate::state::ServerState;
 
 pub use backup::{LIMIT_IMPORT, LIMIT_IMPORT_BYTES};
 pub use health::{HealthJson, MetricsJson};
@@ -55,7 +55,7 @@ pub(crate) fn tool_parts(raw: &str) -> (serde_json::Value, serde_json::Value) {
     }
 }
 
-pub fn router(state: Estado) -> Router {
+pub fn router(state: ServerState) -> Router {
     let admin = Router::new()
         .route("/admin/v1/orgs", get(orgs::list).post(orgs::create))
         .route(
@@ -351,7 +351,7 @@ pub fn router(state: Estado) -> Router {
         .route("/metrics", get(health::metrics))
         .route(
             "/webhook/evolution/{org_id}/{instancia}",
-            axum::routing::post(crate::evolution::receber).layer(
+            axum::routing::post(crate::evolution::receive).layer(
                 axum::extract::DefaultBodyLimit::max(poph_evolution::DEFAULT_BODY_CAP as usize),
             ),
         )
@@ -362,7 +362,7 @@ pub fn router(state: Estado) -> Router {
         .with_state(state.clone())
         .layer(axum::middleware::from_fn_with_state(
             state,
-            crate::encaminhamento::middleware,
+            crate::forwarding::middleware,
         ))
 }
 

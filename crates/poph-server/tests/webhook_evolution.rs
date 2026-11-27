@@ -23,8 +23,8 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::routing::post;
 use poph_evolution::{ATTACHMENT_CAP, ConfigEvolution, EvolutionClient};
-use poph_server::Estado;
-use poph_server::evolution::{CanalEvolution, canais_da_configuracao};
+use poph_server::ServerState;
+use poph_server::evolution::{EvolutionChannel, channels_from_config};
 use poph_store::{NewAgent, NewOrg, Page, Store};
 use poph_types::config::{EvolutionConfig, EvolutionInstanceConfig};
 use poph_types::{AgentId, HarnessConfig, IntegrationId, MessageId, OrgId, Secret};
@@ -209,36 +209,36 @@ impl Cenario {
         .expect("cliente da Evolution falsa");
 
         let canais = vec![
-            CanalEvolution {
+            EvolutionChannel {
                 org,
-                instancia: "loja".to_owned(),
-                integracao,
-                segredo: Some(Secret::new(SEGREDO.to_owned())),
-                cliente: Some(cliente_evo),
-                teto_midia: ATTACHMENT_CAP,
+                instance: "loja".to_owned(),
+                integration: integracao,
+                secret: Some(Secret::new(SEGREDO.to_owned())),
+                client: Some(cliente_evo),
+                attachment_limit: ATTACHMENT_CAP,
             },
             // Instância cuja integração não existe no banco.
-            CanalEvolution {
+            EvolutionChannel {
                 org,
-                instancia: "orfa".to_owned(),
-                integracao: IntegrationId::generate(),
-                segredo: Some(Secret::new(SEGREDO.to_owned())),
-                cliente: None,
-                teto_midia: ATTACHMENT_CAP,
+                instance: "orfa".to_owned(),
+                integration: IntegrationId::generate(),
+                secret: Some(Secret::new(SEGREDO.to_owned())),
+                client: None,
+                attachment_limit: ATTACHMENT_CAP,
             },
             // Instância sem segredo no ambiente: sempre 401.
-            CanalEvolution {
+            EvolutionChannel {
                 org,
-                instancia: "sem-segredo".to_owned(),
-                integracao,
-                segredo: None,
-                cliente: None,
-                teto_midia: ATTACHMENT_CAP,
+                instance: "sem-segredo".to_owned(),
+                integration: integracao,
+                secret: None,
+                client: None,
+                attachment_limit: ATTACHMENT_CAP,
             },
         ];
-        let estado = Estado::novo(Arc::clone(&store), config)
+        let estado = ServerState::new(Arc::clone(&store), config)
             .expect("estado do servidor")
-            .com_canais_evolution(canais);
+            .with_evolution_channels(canais);
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -905,23 +905,23 @@ fn configuracao_resolve_segredo_pelo_nome_da_variavel_e_nao_aceita_nome_inseguro
     config.validar().expect("configuração válida");
 
     let com_valor =
-        canais_da_configuracao(&config, Some(Secret::new(CHAVE_EVO.to_owned())), &|nome| {
+        channels_from_config(&config, Some(Secret::new(CHAVE_EVO.to_owned())), &|nome| {
             (nome == "POPH_EVO_SEGREDO_LOJA").then(|| "  valor-do-segredo  ".to_owned())
         })
         .expect("canais");
     assert_eq!(com_valor.len(), 1);
-    assert!(com_valor[0].segredo.is_some());
+    assert!(com_valor[0].secret.is_some());
     assert!(
-        com_valor[0].cliente.is_some(),
+        com_valor[0].client.is_some(),
         "com chave, a instância baixa mídia"
     );
 
-    let sem_valor = canais_da_configuracao(&config, None, &|_| None).expect("canais");
+    let sem_valor = channels_from_config(&config, None, &|_| None).expect("canais");
     assert!(
-        sem_valor[0].segredo.is_none(),
+        sem_valor[0].secret.is_none(),
         "variável ausente vira instância sem segredo"
     );
-    assert!(sem_valor[0].cliente.is_none(), "sem chave, não baixa mídia");
+    assert!(sem_valor[0].client.is_none(), "sem chave, não baixa mídia");
 
     let mut minuscula = config_com_instancias(vec![instancia("poph_evo_segredo")]);
     assert!(

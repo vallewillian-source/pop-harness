@@ -26,7 +26,7 @@ use axum::response::{IntoResponse, Response};
 use poph_matrix::config::{MatrixModule, MatrixSecrets};
 use poph_matrix::rooms::METADATA_KIND;
 use poph_server::matrix_beginning::StartupSettings;
-use poph_server::{Estado, matrix_beginning};
+use poph_server::{ServerState, matrix_beginning};
 use poph_store::{
     ConversationStatus, Direction, FilterConversations, NewAgent, NewConversation, NewDepartment,
     NewMessage, NewOrg, Origin, OutboxState, Page, Role, Store,
@@ -508,8 +508,8 @@ impl Cenario {
         }
     }
 
-    fn state(&self) -> Estado {
-        Estado::novo(Arc::clone(&self.store), self.config.clone()).expect("estado do servidor")
+    fn state(&self) -> ServerState {
+        ServerState::new(Arc::clone(&self.store), self.config.clone()).expect("estado do servidor")
     }
 
     /// O módulo já preparado, com os tokens de teste (sem tocar no ambiente do processo).
@@ -642,7 +642,7 @@ async fn esperar_ate(descricao: &str, mut condicao: impl FnMut() -> bool) {
 
 /// Sobe o router do servidor numa porta efêmera (sem a raiz de composição, para o teste controlar
 /// quando o módulo é ligado).
-async fn servir(state: Estado) -> (String, tokio::sync::oneshot::Sender<()>) {
+async fn servir(state: ServerState) -> (String, tokio::sync::oneshot::Sender<()>) {
     let app = poph_server::router(state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -686,7 +686,7 @@ async fn modulo_desligado_nao_sobe_tarefas_nem_publica_metricas() {
     for secao in [None, Some(MatrixConfig::default())] {
         let mut config = cenario.config.clone();
         config.matrix = secao;
-        let mut state = Estado::novo(Arc::clone(&cenario.store), config).expect("estado");
+        let mut state = ServerState::new(Arc::clone(&cenario.store), config).expect("estado");
 
         let rodando = matrix_beginning::start(&mut state);
         assert!(
@@ -698,7 +698,7 @@ async fn modulo_desligado_nao_sobe_tarefas_nem_publica_metricas() {
             "sem receptor injetado, as rotas do Synapse não existem"
         );
         assert!(
-            state.matrix_conectado().is_none(),
+            state.matrix_connected().is_none(),
             "módulo desligado não tem estado de conexão para a API ler"
         );
     }
@@ -709,7 +709,7 @@ async fn modulo_desligado_responde_404_no_application_service() {
     let cenario = Cenario::new("desligado-http", "http://127.0.0.1:9".to_owned());
     let mut config = cenario.config.clone();
     config.matrix = None;
-    let state = Estado::novo(Arc::clone(&cenario.store), config).expect("estado");
+    let state = ServerState::new(Arc::clone(&cenario.store), config).expect("estado");
     let (base, desligar) = servir(state).await;
 
     let alvo = format!("{base}/_matrix/app/v1/users/@ph_wa_5511999999999:{SERVIDOR}");
@@ -759,7 +759,7 @@ async fn synapse_fora_na_subida_nao_impede_o_serve() {
         "sem Synapse do outro lado, o módulo está degradado"
     );
     assert_eq!(
-        state.matrix_conectado(),
+        state.matrix_connected(),
         Some(false),
         "o estado do módulo diz 'degradado' para a API administrativa"
     );
@@ -786,7 +786,7 @@ async fn sonda_marca_conectado_e_volta_a_degradar() {
 
     esperar_ate("a sonda marcar conectado", || rodando.connected()).await;
     assert!(synapse.versoes() >= 1, "a sonda fala com o Synapse");
-    assert_eq!(state.matrix_conectado(), Some(true));
+    assert_eq!(state.matrix_connected(), Some(true));
 
     drop(synapse);
     esperar_ate("a sonda marcar degradado depois da queda", || {

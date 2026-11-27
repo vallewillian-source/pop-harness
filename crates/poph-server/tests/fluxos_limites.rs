@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use poph_flows::{Code, Limites, LoadFailure, RevisionKey, Severity, compile};
-use poph_server::Estado;
+use poph_server::ServerState;
 use poph_store::Store;
 use poph_types::HarnessConfig;
 
@@ -23,7 +23,7 @@ fn script_de_40_kib() -> String {
 }
 
 /// Estado do processo com a configuração dada, numa pasta própria deste teste.
-fn estado(rotulo: &str, cfg: impl FnOnce(&mut HarnessConfig)) -> (Estado, PathBuf) {
+fn estado(rotulo: &str, cfg: impl FnOnce(&mut HarnessConfig)) -> (ServerState, PathBuf) {
     let pasta = std::env::temp_dir().join(format!(
         "poph-fluxos-limites-{rotulo}-{}",
         std::process::id()
@@ -34,7 +34,7 @@ fn estado(rotulo: &str, cfg: impl FnOnce(&mut HarnessConfig)) -> (Estado, PathBu
     config.data.directory = pasta.join("dados");
     cfg(&mut config);
     let store = Arc::new(Store::open(&config).expect("abre o banco"));
-    let estado = Estado::novo(store, config).expect("estado do servidor");
+    let estado = ServerState::new(store, config).expect("estado do servidor");
     (estado, pasta)
 }
 
@@ -45,7 +45,7 @@ fn com_teto_de_fonte(bytes: u64) -> impl FnOnce(&mut HarnessConfig) {
 #[test]
 fn servidor_aceita_40_kib_quando_a_configuracao_sobe_o_teto_para_64_kib() {
     let (estado, pasta) = estado("teto64", com_teto_de_fonte(65_536));
-    let compilado = estado.compilar_fluxo(&script_de_40_kib());
+    let compilado = estado.compile_flow(&script_de_40_kib());
     let _ = fs::remove_dir_all(&pasta);
     assert!(
         compilado.ir.is_some(),
@@ -57,7 +57,7 @@ fn servidor_aceita_40_kib_quando_a_configuracao_sobe_o_teto_para_64_kib() {
 #[test]
 fn servidor_recusa_40_kib_com_o_padrao_de_32_kib() {
     let (estado, pasta) = estado("padrao", |_| {});
-    let compilado = estado.compilar_fluxo(&script_de_40_kib());
+    let compilado = estado.compile_flow(&script_de_40_kib());
     let _ = fs::remove_dir_all(&pasta);
     assert!(compilado.ir.is_none());
     assert!(
@@ -72,7 +72,7 @@ fn servidor_recusa_40_kib_com_o_padrao_de_32_kib() {
 #[test]
 fn servidor_recusa_40_kib_quando_a_configuracao_diz_32_kib() {
     let (estado, pasta) = estado("teto32", com_teto_de_fonte(32_768));
-    let compilado = estado.compilar_fluxo(&script_de_40_kib());
+    let compilado = estado.compile_flow(&script_de_40_kib());
     let _ = fs::remove_dir_all(&pasta);
     assert!(compilado.ir.is_none(), "script acima do teto não tem IR");
     assert!(
@@ -89,7 +89,7 @@ fn servidor_recusa_40_kib_quando_a_configuracao_diz_32_kib() {
 fn servidor_compila_o_exemplo_normal_com_o_teto_de_32_kib() {
     // O teto apertado não derruba o que cabe: o exemplo de ~2 KiB continua aceito.
     let (estado, pasta) = estado("exemplo32", com_teto_de_fonte(32_768));
-    let compilado = estado.compilar_fluxo(FLUXO);
+    let compilado = estado.compile_flow(FLUXO);
     let _ = fs::remove_dir_all(&pasta);
     assert!(compilado.ir.is_some(), "{:?}", compilado.diagnostics);
 }
@@ -108,12 +108,12 @@ fn cache_carrega_40_kib_com_o_teto_padrao_e_recusa_com_32_kib() {
     let chave = RevisionKey::new("agendar_visita", 1, &fonte);
 
     let (teto64, pasta_64) = estado("cache-64", com_teto_de_fonte(65_536));
-    let carregada = teto64.carregar_revisao_de_fluxo(&chave, &ir, &fonte);
+    let carregada = teto64.load_flow_revision(&chave, &ir, &fonte);
     let _ = fs::remove_dir_all(&pasta_64);
     assert!(carregada.is_ok(), "carga com 64 KiB: {carregada:?}");
 
     let (apertado, pasta_apertado) = estado("cache-32", com_teto_de_fonte(32_768));
-    let recusada = apertado.carregar_revisao_de_fluxo(&chave, &ir, &fonte);
+    let recusada = apertado.load_flow_revision(&chave, &ir, &fonte);
     let _ = fs::remove_dir_all(&pasta_apertado);
     match recusada {
         Err(LoadFailure::Form(diagnosticos)) => assert!(
@@ -123,7 +123,7 @@ fn cache_carrega_40_kib_com_o_teto_padrao_e_recusa_com_32_kib() {
         outro => panic!("com teto de 32 KiB a carga tem de falhar com FLX02, veio {outro:?}"),
     }
     assert_eq!(
-        apertado.cache_fluxos.metrics().entries,
+        apertado.flow_cache.metrics().entries,
         0,
         "revisão recusada não entra no cache"
     );
@@ -138,7 +138,7 @@ fn teto_de_nos_da_configuracao_vale_no_servidor() {
     let (apertado, pasta) = estado("nos", |config| {
         config.flows.max_nodes = u32::try_from(nos - 1).unwrap();
     });
-    let compilado = apertado.compilar_fluxo(FLUXO);
+    let compilado = apertado.compile_flow(FLUXO);
     let _ = fs::remove_dir_all(&pasta);
     assert!(
         compilado

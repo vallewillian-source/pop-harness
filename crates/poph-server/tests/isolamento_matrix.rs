@@ -41,10 +41,10 @@ use axum::http::{HeaderMap, Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use poph_evolution::webhook::SECRET_HEADER;
 use poph_matrix::{ClientConfig, GhostIds, MatrixClient, Spaces, VirtualUsers};
-use poph_server::evolution::CanalEvolution;
+use poph_server::evolution::EvolutionChannel;
 use poph_server::matrix_beginning::SpaceStorePort;
 use poph_server::matrix_state::{ConversationStates, StateStorePort, SynapseTarget};
-use poph_server::{AsReceiver, AttendantResponse, Estado, HarnessResponsePort, ResponsePort};
+use poph_server::{AsReceiver, AttendantResponse, HarnessResponsePort, ResponsePort, ServerState};
 use poph_store::{
     ConversationStatus, HumanResponse, NewAgent, NewConversation, NewDepartment, NewHumanResponse,
     NewOrg, Origin, Page, Store,
@@ -669,8 +669,8 @@ impl Cenario {
         format!("poph_{}_{segredo}", criado.id)
     }
 
-    fn state(&self) -> Estado {
-        Estado::novo(Arc::clone(&self.store), self.config.clone()).expect("estado do servidor")
+    fn state(&self) -> ServerState {
+        ServerState::new(Arc::clone(&self.store), self.config.clone()).expect("estado do servidor")
     }
 
     fn cliente_matrix(&self) -> MatrixClient {
@@ -701,7 +701,7 @@ impl Cenario {
 
     /// O canal da Evolution de uma org, com o segredo do webhook (sem cliente: o teste não usa
     /// mídia).
-    fn channel(&self, org: OrgId, conversation: ConversationId) -> CanalEvolution {
+    fn channel(&self, org: OrgId, conversation: ConversationId) -> EvolutionChannel {
         let integracao = self
             .store
             .conversations()
@@ -709,13 +709,13 @@ impl Cenario {
             .expect("lê a conversa")
             .integration_id
             .expect("a conversa tem integração");
-        CanalEvolution {
+        EvolutionChannel {
             org,
-            instancia: INSTANCIA.to_owned(),
-            integracao,
-            segredo: Some(Secret::new(SEGREDO_WEBHOOK.to_owned())),
-            cliente: None,
-            teto_midia: 0,
+            instance: INSTANCIA.to_owned(),
+            integration: integracao,
+            secret: Some(Secret::new(SEGREDO_WEBHOOK.to_owned())),
+            client: None,
+            attachment_limit: 0,
         }
     }
 
@@ -810,7 +810,7 @@ impl Drop for Cenario {
 // ───────────────────────────────── HTTP ─────────────────────────────────
 
 /// Sobe o router do servidor numa porta efêmera.
-async fn servir(state: Estado) -> (String, oneshot::Sender<()>) {
+async fn servir(state: ServerState) -> (String, oneshot::Sender<()>) {
     let app = poph_server::router(state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -918,11 +918,11 @@ async fn evento_da_sala_a_com_ids_da_org_b_nao_toca_a_conversa_da_b() {
     let cenario = Cenario::new("as-cruzado").await;
     let state = cenario
         .state()
-        .com_canais_evolution(vec![
+        .with_evolution_channels(vec![
             cenario.channel(cenario.org_a, cenario.conversa_a),
             cenario.channel(cenario.org_b, cenario.conversa_b),
         ])
-        .com_matrix_as(Arc::new(AsReceiver::new(
+        .with_matrix_as(Arc::new(AsReceiver::new(
             PREFIXO,
             SERVIDOR,
             Secret::new(HS_TOKEN.to_owned()),
@@ -1020,7 +1020,7 @@ async fn evento_da_sala_a_com_ids_da_org_b_nao_toca_a_conversa_da_b() {
 async fn sala_desconhecida_com_id_da_org_b_nao_grava_nada_e_conta_o_caso() {
     let cenario = Cenario::new("sala-desconhecida").await;
     let entrega = cenario.entrega();
-    let state = cenario.state().com_matrix_as(Arc::new(AsReceiver::new(
+    let state = cenario.state().with_matrix_as(Arc::new(AsReceiver::new(
         PREFIXO,
         SERVIDOR,
         Secret::new(HS_TOKEN.to_owned()),
@@ -1334,7 +1334,7 @@ async fn espaco_com_departamento_da_outra_org_e_recusado() {
 #[tokio::test]
 async fn nome_do_cliente_fica_na_org_do_webhook_e_nao_renomeia_a_sala_da_outra() {
     let cenario = Cenario::new("nome").await;
-    let state = cenario.state().com_canais_evolution(vec![
+    let state = cenario.state().with_evolution_channels(vec![
         cenario.channel(cenario.org_a, cenario.conversa_a),
         cenario.channel(cenario.org_b, cenario.conversa_b),
     ]);
@@ -1437,7 +1437,7 @@ fn arquivos_da_pasta(pasta: &Path) -> Vec<(String, Vec<u8>)> {
 #[tokio::test]
 async fn tokens_canario_nao_aparecem_em_resposta_log_arquivo_nem_fila() {
     let cenario = Cenario::new("canario").await;
-    let mut state = cenario.state().com_canais_evolution(vec![
+    let mut state = cenario.state().with_evolution_channels(vec![
         cenario.channel(cenario.org_a, cenario.conversa_a),
         cenario.channel(cenario.org_b, cenario.conversa_b),
     ]);
@@ -1450,7 +1450,7 @@ async fn tokens_canario_nao_aparecem_em_resposta_log_arquivo_nem_fila() {
         )
         .expect("espaços"),
     ));
-    let state = state.com_matrix_as(Arc::new(AsReceiver::new(
+    let state = state.with_matrix_as(Arc::new(AsReceiver::new(
         PREFIXO,
         SERVIDOR,
         Secret::new(HS_TOKEN.to_owned()),

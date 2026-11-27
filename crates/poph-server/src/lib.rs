@@ -1,19 +1,17 @@
 pub mod api;
 pub mod auth;
+pub mod case_service;
 pub mod cipher;
 pub mod cluster;
 pub mod console;
-pub mod encaminhamento;
-pub mod entrada_turno;
 pub mod error;
-pub mod estado;
 pub mod evolution;
-pub mod fichas_servico;
-pub mod fluxos_efeitos;
-pub mod fluxos_metricas;
-pub mod fluxos_servico;
-pub mod fluxos_transicao;
-pub mod manifestos;
+pub mod flow_effects;
+pub mod flow_metrics;
+pub mod flow_service;
+pub mod flow_transition;
+pub mod forwarding;
+pub mod manifests;
 pub mod matrix_beginning;
 pub mod matrix_expiry;
 pub mod matrix_failure_notice;
@@ -21,8 +19,10 @@ pub mod matrix_metrics;
 pub mod matrix_mirror;
 pub mod matrix_response;
 pub mod matrix_state;
-pub mod saida_whatsapp;
 mod site_chat;
+pub mod state;
+pub mod turn_input;
+pub mod whatsapp_output;
 
 use std::future::Future;
 
@@ -34,10 +34,10 @@ pub use api::matrix_as::{
 };
 pub use cipher::CipherKey;
 pub use error::{ApiError, ErrorResponse};
-pub use estado::Estado;
-pub use manifestos::CatalogoManifestos;
+pub use manifests::ManifestCatalog;
 pub use matrix_response::{AttendantResponse, HarnessResponsePort, ResponsePort};
-pub(crate) use saida_whatsapp::MOTIVO_TENTATIVAS_ESGOTADAS as WHATSAPP_ATTEMPTS_EXHAUSTED;
+pub use state::ServerState;
+pub(crate) use whatsapp_output::RETRY_LIMIT_REASON as WHATSAPP_ATTEMPTS_EXHAUSTED;
 
 pub(crate) fn last_response_error(failure: &poph_store::HumanResponseFailure) -> Option<&str> {
     failure.ultimo_erro.as_deref()
@@ -45,7 +45,7 @@ pub(crate) fn last_response_error(failure: &poph_store::HumanResponseFailure) ->
 
 pub const VERSAO: &str = env!("CARGO_PKG_VERSION");
 
-pub fn router(estado: Estado) -> Router {
+pub fn router(estado: ServerState) -> Router {
     api::router(estado)
 }
 
@@ -55,17 +55,17 @@ pub fn openapi() -> utoipa::openapi::OpenApi {
 
 pub async fn serve_at<F>(
     listener: TcpListener,
-    mut estado: Estado,
+    mut estado: ServerState,
     desligamento: F,
 ) -> std::io::Result<()>
 where
     F: Future<Output = ()> + Send + 'static,
 {
-    entrada_turno::recuperar_turnos_interrompidos(&estado);
+    turn_input::recover_interrupted_turns(&estado);
     site_chat::recover(&estado).map_err(std::io::Error::other)?;
-    let saida = saida_whatsapp::iniciar(&estado);
-    let effects = fluxos_efeitos::iniciar(&estado);
-    let turno = entrada_turno::iniciar(&estado);
+    let saida = whatsapp_output::start(&estado);
+    let effects = flow_effects::start(&estado);
+    let turno = turn_input::start(&estado);
     let matrix = matrix_beginning::start(&mut estado);
     let resultado = axum::serve(listener, router(estado))
         .with_graceful_shutdown(desligamento)
@@ -87,7 +87,7 @@ where
 
 pub async fn serve<F>(
     endereco: std::net::SocketAddr,
-    estado: Estado,
+    estado: ServerState,
     desligamento: F,
 ) -> std::io::Result<()>
 where

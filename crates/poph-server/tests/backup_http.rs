@@ -22,7 +22,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
-use poph_server::{CipherKey, Estado};
+use poph_server::{CipherKey, ServerState};
 use poph_store::Store;
 use poph_types::HarnessConfig;
 use poph_types::config::GlobalTokenConfig;
@@ -93,9 +93,9 @@ impl Cenario {
 
         let store = Arc::new(Store::open(&config).expect("abre o banco"));
         let chave = CipherKey::derive(CHAVE_CIFRA).expect("chave de cifra");
-        let estado = Estado::novo(Arc::clone(&store), config)
+        let estado = ServerState::new(Arc::clone(&store), config)
             .expect("estado do servidor")
-            .com_chave_de_cifra(Some(chave));
+            .with_encryption_key(Some(chave));
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await

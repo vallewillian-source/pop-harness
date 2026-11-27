@@ -19,7 +19,9 @@ use std::time::{Duration, Instant, SystemTime};
 
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
-use poph_server::{AsReceiver, CAP_BODY, DeliveryError, DeliveryFuture, Estado, EventDelivery};
+use poph_server::{
+    AsReceiver, CAP_BODY, DeliveryError, DeliveryFuture, EventDelivery, ServerState,
+};
 use poph_store::Store;
 use poph_types::config::GlobalTokenConfig;
 use poph_types::{HarnessConfig, MatrixConfig, Sensitive};
@@ -139,9 +141,9 @@ impl Cenario {
         config.validar().expect("configuração válida");
 
         let store = Arc::new(Store::open(&config).expect("abre o banco"));
-        let mut state = Estado::novo(store, config).expect("estado do servidor");
+        let mut state = ServerState::new(store, config).expect("estado do servidor");
         if let Some(receptor) = receptor {
-            state = state.com_matrix_as(Arc::new(receptor));
+            state = state.with_matrix_as(Arc::new(receptor));
         }
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

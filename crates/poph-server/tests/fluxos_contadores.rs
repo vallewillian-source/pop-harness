@@ -22,8 +22,8 @@ use std::time::Duration;
 
 use poph_flows::engine::{self, Campos, Context, Estado as EstadoMotor};
 use poph_flows::{Limites, RuleEvaluator, compile};
-use poph_server::Estado;
-use poph_server::fluxos_transicao::transicao_do_motor;
+use poph_server::ServerState;
+use poph_server::flow_transition::transition_engine;
 use poph_store::metrics::ExecutionMetrics;
 use poph_store::{
     ExecutionStart, ExecutionState, NewAgent, NewConversation, NewFlow, NewOrg,
@@ -121,7 +121,7 @@ etapa(id = "etapa_b", nome = "B", acoes = [acao("ok", "Ok", ator = "agente", vai
 /// Um cenário: banco temporário, org, agente e um `Estado` do servidor (que publica os contadores
 /// no store).
 struct Cenario {
-    estado: Option<Estado>,
+    estado: Option<ServerState>,
     org: poph_types::OrgId,
     agente: poph_types::AgentId,
     pasta: PathBuf,
@@ -139,9 +139,9 @@ impl Cenario {
         let mut config = HarnessConfig::default();
         config.data.directory = pasta.join("dados");
         let store = Arc::new(Store::open(&config).expect("abre o banco"));
-        let estado = Estado::novo(store, config).expect("estado do servidor");
+        let estado = ServerState::new(store, config).expect("estado do servidor");
         assert!(
-            estado.metricas_fluxos().is_some(),
+            estado.flow_metrics().is_some(),
             "o motor de fluxos ligado declara os contadores"
         );
         let org = estado
@@ -175,12 +175,12 @@ impl Cenario {
         }
     }
 
-    fn estado(&self) -> &Estado {
+    fn estado(&self) -> &ServerState {
         self.estado.as_ref().expect("o estado ainda está aqui")
     }
 
     /// Retira o `Estado` do cenário (o teste do `/metrics` entrega ele ao servidor).
-    fn tirar_estado(&mut self) -> Estado {
+    fn tirar_estado(&mut self) -> ServerState {
         self.estado.take().expect("o estado ainda está aqui")
     }
 
@@ -329,7 +329,7 @@ impl Cenario {
                 self.org,
                 execucao.id,
                 execucao.version,
-                &transicao_do_motor(&resultado),
+                &transition_engine(&resultado),
                 chave,
                 TransitionExtras {
                     ator_ref: Some("atendente-de-teste"),
@@ -342,9 +342,9 @@ impl Cenario {
     /// Contadores publicados (os mesmos handles do `/metrics`).
     fn contadores(&self) -> ExecutionMetrics {
         self.estado()
-            .metricas_fluxos()
+            .flow_metrics()
             .expect("motor ligado")
-            .das_execucoes()
+            .execution_metrics()
     }
 
     fn valores(&self) -> (u64, u64, u64, u64, u64) {
@@ -450,7 +450,7 @@ fn conclusao_conta_concluida_e_repetir_a_chave_nao_soma() {
             cenario.org,
             gravada.execution.id,
             gravada.execution.version,
-            &transicao_do_motor(&engine::Resultado {
+            &transition_engine(&engine::Resultado {
                 new_state: estado_do_banco(&gravada.execution),
                 events: Vec::new(),
                 effects: Vec::new(),
@@ -489,7 +489,7 @@ fn abandono_pelo_agente_conta_abandonada() {
             cenario.org,
             execucao.id,
             execucao.version,
-            &transicao_do_motor(&resultado),
+            &transition_engine(&resultado),
             "ab-1",
             TransitionExtras::default(),
         )
@@ -600,7 +600,7 @@ async fn metrics_publica_os_contadores_das_execucoes() {
 }
 
 /// Sobe o servidor com o estado dado e devolve o texto de `/metrics`.
-async fn metricas_http(estado: Estado) -> String {
+async fn metricas_http(estado: ServerState) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("porta efêmera");

@@ -31,9 +31,9 @@ use axum::routing::{post, put};
 use poph_agent::Backoff;
 use poph_evolution::{ATTACHMENT_CAP, ConfigEvolution, EvolutionClient};
 use poph_matrix::{ClientConfig, GhostIds, MatrixClient};
-use poph_server::evolution::CanalEvolution;
+use poph_server::evolution::EvolutionChannel;
 use poph_server::matrix_failure_notice::{FailureNotice, HarnessFailuresPort, SynapseNotice};
-use poph_server::saida_whatsapp::{OpcoesSaidaWhatsApp, SaidaWhatsApp};
+use poph_server::whatsapp_output::{WhatsAppOutput, WhatsAppOutputOptions};
 use poph_store::{
     HumanResponse, NewAgent, NewConversation, NewHumanResponse, NewOrg, NewOutboxItem, OutboxItem,
     OutboxState, OutcomeNotice, Store,
@@ -230,12 +230,12 @@ struct Cenario {
     synapse: SynapseFalso,
     url_synapse: String,
     evo: EvolucaoFalsa,
-    saida: SaidaWhatsApp,
+    saida: WhatsAppOutput,
 }
 
 impl Cenario {
     async fn new(rotulo: &str) -> Self {
-        Self::novo_com_tentativas(rotulo, OpcoesSaidaWhatsApp::default().max_tentativas).await
+        Self::novo_com_tentativas(rotulo, WhatsAppOutputOptions::default().max_attempts).await
     }
 
     /// Igual a [`Cenario::novo`], com o limite de tentativas da fila escolhido pelo teste.
@@ -292,25 +292,25 @@ impl Cenario {
                 .expect("config da Evolution falsa"),
         )
         .expect("cliente da Evolution falsa");
-        let canais = vec![CanalEvolution {
+        let canais = vec![EvolutionChannel {
             org,
-            instancia: INSTANCIA.to_owned(),
-            integracao,
-            segredo: None,
-            cliente: Some(client),
-            teto_midia: ATTACHMENT_CAP,
+            instance: INSTANCIA.to_owned(),
+            integration: integracao,
+            secret: None,
+            client: Some(client),
+            attachment_limit: ATTACHMENT_CAP,
         }];
-        let opcoes = OpcoesSaidaWhatsApp {
+        let opcoes = WhatsAppOutputOptions {
             // Espera curta para a nova tentativa não depender de relógio.
             backoff: Backoff {
                 base: Duration::from_millis(1),
                 factor: 2,
                 cap: Duration::from_millis(5),
             },
-            max_tentativas,
-            ..OpcoesSaidaWhatsApp::default()
+            max_attempts: max_tentativas,
+            ..WhatsAppOutputOptions::default()
         };
-        let saida = SaidaWhatsApp::novo(Arc::clone(&store), &canais, pasta.join("blobs"), opcoes);
+        let saida = WhatsAppOutput::new(Arc::clone(&store), &canais, pasta.join("blobs"), opcoes);
         logs_capturados();
         Self {
             pasta,
@@ -391,7 +391,7 @@ impl Cenario {
     async fn ciclo(&self, roteiro: Vec<(u16, Value)>) {
         *self.evo.roteiro.lock().unwrap() = roteiro.into_iter().collect();
         self.saida
-            .ciclo()
+            .cycle()
             .await
             .expect("ciclo da saída do WhatsApp");
     }

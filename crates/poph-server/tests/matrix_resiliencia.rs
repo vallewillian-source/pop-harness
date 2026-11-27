@@ -45,10 +45,10 @@ use poph_matrix::client::{ClientConfig, MatrixClient};
 use poph_matrix::config::{MatrixModule, MatrixSecrets};
 use poph_matrix::spaces::{DepartmentSpace, InviteLimits, Position, RoomForSpace, Spaces};
 use poph_matrix::users::{Ghost, GhostIds};
-use poph_server::Estado;
-use poph_server::evolution::CanalEvolution;
+use poph_server::ServerState;
+use poph_server::evolution::EvolutionChannel;
 use poph_server::matrix_beginning::{self, RunningMatrix, SpaceStorePort, StartupSettings};
-use poph_server::{entrada_turno, saida_whatsapp};
+use poph_server::{turn_input, whatsapp_output};
 use poph_store::{
     Direction, NewAgent, NewConversation, NewDepartment, NewMessage, NewOrg, Origin, OutboxState,
     Page, Role, StateRoom, Store,
@@ -912,7 +912,7 @@ fn processo_do_modulo(base: &Base, config: MatrixConfig) -> Hospedeiro {
             matrix: Some(config.clone()),
             ..HarnessConfig::default()
         };
-        let mut state = Estado::novo(store, harness).expect("estado do servidor");
+        let mut state = ServerState::new(store, harness).expect("estado do servidor");
         let _rodando = matrix_beginning::start_with_settings(
             &mut state,
             modulo_de(&config),
@@ -935,7 +935,7 @@ fn processo_do_receptor(base: &Base, config: MatrixConfig, ouvinte: StdListener)
             matrix: Some(config.clone()),
             ..HarnessConfig::default()
         };
-        let mut state = Estado::novo(store, harness).expect("estado do servidor");
+        let mut state = ServerState::new(store, harness).expect("estado do servidor");
         let _rodando = matrix_beginning::start_with_settings(
             &mut state,
             modulo_de(&config),
@@ -1090,13 +1090,13 @@ async fn subir_servidor(
             .expect("config da Evolution falsa"),
     )
     .expect("cliente da Evolution falsa");
-    let channel = CanalEvolution {
+    let channel = EvolutionChannel {
         org: base.org,
-        instancia: INSTANCIA.to_owned(),
-        integracao,
-        segredo: Some(Secret::new(SEGREDO_WEBHOOK.to_owned())),
-        cliente: Some(cliente_evo),
-        teto_midia: ATTACHMENT_CAP,
+        instance: INSTANCIA.to_owned(),
+        integration: integracao,
+        secret: Some(Secret::new(SEGREDO_WEBHOOK.to_owned())),
+        client: Some(cliente_evo),
+        attachment_limit: ATTACHMENT_CAP,
     };
     store
         .instructions()
@@ -1114,15 +1114,15 @@ async fn subir_servidor(
         matrix: config.clone(),
         ..HarnessConfig::default()
     };
-    let state = Estado::novo(Arc::clone(&store), harness)
+    let state = ServerState::new(Arc::clone(&store), harness)
         .expect("estado do servidor")
-        .com_canais_evolution(vec![channel]);
+        .with_evolution_channels(vec![channel]);
 
     // Turno com provedor falso, como em `turno_whatsapp`.
     let roteiros: Vec<Script> = (0..respostas).map(resposta_do_agente).collect();
     let fake = Arc::new(FakeProvider::with_scripts(roteiros));
     let provedor: Arc<dyn LlmProvider> = fake.clone();
-    let registro = &state.registro;
+    let registro = &state.registry;
     let config_quente = ConfigHot::new(
         Arc::clone(&store),
         HotConfigOptions::default(),
@@ -1155,7 +1155,7 @@ async fn subir_servidor(
         MetricsFlow::register(registro).expect("métricas da fila"),
     );
     processador.attach_io(fluxo.clone());
-    let mut state = state.com_turno(fluxo, Duration::from_millis(20));
+    let mut state = state.with_turn(fluxo, Duration::from_millis(20));
 
     let modulo = match config {
         Some(config) => {
@@ -1164,10 +1164,10 @@ async fn subir_servidor(
         None => None,
     };
     let mut tarefas = Vec::new();
-    if let Some(saida) = saida_whatsapp::iniciar(&state) {
+    if let Some(saida) = whatsapp_output::start(&state) {
         tarefas.push(saida);
     }
-    if let Some(turno) = entrada_turno::iniciar(&state) {
+    if let Some(turno) = turn_input::start(&state) {
         tarefas.push(turno);
     }
 

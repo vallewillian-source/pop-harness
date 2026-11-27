@@ -2,7 +2,7 @@
 //!
 //! Subcomandos: `validar`, `publicar`, `listar`, `mostrar`, `diff`, `formatar`, `liberar` e `retirar`.
 //! Operam direto no banco, como os outros comandos de org. Compilar, validar, publicar, comparar e
-//! formatar são as funções que a API chama (`poph_server::fluxos_servico`): a CLI não tem regra
+//! formatar são as funções que a API chama (`poph_server::flow_service`): a CLI não tem regra
 //! própria.
 //!
 //! `--org` é obrigatório nos comandos que leem ou gravam dados da org. `validar` só precisa dele para
@@ -17,9 +17,9 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Args, Subcommand};
-use poph_server::fluxos_servico::{
-    Ator, Diagnostic, FalhaFluxo, Operacoes, RevisionCache, auditar, json_comparacao, json_fluxo,
-    json_fluxo_com_rascunho, json_revisao_resumo, json_validacao,
+use poph_server::flow_service::{
+    Actor, Diagnostic, FlowError, FlowOperations, RevisionCache, audit, comparison_json, flow_json,
+    flow_with_draft_json, revision_summary_json, validation_json,
 };
 use poph_store::{FlowFilter, Store};
 use poph_types::{HarnessConfig, OrgId};
@@ -181,8 +181,8 @@ impl Sessao {
         })
     }
 
-    fn operacoes(&self) -> Operacoes<'_> {
-        Operacoes::novo(&self.store, &self.cache, &self.config)
+    fn operacoes(&self) -> FlowOperations<'_> {
+        FlowOperations::new(&self.store, &self.cache, &self.config)
     }
 
     fn org(&self, texto: Option<&str>) -> Result<OrgId, String> {
@@ -239,18 +239,18 @@ fn validar(sessao: &Sessao, org: Option<&str>, args: ArquivoArgs) -> Result<Exit
     };
     let validacao = sessao
         .operacoes()
-        .validar(org, &fonte)
+        .validate(org, &fonte)
         .map_err(|erro| descrever(&erro))?;
     if args.json {
-        imprimir_json(&com_versao(json_validacao(&validacao)));
+        imprimir_json(&com_versao(validation_json(&validacao)));
     } else {
-        if validacao.valido() {
+        if validacao.is_valid() {
             println!("{}: script válido.", args.arquivo.display());
         } else {
             println!("{}: script inválido.", args.arquivo.display());
         }
-        imprimir_diagnosticos(&validacao.diagnosticos);
-        for resolucao in &validacao.resolucoes {
+        imprimir_diagnosticos(&validacao.diagnostics);
+        for resolucao in &validacao.resolutions {
             match &resolucao.department_id {
                 Some(id) => println!("  departamento \"{}\": encontrado ({id})", resolucao.nome),
                 None => println!(
@@ -260,14 +260,14 @@ fn validar(sessao: &Sessao, org: Option<&str>, args: ArquivoArgs) -> Result<Exit
             }
         }
     }
-    Ok(codigo(validacao.valido()))
+    Ok(codigo(validacao.is_valid()))
 }
 
 fn formatar(sessao: &Sessao, args: FormatarArgs) -> Result<ExitCode, String> {
     let fonte = ler_script(&args.arquivo)?;
-    let texto = match sessao.operacoes().formatar(&fonte) {
+    let texto = match sessao.operacoes().format(&fonte) {
         Ok(texto) => texto,
-        Err(FalhaFluxo::ScriptInvalido(diagnosticos)) => {
+        Err(FlowError::InvalidScript(diagnosticos)) => {
             imprimir_diagnosticos(&diagnosticos);
             let erros = diagnosticos.iter().filter(|d| d.is_error()).count();
             return Err(format!(
@@ -302,7 +302,7 @@ fn publicar(sessao: &Sessao, org: Option<&str>, args: PublicarArgs) -> Result<Ex
     let fonte = ler_script(&args.arquivo)?;
     let ops = sessao.operacoes();
     // Compila antes para saber o slug: é o `id` do script. Um script com erro não grava nada.
-    let compilado = ops.compilar(&fonte);
+    let compilado = ops.compile(&fonte);
     if compilado.has_error() {
         imprimir_diagnosticos(&compilado.diagnostics);
         let erros = compilado
@@ -317,7 +317,7 @@ fn publicar(sessao: &Sessao, org: Option<&str>, args: PublicarArgs) -> Result<Ex
     let Some(ir) = compilado.ir.as_ref() else {
         return Err("erro interno: o compilador não devolveu a estrutura do script".to_owned());
     };
-    let ator = Ator::cli();
+    let ator = Actor::cli();
     let existente = sessao
         .store
         .flows()
@@ -326,26 +326,26 @@ fn publicar(sessao: &Sessao, org: Option<&str>, args: PublicarArgs) -> Result<Ex
     match existente {
         None => {
             let criacao = ops
-                .criar(org, &fonte, true, &ator)
+                .create(org, &fonte, true, &ator)
                 .map_err(|erro| erro.to_string())?;
             let feita = criacao
-                .publicacao
+                .publication
                 .as_ref()
                 .ok_or_else(|| "erro interno: a criação não publicou a revisão 1".to_owned())?;
             if args.json {
                 imprimir_json(&json!({
                     "versao_relatorio": VERSAO_RELATORIO,
                     "created": true,
-                    "flow": json_fluxo_com_rascunho(&criacao.fluxo),
-                    "revision": json_revisao_resumo(&feita.revisao),
-                    "warnings": feita.avisos,
+                    "flow": flow_with_draft_json(&criacao.flow),
+                    "revision": revision_summary_json(&feita.revision),
+                    "warnings": feita.warnings,
                 }));
             } else {
                 println!(
                     "fluxo `{}` criado e publicado como revisão {}.",
-                    criacao.fluxo.slug, feita.revisao.numero
+                    criacao.flow.slug, feita.revision.numero
                 );
-                imprimir_diagnosticos(&feita.avisos);
+                imprimir_diagnosticos(&feita.warnings);
             }
         }
         Some(fluxo) => {
@@ -357,7 +357,7 @@ fn publicar(sessao: &Sessao, org: Option<&str>, args: PublicarArgs) -> Result<Ex
                 )
             })?;
             let feita = ops
-                .publicar(org, &fluxo, esperada, &fonte, &ator)
+                .publish(org, &fluxo, esperada, &fonte, &ator)
                 .map_err(|erro| erro.to_string())?;
             // O rascunho e a auditoria da publicação já são gravados por `publicar_revisao`, na mesma
             // escrita que cria a revisão: aqui não há segunda gravação nem auditoria duplicada.
@@ -366,16 +366,16 @@ fn publicar(sessao: &Sessao, org: Option<&str>, args: PublicarArgs) -> Result<Ex
                     "versao_relatorio": VERSAO_RELATORIO,
                     "created": false,
                     "flow_id": fluxo.id.to_string(),
-                    "revision": json_revisao_resumo(&feita.revisao),
-                    "version": feita.versao_do_fluxo,
-                    "warnings": feita.avisos,
+                    "revision": revision_summary_json(&feita.revision),
+                    "version": feita.flow_version,
+                    "warnings": feita.warnings,
                 }));
             } else {
                 println!(
                     "fluxo `{}` publicado como revisão {}.",
-                    fluxo.slug, feita.revisao.numero
+                    fluxo.slug, feita.revision.numero
                 );
-                imprimir_diagnosticos(&feita.avisos);
+                imprimir_diagnosticos(&feita.warnings);
             }
         }
     }
@@ -398,7 +398,7 @@ fn listar(sessao: &Sessao, org: Option<&str>, args: ListarArgs) -> Result<ExitCo
     } else {
         fluxos.last().map(|fluxo| fluxo.id.to_string())
     };
-    let itens: Vec<Value> = fluxos.iter().map(json_fluxo).collect();
+    let itens: Vec<Value> = fluxos.iter().map(flow_json).collect();
     if args.json {
         imprimir_json(&json!({
             "versao_relatorio": VERSAO_RELATORIO,
@@ -435,8 +435,8 @@ fn mostrar(sessao: &Sessao, org: Option<&str>, args: ReferenciaArgs) -> Result<E
         .revisions()
         .current(org, fluxo.id)
         .map_err(|erro| descrever(&erro))?;
-    let mut corpo = json_fluxo_com_rascunho(&fluxo);
-    corpo["revision"] = revisao.as_ref().map_or(Value::Null, json_revisao_resumo);
+    let mut corpo = flow_with_draft_json(&fluxo);
+    corpo["revision"] = revisao.as_ref().map_or(Value::Null, revision_summary_json);
     if args.json {
         imprimir_json(&com_versao(corpo));
         return Ok(ExitCode::SUCCESS);
@@ -461,23 +461,23 @@ fn diff(sessao: &Sessao, org: Option<&str>, args: DiffArgs) -> Result<ExitCode, 
     let fluxo = resolver_fluxo(&sessao.store, org, &args.fluxo)?;
     let comparacao = sessao
         .operacoes()
-        .comparar(org, &fluxo, args.de, args.para)
+        .compare(org, &fluxo, args.de, args.para)
         .map_err(|erro| erro.to_string())?;
     if args.json {
-        imprimir_json(&com_versao(json_comparacao(fluxo.id, &comparacao)));
+        imprimir_json(&com_versao(comparison_json(fluxo.id, &comparacao)));
         return Ok(ExitCode::SUCCESS);
     }
     println!(
         "revisão {} → revisão {}: {} mudança(s).",
-        comparacao.de.numero,
-        comparacao.para.numero,
-        comparacao.mudancas.len()
+        comparacao.from.numero,
+        comparacao.to.numero,
+        comparacao.changes.len()
     );
     println!(
         "  atendimentos ativos: {} na revisão {}, {} na revisão {}.",
-        comparacao.ativas_de, comparacao.de.numero, comparacao.ativas_para, comparacao.para.numero
+        comparacao.active_from, comparacao.from.numero, comparacao.active_to, comparacao.to.numero
     );
-    for mudanca in &comparacao.mudancas {
+    for mudanca in &comparacao.changes {
         println!("  - {}", mudanca.texto);
     }
     Ok(ExitCode::SUCCESS)
@@ -498,10 +498,10 @@ fn permissao(
         sessao.store.flows().revoke(org, agente.id, fluxo.id)
     };
     resultado.map_err(|erro| descrever(&erro))?;
-    auditar(
+    audit(
         &sessao.store,
         org,
-        &Ator::cli(),
+        &Actor::cli(),
         "agent_flows_update",
         "agent",
         agente.id.to_string(),

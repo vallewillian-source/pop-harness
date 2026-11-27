@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::sync::Arc;
 
-use poph_server::Estado;
+use poph_server::ServerState;
 use poph_store::Store;
 use poph_types::HarnessConfig;
 use reqwest::StatusCode;
@@ -85,7 +85,7 @@ impl Cenario {
         config.data.directory = self.dados.clone();
         config.validar().expect("configuração válida");
         let store = Arc::new(Store::open(&config).expect("abre o banco"));
-        let estado = Estado::novo(store, config).expect("estado do servidor");
+        let estado = ServerState::new(store, config).expect("estado do servidor");
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("porta efêmera");

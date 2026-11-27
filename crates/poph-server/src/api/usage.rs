@@ -1,7 +1,7 @@
 use crate::{
     auth::Identity,
     error::{ApiError, id_from_url as parse_path_id},
-    estado::Estado,
+    state::ServerState,
 };
 use axum::{
     Json,
@@ -47,7 +47,7 @@ pub struct TokenUsageJson {
 
 #[utoipa::path(get, path = "/admin/v1/orgs/{org_id}/usage/tokens", tag = "usage", operation_id = "usage_tokens", security(("bearer" = [])), params(("org_id" = String, Path), ("from" = i64, Query), ("to" = i64, Query)), responses((status = 200, body = TokenUsageJson), (status = 422, body = crate::error::ErrorResponse), (status = 404, body = crate::error::ErrorResponse)))]
 pub async fn tokens(
-    State(state): State<Estado>,
+    State(state): State<ServerState>,
     identity: Identity,
     Path(path): Path<OrgPath>,
     Query(query): Query<UsageQuery>,

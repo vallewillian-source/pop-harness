@@ -35,8 +35,8 @@ use poph_agent::turno::{TurnEngine, TurnOptions, TurnProcessor};
 use poph_core::llm::{FakeProvider, FinishReason, LlmEvent, LlmProvider, Script, Usage};
 use poph_evolution::webhook::SECRET_HEADER;
 use poph_evolution::{ATTACHMENT_CAP, ConfigEvolution, EvolutionClient};
-use poph_server::Estado;
-use poph_server::evolution::CanalEvolution;
+use poph_server::ServerState;
+use poph_server::evolution::EvolutionChannel;
 use poph_store::{
     ConversationStatus, Direction, NewAgent, NewConversation, NewOrg, NewOutboxItem, Origin,
     OutboxState, Page, Store, TurnState,
@@ -258,7 +258,7 @@ impl Cenario {
     }
 
     /// Instância `loja`, com segredo e cliente de envio apontando para a Evolution falsa.
-    fn canal(&self) -> CanalEvolution {
+    fn canal(&self) -> EvolutionChannel {
         let cliente = EvolutionClient::new(
             ConfigEvolution::new(
                 self.url_evo.clone(),
@@ -268,13 +268,13 @@ impl Cenario {
             .expect("config da Evolution falsa"),
         )
         .expect("cliente da Evolution falsa");
-        CanalEvolution {
+        EvolutionChannel {
             org: self.org,
-            instancia: INSTANCIA.to_owned(),
-            integracao: self.integracao,
-            segredo: Some(Secret::new(SEGREDO.to_owned())),
-            cliente: Some(cliente),
-            teto_midia: ATTACHMENT_CAP,
+            instance: INSTANCIA.to_owned(),
+            integration: self.integracao,
+            secret: Some(Secret::new(SEGREDO.to_owned())),
+            client: Some(cliente),
+            attachment_limit: ATTACHMENT_CAP,
         }
     }
 
@@ -331,13 +331,13 @@ impl Cenario {
         ligar_turno: bool,
         opcoes: FlowOptions,
     ) -> Servidor {
-        let estado = Estado::novo(Arc::clone(&self.store), HarnessConfig::default())
+        let estado = ServerState::new(Arc::clone(&self.store), HarnessConfig::default())
             .expect("estado do servidor")
-            .com_canais_evolution(vec![self.canal()]);
+            .with_evolution_channels(vec![self.canal()]);
         let (estado, llm) = if ligar_turno {
-            let (fluxo, llm) = self.fluxo(&estado.registro, roteiros, opcoes);
+            let (fluxo, llm) = self.fluxo(&estado.registry, roteiros, opcoes);
             (
-                estado.com_turno(fluxo, Duration::from_millis(20)),
+                estado.with_turn(fluxo, Duration::from_millis(20)),
                 Some(llm),
             )
         } else {
@@ -988,7 +988,7 @@ async fn turno_interrompido_por_queda_e_retomado_uma_vez_na_subida() {
     assert_eq!(gravado.state, TurnState::Failed);
     assert_eq!(
         gravado.error.as_deref(),
-        Some(poph_server::entrada_turno::MOTIVO_INTERROMPIDO)
+        Some(poph_server::turn_input::INTERRUPTED_REASON)
     );
 
     // Uma resposta só: uma chamada ao modelo, uma mensagem do agente e um envio ao cliente.

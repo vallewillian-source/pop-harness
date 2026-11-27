@@ -17,8 +17,8 @@ use std::time::{Duration, SystemTime};
 
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
-use poph_server::Estado;
-use poph_server::cluster::{ClusterVivo, carregar};
+use poph_server::ServerState;
+use poph_server::cluster::{LiveCluster, load};
 use poph_store::Store;
 use poph_types::HarnessConfig;
 use poph_types::Secret;
@@ -134,13 +134,13 @@ impl Cenario {
 
         let store = Arc::new(Store::open(&config).expect("abre o banco"));
         let segredo = Secret::new(SEGREDO.to_owned());
-        let mapa = carregar(&caminho_cluster, Some(&segredo)).expect("mapa inicial válido");
-        let estado = Estado::novo(Arc::clone(&store), config)
+        let mapa = load(&caminho_cluster, Some(&segredo)).expect("mapa inicial válido");
+        let estado = ServerState::new(Arc::clone(&store), config)
             .expect("estado do servidor")
-            .com_cluster(ClusterVivo {
-                caminho: caminho_cluster.clone(),
+            .with_cluster(LiveCluster {
+                path: caminho_cluster.clone(),
                 config: mapa,
-                segredo: Some(segredo),
+                secret: Some(segredo),
             });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await

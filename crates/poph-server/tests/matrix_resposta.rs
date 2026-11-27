@@ -37,8 +37,8 @@ use axum::{Json, Router};
 use poph_evolution::webhook::SECRET_HEADER;
 use poph_evolution::{ATTACHMENT_CAP, ConfigEvolution, EvolutionClient};
 use poph_matrix::{ClientConfig, GhostIds, MatrixClient};
-use poph_server::evolution::CanalEvolution;
-use poph_server::{AsReceiver, AttendantResponse, Estado, HarnessResponsePort, ResponsePort};
+use poph_server::evolution::EvolutionChannel;
+use poph_server::{AsReceiver, AttendantResponse, HarnessResponsePort, ResponsePort, ServerState};
 use poph_store::error::StoreError;
 use poph_store::{
     HumanResponse, NewAgent, NewConversation, NewHumanResponse, NewOrg, Origin, OutboxState, Page,
@@ -458,7 +458,7 @@ impl Cenario {
     }
 
     /// O canal da Evolution que o servidor usa para entregar a fila de saída de uma conversa.
-    fn channel(&self, org: OrgId, conversation: ConversationId, url_evo: &str) -> CanalEvolution {
+    fn channel(&self, org: OrgId, conversation: ConversationId, url_evo: &str) -> EvolutionChannel {
         let client = EvolutionClient::new(
             ConfigEvolution::new(
                 url_evo.to_owned(),
@@ -475,13 +475,13 @@ impl Cenario {
             .expect("lê a conversa")
             .integration_id
             .expect("a conversa tem integração");
-        CanalEvolution {
+        EvolutionChannel {
             org,
-            instancia: INSTANCIA.to_owned(),
-            integracao,
-            segredo: Some(Secret::new(SEGREDO_WEBHOOK.to_owned())),
-            cliente: Some(client),
-            teto_midia: ATTACHMENT_CAP,
+            instance: INSTANCIA.to_owned(),
+            integration: integracao,
+            secret: Some(Secret::new(SEGREDO_WEBHOOK.to_owned())),
+            client: Some(client),
+            attachment_limit: ATTACHMENT_CAP,
         }
     }
 
@@ -508,10 +508,10 @@ impl Cenario {
                 .with_blob_folder(self.pasta.join("blobs")),
         );
 
-        let state = Estado::novo(Arc::clone(&self.store), HarnessConfig::default())
+        let state = ServerState::new(Arc::clone(&self.store), HarnessConfig::default())
             .expect("estado do servidor")
-            .com_canais_evolution(canais)
-            .com_matrix_as(Arc::new(AsReceiver::new(
+            .with_evolution_channels(canais)
+            .with_matrix_as(Arc::new(AsReceiver::new(
                 PREFIXO,
                 SERVER_NAME,
                 Secret::new(HS_TOKEN.to_owned()),

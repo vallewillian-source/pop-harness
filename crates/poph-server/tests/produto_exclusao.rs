@@ -12,7 +12,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
-use poph_server::Estado;
+use poph_server::ServerState;
 use poph_store::{NewConversation, Store};
 use poph_types::config::GlobalTokenConfig;
 use poph_types::{AgentId, HarnessConfig, OrgId, ProductId};
@@ -65,7 +65,7 @@ impl Cenario {
 
         let store = std::sync::Arc::new(Store::open(&config).expect("abre o banco"));
         let estado =
-            Estado::novo(std::sync::Arc::clone(&store), config).expect("estado do servidor");
+            ServerState::new(std::sync::Arc::clone(&store), config).expect("estado do servidor");
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await

@@ -21,7 +21,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
-use poph_server::Estado;
+use poph_server::ServerState;
 use poph_store::{NewFlow, Page, Store};
 use poph_types::config::GlobalTokenConfig;
 use poph_types::{AgentId, FlowId, HarnessConfig, OrgId};
@@ -73,7 +73,7 @@ impl Cenario {
         config.validar().expect("configuração válida");
 
         let store = Arc::new(Store::open(&config).expect("abre o banco"));
-        let estado = Estado::novo(Arc::clone(&store), config).expect("estado do servidor");
+        let estado = ServerState::new(Arc::clone(&store), config).expect("estado do servidor");
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await

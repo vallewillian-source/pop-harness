@@ -30,8 +30,8 @@ use argon2::password_hash::{PasswordHasher, SaltString};
 use poph_flows::engine::{Context, Estado as EstadoMotor, execute_action};
 use poph_flows::ir::Destination;
 use poph_flows::{Ir, Limites, RuleEvaluator, compile};
-use poph_server::Estado;
-use poph_server::fluxos_transicao::transicao_do_motor;
+use poph_server::ServerState;
+use poph_server::flow_transition::transition_engine;
 use poph_store::{
     Execution, NewConversation, NewFlow, NewRecord, RevisionPublication, Store, TransitionExtras,
 };
@@ -129,7 +129,7 @@ impl Cenario {
         config.validar().expect("configuração válida");
 
         let store = Arc::new(Store::open(&config).expect("abre o banco"));
-        let estado = Estado::novo(Arc::clone(&store), config).expect("estado do servidor");
+        let estado = ServerState::new(Arc::clone(&store), config).expect("estado do servidor");
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -428,7 +428,7 @@ impl Cenario {
                 org_id,
                 run_id,
                 execucao.version,
-                &transicao_do_motor(&resultado),
+                &transition_engine(&resultado),
                 chave,
                 TransitionExtras {
                     ator_ref: Some("agente-de-teste"),

@@ -2,7 +2,7 @@ use super::{ListJson, PageQuery, if_match_version, next_cursor, request_status};
 use crate::{
     auth::Identity,
     error::{ApiError, id_from_url as parse_path_id},
-    estado::Estado,
+    state::ServerState,
 };
 use axum::{
     Json,
@@ -49,7 +49,7 @@ fn group(g: &KnowledgeGroup) -> Value {
 }
 #[utoipa::path(operation_id = "listar", get,path="/admin/v1/orgs/{org_id}/knowledge",tag="knowledge",params(("org_id"=String,Path),("limit"=Option<u32>,Query),("cursor"=Option<String>,Query)),security(("bearer"=[])),responses((status=200,description="Grupos",body=ListJson<Value>)))]
 pub async fn list(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<PathParams>,
     q: Result<Query<PageQuery>, QueryRejection>,
@@ -71,7 +71,7 @@ pub async fn list(
 }
 #[utoipa::path(operation_id = "mostrar", get,path="/admin/v1/orgs/{org_id}/knowledge/{group_id}",tag="knowledge",params(("org_id"=String,Path),("group_id"=String,Path)),security(("bearer"=[])),responses((status=200,description="Grupo",body=Value)))]
 pub async fn show(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<PathParams>,
 ) -> Result<Json<Value>, ApiError> {
@@ -84,7 +84,7 @@ pub async fn show(
 }
 #[utoipa::path(operation_id = "criar", post,path="/admin/v1/orgs/{org_id}/knowledge",tag="knowledge",params(("org_id"=String,Path)),security(("bearer"=[])),request_body=Dados,responses((status=201,description="Criado",body=Value)))]
 pub async fn create(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<PathParams>,
     body: Result<Json<Dados>, JsonRejection>,
@@ -115,7 +115,7 @@ pub async fn create(
 }
 #[utoipa::path(operation_id = "atualizar", patch,path="/admin/v1/orgs/{org_id}/knowledge/{group_id}",tag="knowledge",params(("org_id"=String,Path),("group_id"=String,Path),("If-Match"=String,Header)),security(("bearer"=[])),request_body=Dados,responses((status=200,description="Alterado",body=Value),(status=412,description="Conflito",body=crate::error::ErrorResponse)))]
 pub async fn update(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<PathParams>,
     h: HeaderMap,
@@ -150,7 +150,7 @@ pub async fn update(
 }
 #[utoipa::path(operation_id = "excluir", delete,path="/admin/v1/orgs/{org_id}/knowledge/{group_id}",tag="knowledge",params(("org_id"=String,Path),("group_id"=String,Path),("force"=Option<bool>,Query)),security(("bearer"=[])),responses((status=200,description="Excluído",body=Value)))]
 pub async fn delete(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<PathParams>,
     q: Result<Query<ConfirmExclusion>, QueryRejection>,
@@ -224,7 +224,7 @@ fn item_json(i: &poph_store::KnowledgeItem) -> Value {
     json!({"id":i.id.to_string(),"org_id":i.org_id.to_string(),"group_id":i.group_id.to_string(),"title":i.title,"content":i.content,"tags":i.tags,"position":i.position,"status":i.status.as_text(),"version":i.version,"created_at":i.created_at,"updated_at":i.updated_at})
 }
 fn check_item(
-    e: &Estado,
+    e: &ServerState,
     org: OrgId,
     group: KnowledgeGroupId,
     id: poph_types::KnowledgeItemId,
@@ -241,7 +241,7 @@ fn check_item(
 }
 #[utoipa::path(operation_id = "listar_itens", get,path="/admin/v1/orgs/{org_id}/knowledge/{group_id}/items",tag="knowledge",params(("org_id"=String,Path),("group_id"=String,Path),("limit"=Option<u32>,Query),("cursor"=Option<String>,Query)),security(("bearer"=[])),responses((status=200,description="Itens",body=ListJson<Value>)))]
 pub async fn list_items(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<ItemPath>,
     q: Result<Query<PageQuery>, QueryRejection>,
@@ -264,7 +264,7 @@ pub async fn list_items(
 }
 #[utoipa::path(operation_id = "mostrar_item", get,path="/admin/v1/orgs/{org_id}/knowledge/{group_id}/items/{item_id}",tag="knowledge",params(("org_id"=String,Path),("group_id"=String,Path),("item_id"=String,Path)),security(("bearer"=[])),responses((status=200,description="Item",body=Value)))]
 pub async fn show_item(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<ItemPath>,
 ) -> Result<Json<Value>, ApiError> {
@@ -278,7 +278,7 @@ pub async fn show_item(
 }
 #[utoipa::path(operation_id = "criar_item", post,path="/admin/v1/orgs/{org_id}/knowledge/{group_id}/items",tag="knowledge",params(("org_id"=String,Path),("group_id"=String,Path)),security(("bearer"=[])),request_body=ItemData,responses((status=201,description="Criado",body=Value)))]
 pub async fn create_item(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<ItemPath>,
     body: Result<Json<ItemData>, JsonRejection>,
@@ -319,7 +319,7 @@ pub async fn create_item(
 }
 #[utoipa::path(operation_id = "atualizar_item", patch,path="/admin/v1/orgs/{org_id}/knowledge/{group_id}/items/{item_id}",tag="knowledge",params(("org_id"=String,Path),("group_id"=String,Path),("item_id"=String,Path),("If-Match"=String,Header)),security(("bearer"=[])),request_body=ItemData,responses((status=200,description="Alterado",body=Value),(status=412,description="Conflito",body=crate::error::ErrorResponse)))]
 pub async fn update_item(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<ItemPath>,
     h: HeaderMap,
@@ -370,7 +370,7 @@ pub async fn update_item(
 }
 #[utoipa::path(operation_id = "excluir_item", delete,path="/admin/v1/orgs/{org_id}/knowledge/{group_id}/items/{item_id}",tag="knowledge",params(("org_id"=String,Path),("group_id"=String,Path),("item_id"=String,Path)),security(("bearer"=[])),responses((status=200,description="Excluído",body=Value)))]
 pub async fn delete_item(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<ItemPath>,
 ) -> Result<Json<Value>, ApiError> {
@@ -418,7 +418,7 @@ fn agent_ids(
 
 #[utoipa::path(operation_id = "vincular", post,path="/admin/v1/orgs/{org_id}/agents/{agent_id}/knowledge/{group_id}",tag="knowledge",params(("org_id"=String,Path),("agent_id"=String,Path),("group_id"=String,Path)),security(("bearer"=[])),responses((status=200,description="Vínculo criado",body=Value)))]
 pub async fn link(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<AgentPath>,
 ) -> Result<Json<Value>, ApiError> {
@@ -440,7 +440,7 @@ pub async fn link(
 }
 #[utoipa::path(operation_id = "desvincular", delete,path="/admin/v1/orgs/{org_id}/agents/{agent_id}/knowledge/{group_id}",tag="knowledge",params(("org_id"=String,Path),("agent_id"=String,Path),("group_id"=String,Path)),security(("bearer"=[])),responses((status=200,description="Vínculo removido",body=Value)))]
 pub async fn unlink(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<AgentPath>,
 ) -> Result<Json<Value>, ApiError> {
@@ -464,7 +464,7 @@ pub async fn unlink(
 }
 #[utoipa::path(operation_id = "reindexar", post,path="/admin/v1/orgs/{org_id}/agents/{agent_id}/knowledge/reindex",tag="knowledge",params(("org_id"=String,Path),("agent_id"=String,Path)),security(("bearer"=[])),responses((status=200,description="Índice sincronizado",body=Value)))]
 pub async fn reindex(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<AgentPath>,
 ) -> Result<Json<Value>, ApiError> {
@@ -485,7 +485,7 @@ pub async fn reindex(
 }
 
 async fn synchronise(
-    e: &Estado,
+    e: &ServerState,
     org: OrgId,
     agent_id: poph_types::AgentId,
 ) -> Result<poph_rag::IndexReport, ApiError> {
@@ -526,7 +526,7 @@ async fn synchronise(
 }
 
 async fn sync_notice(
-    e: &Estado,
+    e: &ServerState,
     org: OrgId,
     agents: Vec<poph_types::AgentId>,
 ) -> Option<&'static str> {
@@ -538,7 +538,11 @@ async fn sync_notice(
     }
     fail.then_some("índice não atualizado; execute reindex para os agentes afetados")
 }
-async fn group_notice(e: &Estado, org: OrgId, group: KnowledgeGroupId) -> Option<&'static str> {
+async fn group_notice(
+    e: &ServerState,
+    org: OrgId,
+    group: KnowledgeGroupId,
+) -> Option<&'static str> {
     match e.store.knowledge().agents_from_group(org, group) {
         Ok(agents) => sync_notice(e, org, agents).await,
         Err(_) => Some("índice não atualizado; execute reindex para o agente"),

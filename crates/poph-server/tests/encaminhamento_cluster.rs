@@ -26,13 +26,13 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
-use poph_server::Estado;
-use poph_server::cluster::ClusterVivo;
-use poph_server::encaminhamento::{
-    CABECALHO_ASSINATURA, CABECALHO_HOP, CABECALHO_INSTANCIA, CABECALHO_MAPA, CABECALHO_NONCE,
-    CABECALHO_TIMESTAMP, assinar, hash_do_corpo, nonce_novo,
+use poph_server::ServerState;
+use poph_server::cluster::LiveCluster;
+use poph_server::evolution::EvolutionChannel;
+use poph_server::forwarding::{
+    HOP_HEADER, INSTANCE_HEADER, MAP_HEADER, NONCE_HEADER, SIGNATURE_HEADER, TIMESTAMP_HEADER,
+    body_hash, new_nonce, sign,
 };
-use poph_server::evolution::CanalEvolution;
 use poph_store::{NewOrg, Page, Store};
 use poph_types::config::{ClusterConfig, ClusterInstance, GlobalTokenConfig};
 use poph_types::{HarnessConfig, IntegrationId, OrgId, RecordStatus, Secret};
@@ -172,16 +172,16 @@ async fn iniciar(
     listener: tokio::net::TcpListener,
     mapa: ClusterConfig,
     segredo: Option<Secret>,
-    canais: Vec<CanalEvolution>,
+    canais: Vec<EvolutionChannel>,
 ) -> Instancia {
-    let estado = Estado::novo(Arc::clone(&preparo.store), preparo.config)
+    let estado = ServerState::new(Arc::clone(&preparo.store), preparo.config)
         .expect("estado do servidor")
-        .com_cluster(ClusterVivo {
-            caminho: preparo.pasta.join("cluster.toml"),
+        .with_cluster(LiveCluster {
+            path: preparo.pasta.join("cluster.toml"),
             config: mapa,
-            segredo,
+            secret: segredo,
         })
-        .com_canais_evolution(canais);
+        .with_evolution_channels(canais);
     let endereco = listener.local_addr().expect("endereço local");
     let (desligar, sinal) = oneshot::channel();
     tokio::spawn(async move {
@@ -250,7 +250,7 @@ impl Resposta {
             self.cru
         );
         assert!(
-            !self.cru.contains(&hash_do_corpo(SEGREDO.as_bytes())),
+            !self.cru.contains(&body_hash(SEGREDO.as_bytes())),
             "hash do segredo na resposta"
         );
     }
@@ -303,7 +303,7 @@ fn cabecalhos_assinados(
         hop,
         carimbo,
         mapa,
-        &nonce_novo(),
+        &new_nonce(),
     )
 }
 
@@ -320,14 +320,14 @@ fn cabecalhos_assinados_com_nonce(
     mapa: &str,
     nonce: &str,
 ) -> Vec<(&'static str, String)> {
-    let assinatura = assinar(segredo, metodo, alvo, corpo, carimbo, instancia, hop, nonce);
+    let assinatura = sign(segredo, metodo, alvo, corpo, carimbo, instancia, hop, nonce);
     vec![
-        (CABECALHO_INSTANCIA, instancia.to_owned()),
-        (CABECALHO_TIMESTAMP, carimbo.to_string()),
-        (CABECALHO_ASSINATURA, assinatura),
-        (CABECALHO_HOP, hop.to_string()),
-        (CABECALHO_MAPA, mapa.to_owned()),
-        (CABECALHO_NONCE, nonce.to_owned()),
+        (INSTANCE_HEADER, instancia.to_owned()),
+        (TIMESTAMP_HEADER, carimbo.to_string()),
+        (SIGNATURE_HEADER, assinatura),
+        (HOP_HEADER, hop.to_string()),
+        (MAP_HEADER, mapa.to_owned()),
+        (NONCE_HEADER, nonce.to_owned()),
     ]
 }
 
@@ -358,13 +358,13 @@ async fn duas_instancias(
 
     let mut canais = Vec::new();
     if com_canal_em_b {
-        canais.push(CanalEvolution {
+        canais.push(EvolutionChannel {
             org,
-            instancia: "loja".to_owned(),
-            integracao: IntegrationId::generate(),
-            segredo: Some(Secret::new(SEGREDO_WEBHOOK.to_owned())),
-            cliente: None,
-            teto_midia: 1_048_576,
+            instance: "loja".to_owned(),
+            integration: IntegrationId::generate(),
+            secret: Some(Secret::new(SEGREDO_WEBHOOK.to_owned())),
+            client: None,
+            attachment_limit: 1_048_576,
         });
     }
 
@@ -830,11 +830,11 @@ async fn modo_instancia_unica_fica_igual() {
         Some(TOKEN_GLOBAL),
         None,
         &[
-            (CABECALHO_INSTANCIA, "a".to_owned()),
-            (CABECALHO_TIMESTAMP, agora().to_string()),
-            (CABECALHO_ASSINATURA, "00".to_owned()),
-            (CABECALHO_HOP, "1".to_owned()),
-            (CABECALHO_MAPA, "00".to_owned()),
+            (INSTANCE_HEADER, "a".to_owned()),
+            (TIMESTAMP_HEADER, agora().to_string()),
+            (SIGNATURE_HEADER, "00".to_owned()),
+            (HOP_HEADER, "1".to_owned()),
+            (MAP_HEADER, "00".to_owned()),
         ],
     )
     .await;
@@ -875,8 +875,8 @@ async fn nonce_torna_cada_pedido_unico_e_recusa_repeticao() {
         &fingerprint,
     );
     assert_ne!(
-        primeiro.iter().find(|(nome, _)| *nome == CABECALHO_NONCE),
-        segundo.iter().find(|(nome, _)| *nome == CABECALHO_NONCE),
+        primeiro.iter().find(|(nome, _)| *nome == NONCE_HEADER),
+        segundo.iter().find(|(nome, _)| *nome == NONCE_HEADER),
         "cada pedido tem de levar um nonce próprio"
     );
     let um = pedir(Method::GET, &url, Some(TOKEN_GLOBAL), None, &primeiro).await;
@@ -919,7 +919,7 @@ async fn nonce_torna_cada_pedido_unico_e_recusa_repeticao() {
         &fingerprint,
     )
     .into_iter()
-    .filter(|(nome, _)| *nome != CABECALHO_NONCE)
+    .filter(|(nome, _)| *nome != NONCE_HEADER)
     .collect();
     let ausente = pedir(Method::GET, &url, Some(TOKEN_GLOBAL), None, &sem_nonce).await;
     assert_eq!(ausente.status, StatusCode::UNAUTHORIZED, "{}", ausente.cru);

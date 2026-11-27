@@ -16,7 +16,7 @@ use serde_json::{Map, Value, json};
 
 use crate::auth::Identity;
 use crate::error::{ApiError, id_from_url as parse_path_id};
-use crate::estado::Estado;
+use crate::state::ServerState;
 
 use super::audit;
 
@@ -60,7 +60,7 @@ impl ImportParameters {
 #[doc = " `GET …/backup`: devolve o arquivo do retrato da org."]
 #[utoipa::path(get, operation_id="backup_exportar", path="/admin/v1/orgs/{org_id}/backup", tag="backup", security(("bearer" = [])), params(("org_id" = String, Path), ("com_conversas" = Option<bool>, Query, description = "Inclui conversas, mensagens, turnos, as duas filas e os carrinhos (padrão: `false`)")), responses((status = 200, description = "Arquivo do backup da org (JSON no formato `poph-backup-org`, versão 1), como anexo. Segredo de integração sai só com a marca e o nome do campo; caminho de blob não sai", body = Value, content_type = "application/json"), (status = 400, description = "`com_conversas` inválido", body = crate::error::ErrorResponse), (status = 401, description = "Sem token", body = crate::error::ErrorResponse), (status = 403, description = "Org de outro token", body = crate::error::ErrorResponse), (status = 404, description = "Org não encontrada", body = crate::error::ErrorResponse), (status = 409, description = "Arquivo da biblioteca sem conteúdo no disco", body = crate::error::ErrorResponse)))]
 pub async fn export(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<OrgPath>,
     Query(q): Query<ExportParameters>,
@@ -109,13 +109,13 @@ pub async fn export(
 }
 
 fn build_file(
-    e: &Estado,
+    e: &ServerState,
     org: OrgId,
     include_conversations: bool,
 ) -> Result<(Vec<u8>, String), ApiError> {
     let snapshot = e.store.org_snapshot(org, include_conversations)?;
     let blobs = read_blobs(e, &snapshot, org)?;
-    let key = e.chave_de_cifra.clone();
+    let key = e.encryption_key.clone();
     let name_of_secret = move |blob: &[u8]| -> Option<Vec<String>> {
         let map = key.as_ref()?.decifrar(blob).ok()?;
         Some(map.keys().cloned().collect())
@@ -143,7 +143,7 @@ fn build_file(
 }
 
 fn read_blobs(
-    e: &Estado,
+    e: &ServerState,
     snapshot: &OrgSnapshot,
     org: OrgId,
 ) -> Result<BTreeMap<String, Vec<u8>>, ApiError> {
@@ -161,8 +161,8 @@ fn read_blobs(
                 .or_insert_with(|| name.to_owned());
         }
     }
-    let folder = &e.arquivos.blob_folder;
-    let limit = e.arquivos.byte_limit;
+    let folder = &e.files.blob_folder;
+    let limit = e.files.byte_limit;
     let mut blobs = BTreeMap::new();
     for (sha, name) in names_by_sha {
         let bytes = poph_files::blob::read(folder, org, &sha, limit).map_err(|error| {
@@ -233,7 +233,7 @@ fn civil_date(days: i64) -> (i64, u32, u32) {
 #[doc = " `POST …/backup/import`: reconstrói a org do caminho a partir do arquivo do corpo."]
 #[utoipa::path(post, operation_id="backup_importar", path="/admin/v1/orgs/{org_id}/backup/import", tag="backup", security(("bearer" = [])), params(("org_id" = String, Path), ("sobrescrever" = Option<bool>, Query, description = "Autoriza a importação a atualizar linhas que já existem na org (padrão: `false`, que recusa com `409 importacao_sobrescreve` e nada grava)")), request_body(content = Value, content_type = "application/json", description = "Arquivo gerado por `GET …/backup` (ou `poph backup export`), até 64 MB"), responses((status = 200, description = "Relatório da importação: linhas inseridas/atualizadas por tabela, segredos a digitar de novo e o índice", body = Value), (status = 400, description = "Arquivo corrompido, formato ou versão desconhecidos, ou `sobrescrever` que não é booleano", body = crate::error::ErrorResponse), (status = 401, description = "Sem token", body = crate::error::ErrorResponse), (status = 403, description = "Org de outro token", body = crate::error::ErrorResponse), (status = 404, description = "Org de destino não encontrada", body = crate::error::ErrorResponse), (status = 409, description = "`importacao_sobrescreve` (atualizaria linhas existentes sem `sobrescrever=true`), conflito de chave natural ou arquivo da biblioteca sem conteúdo no disco; nada foi gravado", body = crate::error::ErrorResponse), (status = 413, description = "Arquivo acima do limite", body = crate::error::ErrorResponse)))]
 pub async fn import(
-    State(e): State<Estado>,
+    State(e): State<ServerState>,
     ident: Identity,
     Path(c): Path<OrgPath>,
     Query(q): Query<ImportParameters>,
@@ -423,13 +423,13 @@ fn overwrites_import(update: &ImportUpdates) -> ApiError {
 }
 
 fn write_in_target(
-    e: &Estado,
+    e: &ServerState,
     org: OrgId,
     snapshot: OrgSnapshot,
     blobs: &BTreeMap<String, Vec<u8>>,
     overwrite: bool,
 ) -> Result<Result<ImportReport, ImportUpdates>, ApiError> {
-    let folder = &e.arquivos.blob_folder;
+    let folder = &e.files.blob_folder;
     for (sha, content) in blobs {
         match poph_files::blob::write(folder, org, content) {
             Ok(stored) if stored.sha256 == *sha => {}
@@ -488,7 +488,7 @@ fn table_of_report(report: &ImportReport) -> Map<String, Value> {
         .collect()
 }
 
-async fn reindex(e: &Estado, org: OrgId) -> (Value, Option<String>) {
+async fn reindex(e: &ServerState, org: OrgId) -> (Value, Option<String>) {
     use poph_rag::{Embedder, Index, IndexConfig, ModelConfig, OrtEmbedder};
 
     static SINCRONIZACAO: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
