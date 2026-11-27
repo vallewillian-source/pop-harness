@@ -291,7 +291,7 @@ Notes from the removed comments:
 - The helper that waits for the last turn to leave the running state is `wait_turn_finish`.
 - The scenario can put a file in the agent's library with the `send_file` tool enabled. The scripts receive the id of that file, so the model can ask for it. The tool list comes from the agent's instructions, which is how the turn knows which tools to offer the model.
 - The scenario disables the grouping window ("the test does not wait 2 s per turn").
-- The read limit of the outbound queue in the checks is 200 (`POPH_BATCH`).
+- The read limit of the outbound queue in the checks is 200 (constant `BATCH_LIMIT`).
 - The outbound state is the real state of the queue: the console transport confirms the output before the end event.
 - The default script is a turn that asks the model to send a file and then answers in text.
 - The SSE test reads until the first piece of the model's text, then closes the connection. This is how the cancel test starts the turn.

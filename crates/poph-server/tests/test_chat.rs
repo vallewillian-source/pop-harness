@@ -519,7 +519,7 @@ async fn test_conversation_gets_sse_in_order_and_attachment_text_in_prompt() {
     assert_eq!(
         c.store
             .outbox()
-            .list_pending(c.org, POPH_BATCH)
+            .list_pending(c.org, BATCH_LIMIT)
             .expect("fila de saída")
             .len(),
         0,
@@ -527,7 +527,7 @@ async fn test_conversation_gets_sse_in_order_and_attachment_text_in_prompt() {
     );
 }
 
-const POPH_BATCH: u32 = 200;
+const BATCH_LIMIT: u32 = 200;
 
 #[tokio::test]
 async fn two_connections_same_conversation_do_not_make_two_turns() {
@@ -620,7 +620,7 @@ async fn disconnect_cancels_turn_without_stuck_queue() {
     assert_eq!(
         c.store
             .outbox()
-            .list_pending(c.org, POPH_BATCH)
+            .list_pending(c.org, BATCH_LIMIT)
             .expect("fila")
             .len(),
         0
