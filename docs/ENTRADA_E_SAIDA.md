@@ -154,7 +154,7 @@ The gauges are per instance (summed across orgs). Counting per org is HR-21/HR-2
 
 ## 7. How the tests prove it
 
-`crates/poph-agent/tests/entrada_saida.rs` — 14 tests, all in `scripts/ci.sh`:
+`crates/poph-agent/tests/input_output.rs` — 14 tests, all in `scripts/ci.sh`:
 
 | Required group | Test |
 |---|---|
@@ -174,7 +174,7 @@ There is also `medir_ingestao`, marked `#[ignore]`: it measures the throughput a
 ACK. It does not run in CI because it is a measurement, not a check:
 
 ```
-cargo test --release -p poph-agent --test entrada_saida -- --ignored --nocapture measure_ingestion
+cargo test --release -p poph-agent --test input_output -- --ignored --nocapture measure_ingestion
 ```
 
 The two `SIGKILL` tests run the same test binary again with `--exact <child name>`: the parent waits for the child to write a marker (the controlled point) and sends `SIGKILL`.

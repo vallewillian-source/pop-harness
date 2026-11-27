@@ -102,7 +102,7 @@ Item `kind = 'file'` with `payload_json`:
 
 - `crates/poph-store/tests/biblioteca.rs` — repository: create/list/count/delete, isolation by org and by agent within the
   same org, agent from another org refused, field validation.
-- `crates/poph-agent/tests/biblioteca_arquivos.rs` — tool and turn: id of another agent/org refused (including with a
+- `crates/poph-agent/tests/file_library.rs` — tool and turn: id of another agent/org refused (including with a
   forged org in the context), non-existent id with a readable error and the turn carrying on, `SendFile` in the `outbox`
   with `blob_ref` and no duplicate on repetition, an agent without the tool does not receive it, an agent with it sees
   the file descriptions, empty library.

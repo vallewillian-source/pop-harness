@@ -52,7 +52,7 @@ with `estado` and `erro` set. The processor has to close the entry in both cases
   `esperar_mais` (wait more) doubles the window up to the 8 s ceiling, `processar_agora` (process now)
   reduces it to the short 250 ms confirmation, and the fallback keeps the fixed window. If the customer sends
   another message during the wait, the batch is redone. Details and measurements in `docs/JEV.md` §5-B;
-  test in `tests/g2_janela.rs`.
+  test in `tests/g2_window.rs`.
 
 ## 3. Stable prompt (PRD §6.1)
 
@@ -344,16 +344,16 @@ in the queue and is answered at startup; a reply that was being sent when the cr
 Model failure (HR-26i), with a fake provider and a fake Evolution:
 
 ```
-cargo test -p poph-agent --test turno --locked falha_do_modelo
-cargo test -p poph-agent --test biblioteca_arquivos --locked falha_do_modelo
+cargo test -p poph-agent --test turn --locked failure_model
+cargo test -p poph-agent --test file_library --locked failure_model
 cargo test -p poph-server --test turno_whatsapp --locked falha_do_modelo
 ```
 
 No slot and provider refusal (HR-26k), with a fake provider and a fake Evolution:
 
 ```
-cargo test -p poph-agent --test turno --locked falta_de_vaga
-cargo test -p poph-agent --test turno --locked provedor_que_recusa
+cargo test -p poph-agent --test turn --locked missing_slot
+cargo test -p poph-agent --test turn --locked provider_refusal
 cargo test -p poph-server --test turno_whatsapp --locked recusa_do_provedor
 ```
 
@@ -426,7 +426,7 @@ model — a message with only an image produced a request with no content. Now:
   refuses MIME types outside the list and empty images before sending, and the configured providers (antigravity) accept images. If a
   provider starts refusing them, the current path is a turn failure (the HR-26i retry), not a send without the part: degradation by
   capability waits until that configuration exists.
-- **How to prove it:** `cargo test -p poph-agent --test imagem_anexo` (5 tests: image only, image + document, missing blob, ceiling,
+- **How to prove it:** `cargo test -p poph-agent --test image_attachment` (5 tests: image only, image + document, missing blob, ceiling,
   and turn without file configuration).
 
 ## 14. Crash and recovery (HR-57)
@@ -456,7 +456,7 @@ not lost, the turn does not get stuck as "in progress", the conversation goes ba
   reason recorded, with no invented reply and no partial text becoming a reply. On WhatsApp, the model failure enters the HR-26i retry ladder
   (with a limit) and, if output was already queued, does not retry, to avoid duplication.
 - **Jev failure does not bring down the turn.** The batch that fails becomes a fallback recorded in `turns.jev_json.chamada.falha` and the turn
-  continues (`cargo test -p poph-agent --test jev_turno`).
+  continues (`cargo test -p poph-agent --test jev_turn`).
 - **Known limit:** a message from the Console's test chat (`channel = "test"`) is **not** in the `inbox`. If it dies before the turn ends, it stays
   recorded and without an automatic reply after startup (the operator resends it). The channel path (WhatsApp) resumes and replies once.
 - **How to prove it:**
@@ -499,5 +499,5 @@ and delivered after the text of the turn is final; the model's answer has no int
 A database or read error inside this step never breaks the turn: the turn continues without a flow, and the reason
 goes to the log.
 
-Tests: `poph-agent/tests/fluxo_turno.rs`, `poph-agent/tests/fluxo_ferramentas.rs`, `poph-jev/tests/g9_fluxo.rs`; end to
+Tests: `poph-agent/tests/flow_turn.rs`, `poph-agent/tests/flow_tools.rs`, `poph-jev/tests/g9_fluxo.rs`; end to
 end in `poph-server/tests/fluxos_e2e.rs`. Details in [`FLUXOS.md`](FLUXOS.md) §3.

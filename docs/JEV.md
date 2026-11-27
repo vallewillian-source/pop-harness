@@ -190,7 +190,7 @@ orientacao_outro_risco_saude = "⚠️ Se alguém corre risco de saúde agora, l
 
 Texto vazio = o tipo não orienta (sai só a mensagem automática). Trocar o texto não exige
 recompilar; a suíte compara os **padrões** byte a byte com o documento aprovado
-(`crates/poph-jev/tests/handoff.rs` e `crates/poph-agent/tests/transferencia.rs`).
+(`crates/poph-jev/tests/handoff.rs` e `crates/poph-agent/tests/transfer.rs`).
 
 ### A segunda pergunta (`risco_imediato`)
 
@@ -293,7 +293,7 @@ não paga mexer na política padrão do POP Atende. Os 2 casos restantes exigiri
 
 ### Latência e frases partidas (teste automatizado)
 
-`cargo test -p poph-agent --test g2_janela -- --nocapture latency` roda o conjunto inteiro com uma
+`cargo test -p poph-agent --test g2_window -- --nocapture latency` roda o conjunto inteiro com uma
 pausa de relógio virtual e imprime:
 
 ```
@@ -676,7 +676,7 @@ que ninguém viu é real. **O limiar ficou em 0,70**, como os outros gates.
 
 ### Rodadas de ferramenta por turno (medido no teste, determinado)
 
-`medicao_rodadas_de_ferramenta_por_turno` (em `crates/poph-agent/tests/g5_produto.rs`) roda a **mesma**
+`measurement_rounds_tool_by_turn` (em `crates/poph-agent/tests/g5_product.rs`) roda a **mesma**
 mensagem de cliente nas duas condições, com catálogo falso e provedor falso:
 
 | | Rodadas de ferramenta | Chamadas ao modelo |
@@ -694,7 +694,7 @@ ligado.
 
 ```bash
 export PATH="$HOME/.cargo/bin:$PATH"
-cargo test -p poph-agent --test g5_produto          # efeito, fallbacks, id inválido e rodadas
+cargo test -p poph-agent --test g5_product          # efeito, fallbacks, id inválido e rodadas
 cargo test -p poph-jev   --test g5_produto          # contrato da pergunta e da decisão
 
 cat > /tmp/jev-real.toml <<'TOML'
@@ -824,7 +824,7 @@ G8 entra no lote com os outros: não há chamada extra. Na mesma medição, o lo
 
 ### Ganho medido: modelo não chamado
 
-`cargo test -p poph-agent --test g8_encerrada medicao -- --ignored --nocapture`: quatro mensagens de
+`cargo test -p poph-agent --test g8_closed measurement -- --ignored --nocapture`: quatro mensagens de
 encerramento, provedor de modelo falso, base de um trecho:
 
 | | Chamadas ao modelo de texto | Caracteres de prompt |
@@ -842,8 +842,8 @@ isso. **Não medido**: o tempo de um turno real com o G8 ligado.
 ```bash
 export PATH="$HOME/.cargo/bin:$PATH"
 cargo test -p poph-jev  --test g8_encerrada           # pergunta, limiar, fallback e despedida
-cargo test -p poph-agent --test g8_encerrada          # efeito no turno, reabertura, G1, busca, fallbacks
-cargo test -p poph-agent --test g8_encerrada medicao -- --ignored --nocapture
+cargo test -p poph-agent --test g8_closed          # efeito no turno, reabertura, G1, busca, fallbacks
+cargo test -p poph-agent --test g8_closed measurement -- --ignored --nocapture
 
 cat > /tmp/jev-real.toml <<'TOML'
 [jev]
@@ -993,7 +993,7 @@ largo demais. O texto da instrução e da criteria está no código (`G6_INSTRUC
 
 ### Custo e ganho medidos no turno
 
-`cargo test -p poph-agent --test g6_revisao medicao -- --ignored --nocapture`: 24 turnos com o mesmo
+`cargo test -p poph-agent --test g6_review measurement -- --ignored --nocapture`: 24 turnos com o mesmo
 roteiro nas duas condições (15 aprovadas, 6 reprovadas uma vez e aprovadas na segunda, 3 reprovadas
 duas vezes), provedor e Jev falsos:
 
@@ -1017,8 +1017,8 @@ duas vezes), provedor e Jev falsos:
 ```bash
 export PATH="$HOME/.cargo/bin:$PATH"
 cargo test -p poph-jev   --test g6_revisao               # contrato da pergunta, motivos e fallback
-cargo test -p poph-agent --test g6_revisao               # efeito no turno, regeneração, resposta segura
-cargo test -p poph-agent --test g6_revisao medicao -- --ignored --nocapture
+cargo test -p poph-agent --test g6_review               # efeito no turno, regeneração, resposta segura
+cargo test -p poph-agent --test g6_review measurement -- --ignored --nocapture
 
 cat > /tmp/jev-real.toml <<'TOML'
 [jev]
@@ -1167,7 +1167,7 @@ naquele turno.
 ```bash
 export PATH="$HOME/.cargo/bin:$PATH"
 cargo test -p poph-jev   --test g7_injecao   # contrato da pergunta, fallback e truncamento do arquivo
-cargo test -p poph-agent --test g7_injecao   # as três ações, fallbacks e o bloco não confiável no prompt
+cargo test -p poph-agent --test g7_injection   # as três ações, fallbacks e o bloco não confiável no prompt
 
 cat > /tmp/jev-real.toml <<'TOML'
 [jev]
@@ -1188,7 +1188,7 @@ Para a taxa de falso positivo, conte no JSON os casos com `categoria` iniciando 
 > **Escolhe, e o turno inicia.** O gate devolve qual fluxo iniciar. Desde a FX-23, o turno valida a escolha
 > (fluxo ativo, liberado ao agente, revisão publicada, Ficha aberta) e abre a execução antes de o modelo de texto
 > responder. Sem escolha confiável, nada inicia. A ligação está em `poph-agent` (`turno/flow.rs`) e foi provada por
-> `poph-agent/tests/fluxo_turno.rs`.
+> `poph-agent/tests/flow_turn.rs`.
 
 | Peça | Como está |
 |---|---|

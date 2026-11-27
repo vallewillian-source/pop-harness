@@ -105,7 +105,7 @@ HR-13 (turn):
 
 ## 8. Measured numbers (x86_64, 12 cores, debug build)
 
-Command: `cargo test -p poph-agent --test memoria_e_concorrencia -- --ignored --nocapture cost`
+Command: `cargo test -p poph-agent --test memory_and_concurrency -- --ignored --nocapture cost`
 
 | Measure | Value |
 |---|---|

@@ -56,7 +56,7 @@ Testes: `cases_invariant.rs` (`closing_conversation_closes_case_and_records_even
 3. `nenhum`, confiança baixa ou margem curta → nada inicia, e o catálogo não vai ao modelo.
 4. Jev fora do ar, gate desligado ou resposta inutilizável → **reserva**: o modelo recebe a lista de fluxos e pode chamar `fluxo_iniciar`, que passa pela mesma validação.
 
-Se já existe execução ativa, o turno não pergunta nada ao Jev: o bloco da etapa atual entra no prompt. Testes: `poph-jev/tests/g9_fluxo.rs` (opções, cortes em 400 caracteres, limiares, fallback, flag), `poph-agent/tests/fluxo_turno.rs` (início antes do modelo, reserva, bloco da etapa) e `poph-agent/tests/fluxo_ferramentas.rs`.
+Se já existe execução ativa, o turno não pergunta nada ao Jev: o bloco da etapa atual entra no prompt. Testes: `poph-jev/tests/g9_fluxo.rs` (opções, cortes em 400 caracteres, limiares, fallback, flag), `poph-agent/tests/flow_turn.rs` (início antes do modelo, reserva, bloco da etapa) e `poph-agent/tests/flow_tools.rs`.
 
 **Revisão presa.** A execução guarda a revisão com que começou. Publicar a revisão 2 não muda a execução que está na 1 (`fluxos_e2e.rs`, `revisao_antiga_acao_humana_e_dois_fluxos_na_mesma_ficha`; `flows_migration.rs`, `published_revision_cannot_be_changed_nor_deleted`). `poph flow diff` mostra quantos atendimentos estão presos em cada revisão.
 
@@ -166,7 +166,7 @@ O passo a passo para descobrir o motivo está em [RUNBOOKS.md](RUNBOOKS.md), na 
 | Esquema (tabelas, gatilhos, uma execução ativa) | `poph-store/tests/flows_migration.rs`, `flows_repo.rs` |
 | Linguagem (compilador, validador, regras, limites) | `poph-fluxos/tests/compilador.rs`, `validador.rs`, `regras.rs`, `limites.rs` |
 | Motor (início, ações, decisões, fim, efeitos) | `poph-fluxos/tests/motor.rs`, `motor_desfecho.rs`, `poph-store/tests/flow_executions.rs` |
-| Gate G9 e turno | `poph-jev/tests/g9_fluxo.rs`, `poph-agent/tests/fluxo_turno.rs`, `fluxo_ferramentas.rs` |
+| Gate G9 e turno | `poph-jev/tests/g9_fluxo.rs`, `poph-agent/tests/flow_turn.rs`, `flow_tools.rs` |
 | Paridade com o POP Atende | `poph-fluxos/tests/paridade.rs` e [FLUXOS_PARIDADE.md](FLUXOS_PARIDADE.md) |
 | API, permissão, Fichas e ações humanas | `poph-server/tests/agente_fluxos.rs`, `fichas_leitura.rs`, `fichas_acoes.rs`, `isolamento_orgs.rs` |
 | CLI | `poph/tests/cli_flow.rs` |

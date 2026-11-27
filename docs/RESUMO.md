@@ -1,7 +1,7 @@
 # Rolling conversation summary (HR-14)
 
 > Code: `crates/poph-agent/src/resumo.rs` (window assembly and background generation) and
-> `crates/poph-agent/src/turno/mod.rs` (hookup in the turn). Tests: `crates/poph-agent/tests/resumo.rs`
+> `crates/poph-agent/src/turno/mod.rs` (hookup in the turn). Tests: `crates/poph-agent/tests/summary.rs`
 > and the unit tests in `resumo.rs` itself.
 
 ## 1. What it does
@@ -101,7 +101,7 @@ To change it in code: `Motor::com_resumo(OpcoesResumo { ativo: false, ..Default:
 
 ## 8. How to measure
 
-- Tests: `cargo test -p poph-agent --test resumo`. They cover the 60-message conversation (window within budget,
+- Tests: `cargo test -p poph-agent --test summary`. They cover the 60-message conversation (window within budget,
   summary saved and used in the next turn, no gap), the summary failure, the new conversation and the long
   conversation without a summary.
 - Turn time with and without the summary: the test `resumo_nao_aumenta_o_tempo_do_turno` prints the median of each
