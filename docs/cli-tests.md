@@ -201,3 +201,56 @@ End to end for `poph product` (HR-18): a real process, a real database and a rea
 
 - `cli_product_creates_shows_updates_and_deletes`.
 - `cli_product_reindexes_and_respects_the_price_limit`.
+
+## `cli_retention.rs`
+
+End to end for `poph retention run|show` (HR-51): a real process and a real database in a temporary directory. The scan itself (what leaves, what stays, the simulation) is covered by `crates/poph-retention/tests/database.rs`; this file checks the command line: exit codes, JSON shape and error messages.
+
+Helpers: `Scenario` is a temporary directory with the data directory, and the database is created on the first CLI run; `poph` runs the binary with a clean environment, an isolated current directory and the test data directory; `create_org` creates an organization with the CLI (version 1) and returns the id read from the JSON; `configure` replaces the organization configuration (the version is 1, the one from creation).
+
+- `dry_run_json_has_stable_shape_and_deletes_nothing`: `retention run --dry-run --json` keeps a stable JSON shape and deletes nothing.
+- `run_without_orgs_exits_zero_and_warns`: with no organizations the run exits 0 and says there is nothing to scan.
+- `org_with_invalid_config_exits_one_and_says_nothing_was_deleted`.
+- `missing_org_exits_one_with_clear_message`: a nonexistent slug exits 1 with a readable message.
+- `show_reports_default_and_org_zero_retention`: `show` prints the instance default and the organization that never deletes.
+- `show_json_with_invalid_org_exits_one`: the JSON keeps the report shape and the failing organization carries the error message.
+- `run_keeps_case_execution_step_event_and_effect` (FX-34): `MODULE_TABLES` lists the tables of the flows and cases module, and the scan must not lose a row of any of them. `poph retention run` (and `--dry-run`) deletes the old empty conversation but does not touch anything in the recorded case; after the scan the case keeps `conversation_id` null. The conversation is seeded through the repository, in the same database the CLI scans, and then aged by `DAY_MS`; `--dry-run` deletes nothing. The only field that changes on purpose is the case link to the deleted conversation.
+
+## `tools_without_store.rs`
+
+HR-46f: without the embedding model installed, the turn still offers the tools that only use the database — `enviar_arquivo` included — and `consultar_base`/`buscar_produto` stay out.
+
+The defect fixed: the tool registry was built **inside** the knowledge base block. On an installation without `poph model install` the provider request went out with `tools: []`, the model did not receive `enviar_arquivo` and the turn ended `done` without sending anything.
+
+Here the real `poph serve` binary is started with a fake OpenAI-compatible provider and **without** the models folder. What is proven: (a) the provider request carries `tools` with `enviar_arquivo` and without `consultar_base`/`buscar_produto` (all three were enabled on the agent, so the absence comes from the registry, not the filter); (b) the model calls `enviar_arquivo` and the test chat history returns `files_out`; (c) the library download returns the same bytes as the seeded file (same sha256); (d) the history response carries no blob path (`blob_ref`/`blobs/`).
+
+Helpers: `test_dir` is a throwaway directory per test; `Servidor` is the `poph serve` child, killed at the end of the test even when an assertion fails; `fake_provider` is a fake OpenAI-compatible provider whose first request asks for `enviar_arquivo` and whose following requests answer text, keeping each request body for the test; `read_request` reads a whole HTTP request (headers plus body by `content-length`); `evento` writes an SSE event in chunked encoding; `multipart` builds a body with only the `text` field. `Scenario` seeds the database (organization, agent with the three tools enabled, file in the library), starts the fake provider and `poph serve` without the models folder.
+
+Notes: the grouping window is disabled (`grouping_window_ms: 1`) so the test does not wait 2 s per turn; the second test is the control for the per-agent filter (D-04): with `enviar_arquivo` disabled in the instructions the tool exists in the registry but does not go to the model.
+
+- `without_embedding_model_turn_offers_file_tool_and_file_is_sent`.
+- `without_embedding_model_disabled_tool_stays_out`.
+
+## `serve.rs`
+
+`poph serve` refuses to start with a database that is not ready (HR-20). The rule: a missing database is created already migrated (new installation); an existing database the code does not understand — a corrupt file or a schema behind the migrations — requires `poph migrate` first. This file proves the refusal: the process exits with code 1, explains what to do and does not open a port. The expected version comes from the single source in `poph-store` (the Harness schema target version), so the next migration does not leave the assertion behind.
+
+- `serve_refuses_database_not_from_harness`: an existing but unreadable database is not a Harness SQLite, and the message says the version could not be read.
+- `serve_refuses_database_behind_migrations`: simulates a database from a previous version — the schema exists but without the migration record — and checks that the message carries the expected version and names `poph migrate`.
+
+## `serve_logs.rs`
+
+`poph serve` writes a log of the operations and writes no sensitive data (HR-26f). It starts the real binary (`poph serve`) over a temporary database with a configured Evolution instance and delivers a text webhook on the public route, then reads the process stderr. Proof in two parts: (i) the capture works — the startup line (`servidor no ar`) and the registered message line appear; (ii) nothing sensitive appears in the log or in the responses: phone, JID, Evolution key, instance token, the right secret and the wrong secret that was sent.
+
+Helpers: `Setup` is a temporary directory with configuration and database ready (organization, agent and WhatsApp integration); `free_port` picks a free port; `prepare` builds the setup; `Servidor` is the `poph serve` process with stderr read in the background; `start` starts it with a clean environment (no `RUST_LOG`, to prove the level comes from the configuration); `stop` kills the process and waits for stderr to finish being read; `http` is a minimal HTTP request (no library) to talk to the real process; `wait_until_up` polls `/healthz`; `text_event`/`state_event` build the Evolution webhook payloads.
+
+- `server_logs_webhook_operation_without_sensitive_data`: the text message is registered as `nova` and no forbidden value (phone, JID, key, token, secrets, message text) appears in the log or in the responses.
+- `server_logs_connection_state_without_sensitive_data`: the connection state update is registered with the new state (`connected`) and the instance (`loja`), and no secret appears.
+
+## `token_api.rs`
+
+End to end for the new organization token format (HR-20, item 2). The token is **created by the CLI** (`poph --offline token create`) and **used in the API**: the server starts in process, in the same data directory, on an ephemeral port. It proves the two sides agree on the format `poph_<token uuid>_<secret>`, that the clear secret only appears on creation and that a wrong secret does not authenticate.
+
+Helpers: `Scenario` is a temporary directory with the data directory; `create_org`/`create_token` create them through the CLI and read the JSON (the clear token value only exists in the creation output); `start_server` starts the server in process in the test data directory and returns the address.
+
+- `token_created_by_cli_authenticates_against_api`: the CLI token authenticates and sees only its own organization (200 for its own, 403 for another); a wrong secret and a nonexistent uuid are 401; neither `list` nor `show` nor `--json` returns the value after creation.

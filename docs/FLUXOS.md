@@ -208,7 +208,7 @@ O passo a passo para descobrir o motivo está em [RUNBOOKS.md](RUNBOOKS.md), na 
 | API, permissão, Fichas e ações humanas | `poph-server/tests/agent_flows.rs`, `fichas_leitura.rs`, `fichas_acoes.rs`, `org_isolation.rs` |
 | CLI | `poph/tests/cli_flow.rs` |
 | Backup | testes de backup em `poph-store` (19), `poph-server/tests/backup_http.rs` (9) e `poph/tests/cli_backup.rs` (6) |
-| Retenção e cluster | `poph-retention/tests/database.rs`, `poph/tests/cli_retencao.rs`, `poph-server/tests/cluster_forwarding.rs` |
+| Retenção e cluster | `poph-retention/tests/database.rs`, `poph/tests/cli_retention.rs`, `poph-server/tests/cluster_forwarding.rs` |
 | Prova ponta a ponta | `poph-server/tests/fluxos_e2e.rs` (7 testes) |
 | Contadores das execuções | `poph-server/tests/fluxos_contadores.rs` (7 testes) e o caso de contadores em `fluxos_e2e.rs` |
 | Desempenho | seção [Medidas](#medidas) abaixo |
