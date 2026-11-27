@@ -1,18 +1,3 @@
-//! Testes HTTP da leitura das Fichas (FX-29, PRD §7.3 e W6).
-//!
-//! Servidor de verdade (porta efêmera) sobre banco temporário, com cliente HTTP de verdade. Fichas,
-//! execuções e revisões são criadas direto no repositório: a publicação de revisão é a FX-09 e a
-//! rota de ações é a FX-30. Nomes, telefones e textos são fictícios.
-//!
-//! O que fica provado aqui:
-//! - filtros `status`, `agente`, `canal` e `desde`, cada um sozinho e combinados; valor inválido → 400;
-//! - paginação por cursor: as páginas somadas são a lista inteira, na mesma ordem, sem repetir item;
-//! - Ficha de outra org ou inexistente → 404 no detalhe e na linha do tempo, e a lista da org não
-//!   traz a Ficha alheia; token de org em caminho de outra org → 403;
-//! - eventos em ordem de `seq`, paginados por `seq`;
-//! - execução com etapas e campos respondidos aparece dentro do detalhe da Ficha (W6);
-//! - Ficha fechada continua legível, com a execução abandonada e o evento de fechamento.
-
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
@@ -36,41 +21,39 @@ use reqwest::{Client, Method, StatusCode};
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
 
-/// Valor do token global usado nos testes (o servidor guarda só o hash).
 const TOKEN_GLOBAL: &str = "pophg_teste-global-fx29";
 
-fn hash_argon2(valor: &str) -> String {
+fn hash_argon2(value: &str) -> String {
     let sal = SaltString::generate(&mut OsRng);
     Argon2::default()
-        .hash_password(valor.as_bytes(), &sal)
+        .hash_password(value.as_bytes(), &sal)
         .expect("hash argon2")
         .to_string()
 }
 
-/// Servidor no ar, com banco e pasta próprios. O `Drop` desliga e apaga a pasta.
-struct Cenario {
+struct Scenario {
     base: String,
-    cliente: Client,
-    pasta: PathBuf,
+    client: Client,
+    directory: PathBuf,
     store: Arc<Store>,
     desligar: Option<oneshot::Sender<()>>,
 }
 
-impl Cenario {
-    async fn novo(rotulo: &str) -> Self {
-        let carimbo = SystemTime::now()
+impl Scenario {
+    async fn new(label: &str) -> Self {
+        let stamp = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
-            .map(|duracao| duracao.as_nanos())
+            .map(|duration| duration.as_nanos())
             .unwrap_or(0);
-        let pasta = std::env::temp_dir().join(format!(
-            "poph-fichas-{rotulo}-{}-{carimbo}",
+        let directory = std::env::temp_dir().join(format!(
+            "poph-fichas-{label}-{}-{stamp}",
             std::process::id()
         ));
-        let _ = fs::remove_dir_all(&pasta);
-        fs::create_dir_all(pasta.join("dados")).expect("pasta de dados");
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(directory.join("dados")).expect("pasta de dados");
 
         let mut config = HarnessConfig::default();
-        config.data.directory = pasta.join("dados");
+        config.data.directory = directory.join("dados");
         config.server.port = 7482;
         config.admin.tokens_globais = vec![GlobalTokenConfig {
             label: "teste".to_owned(),
@@ -85,63 +68,63 @@ impl Cenario {
             .await
             .expect("porta efêmera");
         let endereco = listener.local_addr().expect("endereço local");
-        let (desligar, sinal) = oneshot::channel();
+        let (desligar, signal) = oneshot::channel();
         tokio::spawn(async move {
             let _ = poph_server::serve_at(listener, estado, async {
-                let _ = sinal.await;
+                let _ = signal.await;
             })
             .await;
         });
 
-        let cenario = Self {
+        let scenario = Self {
             base: format!("http://{endereco}"),
-            cliente: Client::builder()
+            client: Client::builder()
                 .timeout(Duration::from_secs(20))
                 .build()
                 .expect("cliente HTTP"),
-            pasta,
+            directory,
             store,
             desligar: Some(desligar),
         };
-        cenario.esperar_subir().await;
-        cenario
+        scenario.wait_until_up().await;
+        scenario
     }
 
-    async fn esperar_subir(&self) {
-        let inicio = Instant::now();
+    async fn wait_until_up(&self) {
+        let start = Instant::now();
         loop {
             match self
-                .cliente
+                .client
                 .get(format!("{}/healthz", self.base))
                 .send()
                 .await
             {
-                Ok(resposta) if resposta.status().is_success() => return,
-                _ if inicio.elapsed() < Duration::from_secs(10) => {
+                Ok(response) if response.status().is_success() => return,
+                _ if start.elapsed() < Duration::from_secs(10) => {
                     tokio::time::sleep(Duration::from_millis(20)).await;
                 }
-                outro => panic!("servidor não subiu: {outro:?}"),
+                other => panic!("servidor não subiu: {other:?}"),
             }
         }
     }
 
-    async fn pedir(
+    async fn send_request(
         &self,
-        metodo: Method,
-        caminho: &str,
+        method: Method,
+        path: &str,
         token: &str,
-        corpo: Option<Value>,
+        body: Option<Value>,
     ) -> (StatusCode, Value) {
-        let mut pedido = self
-            .cliente
-            .request(metodo, format!("{}{caminho}", self.base))
+        let mut request = self
+            .client
+            .request(method, format!("{}{path}", self.base))
             .bearer_auth(token);
-        if let Some(valor) = corpo {
-            pedido = pedido.json(&valor);
+        if let Some(value) = body {
+            request = request.json(&value);
         }
-        let resposta = pedido.send().await.expect("pedido HTTP");
-        let status = resposta.status();
-        let texto = resposta.text().await.unwrap_or_default();
+        let response = request.send().await.expect("pedido HTTP");
+        let status = response.status();
+        let texto = response.text().await.unwrap_or_default();
         let json = if texto.trim().is_empty() {
             Value::Null
         } else {
@@ -150,51 +133,50 @@ impl Cenario {
         (status, json)
     }
 
-    async fn get(&self, caminho: &str, token: &str) -> (StatusCode, Value) {
-        self.pedir(Method::GET, caminho, token, None).await
+    async fn get(&self, path: &str, token: &str) -> (StatusCode, Value) {
+        self.send_request(Method::GET, path, token, None).await
     }
 
-    async fn criar_org(&self, slug: &str) -> String {
-        let (status, corpo) = self
-            .pedir(
+    async fn create_org(&self, slug: &str) -> String {
+        let (status, body) = self
+            .send_request(
                 Method::POST,
                 "/admin/v1/orgs",
                 TOKEN_GLOBAL,
                 Some(json!({ "name": format!("Org {slug}"), "slug": slug })),
             )
             .await;
-        assert_eq!(status, StatusCode::CREATED, "criar org: {corpo}");
-        corpo["id"].as_str().expect("id da org").to_owned()
+        assert_eq!(status, StatusCode::CREATED, "criar org: {body}");
+        body["id"].as_str().expect("id da org").to_owned()
     }
 
-    async fn criar_token(&self, org: &str) -> String {
-        let (status, corpo) = self
-            .pedir(
+    async fn create_token(&self, org: &str) -> String {
+        let (status, body) = self
+            .send_request(
                 Method::POST,
                 &format!("/admin/v1/orgs/{org}/tokens"),
                 TOKEN_GLOBAL,
                 Some(json!({ "label": "token de teste" })),
             )
             .await;
-        assert_eq!(status, StatusCode::CREATED, "criar token: {corpo}");
-        corpo["value"].as_str().expect("valor do token").to_owned()
+        assert_eq!(status, StatusCode::CREATED, "criar token: {body}");
+        body["value"].as_str().expect("valor do token").to_owned()
     }
 
-    async fn criar_agente(&self, org: &str, token: &str, slug: &str) -> String {
-        let (status, corpo) = self
-            .pedir(
+    async fn create_agent(&self, org: &str, token: &str, slug: &str) -> String {
+        let (status, body) = self
+            .send_request(
                 Method::POST,
                 &format!("/admin/v1/orgs/{org}/agents"),
                 token,
                 Some(json!({ "name": format!("Agente {slug}"), "slug": slug })),
             )
             .await;
-        assert_eq!(status, StatusCode::CREATED, "criar agente: {corpo}");
-        corpo["id"].as_str().expect("id do agente").to_owned()
+        assert_eq!(status, StatusCode::CREATED, "criar agente: {body}");
+        body["id"].as_str().expect("id do agente").to_owned()
     }
 
-    /// Conexão direta ao arquivo do banco, só para gravar a revisão publicada (a publicação é a FX-09).
-    fn conexao(&self) -> rusqlite::Connection {
+    fn connection(&self) -> rusqlite::Connection {
         let conn =
             rusqlite::Connection::open(self.store.harness_path()).expect("abre o banco do teste");
         conn.busy_timeout(Duration::from_secs(10))
@@ -202,11 +184,10 @@ impl Cenario {
         conn
     }
 
-    /// Fluxo com uma revisão publicada, gravado direto (a publicação é a FX-09).
-    fn fluxo_publicado(&self, org: &str, slug: &str) -> (FlowId, RevisionId) {
-        let conn = self.conexao();
+    fn published_flow(&self, org: &str, slug: &str) -> (FlowId, RevisionId) {
+        let conn = self.connection();
         let fluxo = uuid::Uuid::now_v7().to_string();
-        let revisao = uuid::Uuid::now_v7().to_string();
+        let revision = uuid::Uuid::now_v7().to_string();
         conn.execute(
             "INSERT INTO fluxos (id, org_id, slug, nome, descricao, status, rascunho_fonte,
                                  revisao_atual, version)
@@ -219,31 +200,30 @@ impl Cenario {
                                         definicao_json, schema_versao, publicada_em, publicada_por,
                                         resolucoes_json)
              VALUES (?1, ?2, ?3, 1, 'fluxo()', 'sha', '{}', 1, 1, 'admin_token', '{}')",
-            rusqlite::params![revisao, org, fluxo],
+            rusqlite::params![revision, org, fluxo],
         )
         .expect("grava a revisão");
         (
             fluxo.parse().expect("id do fluxo"),
-            revisao.parse().expect("id da revisão"),
+            revision.parse().expect("id da revisão"),
         )
     }
 
     fn liberar(&self, org: &str, agente: &str, fluxo: FlowId) {
         self.store
             .flows()
-            .release(parse_org(org), parse_agente(agente), fluxo)
+            .release(parse_org(org), parse_agent(agente), fluxo)
             .expect("libera o fluxo ao agente");
     }
 
-    /// Ficha sem conversa, do agente, no canal dado.
-    fn ficha_avulsa(&self, org: &str, agente: &str, canal: &str) -> RecordId {
+    fn standalone_case(&self, org: &str, agente: &str, canal: &str) -> RecordId {
         self.store
             .cases()
             .create(
                 parse_org(org),
                 NewRecord {
                     conversation_id: None,
-                    agent_id: parse_agente(agente),
+                    agent_id: parse_agent(agente),
                     canal: canal.to_owned(),
                     peer_externo: Some(format!("cliente-ficticio-{}", uuid::Uuid::now_v7())),
                 },
@@ -252,7 +232,6 @@ impl Cenario {
             .id
     }
 
-    /// Conversa nova, com a Ficha que o repositório cria junto. Devolve a conversa e a Ficha.
     fn conversa(&self, org: &str, agente: &str, canal: &str) -> (Conversa, RecordId) {
         let conversa = self
             .store
@@ -260,7 +239,7 @@ impl Cenario {
             .create(
                 parse_org(org),
                 NewConversation {
-                    agent_id: parse_agente(agente),
+                    agent_id: parse_agent(agente),
                     integration_id: None,
                     canal: canal.to_owned(),
                     peer_externo: Some(format!("cliente-ficticio-{}", uuid::Uuid::now_v7())),
@@ -278,7 +257,7 @@ impl Cenario {
         (conversa, ficha)
     }
 
-    fn fechar_conversa(&self, org: &str, conversa: &Conversa) {
+    fn close_conversation(&self, org: &str, conversa: &Conversa) {
         self.store
             .conversations()
             .close_audited(
@@ -290,14 +269,13 @@ impl Cenario {
             .expect("fecha a conversa");
     }
 
-    /// Abre a execução do fluxo na Ficha, com o fluxo já liberado ao agente.
-    fn abrir_execucao(
+    fn start_execution(
         &self,
         org: &str,
         agente: &str,
         ficha: RecordId,
         fluxo: FlowId,
-        revisao: RevisionId,
+        revision: RevisionId,
     ) -> StoredExecution {
         self.liberar(org, agente, fluxo);
         self.store
@@ -308,7 +286,7 @@ impl Cenario {
                     chave_idempotencia: None,
                     case: ficha,
                     flow: fluxo,
-                    revision: revisao,
+                    revision,
                     actor: EventActor::Agent,
                     ator_ref: Some("agente-de-teste"),
                     jev_decision: None,
@@ -326,9 +304,8 @@ impl Cenario {
             .expect("abre a execução")
     }
 
-    /// O agente registra o nome na etapa `coleta` (campo respondido, W6).
-    fn responder_nome(&self, org: &str, gravada: &StoredExecution, nome: &str) {
-        let transicao = FlowTransition {
+    fn answer_name(&self, org: &str, stored: &StoredExecution, nome: &str) {
+        let transition = FlowTransition {
             new_state: ExecutionState {
                 status: ExecutionStatus::Active,
                 no_atual: "coleta".to_owned(),
@@ -351,9 +328,9 @@ impl Cenario {
             .executions()
             .apply_transition(
                 parse_org(org),
-                gravada.execution.id,
-                gravada.execution.version,
-                &transicao,
+                stored.execution.id,
+                stored.execution.version,
+                &transition,
                 &format!("coleta-{}", uuid::Uuid::now_v7()),
                 TransitionExtras {
                     ator_ref: None,
@@ -364,25 +341,24 @@ impl Cenario {
             .expect("registra o campo respondido");
     }
 
-    /// Lista da org, paginada pelo cursor até o fim. Devolve os ids na ordem em que vieram.
-    async fn paginar(&self, org: &str, token: &str, filtros: &str, limite: u32) -> Vec<String> {
+    async fn paginate(&self, org: &str, token: &str, filters: &str, limit: u32) -> Vec<String> {
         let mut ids = Vec::new();
         let mut cursor: Option<String> = None;
         for _ in 0..100 {
-            let mut caminho = format!("/admin/v1/orgs/{org}/fichas?limit={limite}{filtros}");
-            if let Some(atual) = &cursor {
-                caminho.push_str(&format!("&cursor={atual}"));
+            let mut path = format!("/admin/v1/orgs/{org}/fichas?limit={limit}{filters}");
+            if let Some(current) = &cursor {
+                path.push_str(&format!("&cursor={current}"));
             }
-            let (status, corpo) = self.get(&caminho, token).await;
-            assert_eq!(status, StatusCode::OK, "listar: {corpo}");
-            let itens = corpo["items"].as_array().expect("items");
+            let (status, body) = self.get(&path, token).await;
+            assert_eq!(status, StatusCode::OK, "listar: {body}");
+            let items = body["items"].as_array().expect("items");
             assert!(
-                itens.len() <= limite as usize,
+                items.len() <= limit as usize,
                 "página maior que o limite: {} itens",
-                itens.len()
+                items.len()
             );
-            ids.extend(itens.iter().map(id_de));
-            cursor = corpo["next_cursor"].as_str().map(str::to_owned);
+            ids.extend(items.iter().map(item_id));
+            cursor = body["next_cursor"].as_str().map(str::to_owned);
             if cursor.is_none() {
                 return ids;
             }
@@ -391,12 +367,12 @@ impl Cenario {
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
         if let Some(desligar) = self.desligar.take() {
             let _ = desligar.send(());
         }
-        let _ = fs::remove_dir_all(&self.pasta);
+        let _ = fs::remove_dir_all(&self.directory);
     }
 }
 
@@ -404,43 +380,41 @@ fn parse_org(id: &str) -> OrgId {
     id.parse().expect("id de org")
 }
 
-fn parse_agente(id: &str) -> AgentId {
+fn parse_agent(id: &str) -> AgentId {
     id.parse().expect("id de agente")
 }
 
-fn id_de(item: &Value) -> String {
+fn item_id(item: &Value) -> String {
     item["id"].as_str().expect("id no item").to_owned()
 }
 
-fn codigo(corpo: &Value) -> &str {
-    corpo["code"].as_str().unwrap_or("")
+fn code(body: &Value) -> &str {
+    body["code"].as_str().unwrap_or("")
 }
 
-fn conjunto(ids: &[String]) -> BTreeSet<String> {
+fn id_set(ids: &[String]) -> BTreeSet<String> {
     ids.iter().cloned().collect()
 }
 
 #[tokio::test]
-async fn filtros_isolados_e_combinados() {
-    let c = Cenario::novo("filtros").await;
-    let org = c.criar_org("filtros-a").await;
-    let token = c.criar_token(&org).await;
-    let x = c.criar_agente(&org, &token, "agente-x").await;
-    let y = c.criar_agente(&org, &token, "agente-y").await;
+async fn isolated_and_combined_filters() {
+    let c = Scenario::new("filtros").await;
+    let org = c.create_org("filtros-a").await;
+    let token = c.create_token(&org).await;
+    let x = c.create_agent(&org, &token, "agente-x").await;
+    let y = c.create_agent(&org, &token, "agente-y").await;
 
-    // f1: aberta, X, whatsapp. f2: fechada, X, console. f3: aberta, Y, whatsapp. f4: fechada, Y, whatsapp.
-    let f1 = c.ficha_avulsa(&org, &x, "whatsapp");
-    let (conversa2, f2) = c.conversa(&org, &x, "console");
-    c.fechar_conversa(&org, &conversa2);
-    let f3 = c.ficha_avulsa(&org, &y, "whatsapp");
-    let (conversa4, f4) = c.conversa(&org, &y, "whatsapp");
-    c.fechar_conversa(&org, &conversa4);
+    let f1 = c.standalone_case(&org, &x, "whatsapp");
+    let (conversation2, f2) = c.conversa(&org, &x, "console");
+    c.close_conversation(&org, &conversation2);
+    let f3 = c.standalone_case(&org, &y, "whatsapp");
+    let (conversation4, f4) = c.conversa(&org, &y, "whatsapp");
+    c.close_conversation(&org, &conversation4);
 
-    // Ficha de outra org: não pode aparecer na lista de A.
-    let org_b = c.criar_org("filtros-b").await;
-    let token_b = c.criar_token(&org_b).await;
-    let xb = c.criar_agente(&org_b, &token_b, "agente-b").await;
-    c.ficha_avulsa(&org_b, &xb, "whatsapp");
+    let org_b = c.create_org("filtros-b").await;
+    let token_b = c.create_token(&org_b).await;
+    let xb = c.create_agent(&org_b, &token_b, "agente-b").await;
+    c.standalone_case(&org_b, &xb, "whatsapp");
 
     let (f1, f2, f3, f4) = (
         f1.to_string(),
@@ -448,8 +422,7 @@ async fn filtros_isolados_e_combinados() {
         f3.to_string(),
         f4.to_string(),
     );
-    // (nome do caso, filtros na URL, Fichas que devem voltar)
-    let casos: Vec<(&str, String, Vec<String>)> = vec![
+    let cases: Vec<(&str, String, Vec<String>)> = vec![
         (
             "sem filtro",
             String::new(),
@@ -506,190 +479,179 @@ async fn filtros_isolados_e_combinados() {
             vec![],
         ),
     ];
-    for (nome, filtros, esperado) in &casos {
-        let (status, corpo) = c
+    for (nome, filters, expected) in &cases {
+        let (status, body) = c
             .get(
-                &format!("/admin/v1/orgs/{org}/fichas?limit=200{filtros}"),
+                &format!("/admin/v1/orgs/{org}/fichas?limit=200{filters}"),
                 &token,
             )
             .await;
-        assert_eq!(status, StatusCode::OK, "caso {nome}: {corpo}");
-        let vistos: Vec<String> = corpo["items"]
+        assert_eq!(status, StatusCode::OK, "caso {nome}: {body}");
+        let seen: Vec<String> = body["items"]
             .as_array()
             .unwrap()
             .iter()
-            .map(id_de)
+            .map(item_id)
             .collect();
         assert_eq!(
-            conjunto(&vistos),
-            conjunto(esperado),
+            id_set(&seen),
+            id_set(expected),
             "caso `{nome}` devolveu conjunto diferente"
         );
-        assert_eq!(vistos.len(), esperado.len(), "caso `{nome}` repetiu item");
+        assert_eq!(seen.len(), expected.len(), "caso `{nome}` repetiu item");
     }
 
-    // Valores fora do vocabulário ou vazios: 400 com o campo, nunca filtro ignorado.
-    for (filtro, campo) in [
+    for (filter, campo) in [
         ("status=aberta", "status"),
         ("agente=nao-e-um-id", ""),
         ("canal=", "canal"),
         ("desde=ontem", "desde"),
     ] {
-        let (status, corpo) = c
-            .get(&format!("/admin/v1/orgs/{org}/fichas?{filtro}"), &token)
+        let (status, body) = c
+            .get(&format!("/admin/v1/orgs/{org}/fichas?{filter}"), &token)
             .await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{filtro}: {corpo}");
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{filter}: {body}");
         assert!(
-            matches!(codigo(&corpo), "validation_error" | "invalid_id"),
-            "{filtro} tem de sair com código de validação: {corpo}"
+            matches!(code(&body), "validation_error" | "invalid_id"),
+            "{filter} tem de sair com código de validação: {body}"
         );
         if !campo.is_empty() {
-            assert_eq!(corpo["details"]["field"], campo, "{filtro}: {corpo}");
+            assert_eq!(body["details"]["field"], campo, "{filter}: {body}");
         }
     }
 }
 
 #[tokio::test]
-async fn paginacao_por_cursor_nao_repete_nem_pula() {
-    let c = Cenario::novo("paginacao").await;
-    let org = c.criar_org("paginacao-a").await;
-    let token = c.criar_token(&org).await;
-    let x = c.criar_agente(&org, &token, "agente-x").await;
-    let y = c.criar_agente(&org, &token, "agente-y").await;
+async fn cursor_pagination_does_not_repeat_or_skip() {
+    let c = Scenario::new("paginacao").await;
+    let org = c.create_org("paginacao-a").await;
+    let token = c.create_token(&org).await;
+    let x = c.create_agent(&org, &token, "agente-x").await;
+    let y = c.create_agent(&org, &token, "agente-y").await;
     for _ in 0..5 {
-        c.ficha_avulsa(&org, &x, "whatsapp");
+        c.standalone_case(&org, &x, "whatsapp");
     }
     for _ in 0..2 {
-        c.ficha_avulsa(&org, &y, "whatsapp");
+        c.standalone_case(&org, &y, "whatsapp");
     }
 
-    // Referência: a lista inteira numa página só.
-    let (status, corpo) = c
+    let (status, body) = c
         .get(&format!("/admin/v1/orgs/{org}/fichas?limit=200"), &token)
         .await;
     assert_eq!(status, StatusCode::OK);
-    let inteira: Vec<String> = corpo["items"]
+    let entire: Vec<String> = body["items"]
         .as_array()
         .unwrap()
         .iter()
-        .map(id_de)
+        .map(item_id)
         .collect();
-    assert_eq!(inteira.len(), 7);
+    assert_eq!(entire.len(), 7);
 
-    // Páginas de 2: somadas dão a mesma lista, na mesma ordem, sem repetir na fronteira.
-    let paginada = c.paginar(&org, &token, "", 2).await;
-    assert_eq!(paginada, inteira, "páginas de 2 diferem da lista inteira");
-    assert_eq!(conjunto(&paginada).len(), 7, "item repetido entre páginas");
+    let paged = c.paginate(&org, &token, "", 2).await;
+    assert_eq!(paged, entire, "páginas de 2 diferem da lista inteira");
+    assert_eq!(id_set(&paged).len(), 7, "item repetido entre páginas");
 
-    // Com filtro: mesma regra.
-    let (_, so_x) = c
+    let (_, only_x) = c
         .get(
             &format!("/admin/v1/orgs/{org}/fichas?limit=200&agente={x}"),
             &token,
         )
         .await;
-    let so_x: Vec<String> = so_x["items"]
+    let only_x: Vec<String> = only_x["items"]
         .as_array()
         .unwrap()
         .iter()
-        .map(id_de)
+        .map(item_id)
         .collect();
-    assert_eq!(so_x.len(), 5);
-    let paginada_x = c.paginar(&org, &token, &format!("&agente={x}"), 2).await;
-    assert_eq!(paginada_x, so_x, "paginação com filtro diferente");
+    assert_eq!(only_x.len(), 5);
+    let paged_x = c.paginate(&org, &token, &format!("&agente={x}"), 2).await;
+    assert_eq!(paged_x, only_x, "paginação com filtro diferente");
 
-    // Página que cabe exatamente: a próxima vem vazia e sem cursor.
-    let (_, cheia) = c
+    let (_, full_page) = c
         .get(&format!("/admin/v1/orgs/{org}/fichas?limit=7"), &token)
         .await;
-    assert_eq!(cheia["items"].as_array().unwrap().len(), 7);
-    let cursor = cheia["next_cursor"]
+    assert_eq!(full_page["items"].as_array().unwrap().len(), 7);
+    let cursor = full_page["next_cursor"]
         .as_str()
         .expect("cursor da página cheia");
-    let (_, depois) = c
+    let (_, after) = c
         .get(
             &format!("/admin/v1/orgs/{org}/fichas?limit=7&cursor={cursor}"),
             &token,
         )
         .await;
-    assert!(depois["items"].as_array().unwrap().is_empty());
-    assert!(depois["next_cursor"].is_null());
+    assert!(after["items"].as_array().unwrap().is_empty());
+    assert!(after["next_cursor"].is_null());
 
-    // Cursor que não é de Ficha: 400 com o campo.
-    let (status, erro) = c
+    let (status, error) = c
         .get(
             &format!("/admin/v1/orgs/{org}/fichas?cursor=nao-e-cursor"),
             &token,
         )
         .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{erro}");
-    assert_eq!(codigo(&erro), "invalid_request");
-    assert_eq!(erro["details"]["field"], "cursor");
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{error}");
+    assert_eq!(code(&error), "invalid_request");
+    assert_eq!(error["details"]["field"], "cursor");
 }
 
 #[tokio::test]
-async fn ficha_de_outra_org_da_404_nas_rotas_de_leitura() {
-    let c = Cenario::novo("isolamento").await;
-    let org_a = c.criar_org("isolamento-a").await;
-    let token_a = c.criar_token(&org_a).await;
-    let agente_a = c.criar_agente(&org_a, &token_a, "agente-a").await;
-    let ficha_a = c.ficha_avulsa(&org_a, &agente_a, "whatsapp");
+async fn case_from_another_org_returns_404_on_read_routes() {
+    let c = Scenario::new("isolamento").await;
+    let org_a = c.create_org("isolamento-a").await;
+    let token_a = c.create_token(&org_a).await;
+    let agent_a = c.create_agent(&org_a, &token_a, "agente-a").await;
+    let case_a = c.standalone_case(&org_a, &agent_a, "whatsapp");
 
-    let org_b = c.criar_org("isolamento-b").await;
-    let token_b = c.criar_token(&org_b).await;
-    let agente_b = c.criar_agente(&org_b, &token_b, "agente-b").await;
-    let ficha_b = c.ficha_avulsa(&org_b, &agente_b, "whatsapp");
+    let org_b = c.create_org("isolamento-b").await;
+    let token_b = c.create_token(&org_b).await;
+    let agent_b = c.create_agent(&org_b, &token_b, "agente-b").await;
+    let case_b = c.standalone_case(&org_b, &agent_b, "whatsapp");
 
-    let ficha_b_texto = ficha_b.to_string();
-    let inexistente = uuid::Uuid::now_v7().to_string();
+    let case_b_text = case_b.to_string();
+    let missing_id = uuid::Uuid::now_v7().to_string();
 
-    // Detalhe e linha do tempo: 404 com o mesmo código, de Ficha alheia ou inexistente.
-    for caminho in [
-        format!("/admin/v1/orgs/{org_a}/fichas/{ficha_b_texto}"),
-        format!("/admin/v1/orgs/{org_a}/fichas/{ficha_b_texto}/events"),
-        format!("/admin/v1/orgs/{org_a}/fichas/{inexistente}"),
-        format!("/admin/v1/orgs/{org_a}/fichas/{inexistente}/events"),
+    for path in [
+        format!("/admin/v1/orgs/{org_a}/fichas/{case_b_text}"),
+        format!("/admin/v1/orgs/{org_a}/fichas/{case_b_text}/events"),
+        format!("/admin/v1/orgs/{org_a}/fichas/{missing_id}"),
+        format!("/admin/v1/orgs/{org_a}/fichas/{missing_id}/events"),
     ] {
-        let (status, corpo) = c.get(&caminho, &token_a).await;
-        assert_eq!(status, StatusCode::NOT_FOUND, "{caminho}: {corpo}");
-        assert_eq!(codigo(&corpo), "not_found", "{caminho}: {corpo}");
+        let (status, body) = c.get(&path, &token_a).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}: {body}");
+        assert_eq!(code(&body), "not_found", "{path}: {body}");
     }
-    // O token global também não vê a Ficha de B pelo caminho de A.
-    let (status, corpo) = c
+    let (status, body) = c
         .get(
-            &format!("/admin/v1/orgs/{org_a}/fichas/{ficha_b_texto}"),
+            &format!("/admin/v1/orgs/{org_a}/fichas/{case_b_text}"),
             TOKEN_GLOBAL,
         )
         .await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "{corpo}");
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
 
-    // A lista de A traz só a Ficha de A.
-    let (status, lista) = c
+    let (status, list) = c
         .get(&format!("/admin/v1/orgs/{org_a}/fichas"), &token_a)
         .await;
     assert_eq!(status, StatusCode::OK);
-    let ids: Vec<String> = lista["items"]
+    let ids: Vec<String> = list["items"]
         .as_array()
         .unwrap()
         .iter()
-        .map(id_de)
+        .map(item_id)
         .collect();
-    assert_eq!(ids, vec![ficha_a.to_string()]);
+    assert_eq!(ids, vec![case_a.to_string()]);
 
-    // Token de A em caminho de B: 403 (escopo da org, como no resto da API).
-    for caminho in [
+    for path in [
         format!("/admin/v1/orgs/{org_b}/fichas"),
-        format!("/admin/v1/orgs/{org_b}/fichas/{ficha_b_texto}"),
-        format!("/admin/v1/orgs/{org_b}/fichas/{ficha_b_texto}/events"),
+        format!("/admin/v1/orgs/{org_b}/fichas/{case_b_text}"),
+        format!("/admin/v1/orgs/{org_b}/fichas/{case_b_text}/events"),
     ] {
-        let (status, corpo) = c.get(&caminho, &token_a).await;
-        assert_eq!(status, StatusCode::FORBIDDEN, "{caminho}: {corpo}");
+        let (status, body) = c.get(&path, &token_a).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{path}: {body}");
     }
 
-    // Controle: o dono da Ficha lê normalmente.
     let (status, _) = c
         .get(
-            &format!("/admin/v1/orgs/{org_b}/fichas/{ficha_b_texto}"),
+            &format!("/admin/v1/orgs/{org_b}/fichas/{case_b_text}"),
             &token_b,
         )
         .await;
@@ -697,51 +659,50 @@ async fn ficha_de_outra_org_da_404_nas_rotas_de_leitura() {
 }
 
 #[tokio::test]
-async fn eventos_em_ordem_de_seq_com_paginacao() {
-    let c = Cenario::novo("eventos").await;
-    let org = c.criar_org("eventos-a").await;
-    let token = c.criar_token(&org).await;
-    let agente = c.criar_agente(&org, &token, "agente-x").await;
-    let (fluxo, revisao) = c.fluxo_publicado(&org, "agendar-visita");
-    let ficha = c.ficha_avulsa(&org, &agente, "whatsapp");
-    let gravada = c.abrir_execucao(&org, &agente, ficha, fluxo, revisao);
-    c.responder_nome(&org, &gravada, "Ana Teste");
+async fn events_in_seq_order_with_pagination() {
+    let c = Scenario::new("eventos").await;
+    let org = c.create_org("eventos-a").await;
+    let token = c.create_token(&org).await;
+    let agente = c.create_agent(&org, &token, "agente-x").await;
+    let (fluxo, revision) = c.published_flow(&org, "agendar-visita");
+    let ficha = c.standalone_case(&org, &agente, "whatsapp");
+    let stored = c.start_execution(&org, &agente, ficha, fluxo, revision);
+    c.answer_name(&org, &stored, "Ana Teste");
 
-    let caminho = format!("/admin/v1/orgs/{org}/fichas/{ficha}/events");
-    let (status, todos) = c.get(&format!("{caminho}?limit=200"), &token).await;
-    assert_eq!(status, StatusCode::OK, "{todos}");
-    let itens = todos["items"].as_array().unwrap();
-    let seqs: Vec<i64> = itens.iter().map(|i| i["seq"].as_i64().unwrap()).collect();
+    let path = format!("/admin/v1/orgs/{org}/fichas/{ficha}/events");
+    let (status, all_events) = c.get(&format!("{path}?limit=200"), &token).await;
+    assert_eq!(status, StatusCode::OK, "{all_events}");
+    let items = all_events["items"].as_array().unwrap();
+    let seqs: Vec<i64> = items.iter().map(|i| i["seq"].as_i64().unwrap()).collect();
     assert!(
         seqs.len() >= 3,
         "esperava abertura, início e campo: {seqs:?}"
     );
-    let esperados: Vec<i64> = (1..=seqs.len() as i64).collect();
-    assert_eq!(seqs, esperados, "seq fora de ordem ou com buraco");
-    let tipos: Vec<&str> = itens.iter().map(|i| i["tipo"].as_str().unwrap()).collect();
-    assert_eq!(tipos.first(), Some(&"ficha_aberta"));
-    assert!(tipos.contains(&"fluxo_iniciado"), "{tipos:?}");
-    assert_eq!(tipos.last(), Some(&"campos_preenchidos"), "{tipos:?}");
+    let expected_seqs: Vec<i64> = (1..=seqs.len() as i64).collect();
+    assert_eq!(seqs, expected_seqs, "seq fora de ordem ou com buraco");
+    let kinds: Vec<&str> = items.iter().map(|i| i["tipo"].as_str().unwrap()).collect();
+    assert_eq!(kinds.first(), Some(&"ficha_aberta"));
+    assert!(kinds.contains(&"fluxo_iniciado"), "{kinds:?}");
+    assert_eq!(kinds.last(), Some(&"campos_preenchidos"), "{kinds:?}");
 
-    // Paginado de 1 em 1: a mesma sequência, sem repetir nem pular.
     let mut paginados: Vec<i64> = Vec::new();
     let mut cursor: Option<String> = None;
     for _ in 0..100 {
-        let mut atual = format!("{caminho}?limit=1");
-        if let Some(valor) = &cursor {
-            atual.push_str(&format!("&cursor={valor}"));
+        let mut current = format!("{path}?limit=1");
+        if let Some(value) = &cursor {
+            current.push_str(&format!("&cursor={value}"));
         }
-        let (status, pagina) = c.get(&atual, &token).await;
-        assert_eq!(status, StatusCode::OK, "{pagina}");
-        assert!(pagina["items"].as_array().unwrap().len() <= 1);
+        let (status, page) = c.get(&current, &token).await;
+        assert_eq!(status, StatusCode::OK, "{page}");
+        assert!(page["items"].as_array().unwrap().len() <= 1);
         paginados.extend(
-            pagina["items"]
+            page["items"]
                 .as_array()
                 .unwrap()
                 .iter()
                 .map(|i| i["seq"].as_i64().unwrap()),
         );
-        cursor = pagina["next_cursor"].as_str().map(str::to_owned);
+        cursor = page["next_cursor"].as_str().map(str::to_owned);
         if cursor.is_none() {
             break;
         }
@@ -751,132 +712,127 @@ async fn eventos_em_ordem_de_seq_com_paginacao() {
         "paginação por seq diferente da lista inteira"
     );
 
-    // Cursor é o seq: começar depois do segundo evento devolve do terceiro em diante.
-    let (_, depois_do_segundo) = c
-        .get(&format!("{caminho}?cursor=2&limit=200"), &token)
-        .await;
-    let a_partir_do_terceiro: Vec<i64> = depois_do_segundo["items"]
+    let (_, after_second) = c.get(&format!("{path}?cursor=2&limit=200"), &token).await;
+    let from_third: Vec<i64> = after_second["items"]
         .as_array()
         .unwrap()
         .iter()
         .map(|i| i["seq"].as_i64().unwrap())
         .collect();
-    assert_eq!(a_partir_do_terceiro, seqs[2..].to_vec());
+    assert_eq!(from_third, seqs[2..].to_vec());
 
-    let (status, erro) = c.get(&format!("{caminho}?cursor=abc"), &token).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{erro}");
-    assert_eq!(codigo(&erro), "invalid_request");
+    let (status, error) = c.get(&format!("{path}?cursor=abc"), &token).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{error}");
+    assert_eq!(code(&error), "invalid_request");
 }
 
 #[tokio::test]
-async fn execucao_com_etapas_e_campos_aparece_dentro_da_ficha() {
-    let c = Cenario::novo("w6").await;
-    let org = c.criar_org("w6-a").await;
-    let token = c.criar_token(&org).await;
-    let agente = c.criar_agente(&org, &token, "agente-x").await;
-    let (fluxo, revisao) = c.fluxo_publicado(&org, "agendar-visita");
-    let ficha = c.ficha_avulsa(&org, &agente, "whatsapp");
-    let gravada = c.abrir_execucao(&org, &agente, ficha, fluxo, revisao);
-    c.responder_nome(&org, &gravada, "Ana Teste");
+async fn execution_with_stages_and_fields_appears_inside_case() {
+    let c = Scenario::new("w6").await;
+    let org = c.create_org("w6-a").await;
+    let token = c.create_token(&org).await;
+    let agente = c.create_agent(&org, &token, "agente-x").await;
+    let (fluxo, revision) = c.published_flow(&org, "agendar-visita");
+    let ficha = c.standalone_case(&org, &agente, "whatsapp");
+    let stored = c.start_execution(&org, &agente, ficha, fluxo, revision);
+    c.answer_name(&org, &stored, "Ana Teste");
 
-    let (status, corpo) = c
+    let (status, body) = c
         .get(&format!("/admin/v1/orgs/{org}/fichas/{ficha}"), &token)
         .await;
-    assert_eq!(status, StatusCode::OK, "{corpo}");
-    assert_eq!(corpo["id"], ficha.to_string());
-    assert_eq!(corpo["status"], "open");
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["id"], ficha.to_string());
+    assert_eq!(body["status"], "open");
 
-    let execucoes = corpo["execucoes"].as_array().expect("execucoes na Ficha");
-    assert_eq!(execucoes.len(), 1, "{corpo}");
-    let execucao = &execucoes[0];
-    assert_eq!(execucao["id"], gravada.execution.id.to_string());
-    assert_eq!(execucao["fluxo_id"], fluxo.to_string());
-    assert_eq!(execucao["revisao_id"], revisao.to_string());
-    assert_eq!(execucao["status"], "ativa");
-    assert_eq!(execucao["no_atual"], "coleta");
+    let executions = body["execucoes"].as_array().expect("execucoes na Ficha");
+    assert_eq!(executions.len(), 1, "{body}");
+    let execution = &executions[0];
+    assert_eq!(execution["id"], stored.execution.id.to_string());
+    assert_eq!(execution["fluxo_id"], fluxo.to_string());
+    assert_eq!(execution["revisao_id"], revision.to_string());
+    assert_eq!(execution["status"], "ativa");
+    assert_eq!(execution["no_atual"], "coleta");
 
-    let etapas = execucao["etapas"].as_array().expect("etapas na execução");
-    assert_eq!(etapas.len(), 1, "{execucao}");
-    assert_eq!(etapas[0]["no_id"], "coleta");
-    assert_eq!(etapas[0]["ordem"], 1);
-    assert_eq!(etapas[0]["status"], "parcial");
+    let stages = execution["etapas"].as_array().expect("etapas na execução");
+    assert_eq!(stages.len(), 1, "{execution}");
+    assert_eq!(stages[0]["no_id"], "coleta");
+    assert_eq!(stages[0]["ordem"], 1);
+    assert_eq!(stages[0]["status"], "parcial");
     assert_eq!(
-        etapas[0]["dados"]["nome"], "Ana Teste",
-        "o campo respondido tem de estar na etapa dentro da Ficha: {etapas:?}"
+        stages[0]["dados"]["nome"], "Ana Teste",
+        "o campo respondido tem de estar na etapa dentro da Ficha: {stages:?}"
     );
-    assert_eq!(etapas[0]["atores_que_agiram"], json!(["agente"]));
+    assert_eq!(stages[0]["atores_que_agiram"], json!(["agente"]));
 
-    let liberados = corpo["permissoes"]["fluxos_liberados_ao_agente"]
+    let released = body["permissoes"]["fluxos_liberados_ao_agente"]
         .as_array()
         .expect("permissões");
-    assert_eq!(liberados.len(), 1, "{corpo}");
-    assert_eq!(liberados[0]["slug"], "agendar-visita");
-    assert_eq!(liberados[0]["id"], fluxo.to_string());
+    assert_eq!(released.len(), 1, "{body}");
+    assert_eq!(released[0]["slug"], "agendar-visita");
+    assert_eq!(released[0]["id"], fluxo.to_string());
 
-    // Nada de texto de mensagem na Ficha: só campos e metadados.
-    assert!(!corpo.to_string().contains("mensagem_ao_cliente"));
+    assert!(!body.to_string().contains("mensagem_ao_cliente"));
 }
 
 #[tokio::test]
-async fn ficha_fechada_continua_legivel() {
-    let c = Cenario::novo("fechada").await;
-    let org = c.criar_org("fechada-a").await;
-    let token = c.criar_token(&org).await;
-    let agente = c.criar_agente(&org, &token, "agente-x").await;
-    let (fluxo, revisao) = c.fluxo_publicado(&org, "agendar-visita");
+async fn closed_case_remains_readable() {
+    let c = Scenario::new("fechada").await;
+    let org = c.create_org("fechada-a").await;
+    let token = c.create_token(&org).await;
+    let agente = c.create_agent(&org, &token, "agente-x").await;
+    let (fluxo, revision) = c.published_flow(&org, "agendar-visita");
     let (conversa, ficha) = c.conversa(&org, &agente, "whatsapp");
-    let gravada = c.abrir_execucao(&org, &agente, ficha, fluxo, revisao);
-    c.responder_nome(&org, &gravada, "Ana Teste");
-    c.fechar_conversa(&org, &conversa);
+    let stored = c.start_execution(&org, &agente, ficha, fluxo, revision);
+    c.answer_name(&org, &stored, "Ana Teste");
+    c.close_conversation(&org, &conversa);
 
-    let (status, corpo) = c
+    let (status, body) = c
         .get(&format!("/admin/v1/orgs/{org}/fichas/{ficha}"), &token)
         .await;
     assert_eq!(
         status,
         StatusCode::OK,
-        "Ficha fechada tem de ser legível: {corpo}"
+        "Ficha fechada tem de ser legível: {body}"
     );
-    assert_eq!(corpo["status"], "closed");
-    assert!(corpo["fechada_em"].is_i64(), "{corpo}");
+    assert_eq!(body["status"], "closed");
+    assert!(body["fechada_em"].is_i64(), "{body}");
     assert_eq!(
-        corpo["fechada_por"], "admin",
-        "fechar pela conversa grava o autor: {corpo}"
+        body["fechada_por"], "admin",
+        "fechar pela conversa grava o autor: {body}"
     );
-    assert!(corpo["fechada_motivo"].is_string(), "{corpo}");
-    let execucao = &corpo["execucoes"][0];
-    assert_eq!(execucao["status"], "abandonada", "{execucao}");
-    assert_eq!(execucao["motivo_fim"], "atendimento_encerrado");
-    assert_eq!(execucao["etapas"][0]["dados"]["nome"], "Ana Teste");
+    assert!(body["fechada_motivo"].is_string(), "{body}");
+    let execution = &body["execucoes"][0];
+    assert_eq!(execution["status"], "abandonada", "{execution}");
+    assert_eq!(execution["motivo_fim"], "atendimento_encerrado");
+    assert_eq!(execution["etapas"][0]["dados"]["nome"], "Ana Teste");
 
-    let (status, eventos) = c
+    let (status, events) = c
         .get(
             &format!("/admin/v1/orgs/{org}/fichas/{ficha}/events?limit=200"),
             &token,
         )
         .await;
-    assert_eq!(status, StatusCode::OK, "{eventos}");
-    let tipos: Vec<&str> = eventos["items"]
+    assert_eq!(status, StatusCode::OK, "{events}");
+    let kinds: Vec<&str> = events["items"]
         .as_array()
         .unwrap()
         .iter()
         .map(|i| i["tipo"].as_str().unwrap())
         .collect();
-    assert!(tipos.contains(&"execucao_abandonada"), "{tipos:?}");
-    assert_eq!(tipos.last(), Some(&"ficha_fechada"), "{tipos:?}");
+    assert!(kinds.contains(&"execucao_abandonada"), "{kinds:?}");
+    assert_eq!(kinds.last(), Some(&"ficha_fechada"), "{kinds:?}");
 
-    // A lista também mostra a Ficha fechada com o filtro de status.
-    let (_, fechadas) = c
+    let (_, closed_cases) = c
         .get(
             &format!("/admin/v1/orgs/{org}/fichas?status=closed"),
             &token,
         )
         .await;
-    let ids: Vec<String> = fechadas["items"]
+    let ids: Vec<String> = closed_cases["items"]
         .as_array()
         .unwrap()
         .iter()
-        .map(id_de)
+        .map(item_id)
         .collect();
     assert_eq!(ids, vec![ficha.to_string()]);
 }

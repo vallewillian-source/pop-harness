@@ -1,24 +1,3 @@
-//! Testes HTTP das ações humanas do atendente sobre a Ficha (FX-30, PRD §7.3 e concorrência).
-//!
-//! Servidor de verdade (porta efêmera) sobre banco temporário, com cliente HTTP de verdade. O fluxo
-//! é um script compilado de verdade (`poph_flows::compile`) e publicado pelo repositório (a
-//! publicação pela API é a FX-27). O agente é simulado pelo próprio motor e pela operação atômica
-//! (o turno do agente ainda não existe), para provar a corrida atendente × agente. Nomes e
-//! telefones são fictícios.
-//!
-//! O que fica provado aqui:
-//! - iniciar fluxo sem `If-Match` → `428`; chave vazia → `400`; versão velha → `412`;
-//! - Ficha fechada → `409` ao iniciar, agir e abandonar; fluxo não liberado → `403` sem abrir execução;
-//! - repetir a chave do início não abre outra execução, nem depois que a primeira terminou;
-//! - atendente conclui a etapa que o critério `auto` só fecha com o agente (parcial até o agente);
-//! - corrida atendente × agente: quem chega com versão velha leva `412` e nada é gravado;
-//! - repetir a chave de uma ação devolve o mesmo desfecho, sem evento novo, mesmo com versão velha;
-//! - ação restrita ao agente chamada pelo atendente → `409` (`acao_invalida`, a recusa do motor);
-//! - abandono grava motivo e não gera efeito; motivo vazio → `400`;
-//! - `close` fecha conversa e Ficha e abandona a execução; sem conversa, fecha só a Ficha;
-//! - Ficha ou execução de outra org → `404` (token de outra org no caminho → `403`); execução de
-//!   outra Ficha da mesma org → `404`.
-
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
@@ -27,7 +6,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
-use poph_flows::engine::{Context, Estado as EstadoMotor, execute_action};
+use poph_flows::engine::{Context, Estado as EngineState, execute_action};
 use poph_flows::ir::Destination;
 use poph_flows::{Ir, Limites, RuleEvaluator, compile};
 use poph_server::ServerState;
@@ -44,11 +23,8 @@ use reqwest::{Client, Method, StatusCode};
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
 
-/// Valor do token global usado nos testes (o servidor guarda só o hash).
 const TOKEN_GLOBAL: &str = "pophg_teste-global-fx30";
 
-/// Fluxo de teste: a etapa `coleta` é do agente **e** do atendente, e só avança quando os dois
-/// agiram (critério `auto`); a etapa `revisao` é do atendente e conclui o fluxo.
 const SCRIPT: &str = r#"fluxo(
     id = "agendar",
     nome = "Agendar visita",
@@ -81,10 +57,10 @@ etapa(
 )
 "#;
 
-fn hash_argon2(valor: &str) -> String {
+fn hash_argon2(value: &str) -> String {
     let sal = SaltString::generate(&mut OsRng);
     Argon2::default()
-        .hash_password(valor.as_bytes(), &sal)
+        .hash_password(value.as_bytes(), &sal)
         .expect("hash argon2")
         .to_string()
 }
@@ -93,34 +69,31 @@ fn parse_org(id: &str) -> OrgId {
     id.parse().expect("id de org")
 }
 
-fn parse_agente(id: &str) -> AgentId {
+fn parse_agent(id: &str) -> AgentId {
     id.parse().expect("id de agente")
 }
 
-/// Servidor no ar, com banco e pasta próprios. O `Drop` desliga e apaga a pasta.
-struct Cenario {
+struct Scenario {
     base: String,
-    cliente: Client,
-    pasta: PathBuf,
+    client: Client,
+    directory: PathBuf,
     store: Arc<Store>,
     desligar: Option<oneshot::Sender<()>>,
 }
 
-impl Cenario {
-    async fn novo(rotulo: &str) -> Self {
-        let carimbo = SystemTime::now()
+impl Scenario {
+    async fn new(label: &str) -> Self {
+        let stamp = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
-            .map(|duracao| duracao.as_nanos())
+            .map(|duration| duration.as_nanos())
             .unwrap_or(0);
-        let pasta = std::env::temp_dir().join(format!(
-            "poph-acoes-{rotulo}-{}-{carimbo}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&pasta);
-        fs::create_dir_all(pasta.join("dados")).expect("pasta de dados");
+        let directory =
+            std::env::temp_dir().join(format!("poph-acoes-{label}-{}-{stamp}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(directory.join("dados")).expect("pasta de dados");
 
         let mut config = HarnessConfig::default();
-        config.data.directory = pasta.join("dados");
+        config.data.directory = directory.join("dados");
         config.server.port = 7483;
         config.admin.tokens_globais = vec![GlobalTokenConfig {
             label: "teste".to_owned(),
@@ -129,74 +102,73 @@ impl Cenario {
         config.validar().expect("configuração válida");
 
         let store = Arc::new(Store::open(&config).expect("abre o banco"));
-        let estado = ServerState::new(Arc::clone(&store), config).expect("estado do servidor");
+        let state = ServerState::new(Arc::clone(&store), config).expect("estado do servidor");
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("porta efêmera");
         let endereco = listener.local_addr().expect("endereço local");
-        let (desligar, sinal) = oneshot::channel();
+        let (desligar, signal) = oneshot::channel();
         tokio::spawn(async move {
-            let _ = poph_server::serve_at(listener, estado, async {
-                let _ = sinal.await;
+            let _ = poph_server::serve_at(listener, state, async {
+                let _ = signal.await;
             })
             .await;
         });
 
-        let cenario = Self {
+        let scenario = Self {
             base: format!("http://{endereco}"),
-            cliente: Client::builder()
+            client: Client::builder()
                 .timeout(Duration::from_secs(20))
                 .build()
                 .expect("cliente HTTP"),
-            pasta,
+            directory,
             store,
             desligar: Some(desligar),
         };
-        cenario.esperar_subir().await;
-        cenario
+        scenario.wait_until_up().await;
+        scenario
     }
 
-    async fn esperar_subir(&self) {
-        let inicio = Instant::now();
+    async fn wait_until_up(&self) {
+        let start = Instant::now();
         loop {
             match self
-                .cliente
+                .client
                 .get(format!("{}/healthz", self.base))
                 .send()
                 .await
             {
-                Ok(resposta) if resposta.status().is_success() => return,
-                _ if inicio.elapsed() < Duration::from_secs(10) => {
+                Ok(response) if response.status().is_success() => return,
+                _ if start.elapsed() < Duration::from_secs(10) => {
                     tokio::time::sleep(Duration::from_millis(20)).await;
                 }
-                outro => panic!("servidor não subiu: {outro:?}"),
+                other => panic!("servidor não subiu: {other:?}"),
             }
         }
     }
 
-    /// Pedido HTTP. `versao` vira o `If-Match`; `None` não manda o cabeçalho.
-    async fn pedir(
+    async fn send_request(
         &self,
-        metodo: Method,
-        caminho: &str,
+        method: Method,
+        path: &str,
         token: &str,
         versao: Option<u64>,
-        corpo: Option<Value>,
+        body: Option<Value>,
     ) -> (StatusCode, Value) {
-        let mut pedido = self
-            .cliente
-            .request(metodo, format!("{}{caminho}", self.base))
+        let mut request = self
+            .client
+            .request(method, format!("{}{path}", self.base))
             .bearer_auth(token);
         if let Some(versao) = versao {
-            pedido = pedido.header("If-Match", versao.to_string());
+            request = request.header("If-Match", versao.to_string());
         }
-        if let Some(valor) = corpo {
-            pedido = pedido.json(&valor);
+        if let Some(value) = body {
+            request = request.json(&value);
         }
-        let resposta = pedido.send().await.expect("pedido HTTP");
-        let status = resposta.status();
-        let texto = resposta.text().await.unwrap_or_default();
+        let response = request.send().await.expect("pedido HTTP");
+        let status = response.status();
+        let texto = response.text().await.unwrap_or_default();
         let json = if texto.trim().is_empty() {
             Value::Null
         } else {
@@ -205,9 +177,9 @@ impl Cenario {
         (status, json)
     }
 
-    async fn criar_org(&self, slug: &str) -> String {
-        let (status, corpo) = self
-            .pedir(
+    async fn create_org(&self, slug: &str) -> String {
+        let (status, body) = self
+            .send_request(
                 Method::POST,
                 "/admin/v1/orgs",
                 TOKEN_GLOBAL,
@@ -215,13 +187,13 @@ impl Cenario {
                 Some(json!({ "name": format!("Org {slug}"), "slug": slug })),
             )
             .await;
-        assert_eq!(status, StatusCode::CREATED, "criar org: {corpo}");
-        corpo["id"].as_str().expect("id da org").to_owned()
+        assert_eq!(status, StatusCode::CREATED, "criar org: {body}");
+        body["id"].as_str().expect("id da org").to_owned()
     }
 
-    async fn criar_token(&self, org: &str) -> String {
-        let (status, corpo) = self
-            .pedir(
+    async fn create_token(&self, org: &str) -> String {
+        let (status, body) = self
+            .send_request(
                 Method::POST,
                 &format!("/admin/v1/orgs/{org}/tokens"),
                 TOKEN_GLOBAL,
@@ -229,13 +201,13 @@ impl Cenario {
                 Some(json!({ "label": "token de teste" })),
             )
             .await;
-        assert_eq!(status, StatusCode::CREATED, "criar token: {corpo}");
-        corpo["value"].as_str().expect("valor do token").to_owned()
+        assert_eq!(status, StatusCode::CREATED, "criar token: {body}");
+        body["value"].as_str().expect("valor do token").to_owned()
     }
 
-    async fn criar_agente(&self, org: &str, token: &str, slug: &str) -> String {
-        let (status, corpo) = self
-            .pedir(
+    async fn create_agent(&self, org: &str, token: &str, slug: &str) -> String {
+        let (status, body) = self
+            .send_request(
                 Method::POST,
                 &format!("/admin/v1/orgs/{org}/agents"),
                 token,
@@ -243,22 +215,20 @@ impl Cenario {
                 Some(json!({ "name": format!("Agente {slug}"), "slug": slug })),
             )
             .await;
-        assert_eq!(status, StatusCode::CREATED, "criar agente: {corpo}");
-        corpo["id"].as_str().expect("id do agente").to_owned()
+        assert_eq!(status, StatusCode::CREATED, "criar agente: {body}");
+        body["id"].as_str().expect("id do agente").to_owned()
     }
 
-    /// Fluxo publicado (criado, compilado e publicado pelo repositório) e liberado ao agente.
-    fn fluxo_liberado(&self, org: &str, agente: &str, slug: &str) -> (FlowId, RevisionId) {
-        let (fluxo, revisao) = self.fluxo_publicado(org, slug);
+    fn released_flow(&self, org: &str, agente: &str, slug: &str) -> (FlowId, RevisionId) {
+        let (fluxo, revision) = self.published_flow(org, slug);
         self.store
             .flows()
-            .release(parse_org(org), parse_agente(agente), fluxo)
+            .release(parse_org(org), parse_agent(agente), fluxo)
             .expect("libera o fluxo ao agente");
-        (fluxo, revisao)
+        (fluxo, revision)
     }
 
-    /// Fluxo publicado, sem liberar a agente nenhum.
-    fn fluxo_publicado(&self, org: &str, slug: &str) -> (FlowId, RevisionId) {
+    fn published_flow(&self, org: &str, slug: &str) -> (FlowId, RevisionId) {
         let org_id = parse_org(org);
         let fluxo = self
             .store
@@ -273,12 +243,12 @@ impl Cenario {
                 },
             )
             .expect("cria o fluxo");
-        let compilado = compile(SCRIPT, &Limites::default());
-        let ir = match compilado.ir() {
+        let compiled = compile(SCRIPT, &Limites::default());
+        let ir = match compiled.ir() {
             Ok(ir) => ir,
-            Err(erros) => panic!("script de teste inválido: {erros:?}"),
+            Err(errors) => panic!("script de teste inválido: {errors:?}"),
         };
-        let revisao = self
+        let revision = self
             .store
             .revisions()
             .publish_revision(
@@ -295,18 +265,17 @@ impl Cenario {
                 },
             )
             .expect("publica a revisão");
-        (fluxo.id, revisao.id)
+        (fluxo.id, revision.id)
     }
 
-    /// Ficha sem conversa, do agente.
-    fn ficha_avulsa(&self, org: &str, agente: &str) -> RecordId {
+    fn standalone_case(&self, org: &str, agente: &str) -> RecordId {
         self.store
             .cases()
             .create(
                 parse_org(org),
                 NewRecord {
                     conversation_id: None,
-                    agent_id: parse_agente(agente),
+                    agent_id: parse_agent(agente),
                     canal: "whatsapp".to_owned(),
                     peer_externo: Some(format!("cliente-ficticio-{}", uuid::Uuid::now_v7())),
                 },
@@ -315,15 +284,14 @@ impl Cenario {
             .id
     }
 
-    /// Ficha ligada a uma conversa nova (a Ficha nasce com ela).
-    fn ficha_com_conversa(&self, org: &str, agente: &str) -> (poph_store::Conversa, RecordId) {
+    fn case_with_conversation(&self, org: &str, agente: &str) -> (poph_store::Conversa, RecordId) {
         let conversa = self
             .store
             .conversations()
             .create(
                 parse_org(org),
                 NewConversation {
-                    agent_id: parse_agente(agente),
+                    agent_id: parse_agent(agente),
                     integration_id: None,
                     canal: "whatsapp".to_owned(),
                     peer_externo: Some(format!("cliente-ficticio-{}", uuid::Uuid::now_v7())),
@@ -341,7 +309,7 @@ impl Cenario {
         (conversa, ficha)
     }
 
-    fn versao_da_ficha(&self, org: &str, ficha: RecordId) -> u64 {
+    fn case_version(&self, org: &str, ficha: RecordId) -> u64 {
         self.store
             .cases()
             .get(parse_org(org), ficha)
@@ -349,14 +317,14 @@ impl Cenario {
             .version
     }
 
-    fn execucao(&self, org: &str, run: &str) -> Execution {
+    fn execution(&self, org: &str, run: &str) -> Execution {
         self.store
             .executions()
             .get(parse_org(org), run.parse().expect("id da execução"))
             .expect("lê a execução")
     }
 
-    fn quantas_execucoes(&self, org: &str, ficha: RecordId) -> usize {
+    fn count_executions(&self, org: &str, ficha: RecordId) -> usize {
         self.store
             .executions()
             .from_case(parse_org(org), ficha, 100)
@@ -364,7 +332,7 @@ impl Cenario {
             .len()
     }
 
-    fn quantos_eventos(&self, org: &str, ficha: RecordId) -> usize {
+    fn count_events(&self, org: &str, ficha: RecordId) -> usize {
         self.store
             .cases()
             .events(parse_org(org), ficha, None, 500)
@@ -372,54 +340,52 @@ impl Cenario {
             .len()
     }
 
-    /// O agente age pelo próprio motor e pela operação atômica, como o turno dele faria (o turno
-    /// ainda não existe). Usa a mesma ponte de tradução da API.
-    fn agente_age(&self, org: &str, run: &str, acao: &str, campos: Value, chave: &str) {
+    fn agent_acts(&self, org: &str, run: &str, acao: &str, campos: Value, chave: &str) {
         let org_id = parse_org(org);
         let run_id: ExecutionId = run.parse().expect("id da execução");
-        let execucao = self.execucao(org, run);
-        let revisao = self
+        let execution = self.execution(org, run);
+        let revision = self
             .store
             .revisions()
-            .get_by_id(org_id, execucao.revisao_id)
+            .get_by_id(org_id, execution.revisao_id)
             .expect("lê a revisão");
-        let ir = Ir::from_json(&revisao.definicao_json).expect("IR da revisão");
-        let atores_que_agiram = self
+        let ir = Ir::from_json(&revision.definicao_json).expect("IR da revisão");
+        let acting_actors = self
             .store
             .executions()
             .stages(org_id, run_id)
             .expect("lê as etapas")
             .iter()
             .rev()
-            .find(|etapa| etapa.no_id == execucao.no_atual)
+            .find(|etapa| etapa.no_id == execution.no_atual)
             .map(|etapa| etapa.acting_actors.clone())
             .unwrap_or_default();
-        let estado = EstadoMotor {
+        let state = EngineState {
             fluxo_id: ir.fluxo.id.clone(),
-            status: execucao.status,
+            status: execution.status,
             no_atual: Destination::Etapa {
-                id: execucao.no_atual.clone(),
+                id: execution.no_atual.clone(),
             },
-            dados: serde_json::from_str(&execucao.dados_json).expect("dados da execução"),
-            actors_who_acted: atores_que_agiram,
+            dados: serde_json::from_str(&execution.dados_json).expect("dados da execução"),
+            actors_who_acted: acting_actors,
             resultado: None,
             motivo: None,
             keys: BTreeMap::new(),
         };
-        let avaliador = RuleEvaluator::without_functions();
-        let ficha_texto = execucao.ficha_id.to_string();
-        let contexto = Context::new(&avaliador)
-            .with_case(&ficha_texto)
+        let evaluator = RuleEvaluator::without_functions();
+        let case_text = execution.ficha_id.to_string();
+        let context = Context::new(&evaluator)
+            .with_case(&case_text)
             .with_client("cliente-ficticio");
         let campos = campos.as_object().cloned().unwrap_or_default();
         let resultado = execute_action(
             &ir,
-            &estado,
+            &state,
             acao,
             &campos,
             ActionActor::Agent,
             Some(chave),
-            &contexto,
+            &context,
         )
         .expect("o agente age na etapa");
         self.store
@@ -427,7 +393,7 @@ impl Cenario {
             .apply_transition(
                 org_id,
                 run_id,
-                execucao.version,
+                execution.version,
                 &transition_engine(&resultado),
                 chave,
                 TransitionExtras {
@@ -439,9 +405,7 @@ impl Cenario {
             .expect("grava a ação do agente");
     }
 
-    // ── Pedidos das rotas de ações ──
-
-    async fn iniciar(
+    async fn start_flow(
         &self,
         org: &str,
         token: &str,
@@ -450,7 +414,7 @@ impl Cenario {
         fluxo: FlowId,
         chave: &str,
     ) -> (StatusCode, Value) {
-        self.pedir(
+        self.send_request(
             Method::POST,
             &format!("/admin/v1/orgs/{org}/fichas/{ficha}/flow-runs"),
             token,
@@ -460,7 +424,6 @@ impl Cenario {
         .await
     }
 
-    // Espelha a assinatura da rota (org, token, ficha, execução, versão, ação, campos, chave).
     #[allow(clippy::too_many_arguments)]
     async fn acao(
         &self,
@@ -473,7 +436,7 @@ impl Cenario {
         campos: Value,
         chave: &str,
     ) -> (StatusCode, Value) {
-        self.pedir(
+        self.send_request(
             Method::POST,
             &format!("/admin/v1/orgs/{org}/fichas/{ficha}/flow-runs/{run}/actions"),
             token,
@@ -483,9 +446,8 @@ impl Cenario {
         .await
     }
 
-    // Espelha a assinatura da rota (org, token, ficha, execução, versão, motivo, chave).
     #[allow(clippy::too_many_arguments)]
-    async fn abandonar(
+    async fn abandon(
         &self,
         org: &str,
         token: &str,
@@ -495,7 +457,7 @@ impl Cenario {
         motivo: &str,
         chave: &str,
     ) -> (StatusCode, Value) {
-        self.pedir(
+        self.send_request(
             Method::POST,
             &format!("/admin/v1/orgs/{org}/fichas/{ficha}/flow-runs/{run}/abandon"),
             token,
@@ -505,14 +467,14 @@ impl Cenario {
         .await
     }
 
-    async fn fechar(
+    async fn close(
         &self,
         org: &str,
         token: &str,
         ficha: RecordId,
         versao: Option<u64>,
     ) -> (StatusCode, Value) {
-        self.pedir(
+        self.send_request(
             Method::POST,
             &format!("/admin/v1/orgs/{org}/fichas/{ficha}/close"),
             token,
@@ -523,20 +485,19 @@ impl Cenario {
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
         if let Some(desligar) = self.desligar.take() {
             let _ = desligar.send(());
         }
-        let _ = fs::remove_dir_all(&self.pasta);
+        let _ = fs::remove_dir_all(&self.directory);
     }
 }
 
-fn codigo(corpo: &Value) -> &str {
-    corpo["code"].as_str().unwrap_or("")
+fn code(body: &Value) -> &str {
+    body["code"].as_str().unwrap_or("")
 }
 
-/// Org com agente, token e fluxo liberado: o cenário mínimo de quase todos os testes.
 struct Base {
     org: String,
     token: String,
@@ -544,13 +505,13 @@ struct Base {
     fluxo: FlowId,
 }
 
-async fn base(c: &Cenario, slug: &str) -> Base {
-    let org = c.criar_org(slug).await;
-    let token = c.criar_token(&org).await;
+async fn base(c: &Scenario, slug: &str) -> Base {
+    let org = c.create_org(slug).await;
+    let token = c.create_token(&org).await;
     let agente = c
-        .criar_agente(&org, &token, &format!("agente-{slug}"))
+        .create_agent(&org, &token, &format!("agente-{slug}"))
         .await;
-    let (fluxo, _revisao) = c.fluxo_liberado(
+    let (fluxo, _revision) = c.released_flow(
         &org,
         &agente,
         &format!("agendar_{}", slug.replace('-', "_")),
@@ -563,29 +524,27 @@ async fn base(c: &Cenario, slug: &str) -> Base {
     }
 }
 
-// ───────────────────────────────────── Testes ─────────────────────────────────────
-
 #[tokio::test]
-async fn iniciar_exige_if_match_chave_e_versao_certa() {
-    let c = Cenario::novo("inicio-exige").await;
+async fn start_requires_if_match_key_and_correct_version() {
+    let c = Scenario::new("inicio-exige").await;
     let b = base(&c, "inicio-exige").await;
-    let ficha = c.ficha_avulsa(&b.org, &b.agente);
-    let versao = c.versao_da_ficha(&b.org, ficha);
+    let ficha = c.standalone_case(&b.org, &b.agente);
+    let versao = c.case_version(&b.org, ficha);
 
-    let (status, corpo) = c
-        .iniciar(&b.org, &b.token, ficha, None, b.fluxo, "chave-1")
+    let (status, body) = c
+        .start_flow(&b.org, &b.token, ficha, None, b.fluxo, "chave-1")
         .await;
-    assert_eq!(status, StatusCode::PRECONDITION_REQUIRED, "{corpo}");
-    assert_eq!(codigo(&corpo), "precondition_required");
+    assert_eq!(status, StatusCode::PRECONDITION_REQUIRED, "{body}");
+    assert_eq!(code(&body), "precondition_required");
 
-    let (status, corpo) = c
-        .iniciar(&b.org, &b.token, ficha, Some(versao), b.fluxo, "   ")
+    let (status, body) = c
+        .start_flow(&b.org, &b.token, ficha, Some(versao), b.fluxo, "   ")
         .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{corpo}");
-    assert_eq!(codigo(&corpo), "validation_error");
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(code(&body), "validation_error");
 
-    let (status, corpo) = c
-        .iniciar(
+    let (status, body) = c
+        .start_flow(
             &b.org,
             &b.token,
             ficha,
@@ -594,56 +553,55 @@ async fn iniciar_exige_if_match_chave_e_versao_certa() {
             "chave-1",
         )
         .await;
-    assert_eq!(status, StatusCode::PRECONDITION_FAILED, "{corpo}");
-    assert_eq!(codigo(&corpo), "version_conflict");
-    assert_eq!(c.quantas_execucoes(&b.org, ficha), 0, "nada foi aberto");
+    assert_eq!(status, StatusCode::PRECONDITION_FAILED, "{body}");
+    assert_eq!(code(&body), "version_conflict");
+    assert_eq!(c.count_executions(&b.org, ficha), 0, "nada foi aberto");
 }
 
 #[tokio::test]
-async fn iniciar_em_ficha_fechada_da_409() {
-    let c = Cenario::novo("ficha-fechada").await;
+async fn start_on_closed_case_returns_409() {
+    let c = Scenario::new("ficha-fechada").await;
     let b = base(&c, "ficha-fechada").await;
-    let ficha = c.ficha_avulsa(&b.org, &b.agente);
+    let ficha = c.standalone_case(&b.org, &b.agente);
     c.store
         .cases()
         .close_without_conversation(parse_org(&b.org), ficha, 1, "encerrada no teste")
         .expect("fecha a Ficha");
-    let versao = c.versao_da_ficha(&b.org, ficha);
+    let versao = c.case_version(&b.org, ficha);
 
-    let (status, corpo) = c
-        .iniciar(&b.org, &b.token, ficha, Some(versao), b.fluxo, "chave-1")
+    let (status, body) = c
+        .start_flow(&b.org, &b.token, ficha, Some(versao), b.fluxo, "chave-1")
         .await;
-    assert_eq!(status, StatusCode::CONFLICT, "{corpo}");
-    assert_eq!(codigo(&corpo), "ficha_encerrada");
-    assert_eq!(c.quantas_execucoes(&b.org, ficha), 0);
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(code(&body), "ficha_encerrada");
+    assert_eq!(c.count_executions(&b.org, ficha), 0);
 }
 
 #[tokio::test]
-async fn fluxo_nao_liberado_da_403_e_nao_abre_execucao() {
-    let c = Cenario::novo("nao-liberado").await;
+async fn unreleased_flow_returns_403_and_opens_no_execution() {
+    let c = Scenario::new("nao-liberado").await;
     let b = base(&c, "nao-liberado").await;
-    // Segundo fluxo, publicado mas não liberado a este agente.
-    let (outro, _) = c.fluxo_publicado(&b.org, "sem_permissao");
-    let ficha = c.ficha_avulsa(&b.org, &b.agente);
-    let versao = c.versao_da_ficha(&b.org, ficha);
+    let (other, _) = c.published_flow(&b.org, "sem_permissao");
+    let ficha = c.standalone_case(&b.org, &b.agente);
+    let versao = c.case_version(&b.org, ficha);
 
-    let (status, corpo) = c
-        .iniciar(&b.org, &b.token, ficha, Some(versao), outro, "chave-1")
+    let (status, body) = c
+        .start_flow(&b.org, &b.token, ficha, Some(versao), other, "chave-1")
         .await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "{corpo}");
-    assert_eq!(codigo(&corpo), "fluxo_nao_liberado");
-    assert_eq!(c.quantas_execucoes(&b.org, ficha), 0);
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(code(&body), "fluxo_nao_liberado");
+    assert_eq!(c.count_executions(&b.org, ficha), 0);
 }
 
 #[tokio::test]
-async fn repetir_a_chave_do_inicio_nao_duplica_nem_depois_de_terminar() {
-    let c = Cenario::novo("inicio-repetido").await;
+async fn repeating_start_key_does_not_duplicate_even_after_finishing() {
+    let c = Scenario::new("inicio-repetido").await;
     let b = base(&c, "inicio-repetido").await;
-    let ficha = c.ficha_avulsa(&b.org, &b.agente);
-    let versao = c.versao_da_ficha(&b.org, ficha);
+    let ficha = c.standalone_case(&b.org, &b.agente);
+    let versao = c.case_version(&b.org, ficha);
 
-    let (status, primeira) = c
-        .iniciar(
+    let (status, first) = c
+        .start_flow(
             &b.org,
             &b.token,
             ficha,
@@ -652,13 +610,12 @@ async fn repetir_a_chave_do_inicio_nao_duplica_nem_depois_de_terminar() {
             "abrir-visita",
         )
         .await;
-    assert_eq!(status, StatusCode::CREATED, "{primeira}");
-    let run = primeira["id"].as_str().expect("id da execução").to_owned();
-    let eventos = c.quantos_eventos(&b.org, ficha);
+    assert_eq!(status, StatusCode::CREATED, "{first}");
+    let run = first["id"].as_str().expect("id da execução").to_owned();
+    let events = c.count_events(&b.org, ficha);
 
-    // Repetição com a mesma chave, enquanto a execução ainda está ativa.
-    let (status, repetida) = c
-        .iniciar(
+    let (status, repeated) = c
+        .start_flow(
             &b.org,
             &b.token,
             ficha,
@@ -667,27 +624,26 @@ async fn repetir_a_chave_do_inicio_nao_duplica_nem_depois_de_terminar() {
             "abrir-visita",
         )
         .await;
-    assert_eq!(status, StatusCode::OK, "{repetida}");
-    assert_eq!(repetida["id"], primeira["id"]);
-    assert_eq!(repetida["repetida"], json!(true));
-    assert_eq!(c.quantas_execucoes(&b.org, ficha), 1);
-    assert_eq!(c.quantos_eventos(&b.org, ficha), eventos, "sem evento novo");
+    assert_eq!(status, StatusCode::OK, "{repeated}");
+    assert_eq!(repeated["id"], first["id"]);
+    assert_eq!(repeated["repetida"], json!(true));
+    assert_eq!(c.count_executions(&b.org, ficha), 1);
+    assert_eq!(c.count_events(&b.org, ficha), events, "sem evento novo");
 
-    // Depois que a execução termina, a mesma chave ainda devolve a primeira, não abre outra.
     let (status, _) = c
-        .abandonar(
+        .abandon(
             &b.org,
             &b.token,
             ficha,
             &run,
-            Some(c.execucao(&b.org, &run).version),
+            Some(c.execution(&b.org, &run).version),
             "cliente desistiu",
             "parar-visita",
         )
         .await;
     assert_eq!(status, StatusCode::OK);
-    let (status, depois) = c
-        .iniciar(
+    let (status, after) = c
+        .start_flow(
             &b.org,
             &b.token,
             ficha,
@@ -696,180 +652,174 @@ async fn repetir_a_chave_do_inicio_nao_duplica_nem_depois_de_terminar() {
             "abrir-visita",
         )
         .await;
-    assert_eq!(status, StatusCode::OK, "{depois}");
-    assert_eq!(depois["id"], primeira["id"]);
+    assert_eq!(status, StatusCode::OK, "{after}");
+    assert_eq!(after["id"], first["id"]);
     assert_eq!(
-        c.quantas_execucoes(&b.org, ficha),
+        c.count_executions(&b.org, ficha),
         1,
         "nenhuma execução nova"
     );
 }
 
 #[tokio::test]
-async fn atendente_confirma_o_agente_completa_e_o_atendente_conclui() {
-    let c = Cenario::novo("criterio-auto").await;
+async fn attendant_confirms_agent_completes_and_attendant_concludes() {
+    let c = Scenario::new("criterio-auto").await;
     let b = base(&c, "criterio-auto").await;
-    let ficha = c.ficha_avulsa(&b.org, &b.agente);
-    let versao = c.versao_da_ficha(&b.org, ficha);
-    let (_, aberta) = c
-        .iniciar(&b.org, &b.token, ficha, Some(versao), b.fluxo, "abrir")
+    let ficha = c.standalone_case(&b.org, &b.agente);
+    let versao = c.case_version(&b.org, ficha);
+    let (_, opened) = c
+        .start_flow(&b.org, &b.token, ficha, Some(versao), b.fluxo, "abrir")
         .await;
-    let run = aberta["id"].as_str().expect("id").to_owned();
+    let run = opened["id"].as_str().expect("id").to_owned();
 
-    // O atendente confirma primeiro: a etapa não avança sozinha (o agente também age ali).
-    let (status, parcial) = c
+    let (status, partial) = c
         .acao(
             &b.org,
             &b.token,
             ficha,
             &run,
-            Some(c.execucao(&b.org, &run).version),
+            Some(c.execution(&b.org, &run).version),
             "confirmar",
             json!({}),
             "atendente-confirma",
         )
         .await;
-    assert_eq!(status, StatusCode::OK, "{parcial}");
-    assert_eq!(parcial["no_atual"], json!("coleta"), "{parcial}");
+    assert_eq!(status, StatusCode::OK, "{partial}");
+    assert_eq!(partial["no_atual"], json!("coleta"), "{partial}");
     assert_eq!(
-        parcial["etapas"][0]["status"],
+        partial["etapas"][0]["status"],
         json!("parcial"),
-        "{parcial}"
+        "{partial}"
     );
 
-    // O agente registra o nome: agora os dois agiram e a etapa avança para a revisão.
-    c.agente_age(
+    c.agent_acts(
         &b.org,
         &run,
         "registrar",
         json!({ "nome": "Ana Teste" }),
         "agente-registra",
     );
-    assert_eq!(c.execucao(&b.org, &run).no_atual, "revisao");
+    assert_eq!(c.execution(&b.org, &run).no_atual, "revisao");
 
-    // O atendente conclui: a execução termina com o resultado do fim.
-    let (status, concluida) = c
+    let (status, completed) = c
         .acao(
             &b.org,
             &b.token,
             ficha,
             &run,
-            Some(c.execucao(&b.org, &run).version),
+            Some(c.execution(&b.org, &run).version),
             "concluir",
             json!({}),
             "atendente-conclui",
         )
         .await;
-    assert_eq!(status, StatusCode::OK, "{concluida}");
-    assert_eq!(concluida["status"], json!("concluida"), "{concluida}");
-    assert_eq!(concluida["resultado"], json!("Agendado"));
+    assert_eq!(status, StatusCode::OK, "{completed}");
+    assert_eq!(completed["status"], json!("concluida"), "{completed}");
+    assert_eq!(completed["resultado"], json!("Agendado"));
 }
 
 #[tokio::test]
-async fn corrida_atendente_com_agente_da_412_e_nao_grava_nada() {
-    let c = Cenario::novo("corrida").await;
+async fn attendant_agent_race_returns_412_and_writes_nothing() {
+    let c = Scenario::new("corrida").await;
     let b = base(&c, "corrida").await;
-    let ficha = c.ficha_avulsa(&b.org, &b.agente);
-    let versao = c.versao_da_ficha(&b.org, ficha);
-    let (_, aberta) = c
-        .iniciar(&b.org, &b.token, ficha, Some(versao), b.fluxo, "abrir")
+    let ficha = c.standalone_case(&b.org, &b.agente);
+    let versao = c.case_version(&b.org, ficha);
+    let (_, opened) = c
+        .start_flow(&b.org, &b.token, ficha, Some(versao), b.fluxo, "abrir")
         .await;
-    let run = aberta["id"].as_str().expect("id").to_owned();
-    let versao_lida = c.execucao(&b.org, &run).version;
+    let run = opened["id"].as_str().expect("id").to_owned();
+    let read_version = c.execution(&b.org, &run).version;
 
-    // O agente grava primeiro: a versão que o atendente leu ficou velha.
-    c.agente_age(
+    c.agent_acts(
         &b.org,
         &run,
         "registrar",
         json!({ "nome": "Bia Teste" }),
         "agente-primeiro",
     );
-    let eventos = c.quantos_eventos(&b.org, ficha);
+    let events = c.count_events(&b.org, ficha);
 
-    let (status, corpo) = c
+    let (status, body) = c
         .acao(
             &b.org,
             &b.token,
             ficha,
             &run,
-            Some(versao_lida),
+            Some(read_version),
             "confirmar",
             json!({}),
             "atendente-atrasado",
         )
         .await;
-    assert_eq!(status, StatusCode::PRECONDITION_FAILED, "{corpo}");
-    assert_eq!(codigo(&corpo), "version_conflict");
+    assert_eq!(status, StatusCode::PRECONDITION_FAILED, "{body}");
+    assert_eq!(code(&body), "version_conflict");
     assert_eq!(
-        c.quantos_eventos(&b.org, ficha),
-        eventos,
+        c.count_events(&b.org, ficha),
+        events,
         "a recusa não gravou evento"
     );
-    // Com o agente sozinho a etapa não avança: o critério `auto` também espera o atendente.
-    assert_eq!(c.execucao(&b.org, &run).no_atual, "coleta");
+    assert_eq!(c.execution(&b.org, &run).no_atual, "coleta");
 }
 
 #[tokio::test]
-async fn repetir_a_chave_da_acao_devolve_o_mesmo_sem_evento_novo() {
-    let c = Cenario::novo("acao-repetida").await;
+async fn repeating_action_key_returns_same_without_new_event() {
+    let c = Scenario::new("acao-repetida").await;
     let b = base(&c, "acao-repetida").await;
-    let ficha = c.ficha_avulsa(&b.org, &b.agente);
-    let versao = c.versao_da_ficha(&b.org, ficha);
-    let (_, aberta) = c
-        .iniciar(&b.org, &b.token, ficha, Some(versao), b.fluxo, "abrir")
+    let ficha = c.standalone_case(&b.org, &b.agente);
+    let versao = c.case_version(&b.org, ficha);
+    let (_, opened) = c
+        .start_flow(&b.org, &b.token, ficha, Some(versao), b.fluxo, "abrir")
         .await;
-    let run = aberta["id"].as_str().expect("id").to_owned();
-    let versao_lida = c.execucao(&b.org, &run).version;
+    let run = opened["id"].as_str().expect("id").to_owned();
+    let read_version = c.execution(&b.org, &run).version;
 
-    let (status, primeira) = c
+    let (status, first) = c
         .acao(
             &b.org,
             &b.token,
             ficha,
             &run,
-            Some(versao_lida),
+            Some(read_version),
             "confirmar",
             json!({}),
             "confirma-uma-vez",
         )
         .await;
-    assert_eq!(status, StatusCode::OK, "{primeira}");
-    let eventos = c.quantos_eventos(&b.org, ficha);
-    let versao_depois = c.execucao(&b.org, &run).version;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    let events = c.count_events(&b.org, ficha);
+    let version_after = c.execution(&b.org, &run).version;
 
-    // Reenvio da mesma chave com a versão antiga (queda de rede no meio): mesmo desfecho.
-    let (status, repetida) = c
+    let (status, repeated) = c
         .acao(
             &b.org,
             &b.token,
             ficha,
             &run,
-            Some(versao_lida),
+            Some(read_version),
             "confirmar",
             json!({}),
             "confirma-uma-vez",
         )
         .await;
-    assert_eq!(status, StatusCode::OK, "{repetida}");
-    assert_eq!(repetida["repetida"], json!(true));
-    assert_eq!(c.quantos_eventos(&b.org, ficha), eventos, "sem evento novo");
+    assert_eq!(status, StatusCode::OK, "{repeated}");
+    assert_eq!(repeated["repetida"], json!(true));
+    assert_eq!(c.count_events(&b.org, ficha), events, "sem evento novo");
     assert_eq!(
-        c.execucao(&b.org, &run).version,
-        versao_depois,
+        c.execution(&b.org, &run).version,
+        version_after,
         "versão não andou"
     );
 }
 
 #[tokio::test]
-async fn repetir_a_abertura_depois_de_fechar_a_ficha_devolve_a_mesma() {
-    let c = Cenario::novo("inicio-depois-fechar").await;
+async fn repeating_open_after_closing_case_returns_same() {
+    let c = Scenario::new("inicio-depois-fechar").await;
     let b = base(&c, "inicio-depois-fechar").await;
-    let ficha = c.ficha_avulsa(&b.org, &b.agente);
-    let versao = c.versao_da_ficha(&b.org, ficha);
+    let ficha = c.standalone_case(&b.org, &b.agente);
+    let versao = c.case_version(&b.org, ficha);
 
-    let (status, primeira) = c
-        .iniciar(
+    let (status, first) = c
+        .start_flow(
             &b.org,
             &b.token,
             ficha,
@@ -878,16 +828,14 @@ async fn repetir_a_abertura_depois_de_fechar_a_ficha_devolve_a_mesma() {
             "abrir-visita",
         )
         .await;
-    assert_eq!(status, StatusCode::CREATED, "{primeira}");
+    assert_eq!(status, StatusCode::CREATED, "{first}");
 
-    // Fecha a Ficha: a execução ativa é abandonada pelo fechamento.
-    let (status, corpo) = c.fechar(&b.org, &b.token, ficha, Some(versao)).await;
-    assert_eq!(status, StatusCode::OK, "{corpo}");
-    let eventos = c.quantos_eventos(&b.org, ficha);
+    let (status, body) = c.close(&b.org, &b.token, ficha, Some(versao)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let events = c.count_events(&b.org, ficha);
 
-    // Reenvio com a mesma chave e com o If-Match de antes: devolve a primeira execução, sem nada novo.
-    let (status, repetida) = c
-        .iniciar(
+    let (status, repeated) = c
+        .start_flow(
             &b.org,
             &b.token,
             ficha,
@@ -896,15 +844,14 @@ async fn repetir_a_abertura_depois_de_fechar_a_ficha_devolve_a_mesma() {
             "abrir-visita",
         )
         .await;
-    assert_eq!(status, StatusCode::OK, "{repetida}");
-    assert_eq!(repetida["id"], primeira["id"]);
-    assert_eq!(repetida["repetida"], json!(true));
-    assert_eq!(c.quantas_execucoes(&b.org, ficha), 1);
-    assert_eq!(c.quantos_eventos(&b.org, ficha), eventos, "sem evento novo");
+    assert_eq!(status, StatusCode::OK, "{repeated}");
+    assert_eq!(repeated["id"], first["id"]);
+    assert_eq!(repeated["repetida"], json!(true));
+    assert_eq!(c.count_executions(&b.org, ficha), 1);
+    assert_eq!(c.count_events(&b.org, ficha), events, "sem evento novo");
 
-    // Chave nova numa Ficha fechada continua recusada com 409.
-    let (status, corpo) = c
-        .iniciar(
+    let (status, body) = c
+        .start_flow(
             &b.org,
             &b.token,
             ficha,
@@ -913,243 +860,242 @@ async fn repetir_a_abertura_depois_de_fechar_a_ficha_devolve_a_mesma() {
             "outra-abertura",
         )
         .await;
-    assert_eq!(status, StatusCode::CONFLICT, "{corpo}");
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
 }
 
 #[tokio::test]
-async fn acao_restrita_ao_agente_chamada_pelo_atendente_da_409() {
-    let c = Cenario::novo("acao-restrita").await;
+async fn agent_only_action_called_by_attendant_returns_409() {
+    let c = Scenario::new("acao-restrita").await;
     let b = base(&c, "acao-restrita").await;
-    let ficha = c.ficha_avulsa(&b.org, &b.agente);
-    let versao = c.versao_da_ficha(&b.org, ficha);
-    let (_, aberta) = c
-        .iniciar(&b.org, &b.token, ficha, Some(versao), b.fluxo, "abrir")
+    let ficha = c.standalone_case(&b.org, &b.agente);
+    let versao = c.case_version(&b.org, ficha);
+    let (_, opened) = c
+        .start_flow(&b.org, &b.token, ficha, Some(versao), b.fluxo, "abrir")
         .await;
-    let run = aberta["id"].as_str().expect("id").to_owned();
-    let versao_lida = c.execucao(&b.org, &run).version;
+    let run = opened["id"].as_str().expect("id").to_owned();
+    let read_version = c.execution(&b.org, &run).version;
 
-    let (status, corpo) = c
+    let (status, body) = c
         .acao(
             &b.org,
             &b.token,
             ficha,
             &run,
-            Some(versao_lida),
+            Some(read_version),
             "registrar",
             json!({ "nome": "Carla Teste" }),
             "atendente-tenta-agente",
         )
         .await;
-    assert_eq!(status, StatusCode::CONFLICT, "{corpo}");
-    assert_eq!(codigo(&corpo), "acao_invalida");
-    assert_eq!(c.execucao(&b.org, &run).version, versao_lida, "nada mudou");
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(code(&body), "acao_invalida");
+    assert_eq!(
+        c.execution(&b.org, &run).version,
+        read_version,
+        "nada mudou"
+    );
 }
 
 #[tokio::test]
-async fn abandonar_grava_motivo_e_repetir_a_chave_nao_repete_o_evento() {
-    let c = Cenario::novo("abandono").await;
+async fn abandon_stores_reason_and_repeating_key_does_not_repeat_event() {
+    let c = Scenario::new("abandono").await;
     let b = base(&c, "abandono").await;
-    let ficha = c.ficha_avulsa(&b.org, &b.agente);
-    let versao = c.versao_da_ficha(&b.org, ficha);
-    let (_, aberta) = c
-        .iniciar(&b.org, &b.token, ficha, Some(versao), b.fluxo, "abrir")
+    let ficha = c.standalone_case(&b.org, &b.agente);
+    let versao = c.case_version(&b.org, ficha);
+    let (_, opened) = c
+        .start_flow(&b.org, &b.token, ficha, Some(versao), b.fluxo, "abrir")
         .await;
-    let run = aberta["id"].as_str().expect("id").to_owned();
-    let versao_lida = c.execucao(&b.org, &run).version;
+    let run = opened["id"].as_str().expect("id").to_owned();
+    let read_version = c.execution(&b.org, &run).version;
 
-    let (status, corpo) = c
-        .abandonar(
+    let (status, body) = c
+        .abandon(
             &b.org,
             &b.token,
             ficha,
             &run,
-            Some(versao_lida),
+            Some(read_version),
             "",
             "sem-motivo",
         )
         .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{corpo}");
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
 
-    let (status, corpo) = c
-        .abandonar(
+    let (status, body) = c
+        .abandon(
             &b.org,
             &b.token,
             ficha,
             &run,
-            Some(versao_lida),
+            Some(read_version),
             "cliente desistiu",
             "parar",
         )
         .await;
-    assert_eq!(status, StatusCode::OK, "{corpo}");
-    assert_eq!(corpo["status"], json!("abandonada"));
-    assert_eq!(corpo["motivo_fim"], json!("cliente desistiu"));
-    let eventos = c.quantos_eventos(&b.org, ficha);
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], json!("abandonada"));
+    assert_eq!(body["motivo_fim"], json!("cliente desistiu"));
+    let events = c.count_events(&b.org, ficha);
 
-    let (status, repetida) = c
-        .abandonar(
+    let (status, repeated) = c
+        .abandon(
             &b.org,
             &b.token,
             ficha,
             &run,
-            Some(versao_lida),
+            Some(read_version),
             "cliente desistiu",
             "parar",
         )
         .await;
-    assert_eq!(status, StatusCode::OK, "{repetida}");
-    assert_eq!(repetida["repetida"], json!(true));
-    assert_eq!(c.quantos_eventos(&b.org, ficha), eventos, "sem evento novo");
+    assert_eq!(status, StatusCode::OK, "{repeated}");
+    assert_eq!(repeated["repetida"], json!(true));
+    assert_eq!(c.count_events(&b.org, ficha), events, "sem evento novo");
 }
 
 #[tokio::test]
-async fn close_fecha_conversa_ficha_e_abandona_a_execucao() {
-    let c = Cenario::novo("close-conversa").await;
-    let org = c.criar_org("close-conversa").await;
-    let token = c.criar_token(&org).await;
-    let agente = c.criar_agente(&org, &token, "agente-close").await;
-    let (fluxo, _) = c.fluxo_liberado(&org, &agente, "agendar_close");
-    let (conversa, ficha) = c.ficha_com_conversa(&org, &agente);
-    let versao = c.versao_da_ficha(&org, ficha);
-    let (status, aberta) = c
-        .iniciar(&org, &token, ficha, Some(versao), fluxo, "abrir")
+async fn close_closes_conversation_case_and_abandons_execution() {
+    let c = Scenario::new("close-conversa").await;
+    let org = c.create_org("close-conversa").await;
+    let token = c.create_token(&org).await;
+    let agente = c.create_agent(&org, &token, "agente-close").await;
+    let (fluxo, _) = c.released_flow(&org, &agente, "agendar_close");
+    let (conversa, ficha) = c.case_with_conversation(&org, &agente);
+    let versao = c.case_version(&org, ficha);
+    let (status, opened) = c
+        .start_flow(&org, &token, ficha, Some(versao), fluxo, "abrir")
         .await;
-    assert_eq!(status, StatusCode::CREATED, "{aberta}");
-    let run = aberta["id"].as_str().expect("id").to_owned();
+    assert_eq!(status, StatusCode::CREATED, "{opened}");
+    let run = opened["id"].as_str().expect("id").to_owned();
 
-    // Versão velha da Ficha: `412`, nada fecha.
-    let (status, corpo) = c.fechar(&org, &token, ficha, Some(versao + 3)).await;
-    assert_eq!(status, StatusCode::PRECONDITION_FAILED, "{corpo}");
-    assert_eq!(c.execucao(&org, &run).status.as_text(), "ativa");
+    let (status, body) = c.close(&org, &token, ficha, Some(versao + 3)).await;
+    assert_eq!(status, StatusCode::PRECONDITION_FAILED, "{body}");
+    assert_eq!(c.execution(&org, &run).status.as_text(), "ativa");
 
-    let (status, corpo) = c.fechar(&org, &token, ficha, Some(versao)).await;
-    assert_eq!(status, StatusCode::OK, "{corpo}");
-    assert_eq!(corpo["status"], json!("closed"));
+    let (status, body) = c.close(&org, &token, ficha, Some(versao)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], json!("closed"));
 
-    let conversa_depois = c
+    let conversation_after = c
         .store
         .conversations()
         .get(parse_org(&org), conversa.id)
         .expect("lê a conversa");
-    assert_eq!(conversa_depois.status.as_text(), "closed");
-    let execucao = c.execucao(&org, &run);
-    assert_eq!(execucao.status.as_text(), "abandonada");
+    assert_eq!(conversation_after.status.as_text(), "closed");
+    let execution = c.execution(&org, &run);
+    assert_eq!(execution.status.as_text(), "abandonada");
     assert_eq!(
-        execucao.motivo_fim.as_deref(),
+        execution.motivo_fim.as_deref(),
         Some("atendimento_encerrado")
     );
 
-    // Fechar de novo recusa: `409`, sem evento novo.
-    let eventos = c.quantos_eventos(&org, ficha);
-    let (status, corpo) = c.fechar(&org, &token, ficha, Some(versao)).await;
-    assert_eq!(status, StatusCode::CONFLICT, "{corpo}");
-    assert_eq!(c.quantos_eventos(&org, ficha), eventos);
+    let events = c.count_events(&org, ficha);
+    let (status, body) = c.close(&org, &token, ficha, Some(versao)).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(c.count_events(&org, ficha), events);
 }
 
 #[tokio::test]
-async fn close_sem_conversa_fecha_so_a_ficha() {
-    let c = Cenario::novo("close-avulsa").await;
+async fn close_without_conversation_closes_only_case() {
+    let c = Scenario::new("close-avulsa").await;
     let b = base(&c, "close-avulsa").await;
-    let ficha = c.ficha_avulsa(&b.org, &b.agente);
-    let versao = c.versao_da_ficha(&b.org, ficha);
+    let ficha = c.standalone_case(&b.org, &b.agente);
+    let versao = c.case_version(&b.org, ficha);
 
-    let (status, corpo) = c.fechar(&b.org, &b.token, ficha, Some(versao + 3)).await;
-    assert_eq!(status, StatusCode::PRECONDITION_FAILED, "{corpo}");
+    let (status, body) = c.close(&b.org, &b.token, ficha, Some(versao + 3)).await;
+    assert_eq!(status, StatusCode::PRECONDITION_FAILED, "{body}");
 
-    let (status, corpo) = c.fechar(&b.org, &b.token, ficha, Some(versao)).await;
-    assert_eq!(status, StatusCode::OK, "{corpo}");
-    assert_eq!(corpo["status"], json!("closed"));
+    let (status, body) = c.close(&b.org, &b.token, ficha, Some(versao)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], json!("closed"));
     assert_eq!(
-        corpo["fechada_motivo"],
+        body["fechada_motivo"],
         json!("encerrada pelo administrador")
     );
 
-    let (status, corpo) = c.fechar(&b.org, &b.token, ficha, Some(versao)).await;
-    assert_eq!(status, StatusCode::CONFLICT, "{corpo}");
+    let (status, body) = c.close(&b.org, &b.token, ficha, Some(versao)).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
 }
 
 #[tokio::test]
-async fn isolamento_das_rotas_de_acao_por_org_e_por_ficha() {
-    let c = Cenario::novo("isolamento").await;
+async fn action_routes_isolated_by_org_and_case() {
+    let c = Scenario::new("isolamento").await;
     let a = base(&c, "iso-a").await;
     let b = base(&c, "iso-b").await;
-    let ficha_a = c.ficha_avulsa(&a.org, &a.agente);
-    let ficha_a2 = c.ficha_avulsa(&a.org, &a.agente);
-    let versao_a = c.versao_da_ficha(&a.org, ficha_a);
-    let (_, aberta) = c
-        .iniciar(&a.org, &a.token, ficha_a, Some(versao_a), a.fluxo, "abrir")
+    let case_a = c.standalone_case(&a.org, &a.agente);
+    let case_a2 = c.standalone_case(&a.org, &a.agente);
+    let version_a = c.case_version(&a.org, case_a);
+    let (_, opened) = c
+        .start_flow(&a.org, &a.token, case_a, Some(version_a), a.fluxo, "abrir")
         .await;
-    let run_a = aberta["id"].as_str().expect("id").to_owned();
-    let versao_exec = c.execucao(&a.org, &run_a).version;
+    let run_a = opened["id"].as_str().expect("id").to_owned();
+    let run_version = c.execution(&a.org, &run_a).version;
 
-    // Token da org B lendo a Ficha da org A: `404`, sem dizer que a Ficha existe.
-    let (status, corpo) = c
-        .iniciar(
+    let (status, body) = c
+        .start_flow(
             &b.org,
             &b.token,
-            ficha_a,
-            Some(versao_a),
+            case_a,
+            Some(version_a),
             a.fluxo,
             "outra-org",
         )
         .await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "{corpo}");
-    let (status, corpo) = c.fechar(&b.org, &b.token, ficha_a, Some(versao_a)).await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "{corpo}");
-    let (status, corpo) = c
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    let (status, body) = c.close(&b.org, &b.token, case_a, Some(version_a)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    let (status, body) = c
         .acao(
             &b.org,
             &b.token,
-            ficha_a,
+            case_a,
             &run_a,
-            Some(versao_exec),
+            Some(run_version),
             "confirmar",
             json!({}),
             "outra-org-acao",
         )
         .await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "{corpo}");
-    let (status, corpo) = c
-        .abandonar(
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    let (status, body) = c
+        .abandon(
             &b.org,
             &b.token,
-            ficha_a,
+            case_a,
             &run_a,
-            Some(versao_exec),
+            Some(run_version),
             "x",
             "outra-org-ab",
         )
         .await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "{corpo}");
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
 
-    // Token da org B no caminho da org A: `403`, como no resto da API.
-    let (status, corpo) = c
-        .iniciar(
+    let (status, body) = c
+        .start_flow(
             &a.org,
             &b.token,
-            ficha_a,
-            Some(versao_a),
+            case_a,
+            Some(version_a),
             a.fluxo,
             "caminho-alheio",
         )
         .await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "{corpo}");
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
 
-    // Mesma org, outra Ficha: a execução da Ficha A não age pela Ficha A2.
-    let versao_a2 = c.versao_da_ficha(&a.org, ficha_a2);
-    let (status, corpo) = c
+    let version_a2 = c.case_version(&a.org, case_a2);
+    let (status, body) = c
         .acao(
             &a.org,
             &a.token,
-            ficha_a2,
+            case_a2,
             &run_a,
-            Some(versao_exec),
+            Some(run_version),
             "confirmar",
             json!({}),
             "outra-ficha",
         )
         .await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "{corpo}");
-    assert_eq!(c.execucao(&a.org, &run_a).version, versao_exec);
-    let _ = versao_a2;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(c.execution(&a.org, &run_a).version, run_version);
+    let _ = version_a2;
 }
