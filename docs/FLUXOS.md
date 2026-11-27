@@ -384,6 +384,61 @@ marks the dependency as used, because the Rust `unused_dependencies` lint breaks
   and a resolution with `departamento_id = None`; publication stores the resolution and the runtime
   effect fails closed at execution time.
 
+### 8.8 Flow engine (`motor`)
+
+- The engine is **pure**: it takes the compiled IR and the execution state that came from the
+  database and returns the new state with the events the atomic write will store. There is no
+  database, clock, network or `async`; the time and the `version` belong to the caller. The same
+  input gives the same output, as many times as it runs.
+- It describes, it does not persist: transaction, `version`, isolation between the case and the
+  flow, event write, closing the conversation and closing the case are not its job. Reaching a
+  `fim(encerra_atendimento=True)` only **asks** for the close (`Resultado::encerra_atendimento`);
+  the caller closes in the same transaction. Delivering an effect is also not its job: it returns
+  `ProducedEffect` with the idempotency key, and the queue does the rest.
+- `execute_action` checks in this order: execution active → idempotency key already applied →
+  execution halted on a decision (resolved first) → current node is a step → the action exists in
+  the step (otherwise the error carries the list of valid ones) → the actor acts in this step →
+  the action is not restricted to another actor → every informed field exists with the right
+  type/option → every field of `exige` is filled → store the fields, decide the advance, produce
+  the effects and follow the destination. Any refusal leaves the state untouched; the exception is
+  a **defective** flow (decision cycle, jump cap, rule that does not evaluate), which returns `Ok`
+  with the execution marked `falha`, because the caller must persist that outcome.
+- The automatic advance is derived from the **actions**, never from the step's actor list: an
+  action restricted to an actor that leads forward (step or decision) requires that actor; an
+  unrestricted action requires nobody; an action that goes to `fim(...)` requires nobody and is
+  decisive (it reaches the outcome even with another actor pending); an actor that only appears in
+  the step list does not block the step; the client is never an action actor. While someone is
+  missing, the step stays `parcial` and `waiting` names who.
+- Each accepted mutation with an idempotency key stores a `Receipt` in the state. Repeating the
+  key returns `repeated = true` with the same outcome and **no** new event; in the database the
+  guarantee is the unique index on the idempotency key.
+- Effects come out in the declared order, with the text resolved and the key `node + index`
+  (`etapa:<id>/0`, `acao:<step>.<action>/0`), without the execution id. Two visits to the **same**
+  step (a flow that loops back) reuse the key, so its `ao_entrar` is not enqueued twice: one
+  message per effect, and a loop with `mensagem_ao_cliente` in `ao_entrar` reaches the customer
+  once.
+- Interpolation applies to text only: `{step.field}`, `{ficha.id}` and `{client.peer}`. A variable
+  that does not exist becomes empty text (the publish warning FLX59 says so), and an unmatched `{`
+  stays as it is. The `para` of `notificar_whatsapp` and the department of `encaminhar` are
+  identifiers and are not interpolated.
+- Field values are validated strictly against the declared type (JSON number, JSON boolean, one of
+  the declared option ids) and text is stored without the outer spaces. `null` means "not filled":
+  accepted in an optional field, refused in a required one. `exige` is checked **after** storing
+  this call's fields and together with what the step already had, so the agent may inform the data
+  in one call and ask for the action that requires it in the next.
+- Field errors come out in alphabetical order **on purpose**, not in map order: in the workspace
+  build `serde_json` is compiled with `preserve_order` (because of the server's `utoipa`), while
+  standalone it sorts by key. The message the agent reads cannot depend on which build ran.
+- Failure causes are classified. Cycle of decisions, jump cap and a rule that does not evaluate all
+  leave the execution `falha` with the reason in the state; only the failed rule sets
+  `rule_error`, which feeds the `poph_fluxos_erros_regra_total` metric (FX-40), because the database
+  mirror cannot tell the cause from the reason text.
+- Known limits: the ISO date check validates shape and ranges (month 1–12, day 1–31, hour/minute/
+  second), not the calendar (`2026-02-30` passes); `dados[step]` that is not an object is treated as
+  a step without fields (the engine neither fixes nor accuses data that is not its own); who may
+  abandon an execution (agent or attendant) is the caller's rule, and the engine only records who
+  did it.
+
 ## Medidas
 
 **Máquina:** Fedora 44, x86_64, AMD Ryzen 5 5600GT (6 núcleos, 12 threads), 32 GB de RAM.

@@ -754,11 +754,11 @@ async fn execution_active_not_question_judge() {
         .expect("há revisão publicada");
     let compiled = compile(SCRIPT, &Limites::default());
     let ir = compiled.ir().expect("compila");
-    let estado = poph_fluxos::motor::iniciar(ir).expect("estado inicial");
+    let estado = poph_fluxos::motor::start(ir).expect("estado inicial");
     let evaluator = poph_fluxos::RuleEvaluator::without_functions();
-    let context = poph_fluxos::motor::Contexto::novo(&evaluator);
+    let context = poph_fluxos::motor::Context::new(&evaluator);
     let effects =
-        poph_fluxos::motor::efeitos_de_entrada(ir, estado.no_atual.id(), &estado.dados, &context)
+        poph_fluxos::motor::entry_effects(ir, estado.no_atual.id(), &estado.dados, &context)
             .expect("efeitos de entrada")
             .iter()
             .map(poph_agent::flows_transition::effect_of_transition)

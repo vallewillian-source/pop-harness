@@ -28,7 +28,7 @@ use std::time::{Duration, Instant, SystemTime};
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString};
 use poph_fluxos::ir::Destination;
-use poph_fluxos::motor::{Contexto, Estado as EstadoMotor, executar_acao};
+use poph_fluxos::motor::{Context, Estado as EstadoMotor, execute_action};
 use poph_fluxos::{Ir, Limites, RuleEvaluator, compile};
 use poph_server::Estado;
 use poph_server::fluxos_transicao::transicao_do_motor;
@@ -401,18 +401,18 @@ impl Cenario {
                 id: execucao.no_atual.clone(),
             },
             dados: serde_json::from_str(&execucao.dados_json).expect("dados da execução"),
-            atores_que_agiram,
+            actors_who_acted: atores_que_agiram,
             resultado: None,
             motivo: None,
             keys: BTreeMap::new(),
         };
         let avaliador = RuleEvaluator::without_functions();
         let ficha_texto = execucao.ficha_id.to_string();
-        let contexto = Contexto::novo(&avaliador)
-            .com_ficha(&ficha_texto)
-            .com_cliente("cliente-ficticio");
+        let contexto = Context::new(&avaliador)
+            .with_case(&ficha_texto)
+            .with_client("cliente-ficticio");
         let campos = campos.as_object().cloned().unwrap_or_default();
-        let resultado = executar_acao(
+        let resultado = execute_action(
             &ir,
             &estado,
             acao,

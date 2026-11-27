@@ -1,4 +1,4 @@
-use poph_fluxos::EfeitoProduzido;
+use poph_fluxos::ProducedEffect;
 use poph_fluxos::motor::{Estado as StateEngine, Resultado as ResultEngine};
 use poph_store::{ExecutionState, FlowTransition, TransitionEffect, TransitionEvent};
 
@@ -7,7 +7,7 @@ pub fn state_for_database(estado: &StateEngine) -> ExecutionState {
         status: estado.status,
         no_atual: estado.no_atual.id().to_owned(),
         dados_json: serde_json::Value::Object(estado.dados.clone()).to_string(),
-        acting_actors: estado.atores_que_agiram.clone(),
+        acting_actors: estado.actors_who_acted.clone(),
         result: estado.resultado.clone(),
         reason: estado.motivo.clone(),
     }
@@ -15,25 +15,25 @@ pub fn state_for_database(estado: &StateEngine) -> ExecutionState {
 
 pub fn transition_engine(resultado: &ResultEngine) -> FlowTransition {
     FlowTransition {
-        new_state: state_for_database(&resultado.novo_estado),
-        events: resultado.eventos.iter().map(event_for_database).collect(),
-        effects: resultado.efeitos.iter().map(effect_of_transition).collect(),
-        closes_service: resultado.encerra_atendimento,
-        repeated: resultado.repetida,
-        rule_error: resultado.erro_de_regra,
+        new_state: state_for_database(&resultado.new_state),
+        events: resultado.events.iter().map(event_for_database).collect(),
+        effects: resultado.effects.iter().map(effect_of_transition).collect(),
+        closes_service: resultado.ends_service,
+        repeated: resultado.repeated,
+        rule_error: resultado.rule_error,
     }
 }
 
 fn event_for_database(evento: &poph_fluxos::motor::Evento) -> TransitionEvent {
     TransitionEvent {
         tipo: evento.tipo,
-        ator_tipo: evento.ator,
+        ator_tipo: evento.actor,
         payload_json: evento.payload.to_string(),
     }
 }
 
-pub fn effect_of_transition(produced: &EfeitoProduzido) -> TransitionEffect {
-    let payload = match &produced.efeito {
+pub fn effect_of_transition(produced: &ProducedEffect) -> TransitionEffect {
+    let payload = match &produced.effect {
         poph_fluxos::ir::Effect::MessageToCustomer { texto } => {
             serde_json::json!({ "texto": texto })
         }
@@ -57,11 +57,11 @@ mod tests {
 
     #[test]
     fn payload_of_each_kind_of_effect() {
-        let produced = |effect: poph_fluxos::ir::Effect| EfeitoProduzido {
+        let produced = |effect: poph_fluxos::ir::Effect| ProducedEffect {
             chave: "etapa:coleta/0".to_owned(),
             no: "etapa:coleta".to_owned(),
-            indice: 0,
-            efeito: effect,
+            index: 0,
+            effect,
         };
         let message_effect =
             effect_of_transition(&produced(poph_fluxos::ir::Effect::MessageToCustomer {

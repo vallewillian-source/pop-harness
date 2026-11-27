@@ -8,7 +8,7 @@
 use poph_fluxos::ir::{
     Acao, Campo, Decisao, Destination, Effect, Etapa, Fim, Fluxo, Gatilho, Ir, Rule,
 };
-use poph_fluxos::motor::{Campos, Contexto, abandonar, efeitos_de_entrada, executar_acao, iniciar};
+use poph_fluxos::motor::{Campos, Context, abandon, entry_effects, execute_action, start};
 use poph_fluxos::regras::{Dados, RuleEvaluator};
 use poph_types::{ActionActor, DomainError, ExecutionStatus, FieldKind, RecordEventKind};
 use serde_json::{Value as Json, json};
@@ -132,7 +132,7 @@ fn sem_campos() -> Campos {
 }
 
 fn tipos(resultado: &poph_fluxos::motor::Resultado) -> Vec<RecordEventKind> {
-    resultado.eventos.iter().map(|evento| evento.tipo).collect()
+    resultado.events.iter().map(|evento| evento.tipo).collect()
 }
 
 fn motivo(erro: &DomainError) -> String {
@@ -174,21 +174,21 @@ fn fluxo_com_decisao(entao: Destination, senao: Destination) -> Ir {
 #[test]
 fn decisao_vai_para_o_ramo_verdadeiro() {
     let ir = fluxo_com_decisao(vai_para("urgente"), vai_para("normal"));
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
     let avaliador = RuleEvaluator::without_functions();
 
-    let resultado = executar_acao(
+    let resultado = execute_action(
         &ir,
         &estado,
         "ir",
         &campos(json!({ "marca": "urgente" })),
         ActionActor::Agent,
         Some("chave-1"),
-        &Contexto::novo(&avaliador),
+        &Context::new(&avaliador),
     )
     .expect("a ação é válida");
 
-    assert_eq!(resultado.novo_estado.no_atual, vai_para("urgente"));
+    assert_eq!(resultado.new_state.no_atual, vai_para("urgente"));
     assert_eq!(
         tipos(&resultado),
         vec![
@@ -201,7 +201,7 @@ fn decisao_vai_para_o_ramo_verdadeiro() {
         "a decisão é resolvida na mesma passagem e a etapa de destino é a que entra"
     );
     assert_eq!(
-        resultado.eventos[3].payload,
+        resultado.events[3].payload,
         json!({
             "decisao": "escolher",
             "resultado": true,
@@ -214,23 +214,23 @@ fn decisao_vai_para_o_ramo_verdadeiro() {
 #[test]
 fn decisao_vai_para_o_ramo_falso() {
     let ir = fluxo_com_decisao(vai_para("urgente"), vai_para("normal"));
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
     let avaliador = RuleEvaluator::without_functions();
 
-    let resultado = executar_acao(
+    let resultado = execute_action(
         &ir,
         &estado,
         "ir",
         &campos(json!({ "marca": "calmo" })),
         ActionActor::Agent,
         None,
-        &Contexto::novo(&avaliador),
+        &Context::new(&avaliador),
     )
     .expect("a ação é válida");
 
-    assert_eq!(resultado.novo_estado.no_atual, vai_para("normal"));
+    assert_eq!(resultado.new_state.no_atual, vai_para("normal"));
     assert_eq!(
-        resultado.eventos[3].payload,
+        resultado.events[3].payload,
         json!({ "decisao": "escolher", "resultado": false, "destino": vai_para("normal") })
     );
 }
@@ -257,23 +257,23 @@ fn duas_decisoes_encadeadas_chegam_a_etapa_em_uma_passagem() {
             decisao_sempre("segunda", vai_para("chegada"), vai_para("chegada")),
         ],
     );
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
     let avaliador = RuleEvaluator::without_functions();
 
-    let resultado = executar_acao(
+    let resultado = execute_action(
         &ir,
         &estado,
         "ir",
         &sem_campos(),
         ActionActor::Agent,
         None,
-        &Contexto::novo(&avaliador),
+        &Context::new(&avaliador),
     )
     .expect("a ação é válida");
 
-    assert_eq!(resultado.novo_estado.no_atual, vai_para("chegada"));
+    assert_eq!(resultado.new_state.no_atual, vai_para("chegada"));
     let resolvidas: Vec<&Json> = resultado
-        .eventos
+        .events
         .iter()
         .filter(|evento| evento.tipo == RecordEventKind::DecisionResolved)
         .map(|evento| &evento.payload)
@@ -301,27 +301,27 @@ fn ciclo_de_decisoes_para_a_execucao_em_falha() {
             decisao_sempre("b", vai_para_decisao("a"), vai_para_decisao("a")),
         ],
     );
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
     let avaliador = RuleEvaluator::without_functions();
 
-    let resultado = executar_acao(
+    let resultado = execute_action(
         &ir,
         &estado,
         "ir",
         &sem_campos(),
         ActionActor::Agent,
         None,
-        &Contexto::novo(&avaliador),
+        &Context::new(&avaliador),
     )
     .expect("a passagem volta com o desfecho, não como erro da chamada");
 
     assert_eq!(
-        resultado.novo_estado.status,
+        resultado.new_state.status,
         ExecutionStatus::Failed,
         "ciclo de decisões põe a execução em falha"
     );
     let gravado = resultado
-        .novo_estado
+        .new_state
         .motivo
         .clone()
         .expect("o motivo fica no estado");
@@ -336,11 +336,11 @@ fn ciclo_de_decisoes_para_a_execucao_em_falha() {
         "o último evento é a falha"
     );
     assert_eq!(
-        resultado.eventos.last().expect("evento").payload["motivo"],
+        resultado.events.last().expect("evento").payload["motivo"],
         json!(gravado),
         "o evento carrega o mesmo motivo"
     );
-    assert!(resultado.efeitos.is_empty());
+    assert!(resultado.effects.is_empty());
 }
 
 #[test]
@@ -378,21 +378,21 @@ fn dez_saltos_passam_e_onze_derrubam_a_execucao() {
 
     // O teto é 10 saltos: dez decisões encadeadas chegam na etapa.
     let ir = cadeia(10);
-    let estado = iniciar(&ir).expect("início");
-    let dez = executar_acao(
+    let estado = start(&ir).expect("início");
+    let dez = execute_action(
         &ir,
         &estado,
         "ir",
         &sem_campos(),
         ActionActor::Agent,
         None,
-        &Contexto::novo(&avaliador),
+        &Context::new(&avaliador),
     )
     .expect("dez saltos cabem no teto");
-    assert_eq!(dez.novo_estado.status, ExecutionStatus::Active);
-    assert_eq!(dez.novo_estado.no_atual, vai_para("chegada"));
+    assert_eq!(dez.new_state.status, ExecutionStatus::Active);
+    assert_eq!(dez.new_state.no_atual, vai_para("chegada"));
     assert_eq!(
-        dez.eventos
+        dez.events
             .iter()
             .filter(|evento| evento.tipo == RecordEventKind::DecisionResolved)
             .count(),
@@ -401,22 +401,22 @@ fn dez_saltos_passam_e_onze_derrubam_a_execucao() {
 
     // Onze passam do teto e a execução falha, com o limite no motivo.
     let ir = cadeia(11);
-    let estado = iniciar(&ir).expect("início");
-    let onze = executar_acao(
+    let estado = start(&ir).expect("início");
+    let onze = execute_action(
         &ir,
         &estado,
         "ir",
         &sem_campos(),
         ActionActor::Agent,
         None,
-        &Contexto::novo(&avaliador),
+        &Context::new(&avaliador),
     )
     .expect("a passagem volta com o desfecho");
-    assert_eq!(onze.novo_estado.status, ExecutionStatus::Failed);
-    let gravado = onze.novo_estado.motivo.clone().expect("motivo");
+    assert_eq!(onze.new_state.status, ExecutionStatus::Failed);
+    let gravado = onze.new_state.motivo.clone().expect("motivo");
     assert!(gravado.contains("10 decisões encadeadas"), "{gravado}");
     assert!(
-        onze.efeitos.is_empty(),
+        onze.effects.is_empty(),
         "a falha não enfileira efeito nenhum"
     );
 }
@@ -441,52 +441,49 @@ fn o_teto_de_saltos_vem_do_contexto() {
             decisao_sempre("d3", vai_para("chegada"), vai_para("chegada")),
         ],
     );
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
     let avaliador = RuleEvaluator::without_functions();
 
-    let com_teto_de_tres = executar_acao(
+    let com_teto_de_tres = execute_action(
         &ir,
         &estado,
         "ir",
         &sem_campos(),
         ActionActor::Agent,
         None,
-        &Contexto::novo(&avaliador).com_limite_de_saltos(3),
+        &Context::new(&avaliador).with_jump_limit(3),
     )
     .expect("a passagem volta com o desfecho");
-    assert_eq!(com_teto_de_tres.novo_estado.status, ExecutionStatus::Failed);
+    assert_eq!(com_teto_de_tres.new_state.status, ExecutionStatus::Failed);
 
-    let com_teto_de_quatro = executar_acao(
+    let com_teto_de_quatro = execute_action(
         &ir,
         &estado,
         "ir",
         &sem_campos(),
         ActionActor::Agent,
         None,
-        &Contexto::novo(&avaliador).com_limite_de_saltos(4),
+        &Context::new(&avaliador).with_jump_limit(4),
     )
     .expect("a passagem volta com o desfecho");
-    assert_eq!(
-        com_teto_de_quatro.novo_estado.status,
-        ExecutionStatus::Active
-    );
-    assert_eq!(com_teto_de_quatro.novo_estado.no_atual, vai_para("chegada"));
+    assert_eq!(com_teto_de_quatro.new_state.status, ExecutionStatus::Active);
+    assert_eq!(com_teto_de_quatro.new_state.no_atual, vai_para("chegada"));
 }
 
 #[test]
 fn decisao_que_aponta_para_etapa_inexistente_e_ir_divergente() {
     let ir = fluxo_com_decisao(vai_para("fantasma"), vai_para("normal"));
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
     let avaliador = RuleEvaluator::without_functions();
 
-    let erro = executar_acao(
+    let erro = execute_action(
         &ir,
         &estado,
         "ir",
         &campos(json!({ "marca": "urgente" })),
         ActionActor::Agent,
         None,
-        &Contexto::novo(&avaliador),
+        &Context::new(&avaliador),
     )
     .expect_err("o destino do ramo não existe na estrutura");
     assert!(matches!(erro, DomainError::IrDivergent { .. }), "{erro:?}");
@@ -521,25 +518,25 @@ fn regra_que_nao_avalia_para_a_execucao_em_falha() {
             vai_para("normal"),
         )],
     );
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
     let avaliador = RuleEvaluator::without_functions();
 
-    let resultado = executar_acao(
+    let resultado = execute_action(
         &ir,
         &estado,
         "ir",
         &sem_campos(),
         ActionActor::Agent,
         None,
-        &Contexto::novo(&avaliador),
+        &Context::new(&avaliador),
     )
     .expect("a passagem volta com o desfecho");
 
-    assert_eq!(resultado.novo_estado.status, ExecutionStatus::Failed);
-    let gravado = resultado.novo_estado.motivo.clone().expect("motivo");
+    assert_eq!(resultado.new_state.status, ExecutionStatus::Failed);
+    let gravado = resultado.new_state.motivo.clone().expect("motivo");
     assert!(gravado.contains("regra inválida"), "{gravado}");
     assert_eq!(
-        resultado.novo_estado.no_atual,
+        resultado.new_state.no_atual,
         vai_para_decisao("escolher"),
         "a execução para na decisão que não pôde avaliar"
     );
@@ -567,27 +564,27 @@ fn fim_sem_encerrar_atendimento_conclui_a_execucao() {
         )],
         Vec::new(),
     );
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
     let avaliador = RuleEvaluator::without_functions();
 
-    let resultado = executar_acao(
+    let resultado = execute_action(
         &ir,
         &estado,
         "concluir",
         &sem_campos(),
         ActionActor::Agent,
         None,
-        &Contexto::novo(&avaliador),
+        &Context::new(&avaliador),
     )
     .expect("a ação é válida");
 
-    assert_eq!(resultado.novo_estado.status, ExecutionStatus::Completed);
+    assert_eq!(resultado.new_state.status, ExecutionStatus::Completed);
     assert_eq!(
-        resultado.novo_estado.resultado,
+        resultado.new_state.resultado,
         Some("Resultado de concluido".to_owned())
     );
     assert!(
-        !resultado.encerra_atendimento,
+        !resultado.ends_service,
         "sem `encerra_atendimento`, a conversa continua com o agente"
     );
     assert_eq!(
@@ -599,7 +596,7 @@ fn fim_sem_encerrar_atendimento_conclui_a_execucao() {
         ]
     );
     assert_eq!(
-        resultado.eventos[2].payload,
+        resultado.events[2].payload,
         json!({
             "fim": "concluido",
             "resultado": "Resultado de concluido",
@@ -624,27 +621,27 @@ fn fim_com_encerra_atendimento_pede_o_encerramento() {
         )],
         Vec::new(),
     );
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
     let avaliador = RuleEvaluator::without_functions();
 
-    let resultado = executar_acao(
+    let resultado = execute_action(
         &ir,
         &estado,
         "concluir",
         &sem_campos(),
         ActionActor::Agent,
         None,
-        &Contexto::novo(&avaliador),
+        &Context::new(&avaliador),
     )
     .expect("a ação é válida");
 
-    assert_eq!(resultado.novo_estado.status, ExecutionStatus::Completed);
+    assert_eq!(resultado.new_state.status, ExecutionStatus::Completed);
     assert!(
-        resultado.encerra_atendimento,
+        resultado.ends_service,
         "o fim pede o encerramento; quem fecha é o chamador"
     );
     assert_eq!(
-        resultado.eventos.last().expect("evento").payload["encerra_atendimento"],
+        resultado.events.last().expect("evento").payload["encerra_atendimento"],
         json!(true)
     );
 }
@@ -652,22 +649,22 @@ fn fim_com_encerra_atendimento_pede_o_encerramento() {
 #[test]
 fn decisao_que_desemboca_num_fim_tambem_conclui() {
     let ir = fluxo_com_decisao(fim("concluido", true), vai_para("normal"));
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
     let avaliador = RuleEvaluator::without_functions();
 
-    let resultado = executar_acao(
+    let resultado = execute_action(
         &ir,
         &estado,
         "ir",
         &campos(json!({ "marca": "urgente" })),
         ActionActor::Agent,
         None,
-        &Contexto::novo(&avaliador),
+        &Context::new(&avaliador),
     )
     .expect("a ação é válida");
 
-    assert_eq!(resultado.novo_estado.status, ExecutionStatus::Completed);
-    assert!(resultado.encerra_atendimento);
+    assert_eq!(resultado.new_state.status, ExecutionStatus::Completed);
+    assert!(resultado.ends_service);
     assert_eq!(
         tipos(&resultado),
         vec![
@@ -725,13 +722,13 @@ fn fluxo_com_efeitos() -> Ir {
 #[test]
 fn efeitos_saem_na_ordem_da_ia_com_o_texto_resolvido() {
     let ir = fluxo_com_efeitos();
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
     let avaliador = RuleEvaluator::without_functions();
-    let contexto = Contexto::novo(&avaliador)
-        .com_ficha("ficha-1")
-        .com_cliente("5521900000000");
+    let contexto = Context::new(&avaliador)
+        .with_case("ficha-1")
+        .with_client("5521900000000");
 
-    let resultado = executar_acao(
+    let resultado = execute_action(
         &ir,
         &estado,
         "confirmar",
@@ -742,10 +739,10 @@ fn efeitos_saem_na_ordem_da_ia_com_o_texto_resolvido() {
     )
     .expect("a ação é válida");
 
-    assert_eq!(resultado.efeitos.len(), 4, "três da ação e um da entrada");
+    assert_eq!(resultado.effects.len(), 4, "três da ação e um da entrada");
     assert_eq!(
         resultado
-            .efeitos
+            .effects
             .iter()
             .map(|efeito| efeito.chave.as_str())
             .collect::<Vec<_>>(),
@@ -758,28 +755,28 @@ fn efeitos_saem_na_ordem_da_ia_com_o_texto_resolvido() {
         "a ordem é a declarada, e a chave diz o nó e a posição"
     );
     assert_eq!(
-        resultado.efeitos[0].efeito,
+        resultado.effects[0].effect,
         Effect::MessageToCustomer {
             texto: "Pedido para Rua das Flores, 10, do contato 5521900000000".to_owned()
         }
     );
     assert_eq!(
-        resultado.efeitos[1].efeito,
+        resultado.effects[1].effect,
         Effect::NotifyWhatsApp {
             para: "5521999990000".to_owned(),
             mensagem: "Ficha ficha-1: Rua das Flores, 10".to_owned()
         }
     );
     assert_eq!(
-        resultado.efeitos[2].efeito,
+        resultado.effects[2].effect,
         Effect::Encaminhar {
             departamento: "Logística".to_owned()
         }
     );
-    assert_eq!(resultado.efeitos[3].tipo(), "mensagem_ao_cliente");
+    assert_eq!(resultado.effects[3].tipo(), "mensagem_ao_cliente");
     assert_eq!(
         resultado
-            .eventos
+            .events
             .iter()
             .filter(|evento| evento.tipo == RecordEventKind::EffectCreated)
             .count(),
@@ -791,12 +788,12 @@ fn efeitos_saem_na_ordem_da_ia_com_o_texto_resolvido() {
 #[test]
 fn a_chave_do_efeito_e_estavel_para_a_mesma_entrada() {
     let ir = fluxo_com_efeitos();
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
     let avaliador = RuleEvaluator::without_functions();
-    let contexto = Contexto::novo(&avaliador).com_ficha("ficha-1");
+    let contexto = Context::new(&avaliador).with_case("ficha-1");
     let entrada = campos(json!({ "endereco": "Rua A" }));
 
-    let primeiro = executar_acao(
+    let primeiro = execute_action(
         &ir,
         &estado,
         "confirmar",
@@ -806,7 +803,7 @@ fn a_chave_do_efeito_e_estavel_para_a_mesma_entrada() {
         &contexto,
     )
     .expect("primeira");
-    let segundo = executar_acao(
+    let segundo = execute_action(
         &ir,
         &estado,
         "confirmar",
@@ -818,7 +815,7 @@ fn a_chave_do_efeito_e_estavel_para_a_mesma_entrada() {
     .expect("segunda");
 
     assert_eq!(
-        primeiro.efeitos, segundo.efeitos,
+        primeiro.effects, segundo.effects,
         "mesma entrada, mesmas chaves"
     );
 }
@@ -841,22 +838,22 @@ fn variavel_de_efeito_que_nao_existe_vira_texto_vazio() {
         )],
         Vec::new(),
     );
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
     let avaliador = RuleEvaluator::without_functions();
 
-    let resultado = executar_acao(
+    let resultado = execute_action(
         &ir,
         &estado,
         "confirmar",
         &sem_campos(),
         ActionActor::Agent,
         None,
-        &Contexto::novo(&avaliador),
+        &Context::new(&avaliador),
     )
     .expect("a ação é válida");
 
     assert_eq!(
-        resultado.efeitos[0].efeito,
+        resultado.effects[0].effect,
         Effect::MessageToCustomer {
             texto: "Pedido para .".to_owned()
         },
@@ -882,22 +879,22 @@ fn o_dado_do_cliente_entra_como_valor_no_texto_do_efeito() {
         )],
         Vec::new(),
     );
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
     let avaliador = RuleEvaluator::without_functions();
 
-    let resultado = executar_acao(
+    let resultado = execute_action(
         &ir,
         &estado,
         "confirmar",
         &campos(json!({ "endereco": "  Rua A  " })),
         ActionActor::Agent,
         None,
-        &Contexto::novo(&avaliador),
+        &Context::new(&avaliador),
     )
     .expect("a ação é válida");
 
     assert_eq!(
-        resultado.efeitos[0].efeito,
+        resultado.effects[0].effect,
         Effect::MessageToCustomer {
             texto: "Pedido: Rua A".to_owned()
         },
@@ -919,51 +916,50 @@ fn efeitos_da_entrada_da_primeira_etapa_saem_pela_funcao_publica() {
         )],
         Vec::new(),
     );
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
     let avaliador = RuleEvaluator::without_functions();
-    let contexto = Contexto::novo(&avaliador).com_ficha("ficha-9");
+    let contexto = Context::new(&avaliador).with_case("ficha-9");
     let dados: Dados = estado.dados.clone();
 
-    let efeitos = efeitos_de_entrada(&ir, "abertura", &dados, &contexto).expect("etapa existe");
+    let efeitos = entry_effects(&ir, "abertura", &dados, &contexto).expect("etapa existe");
     assert_eq!(efeitos.len(), 1);
     assert_eq!(efeitos[0].chave, "etapa:abertura/0");
     assert_eq!(
-        efeitos[0].efeito,
+        efeitos[0].effect,
         Effect::NotifyWhatsApp {
             para: "5521999990000".to_owned(),
             mensagem: "Atendimento ficha-9 começou".to_owned()
         }
     );
 
-    let erro =
-        efeitos_de_entrada(&ir, "fantasma", &dados, &contexto).expect_err("etapa não existe");
+    let erro = entry_effects(&ir, "fantasma", &dados, &contexto).expect_err("etapa não existe");
     assert!(matches!(erro, DomainError::IrDivergent { .. }), "{erro:?}");
 }
 
 #[test]
 fn etapa_com_efeito_de_entrada_vira_efeito_ao_avancar() {
     let ir = fluxo_com_efeitos();
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
     let avaliador = RuleEvaluator::without_functions();
 
-    let resultado = executar_acao(
+    let resultado = execute_action(
         &ir,
         &estado,
         "confirmar",
         &campos(json!({ "endereco": "Rua B" })),
         ActionActor::Agent,
         None,
-        &Contexto::novo(&avaliador),
+        &Context::new(&avaliador),
     )
     .expect("a ação é válida");
 
-    assert_eq!(resultado.novo_estado.no_atual, vai_para("confirmacao"));
+    assert_eq!(resultado.new_state.no_atual, vai_para("confirmacao"));
     assert_eq!(
-        resultado.efeitos.last().expect("efeito").chave,
+        resultado.effects.last().expect("efeito").chave,
         "etapa:confirmacao/0"
     );
     assert_eq!(
-        resultado.eventos.last().expect("evento").tipo,
+        resultado.events.last().expect("evento").tipo,
         RecordEventKind::EffectCreated,
         "o efeito da etapa nova é o último evento da passagem"
     );
@@ -974,9 +970,9 @@ fn etapa_com_efeito_de_entrada_vira_efeito_ao_avancar() {
 #[test]
 fn abandono_marca_a_execucao_e_nao_produz_efeito() {
     let ir = fluxo_com_efeitos();
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
 
-    let resultado = abandonar(
+    let resultado = abandon(
         &estado,
         "  o cliente pediu para parar  ",
         ActionActor::Agent,
@@ -984,18 +980,18 @@ fn abandono_marca_a_execucao_e_nao_produz_efeito() {
     )
     .expect("a execução está ativa");
 
-    assert_eq!(resultado.novo_estado.status, ExecutionStatus::Abandoned);
+    assert_eq!(resultado.new_state.status, ExecutionStatus::Abandoned);
     assert_eq!(
-        resultado.novo_estado.motivo,
+        resultado.new_state.motivo,
         Some("o cliente pediu para parar".to_owned()),
         "o motivo é gravado sem os espaços das pontas"
     );
-    assert!(resultado.efeitos.is_empty(), "abandono não dispara efeito");
-    assert!(resultado.aguardando.is_empty());
-    assert!(!resultado.encerra_atendimento);
+    assert!(resultado.effects.is_empty(), "abandono não dispara efeito");
+    assert!(resultado.waiting.is_empty());
+    assert!(!resultado.ends_service);
     assert_eq!(tipos(&resultado), vec![RecordEventKind::ExecutionAbandoned]);
     assert_eq!(
-        resultado.eventos[0].payload,
+        resultado.events[0].payload,
         json!({ "motivo": "o cliente pediu para parar", "no": "coleta" })
     );
 }
@@ -1003,28 +999,28 @@ fn abandono_marca_a_execucao_e_nao_produz_efeito() {
 #[test]
 fn abandono_sem_motivo_e_recusado_e_execucao_encerrada_nao_e_abandonada_de_novo() {
     let ir = fluxo_com_efeitos();
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
 
-    let erro = abandonar(&estado, "   ", ActionActor::Agent, None).expect_err("motivo vazio");
+    let erro = abandon(&estado, "   ", ActionActor::Agent, None).expect_err("motivo vazio");
     assert!(matches!(erro, DomainError::Validation { .. }), "{erro:?}");
 
-    let abandonada = abandonar(&estado, "desistiu", ActionActor::Attendant, None)
+    let abandonada = abandon(&estado, "desistiu", ActionActor::Attendant, None)
         .expect("abandona")
-        .novo_estado;
-    let erro = abandonar(&abandonada, "de novo", ActionActor::Agent, None)
-        .expect_err("já está abandonada");
+        .new_state;
+    let erro =
+        abandon(&abandonada, "de novo", ActionActor::Agent, None).expect_err("já está abandonada");
     assert!(matches!(erro, DomainError::Conflict { .. }), "{erro:?}");
 }
 
 #[test]
 fn repetir_a_chave_nao_duplica_evento_nem_efeito() {
     let ir = fluxo_com_efeitos();
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
     let avaliador = RuleEvaluator::without_functions();
-    let contexto = Contexto::novo(&avaliador).com_ficha("ficha-1");
+    let contexto = Context::new(&avaliador).with_case("ficha-1");
     let entrada = campos(json!({ "endereco": "Rua C" }));
 
-    let primeiro = executar_acao(
+    let primeiro = execute_action(
         &ir,
         &estado,
         "confirmar",
@@ -1035,9 +1031,9 @@ fn repetir_a_chave_nao_duplica_evento_nem_efeito() {
     )
     .expect("primeira");
 
-    let segundo = executar_acao(
+    let segundo = execute_action(
         &ir,
-        &primeiro.novo_estado,
+        &primeiro.new_state,
         "confirmar",
         &entrada,
         ActionActor::Agent,
@@ -1046,31 +1042,28 @@ fn repetir_a_chave_nao_duplica_evento_nem_efeito() {
     )
     .expect("repetida");
 
-    assert!(segundo.repetida);
-    assert!(segundo.eventos.is_empty(), "repetir não grava evento");
-    assert!(segundo.efeitos.is_empty(), "repetir não enfileira efeito");
-    assert!(
-        !segundo.encerra_atendimento,
-        "repetir não pede encerramento"
-    );
+    assert!(segundo.repeated);
+    assert!(segundo.events.is_empty(), "repetir não grava evento");
+    assert!(segundo.effects.is_empty(), "repetir não enfileira efeito");
+    assert!(!segundo.ends_service, "repetir não pede encerramento");
     assert_eq!(
-        segundo.novo_estado, primeiro.novo_estado,
+        segundo.new_state, primeiro.new_state,
         "o estado não muda na repetição"
     );
-    assert_eq!(primeiro.novo_estado.keys.len(), 1);
+    assert_eq!(primeiro.new_state.keys.len(), 1);
 }
 
 #[test]
 fn a_mesma_entrada_com_decisao_e_efeito_da_o_mesmo_resultado() {
     let ir = fluxo_com_efeitos();
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
     let avaliador = RuleEvaluator::without_functions();
-    let contexto = Contexto::novo(&avaliador)
-        .com_ficha("ficha-1")
-        .com_cliente("5521900000000");
+    let contexto = Context::new(&avaliador)
+        .with_case("ficha-1")
+        .with_client("5521900000000");
     let entrada = campos(json!({ "endereco": "Rua D" }));
 
-    let primeiro = executar_acao(
+    let primeiro = execute_action(
         &ir,
         &estado,
         "confirmar",
@@ -1080,7 +1073,7 @@ fn a_mesma_entrada_com_decisao_e_efeito_da_o_mesmo_resultado() {
         &contexto,
     )
     .expect("primeira");
-    let segundo = executar_acao(
+    let segundo = execute_action(
         &ir,
         &estado,
         "confirmar",
@@ -1092,5 +1085,5 @@ fn a_mesma_entrada_com_decisao_e_efeito_da_o_mesmo_resultado() {
     .expect("segunda");
 
     assert_eq!(primeiro, segundo);
-    assert!(primeiro.encerra_atendimento == segundo.encerra_atendimento);
+    assert!(primeiro.ends_service == segundo.ends_service);
 }

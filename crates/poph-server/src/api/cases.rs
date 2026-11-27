@@ -9,8 +9,8 @@ use axum::{
 use poph_fluxos::cache::RevisionKey;
 use poph_fluxos::ir::Destination;
 use poph_fluxos::motor::{
-    Campos, Contexto, Estado as EngineState, abandonar as abandon_run, efeitos_de_entrada,
-    executar_acao, iniciar,
+    Campos, Context, Estado as EngineState, abandon as abandon_run, entry_effects, execute_action,
+    start,
 };
 use poph_fluxos::{Dados, Ir, Limites, RuleEvaluator, RuleLimits};
 use poph_store::{
@@ -346,12 +346,11 @@ pub async fn start_flow(
     let evaluator = revision_evaluator(&e, &revision, &ir)?;
     let case_text = case_id.to_string();
     let peer = case.peer_externo.clone().unwrap_or_default();
-    let context = Contexto::novo(&evaluator)
-        .com_ficha(&case_text)
-        .com_cliente(&peer);
-    let state = iniciar(&ir).map_err(domain)?;
-    let effect =
-        efeitos_de_entrada(&ir, state.no_atual.id(), &state.dados, &context).map_err(domain)?;
+    let context = Context::new(&evaluator)
+        .with_case(&case_text)
+        .with_client(&peer);
+    let state = start(&ir).map_err(domain)?;
+    let effect = entry_effects(&ir, state.no_atual.id(), &state.dados, &context).map_err(domain)?;
     let token = ident.ator_id();
     let stored = e.store.executions().start_execution(
         org,
@@ -457,10 +456,10 @@ pub async fn apply_action(
     let (ir, evaluator, state) = action_state(&e, org, &current)?;
     let case_text = case_id.to_string();
     let peer = case.peer_externo.clone().unwrap_or_default();
-    let context = Contexto::novo(&evaluator)
-        .com_ficha(&case_text)
-        .com_cliente(&peer);
-    let result = executar_acao(
+    let context = Context::new(&evaluator)
+        .with_case(&case_text)
+        .with_client(&peer);
+    let result = execute_action(
         &ir,
         &state,
         &data.action,
@@ -781,7 +780,7 @@ fn action_state(
         status: execution.status,
         no_atual: destination_id(&ir, &execution.no_atual)?,
         dados: data,
-        atores_que_agiram: acting_actors,
+        actors_who_acted: acting_actors,
         resultado: execution.result.clone(),
         motivo: execution.motivo_fim.clone(),
         keys: BTreeMap::new(),

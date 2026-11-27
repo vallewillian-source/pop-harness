@@ -34,7 +34,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::routing::post;
 use poph_agent::Backoff;
 use poph_evolution::{ATTACHMENT_CAP, ConfigEvolution, EvolutionClient};
-use poph_fluxos::EfeitoProduzido;
+use poph_fluxos::ProducedEffect;
 use poph_fluxos::ir::Effect;
 use poph_server::evolution::CanalEvolution;
 use poph_server::fluxos_efeitos::{
@@ -518,11 +518,11 @@ fn fluxo_publicado(store: &Store, org: OrgId) -> (FlowId, RevisionId) {
 
 /// `mensagem_ao_cliente` como o motor descreve e como a fila grava.
 fn ao_cliente(texto: &str) -> TransitionEffect {
-    efeito_da_transicao(&EfeitoProduzido {
+    efeito_da_transicao(&ProducedEffect {
         chave: "etapa:boas_vindas/0".to_owned(),
         no: "etapa:boas_vindas".to_owned(),
-        indice: 0,
-        efeito: Effect::MessageToCustomer {
+        index: 0,
+        effect: Effect::MessageToCustomer {
             texto: texto.to_owned(),
         },
     })
@@ -530,11 +530,11 @@ fn ao_cliente(texto: &str) -> TransitionEffect {
 
 /// `notificar_whatsapp` para a equipe.
 fn notificar(mensagem: &str) -> TransitionEffect {
-    efeito_da_transicao(&EfeitoProduzido {
+    efeito_da_transicao(&ProducedEffect {
         chave: "acao:boas_vindas.registrar/0".to_owned(),
         no: "acao:boas_vindas.registrar".to_owned(),
-        indice: 0,
-        efeito: Effect::NotifyWhatsApp {
+        index: 0,
+        effect: Effect::NotifyWhatsApp {
             para: TELEFONE_EQUIPE.to_owned(),
             mensagem: mensagem.to_owned(),
         },
@@ -543,11 +543,11 @@ fn notificar(mensagem: &str) -> TransitionEffect {
 
 /// `encaminhar` para o departamento pelo nome.
 fn encaminhar(departamento: &str) -> TransitionEffect {
-    efeito_da_transicao(&EfeitoProduzido {
+    efeito_da_transicao(&ProducedEffect {
         chave: "acao:boas_vindas.transferir/0".to_owned(),
         no: "acao:boas_vindas.transferir".to_owned(),
-        indice: 0,
-        efeito: Effect::Encaminhar {
+        index: 0,
+        effect: Effect::Encaminhar {
             departamento: departamento.to_owned(),
         },
     })

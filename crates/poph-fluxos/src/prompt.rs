@@ -5,7 +5,7 @@ use serde_json::Value as Json;
 use poph_types::{ActionActor, DomainError, DomainResult, ExecutionStatus, FieldKind};
 
 use crate::ir::{Acao, Campo, Destination, Etapa, Ir};
-use crate::motor::{Estado, atores_exigidos, dados_da_etapa};
+use crate::motor::{Estado, required_actors, step_data};
 use crate::regras::preenchido;
 
 pub const BLOCK_CAP: usize = 6000;
@@ -83,7 +83,7 @@ pub fn stage_block(ir: &Ir, step_id: &str) -> DomainResult<String> {
             id: step_id.to_owned(),
         },
         dados: serde_json::Map::new(),
-        atores_que_agiram: Vec::new(),
+        actors_who_acted: Vec::new(),
         resultado: None,
         motivo: None,
         keys: std::collections::BTreeMap::new(),
@@ -100,10 +100,10 @@ fn step_section(saida: &mut String, ir: &Ir, etapa: &Etapa, estado: &Estado) {
         line(saida, &format!("Instrução: {instruction}"));
     }
 
-    if !estado.atores_que_agiram.is_empty() {
-        let faltam: Vec<String> = atores_exigidos(etapa)
+    if !estado.actors_who_acted.is_empty() {
+        let faltam: Vec<String> = required_actors(etapa)
             .into_iter()
-            .filter(|actor| !estado.atores_que_agiram.contains(actor))
+            .filter(|actor| !estado.actors_who_acted.contains(actor))
             .map(|actor| actor.as_text().to_owned())
             .collect();
         if !faltam.is_empty() {
@@ -129,7 +129,7 @@ fn fields_section(saida: &mut String, etapa: &Etapa, estado: &Estado) {
         return;
     }
     line(saida, "Campos desta etapa:");
-    let registered = dados_da_etapa(&estado.dados, &etapa.id);
+    let registered = step_data(&estado.dados, &etapa.id);
     for campo in &etapa.campos {
         let situacao = match registered.get(&campo.id) {
             Some(value) if preenchido(Some(value)) => {

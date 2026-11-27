@@ -8,7 +8,7 @@
 //! são montadas à mão para o teste criar o caso exato.
 
 use poph_fluxos::ir::{Acao, Campo, Destination, Etapa, Fim, Fluxo, Gatilho, Ir};
-use poph_fluxos::motor::{Campos, Contexto, Estado, executar_acao, iniciar};
+use poph_fluxos::motor::{Campos, Context, Estado, execute_action, start};
 use poph_fluxos::prompt::{BLOCK_CAP, render_block, stage_block};
 use poph_fluxos::regras::RuleEvaluator;
 use poph_types::{ActionActor, DomainError, ExecutionStatus, FieldKind};
@@ -102,7 +102,7 @@ fn ir_com(nome: &str, inicio: &str, etapas: Vec<Etapa>) -> Ir {
 
 /// Estado numa etapa, com os dados informados (`dados[etapa][campo]`).
 fn estado_em(ir: &Ir, etapa: &str, dados: Json) -> Estado {
-    let mut estado = iniciar(ir).expect("início");
+    let mut estado = start(ir).expect("início");
     estado.no_atual = ir_para_etapa(etapa);
     if let Json::Object(mapa) = dados {
         estado.dados = mapa;
@@ -113,9 +113,9 @@ fn estado_em(ir: &Ir, etapa: &str, dados: Json) -> Estado {
 /// Contexto das chamadas do motor: sem Ficha, sem cliente e com o avaliador só de combinadores.
 ///
 /// Os testes de decisão montam o seu com o avaliador que tem as `def` do fluxo.
-fn contexto() -> Contexto<'static> {
+fn contexto() -> Context<'static> {
     static AVALIADOR: OnceLock<RuleEvaluator> = OnceLock::new();
-    Contexto::novo(AVALIADOR.get_or_init(RuleEvaluator::without_functions))
+    Context::new(AVALIADOR.get_or_init(RuleEvaluator::without_functions))
 }
 
 // ------------------------------------------------------------------ texto dourado
@@ -201,8 +201,8 @@ fn etapa_parcial_diz_quem_falta_agir() {
             ),
         ],
     );
-    let inicial = iniciar(&ir).expect("início");
-    let depois_do_agente = executar_acao(
+    let inicial = start(&ir).expect("início");
+    let depois_do_agente = execute_action(
         &ir,
         &inicial,
         "enviar",
@@ -212,7 +212,7 @@ fn etapa_parcial_diz_quem_falta_agir() {
         &contexto(),
     )
     .expect("o agente envia para a aprovação");
-    assert_eq!(depois_do_agente.aguardando, vec![ActionActor::Attendant]);
+    assert_eq!(depois_do_agente.waiting, vec![ActionActor::Attendant]);
 
     let esperado = format!(
         r#"Fluxo em andamento: Aprovação de pedido.
@@ -233,7 +233,7 @@ Mapa do fluxo:
 - Fechamento (fechamento)
 "#
     );
-    assert_eq!(render_block(&ir, &depois_do_agente.novo_estado), esperado);
+    assert_eq!(render_block(&ir, &depois_do_agente.new_state), esperado);
 }
 
 #[test]
@@ -275,8 +275,8 @@ fn quando_o_segundo_ator_age_o_bloco_mostra_a_etapa_seguinte() {
             ),
         ],
     );
-    let inicial = iniciar(&ir).expect("início");
-    let parcial = executar_acao(
+    let inicial = start(&ir).expect("início");
+    let parcial = execute_action(
         &ir,
         &inicial,
         "aprovar",
@@ -286,9 +286,9 @@ fn quando_o_segundo_ator_age_o_bloco_mostra_a_etapa_seguinte() {
         &contexto(),
     )
     .expect("o atendente aprova");
-    let avancou = executar_acao(
+    let avancou = execute_action(
         &ir,
-        &parcial.novo_estado,
+        &parcial.new_state,
         "enviar",
         &Campos::new(),
         ActionActor::Agent,
@@ -296,9 +296,9 @@ fn quando_o_segundo_ator_age_o_bloco_mostra_a_etapa_seguinte() {
         &contexto(),
     )
     .expect("o agente envia depois");
-    assert!(avancou.aguardando.is_empty());
+    assert!(avancou.waiting.is_empty());
 
-    let texto = render_block(&ir, &avancou.novo_estado);
+    let texto = render_block(&ir, &avancou.new_state);
     assert!(texto.contains("Etapa atual: Fechamento (fechamento).\n"));
     assert!(!texto.contains("Quem falta agir"));
 }
@@ -348,7 +348,7 @@ fn preview_de_etapa_que_nao_existe_e_nao_encontrado() {
 fn execucao_no_fim_ou_fora_de_etapa_diz_que_nao_ha_acao() {
     let ir = ir_dourada_agendar_visita();
 
-    let mut no_fim = iniciar(&ir).expect("início");
+    let mut no_fim = start(&ir).expect("início");
     no_fim.no_atual = Destination::Fim {
         id: "concluida".to_owned(),
         resultado: Some("Visita agendada".to_owned()),
@@ -363,13 +363,13 @@ fn execucao_no_fim_ou_fora_de_etapa_diz_que_nao_ha_acao() {
         "{texto}"
     );
 
-    let mut etapa_sumida = iniciar(&ir).expect("início");
+    let mut etapa_sumida = start(&ir).expect("início");
     etapa_sumida.no_atual = ir_para_etapa("fantasma");
     assert!(render_block(&ir, &etapa_sumida).contains(
         "Etapa atual: fantasma não existe na estrutura do fluxo; não há ação a executar."
     ));
 
-    let mut concluida = iniciar(&ir).expect("início");
+    let mut concluida = start(&ir).expect("início");
     concluida.status = ExecutionStatus::Completed;
     assert!(
         render_block(&ir, &concluida)
@@ -512,10 +512,10 @@ fn a_ordem_em_que_os_dados_foram_gravados_nao_muda_o_bloco() {
     );
     ordem_b.insert("envio".to_owned(), Json::Object(envio_b));
 
-    let mut estado_a = iniciar(&ir).expect("início");
+    let mut estado_a = start(&ir).expect("início");
     estado_a.no_atual = ir_para_etapa("envio");
     estado_a.dados = ordem_a;
-    let mut estado_b = iniciar(&ir).expect("início");
+    let mut estado_b = start(&ir).expect("início");
     estado_b.no_atual = ir_para_etapa("envio");
     estado_b.dados = ordem_b;
 

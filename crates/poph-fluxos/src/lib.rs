@@ -22,9 +22,8 @@ pub use diff::{Change, ChangeType, Impact, diff};
 pub use formatador::{FalhaDeFormato, LARGURA, formatar, formatar_com, imprimir};
 pub use ir::Ir;
 pub use motor::{
-    Campos, Contexto, EfeitoProduzido, Estado, Evento, MAX_SALTOS_DECISAO, Recibo, Resultado,
-    abandonar, atores_exigidos, campos_faltando, dados_da_etapa, efeitos_de_entrada, executar_acao,
-    iniciar,
+    Campos, Context, Estado, Evento, MAX_SALTOS_DECISAO, ProducedEffect, Receipt, Resultado,
+    abandon, entry_effects, execute_action, missing_fields, required_actors, start, step_data,
 };
 pub use prompt::{BLOCK_CAP, render_block, stage_block};
 pub use regras::{Dados, RuleError, RuleEvaluator, RuleLimits, evaluate, snapshot_from_json};

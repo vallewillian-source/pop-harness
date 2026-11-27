@@ -3,7 +3,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use poph_fluxos::ir::{Destination, Ir};
-use poph_fluxos::motor::{self, Contexto as ContextEngine, Estado as StateEngine, executar_acao};
+use poph_fluxos::motor::{self, Context as ContextEngine, Estado as StateEngine, execute_action};
 use poph_store::{Execution, Ficha, Store, StoreError, TransitionExtras};
 use poph_types::{ActionActor, FlowsConfig, RecordStatus};
 use serde_json::{Map, Value};
@@ -154,13 +154,13 @@ impl FlowTurn {
             None => return Err(could_not_read_the_flow()),
         };
         let text_of_case = ficha.id.to_string();
-        let mut engine_context = ContextEngine::novo(&load.evaluator)
-            .com_ficha(&text_of_case)
-            .com_limite_de_saltos(self.adjustments.jumps());
+        let mut engine_context = ContextEngine::new(&load.evaluator)
+            .with_case(&text_of_case)
+            .with_jump_limit(self.adjustments.jumps());
         if let Some(peer) = ficha.peer_externo.as_deref() {
-            engine_context = engine_context.com_cliente(peer);
+            engine_context = engine_context.with_client(peer);
         }
-        let resultado = executar_acao(
+        let resultado = execute_action(
             &load.ir,
             &load.estado,
             &acao,
@@ -301,7 +301,7 @@ impl FlowTurn {
             Some(load) => load,
             None => return Err(could_not_read_the_flow()),
         };
-        let resultado = motor::abandonar(&load.estado, &motivo, ActionActor::Agent, Some(&chave))
+        let resultado = motor::abandon(&load.estado, &motivo, ActionActor::Agent, Some(&chave))
             .map_err(|error| format!("erro: {error}"))?;
         self.store
             .executions()
@@ -455,7 +455,7 @@ fn response_of_action(
     if repeated {
         saida.push_str("Esta ação já tinha sido registrada; nada mudou.\n");
     }
-    let new = &resultado.novo_estado;
+    let new = &resultado.new_state;
     let advanced = new.no_atual.id() != previous.no_atual.id();
     match &new.no_atual {
         Destination::Etapa { .. } if advanced => {
@@ -478,7 +478,7 @@ fn response_of_action(
         }
     }
     saida.push_str(&describe(ir, new));
-    if !resultado.efeitos.is_empty() {
+    if !resultado.effects.is_empty() {
         saida.push_str(&note_of_effect());
     }
     saida
@@ -503,13 +503,13 @@ fn describe(ir: &Ir, estado: &StateEngine) -> String {
             {
                 saida.push_str(&format!("\nOrientação da etapa: {instruction}"));
             }
-            let missing = motor::campos_faltando(etapa, &estado.dados);
+            let missing = motor::missing_fields(etapa, &estado.dados);
             saida.push_str(&format!(
                 "\nCampos obrigatórios que faltam: {}.",
                 list(&missing)
             ));
-            let mut waiting = motor::atores_exigidos(etapa);
-            waiting.retain(|actor| !estado.atores_que_agiram.contains(actor));
+            let mut waiting = motor::required_actors(etapa);
+            waiting.retain(|actor| !estado.actors_who_acted.contains(actor));
             if !waiting.is_empty() {
                 saida.push_str(&format!(
                     "\nQuem ainda precisa agir nesta etapa: {}.",

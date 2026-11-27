@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use poph_fluxos::motor::{self, Campos, Contexto, Estado as EstadoMotor};
+use poph_fluxos::motor::{self, Campos, Context, Estado as EstadoMotor};
 use poph_fluxos::{Limites, RuleEvaluator, compile};
 use poph_server::Estado;
 use poph_server::fluxos_transicao::transicao_do_motor;
@@ -309,11 +309,11 @@ impl Cenario {
             .unwrap_or_else(|diagnosticos| panic!("script do teste não compila: {diagnosticos:?}"));
         let avaliador = RuleEvaluator::new(script).expect("as regras do script carregam");
         let estado = estado_do_banco(execucao);
-        let mut contexto = Contexto::novo(&avaliador);
+        let mut contexto = Context::new(&avaliador);
         if let Some(saltos) = saltos {
-            contexto = contexto.com_limite_de_saltos(saltos);
+            contexto = contexto.with_jump_limit(saltos);
         }
-        let resultado = motor::executar_acao(
+        let resultado = motor::execute_action(
             ir,
             &estado,
             acao,
@@ -376,7 +376,7 @@ fn estado_do_banco(execucao: &poph_store::Execution) -> EstadoMotor {
         status: execucao.status,
         no_atual: poph_fluxos::ir::Destination::Etapa { id: ir.clone() },
         dados: poph_fluxos::Dados::new(),
-        atores_que_agiram: Vec::new(),
+        actors_who_acted: Vec::new(),
         resultado: execucao.result.clone(),
         motivo: execucao.motivo_fim.clone(),
         keys: Default::default(),
@@ -451,13 +451,13 @@ fn conclusao_conta_concluida_e_repetir_a_chave_nao_soma() {
             gravada.execution.id,
             gravada.execution.version,
             &transicao_do_motor(&motor::Resultado {
-                novo_estado: estado_do_banco(&gravada.execution),
-                eventos: Vec::new(),
-                efeitos: Vec::new(),
-                aguardando: Vec::new(),
-                repetida: true,
-                encerra_atendimento: false,
-                erro_de_regra: false,
+                new_state: estado_do_banco(&gravada.execution),
+                events: Vec::new(),
+                effects: Vec::new(),
+                waiting: Vec::new(),
+                repeated: true,
+                ends_service: false,
+                rule_error: false,
             }),
             "acao-1",
             TransitionExtras::default(),
@@ -475,7 +475,7 @@ fn abandono_pelo_agente_conta_abandonada() {
     let execucao = cenario.abrir(ficha, fluxo, revisao, "abandono-1");
 
     let estado = estado_do_banco(&execucao);
-    let resultado = motor::abandonar(
+    let resultado = motor::abandon(
         &estado,
         "cliente desistiu",
         ActionActor::Agent,

@@ -19,9 +19,7 @@ use std::sync::OnceLock;
 use poph_fluxos::ir::{
     Acao, Campo, Decisao, Destination, Effect, Etapa, Fim, Fluxo, Gatilho, Ir, Rule,
 };
-use poph_fluxos::motor::{
-    Campos, Contexto, atores_exigidos, efeitos_de_entrada, executar_acao, iniciar,
-};
+use poph_fluxos::motor::{Campos, Context, entry_effects, execute_action, required_actors, start};
 use poph_fluxos::regras::{Dados, RuleEvaluator};
 use poph_types::{ActionActor, ExecutionStatus, FieldKind, RecordEventKind};
 use serde_json::{Value as Json, json};
@@ -29,9 +27,9 @@ use serde_json::{Value as Json, json};
 // ------------------------------------------------------------------ auxiliares
 
 /// Contexto mínimo das chamadas do motor (sem Ficha, sem cliente, só combinadores).
-fn contexto() -> Contexto<'static> {
+fn contexto() -> Context<'static> {
     static AVALIADOR: OnceLock<RuleEvaluator> = OnceLock::new();
-    Contexto::novo(AVALIADOR.get_or_init(RuleEvaluator::without_functions))
+    Context::new(AVALIADOR.get_or_init(RuleEvaluator::without_functions))
 }
 
 fn campo(id: &str, tipo: FieldKind, obrigatorio: bool) -> Campo {
@@ -185,7 +183,7 @@ fn dados(valor: Json) -> Dados {
 }
 
 fn tipos(resultado: &poph_fluxos::motor::Resultado) -> Vec<RecordEventKind> {
-    resultado.eventos.iter().map(|evento| evento.tipo).collect()
+    resultado.events.iter().map(|evento| evento.tipo).collect()
 }
 
 /// Fluxo de duas etapas em que `execucao` tem uma ação restrita ao agente e outra ao atendente,
@@ -250,9 +248,9 @@ fn auto_avanca_quando_o_unico_ator_exigido_e_quem_agiu() {
         ],
         Vec::new(),
     );
-    let estado = iniciar(&ir).expect("a execução começa");
+    let estado = start(&ir).expect("a execução começa");
 
-    let resultado = executar_acao(
+    let resultado = execute_action(
         &ir,
         &estado,
         "registrar_relato",
@@ -263,14 +261,14 @@ fn auto_avanca_quando_o_unico_ator_exigido_e_quem_agiu() {
     )
     .expect("a ação é aceita");
 
-    assert_eq!(resultado.novo_estado.no_atual, vai_para("orcamento"));
-    assert_eq!(resultado.novo_estado.status, ExecutionStatus::Active);
+    assert_eq!(resultado.new_state.no_atual, vai_para("orcamento"));
+    assert_eq!(resultado.new_state.status, ExecutionStatus::Active);
     assert_eq!(
-        resultado.novo_estado.dados["abertura"]["relato"],
+        resultado.new_state.dados["abertura"]["relato"],
         json!("Chuveiro queimado")
     );
     assert!(
-        resultado.aguardando.is_empty(),
+        resultado.waiting.is_empty(),
         "quem age sozinho não deixa ninguém pendente"
     );
     assert!(tipos(&resultado).contains(&RecordEventKind::StepEntered));
@@ -281,9 +279,9 @@ fn auto_avanca_quando_o_unico_ator_exigido_e_quem_agiu() {
 #[test]
 fn auto_fica_parcial_quando_falta_o_outro_ator_restrito() {
     let ir = fluxo_de_dois_atores();
-    let estado = iniciar(&ir).expect("a execução começa");
+    let estado = start(&ir).expect("a execução começa");
 
-    let resultado = executar_acao(
+    let resultado = execute_action(
         &ir,
         &estado,
         "atendente_valida",
@@ -294,20 +292,20 @@ fn auto_fica_parcial_quando_falta_o_outro_ator_restrito() {
     )
     .expect("a ação é aceita");
 
-    assert_eq!(resultado.novo_estado.no_atual, vai_para("execucao"));
-    assert_eq!(resultado.novo_estado.status, ExecutionStatus::Active);
+    assert_eq!(resultado.new_state.no_atual, vai_para("execucao"));
+    assert_eq!(resultado.new_state.status, ExecutionStatus::Active);
     assert_eq!(
-        resultado.novo_estado.atores_que_agiram,
+        resultado.new_state.actors_who_acted,
         vec![ActionActor::Attendant]
     );
     assert_eq!(
-        resultado.aguardando,
+        resultado.waiting,
         vec![ActionActor::Agent],
         "o Python devolve `waiting_on == [agent]`"
     );
     assert_eq!(tipos(&resultado), vec![RecordEventKind::ActionExecuted]);
     assert_eq!(
-        atores_exigidos(ir.stages.first().expect("há etapa")),
+        required_actors(ir.stages.first().expect("há etapa")),
         vec![ActionActor::Agent, ActionActor::Attendant]
     );
 }
@@ -317,8 +315,8 @@ fn auto_fica_parcial_quando_falta_o_outro_ator_restrito() {
 #[test]
 fn auto_avanca_quando_o_segundo_ator_restrito_age() {
     let ir = fluxo_de_dois_atores();
-    let estado = iniciar(&ir).expect("a execução começa");
-    let parcial = executar_acao(
+    let estado = start(&ir).expect("a execução começa");
+    let parcial = execute_action(
         &ir,
         &estado,
         "atendente_valida",
@@ -329,9 +327,9 @@ fn auto_avanca_quando_o_segundo_ator_restrito_age() {
     )
     .expect("a primeira ação é aceita");
 
-    let resultado = executar_acao(
+    let resultado = execute_action(
         &ir,
-        &parcial.novo_estado,
+        &parcial.new_state,
         "agente_conclui",
         &sem_campos(),
         ActionActor::Agent,
@@ -340,9 +338,9 @@ fn auto_avanca_quando_o_segundo_ator_restrito_age() {
     )
     .expect("a segunda ação é aceita");
 
-    assert_eq!(resultado.novo_estado.no_atual, vai_para("pos"));
-    assert!(resultado.aguardando.is_empty());
-    assert_eq!(resultado.novo_estado.atores_que_agiram, Vec::new());
+    assert_eq!(resultado.new_state.no_atual, vai_para("pos"));
+    assert!(resultado.waiting.is_empty());
+    assert_eq!(resultado.new_state.actors_who_acted, Vec::new());
     assert_eq!(tipos(&resultado)[0], RecordEventKind::ActionExecuted);
     assert!(tipos(&resultado).contains(&RecordEventKind::StepCompleted));
 }
@@ -352,10 +350,10 @@ fn auto_avanca_quando_o_segundo_ator_restrito_age() {
 #[test]
 fn auto_os_dois_atores_chegam_ao_mesmo_destino_em_qualquer_ordem() {
     let ir = fluxo_de_dois_atores();
-    let estado = iniciar(&ir).expect("a execução começa");
+    let estado = start(&ir).expect("a execução começa");
 
     // Agente primeiro: o atendente fica pendente.
-    let agente_primeiro = executar_acao(
+    let agente_primeiro = execute_action(
         &ir,
         &estado,
         "agente_conclui",
@@ -365,10 +363,10 @@ fn auto_os_dois_atores_chegam_ao_mesmo_destino_em_qualquer_ordem() {
         &contexto(),
     )
     .expect("a ação do agente é aceita");
-    assert_eq!(agente_primeiro.aguardando, vec![ActionActor::Attendant]);
-    let depois = executar_acao(
+    assert_eq!(agente_primeiro.waiting, vec![ActionActor::Attendant]);
+    let depois = execute_action(
         &ir,
-        &agente_primeiro.novo_estado,
+        &agente_primeiro.new_state,
         "atendente_valida",
         &sem_campos(),
         ActionActor::Attendant,
@@ -376,10 +374,10 @@ fn auto_os_dois_atores_chegam_ao_mesmo_destino_em_qualquer_ordem() {
         &contexto(),
     )
     .expect("a ação do atendente é aceita");
-    assert_eq!(depois.novo_estado.no_atual, vai_para("pos"));
+    assert_eq!(depois.new_state.no_atual, vai_para("pos"));
 
     // Atendente primeiro: o agente fica pendente, e o destino é o mesmo.
-    let atendente_primeiro = executar_acao(
+    let atendente_primeiro = execute_action(
         &ir,
         &estado,
         "atendente_valida",
@@ -389,10 +387,10 @@ fn auto_os_dois_atores_chegam_ao_mesmo_destino_em_qualquer_ordem() {
         &contexto(),
     )
     .expect("a ação do atendente é aceita");
-    assert_eq!(atendente_primeiro.aguardando, vec![ActionActor::Agent]);
-    let depois = executar_acao(
+    assert_eq!(atendente_primeiro.waiting, vec![ActionActor::Agent]);
+    let depois = execute_action(
         &ir,
-        &atendente_primeiro.novo_estado,
+        &atendente_primeiro.new_state,
         "agente_conclui",
         &sem_campos(),
         ActionActor::Agent,
@@ -400,7 +398,7 @@ fn auto_os_dois_atores_chegam_ao_mesmo_destino_em_qualquer_ordem() {
         &contexto(),
     )
     .expect("a ação do agente é aceita");
-    assert_eq!(depois.novo_estado.no_atual, vai_para("pos"));
+    assert_eq!(depois.new_state.no_atual, vai_para("pos"));
 }
 
 /// Origem: `test_state_engine.py::TestCompletionGatedActors::test_all_with_client_actor_advances_on_agent_action`
@@ -430,9 +428,9 @@ fn auto_ator_sem_acao_propria_nao_trava_a_etapa() {
         ],
         Vec::new(),
     );
-    let estado = iniciar(&ir).expect("a execução começa");
+    let estado = start(&ir).expect("a execução começa");
 
-    let resultado = executar_acao(
+    let resultado = execute_action(
         &ir,
         &estado,
         "relatar",
@@ -443,8 +441,8 @@ fn auto_ator_sem_acao_propria_nao_trava_a_etapa() {
     )
     .expect("a ação é aceita");
 
-    assert_eq!(resultado.novo_estado.no_atual, vai_para("agendamento"));
-    assert!(resultado.aguardando.is_empty());
+    assert_eq!(resultado.new_state.no_atual, vai_para("agendamento"));
+    assert!(resultado.waiting.is_empty());
 }
 
 /// Origem: `test_state_engine.py::TestAutoCompletionExecution::test_auto_close_action_is_decisive`
@@ -472,9 +470,9 @@ fn auto_a_acao_que_leva_ao_fim_e_decisiva_com_outro_ator_pendente() {
         ],
         Vec::new(),
     );
-    let estado = iniciar(&ir).expect("a execução começa");
+    let estado = start(&ir).expect("a execução começa");
 
-    let resultado = executar_acao(
+    let resultado = execute_action(
         &ir,
         &estado,
         "cancelar",
@@ -485,16 +483,13 @@ fn auto_a_acao_que_leva_ao_fim_e_decisiva_com_outro_ator_pendente() {
     )
     .expect("a ação é aceita");
 
-    assert_eq!(resultado.novo_estado.status, ExecutionStatus::Completed);
-    assert_eq!(
-        resultado.novo_estado.resultado.as_deref(),
-        Some("Cancelado")
-    );
+    assert_eq!(resultado.new_state.status, ExecutionStatus::Completed);
+    assert_eq!(resultado.new_state.resultado.as_deref(), Some("Cancelado"));
     assert_eq!(
         tipos(&resultado).last(),
         Some(&RecordEventKind::ExecutionCompleted)
     );
-    assert!(resultado.aguardando.is_empty());
+    assert!(resultado.waiting.is_empty());
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -526,9 +521,9 @@ fn acao_restrita_ao_atendente_recusada_para_o_agente() {
         ],
         Vec::new(),
     );
-    let estado = iniciar(&ir).expect("a execução começa");
+    let estado = start(&ir).expect("a execução começa");
 
-    let erro = executar_acao(
+    let erro = execute_action(
         &ir,
         &estado,
         "validar",
@@ -560,9 +555,9 @@ fn ator_fora_dos_atores_da_etapa_e_recusado() {
         )],
         Vec::new(),
     );
-    let estado = iniciar(&ir).expect("a execução começa");
+    let estado = start(&ir).expect("a execução começa");
 
-    let erro = executar_acao(
+    let erro = execute_action(
         &ir,
         &estado,
         "encerrar",
@@ -607,9 +602,9 @@ fn acao_inexistente_devolve_as_validas_e_nao_muda_nada() {
         ],
         Vec::new(),
     );
-    let estado = iniciar(&ir).expect("a execução começa");
+    let estado = start(&ir).expect("a execução começa");
 
-    let erro = executar_acao(
+    let erro = execute_action(
         &ir,
         &estado,
         "aprovar",
@@ -647,8 +642,8 @@ fn execucao_encerrada_nao_aceita_acao() {
         )],
         Vec::new(),
     );
-    let estado = iniciar(&ir).expect("a execução começa");
-    let concluida = executar_acao(
+    let estado = start(&ir).expect("a execução começa");
+    let concluida = execute_action(
         &ir,
         &estado,
         "concluir",
@@ -658,11 +653,11 @@ fn execucao_encerrada_nao_aceita_acao() {
         &contexto(),
     )
     .expect("a ação é aceita");
-    assert_eq!(concluida.novo_estado.status, ExecutionStatus::Completed);
+    assert_eq!(concluida.new_state.status, ExecutionStatus::Completed);
 
-    let erro = executar_acao(
+    let erro = execute_action(
         &ir,
-        &concluida.novo_estado,
+        &concluida.new_state,
         "voltar",
         &sem_campos(),
         ActionActor::Agent,
@@ -913,9 +908,9 @@ fn duas_condicionais_encadeadas_escolhem_a_etapa_final() {
             ),
         ],
     );
-    let estado = iniciar(&ir).expect("a execução começa");
+    let estado = start(&ir).expect("a execução começa");
 
-    let resultado = executar_acao(
+    let resultado = execute_action(
         &ir,
         &estado,
         "seguir",
@@ -926,9 +921,9 @@ fn duas_condicionais_encadeadas_escolhem_a_etapa_final() {
     )
     .expect("a ação é aceita");
 
-    assert_eq!(resultado.novo_estado.no_atual, vai_para("caro"));
+    assert_eq!(resultado.new_state.no_atual, vai_para("caro"));
     let resolvidas: Vec<&poph_fluxos::motor::Evento> = resultado
-        .eventos
+        .events
         .iter()
         .filter(|evento| evento.tipo == RecordEventKind::DecisionResolved)
         .collect();
@@ -1007,10 +1002,10 @@ fn condicional_com_def_escolhe_o_ramo() {
             vai_para("simples"),
         )],
     );
-    let contexto = Contexto::novo(&avaliador);
-    let estado = iniciar(&ir).expect("a execução começa");
+    let contexto = Context::new(&avaliador);
+    let estado = start(&ir).expect("a execução começa");
 
-    let caso_grave = executar_acao(
+    let caso_grave = execute_action(
         &ir,
         &estado,
         "seguir",
@@ -1020,9 +1015,9 @@ fn condicional_com_def_escolhe_o_ramo() {
         &contexto,
     )
     .expect("a ação é aceita");
-    assert_eq!(caso_grave.novo_estado.no_atual, vai_para("grave"));
+    assert_eq!(caso_grave.new_state.no_atual, vai_para("grave"));
 
-    let caso_simples = executar_acao(
+    let caso_simples = execute_action(
         &ir,
         &estado,
         "seguir",
@@ -1032,7 +1027,7 @@ fn condicional_com_def_escolhe_o_ramo() {
         &contexto,
     )
     .expect("a ação é aceita");
-    assert_eq!(caso_simples.novo_estado.no_atual, vai_para("simples"));
+    assert_eq!(caso_simples.new_state.no_atual, vai_para("simples"));
 }
 
 /// Origem: `state_engine._resolve_conditional_route` — no POP Atende, condicional que aponta para
@@ -1063,9 +1058,9 @@ fn condicional_que_vai_para_etapa_inexistente_falha_fechado() {
             vai_para("triagem"),
         )],
     );
-    let estado = iniciar(&ir).expect("a execução começa");
+    let estado = start(&ir).expect("a execução começa");
 
-    let erro = executar_acao(
+    let erro = execute_action(
         &ir,
         &estado,
         "seguir",
@@ -1114,9 +1109,9 @@ fn campo_obrigatorio_faltando_devolve_a_lista() {
         ],
         Vec::new(),
     );
-    let estado = iniciar(&ir).expect("a execução começa");
+    let estado = start(&ir).expect("a execução começa");
 
-    let erro = executar_acao(
+    let erro = execute_action(
         &ir,
         &estado,
         "enviar_orcamento",
@@ -1147,9 +1142,9 @@ fn campo_de_texto_recusa_numero() {
         )],
         Vec::new(),
     );
-    let estado = iniciar(&ir).expect("a execução começa");
+    let estado = start(&ir).expect("a execução começa");
 
-    let aceito = executar_acao(
+    let aceito = execute_action(
         &ir,
         &estado,
         "registrar",
@@ -1160,12 +1155,12 @@ fn campo_de_texto_recusa_numero() {
     )
     .expect("texto é aceito");
     assert_eq!(
-        aceito.novo_estado.dados["abertura"]["relato"],
+        aceito.new_state.dados["abertura"]["relato"],
         json!("texto curto"),
         "o texto é gravado sem os espaços das pontas"
     );
 
-    let erro = executar_acao(
+    let erro = execute_action(
         &ir,
         &estado,
         "registrar",
@@ -1194,9 +1189,9 @@ fn campo_de_numero_recusa_texto() {
         )],
         Vec::new(),
     );
-    let estado = iniciar(&ir).expect("a execução começa");
+    let estado = start(&ir).expect("a execução começa");
 
-    let aceito = executar_acao(
+    let aceito = execute_action(
         &ir,
         &estado,
         "enviar",
@@ -1206,12 +1201,9 @@ fn campo_de_numero_recusa_texto() {
         &contexto(),
     )
     .expect("número é aceito");
-    assert_eq!(
-        aceito.novo_estado.dados["orcamento"]["valor"],
-        json!(1000.0)
-    );
+    assert_eq!(aceito.new_state.dados["orcamento"]["valor"], json!(1000.0));
 
-    let erro = executar_acao(
+    let erro = execute_action(
         &ir,
         &estado,
         "enviar",
@@ -1240,9 +1232,9 @@ fn campo_de_opcao_recusa_valor_fora_da_lista() {
         )],
         Vec::new(),
     );
-    let estado = iniciar(&ir).expect("a execução começa");
+    let estado = start(&ir).expect("a execução começa");
 
-    let aceito = executar_acao(
+    let aceito = execute_action(
         &ir,
         &estado,
         "agendar",
@@ -1252,12 +1244,9 @@ fn campo_de_opcao_recusa_valor_fora_da_lista() {
         &contexto(),
     )
     .expect("opção declarada é aceita");
-    assert_eq!(
-        aceito.novo_estado.dados["triagem"]["periodo"],
-        json!("tarde")
-    );
+    assert_eq!(aceito.new_state.dados["triagem"]["periodo"], json!("tarde"));
 
-    let erro = executar_acao(
+    let erro = execute_action(
         &ir,
         &estado,
         "agendar",
@@ -1290,9 +1279,9 @@ fn campo_de_data_aceita_iso_e_recusa_texto_livre() {
         )],
         Vec::new(),
     );
-    let estado = iniciar(&ir).expect("a execução começa");
+    let estado = start(&ir).expect("a execução começa");
 
-    let aceito = executar_acao(
+    let aceito = execute_action(
         &ir,
         &estado,
         "confirmar",
@@ -1303,11 +1292,11 @@ fn campo_de_data_aceita_iso_e_recusa_texto_livre() {
     )
     .expect("data ISO é aceita");
     assert_eq!(
-        aceito.novo_estado.dados["agendamento"]["data_hora_visita"],
+        aceito.new_state.dados["agendamento"]["data_hora_visita"],
         json!("2026-03-15T14:00:00")
     );
 
-    let erro = executar_acao(
+    let erro = execute_action(
         &ir,
         &estado,
         "confirmar",
@@ -1349,9 +1338,9 @@ fn closed_do_pop_atende_virou_fim_que_conclui_a_execucao() {
         )],
         Vec::new(),
     );
-    let estado = iniciar(&ir).expect("a execução começa");
+    let estado = start(&ir).expect("a execução começa");
 
-    let resultado = executar_acao(
+    let resultado = execute_action(
         &ir,
         &estado,
         "concluir",
@@ -1362,12 +1351,12 @@ fn closed_do_pop_atende_virou_fim_que_conclui_a_execucao() {
     )
     .expect("a ação é aceita");
 
-    assert_eq!(resultado.novo_estado.status, ExecutionStatus::Completed);
+    assert_eq!(resultado.new_state.status, ExecutionStatus::Completed);
     assert_eq!(
-        resultado.novo_estado.resultado.as_deref(),
+        resultado.new_state.resultado.as_deref(),
         Some("Atendimento concluído")
     );
-    assert_eq!(resultado.novo_estado.motivo, None);
+    assert_eq!(resultado.new_state.motivo, None);
     assert_eq!(
         tipos(&resultado),
         vec![
@@ -1396,9 +1385,9 @@ fn fim_so_pede_o_fechamento_do_atendimento_quando_declara_isso() {
         )],
         Vec::new(),
     );
-    let estado = iniciar(&ir).expect("a execução começa");
+    let estado = start(&ir).expect("a execução começa");
 
-    let sem_encerrar = executar_acao(
+    let sem_encerrar = execute_action(
         &ir,
         &estado,
         "concluir",
@@ -1408,13 +1397,13 @@ fn fim_so_pede_o_fechamento_do_atendimento_quando_declara_isso() {
         &contexto(),
     )
     .expect("a ação é aceita");
-    assert_eq!(sem_encerrar.novo_estado.status, ExecutionStatus::Completed);
+    assert_eq!(sem_encerrar.new_state.status, ExecutionStatus::Completed);
     assert!(
-        !sem_encerrar.encerra_atendimento,
+        !sem_encerrar.ends_service,
         "concluir o fluxo não fecha o atendimento"
     );
 
-    let encerrando = executar_acao(
+    let encerrando = execute_action(
         &ir,
         &estado,
         "encerrar_tudo",
@@ -1424,9 +1413,9 @@ fn fim_so_pede_o_fechamento_do_atendimento_quando_declara_isso() {
         &contexto(),
     )
     .expect("a ação é aceita");
-    assert_eq!(encerrando.novo_estado.status, ExecutionStatus::Completed);
+    assert_eq!(encerrando.new_state.status, ExecutionStatus::Completed);
     assert!(
-        encerrando.encerra_atendimento,
+        encerrando.ends_service,
         "o fim que declara o encerramento pede o fechamento ao chamador"
     );
 }
@@ -1459,9 +1448,9 @@ fn o_encerramento_e_declarado_e_nao_deduzido_pelo_nome_da_etapa() {
         ],
         Vec::new(),
     );
-    let estado = iniciar(&ir).expect("a execução começa");
+    let estado = start(&ir).expect("a execução começa");
 
-    let resultado = executar_acao(
+    let resultado = execute_action(
         &ir,
         &estado,
         "seguir",
@@ -1472,13 +1461,13 @@ fn o_encerramento_e_declarado_e_nao_deduzido_pelo_nome_da_etapa() {
     )
     .expect("a ação é aceita");
 
-    assert_eq!(resultado.novo_estado.no_atual, vai_para("encerrado"));
+    assert_eq!(resultado.new_state.no_atual, vai_para("encerrado"));
     assert_eq!(
-        resultado.novo_estado.status,
+        resultado.new_state.status,
         ExecutionStatus::Active,
         "chegar numa etapa chamada `Encerrado` não encerra nada"
     );
-    assert!(!resultado.encerra_atendimento);
+    assert!(!resultado.ends_service);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1538,10 +1527,10 @@ fn notificacao_e_encaminhamento_saem_como_efeito_da_acao() {
         Vec::new(),
     );
     let avaliador = RuleEvaluator::without_functions();
-    let contexto = Contexto::novo(&avaliador).com_cliente("cli_ficticio");
-    let estado = iniciar(&ir).expect("a execução começa");
+    let contexto = Context::new(&avaliador).with_client("cli_ficticio");
+    let estado = start(&ir).expect("a execução começa");
 
-    let resultado = executar_acao(
+    let resultado = execute_action(
         &ir,
         &estado,
         "concluir",
@@ -1552,20 +1541,20 @@ fn notificacao_e_encaminhamento_saem_como_efeito_da_acao() {
     )
     .expect("a ação é aceita");
 
-    assert_eq!(resultado.efeitos.len(), 2);
-    assert_eq!(resultado.efeitos[0].chave, "acao:coleta.concluir/0");
-    assert_eq!(resultado.efeitos[0].tipo(), "notificar_whatsapp");
+    assert_eq!(resultado.effects.len(), 2);
+    assert_eq!(resultado.effects[0].chave, "acao:coleta.concluir/0");
+    assert_eq!(resultado.effects[0].tipo(), "notificar_whatsapp");
     assert_eq!(
-        resultado.efeitos[0].efeito,
+        resultado.effects[0].effect,
         Effect::NotifyWhatsApp {
             para: "5521999990000".to_owned(),
             mensagem: "O atendimento do cliente cli_ficticio foi concluído".to_owned(),
         }
     );
-    assert_eq!(resultado.efeitos[1].chave, "acao:coleta.concluir/1");
-    assert_eq!(resultado.efeitos[1].tipo(), "encaminhar");
+    assert_eq!(resultado.effects[1].chave, "acao:coleta.concluir/1");
+    assert_eq!(resultado.effects[1].tipo(), "encaminhar");
     assert_eq!(
-        resultado.efeitos[1].efeito,
+        resultado.effects[1].effect,
         Effect::Encaminhar {
             departamento: "financeiro".to_owned(),
         }
@@ -1603,16 +1592,15 @@ fn mensagem_de_entrada_da_etapa_sai_ao_iniciar_a_execucao() {
         Vec::new(),
     );
     let avaliador = RuleEvaluator::without_functions();
-    let contexto = Contexto::novo(&avaliador).com_cliente("cli_ficticio");
-    let estado = iniciar(&ir).expect("a execução começa");
+    let contexto = Context::new(&avaliador).with_client("cli_ficticio");
+    let estado = start(&ir).expect("a execução começa");
 
-    let efeitos =
-        efeitos_de_entrada(&ir, "abertura", &estado.dados, &contexto).expect("a etapa existe");
+    let efeitos = entry_effects(&ir, "abertura", &estado.dados, &contexto).expect("a etapa existe");
 
     assert_eq!(efeitos.len(), 1);
     assert_eq!(efeitos[0].chave, "etapa:abertura/0");
     assert_eq!(
-        efeitos[0].efeito,
+        efeitos[0].effect,
         Effect::MessageToCustomer {
             texto: "Olá, cli_ficticio! Já vou te atender.".to_owned(),
         }
@@ -1647,21 +1635,20 @@ fn variavel_inexistente_no_texto_sai_vazia() {
         Vec::new(),
     );
     let avaliador = RuleEvaluator::without_functions();
-    let contexto = Contexto::novo(&avaliador);
-    let estado = iniciar(&ir).expect("a execução começa");
+    let contexto = Context::new(&avaliador);
+    let estado = start(&ir).expect("a execução começa");
 
-    let efeitos =
-        efeitos_de_entrada(&ir, "triagem", &estado.dados, &contexto).expect("a etapa existe");
+    let efeitos = entry_effects(&ir, "triagem", &estado.dados, &contexto).expect("a etapa existe");
 
     assert_eq!(
-        efeitos[0].efeito,
+        efeitos[0].effect,
         Effect::MessageToCustomer {
             texto: "Endereço registrado: .".to_owned(),
         },
         "a variável que não existe sai vazia, sem quebrar o texto"
     );
     assert_eq!(
-        efeitos[1].efeito,
+        efeitos[1].effect,
         Effect::MessageToCustomer {
             texto: "Chave sem par: {triagem.cep".to_owned(),
         },
@@ -1702,10 +1689,10 @@ fn inicio_e_declarado_no_fluxo_e_nao_marcado_na_etapa() {
         Vec::new(),
     );
 
-    let estado = iniciar(&ir).expect("a execução começa");
+    let estado = start(&ir).expect("a execução começa");
 
     assert_eq!(estado.no_atual, vai_para("meio"));
     assert_eq!(estado.status, ExecutionStatus::Active);
     assert!(estado.dados.is_empty());
-    assert!(estado.atores_que_agiram.is_empty());
+    assert!(estado.actors_who_acted.is_empty());
 }

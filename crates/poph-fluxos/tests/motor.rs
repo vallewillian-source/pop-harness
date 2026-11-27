@@ -8,7 +8,7 @@
 
 use poph_fluxos::ir::{Acao, Campo, Destination, Etapa, Fim, Fluxo, Gatilho, Ir};
 use poph_fluxos::motor::{
-    Campos, Contexto, Estado, atores_exigidos, campos_faltando, executar_acao, iniciar,
+    Campos, Context, Estado, execute_action, missing_fields, required_actors, start,
 };
 use poph_fluxos::regras::RuleEvaluator;
 use poph_types::{ActionActor, DomainError, ExecutionStatus, FieldKind, RecordEventKind};
@@ -19,9 +19,9 @@ use std::sync::OnceLock;
 /// Contexto das chamadas do motor: sem Ficha, sem cliente e com o avaliador só de combinadores.
 ///
 /// Os testes de decisão montam o seu com o avaliador que tem as `def` do fluxo.
-fn contexto() -> Contexto<'static> {
+fn contexto() -> Context<'static> {
     static AVALIADOR: OnceLock<RuleEvaluator> = OnceLock::new();
-    Contexto::novo(AVALIADOR.get_or_init(RuleEvaluator::without_functions))
+    Context::new(AVALIADOR.get_or_init(RuleEvaluator::without_functions))
 }
 
 fn campo(id: &str, tipo: FieldKind, obrigatorio: bool, opcoes: &[&str]) -> Campo {
@@ -177,7 +177,7 @@ fn erros_de_campos(erro: &DomainError) -> Vec<String> {
 }
 
 fn tipos(resultado: &poph_fluxos::motor::Resultado) -> Vec<RecordEventKind> {
-    resultado.eventos.iter().map(|evento| evento.tipo).collect()
+    resultado.events.iter().map(|evento| evento.tipo).collect()
 }
 
 // ------------------------------------------------------------------ iniciar
@@ -185,7 +185,7 @@ fn tipos(resultado: &poph_fluxos::motor::Resultado) -> Vec<RecordEventKind> {
 #[test]
 fn iniciar_comeca_na_etapa_de_inicio_com_o_estado_vazio() {
     let ir = fluxo_simples();
-    let estado = iniciar(&ir).expect("a etapa de início existe");
+    let estado = start(&ir).expect("a etapa de início existe");
 
     assert_eq!(estado.fluxo_id, "teste");
     assert_eq!(estado.status, ExecutionStatus::Active);
@@ -196,7 +196,7 @@ fn iniciar_comeca_na_etapa_de_inicio_com_o_estado_vazio() {
         }
     );
     assert!(estado.dados.is_empty(), "a execução nova não tem dado");
-    assert!(estado.atores_que_agiram.is_empty());
+    assert!(estado.actors_who_acted.is_empty());
     assert!(estado.keys.is_empty());
     assert_eq!(estado.resultado, None);
 }
@@ -207,7 +207,7 @@ fn iniciar_recusa_ir_que_aponta_para_etapa_inexistente() {
     let mut ir = fluxo_simples();
     ir.start = "nao_existe".to_owned();
 
-    let erro = iniciar(&ir).expect_err("a etapa de início não existe");
+    let erro = start(&ir).expect_err("a etapa de início não existe");
     assert!(
         matches!(erro, DomainError::IrDivergent { .. }),
         "esperava ir_divergente e veio {erro:?}"
@@ -220,9 +220,9 @@ fn iniciar_recusa_ir_que_aponta_para_etapa_inexistente() {
 #[test]
 fn acao_valida_grava_os_campos_e_avanca_para_a_etapa_de_destino() {
     let ir = fluxo_simples();
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
 
-    let resultado = executar_acao(
+    let resultado = execute_action(
         &ir,
         &estado,
         "confirmar",
@@ -234,23 +234,23 @@ fn acao_valida_grava_os_campos_e_avanca_para_a_etapa_de_destino() {
     .expect("a ação é válida");
 
     assert_eq!(
-        resultado.novo_estado.no_atual,
+        resultado.new_state.no_atual,
         Destination::Etapa {
             id: "confirmacao".to_owned()
         }
     );
     assert_eq!(
-        resultado.novo_estado.dados.get("coleta"),
+        resultado.new_state.dados.get("coleta"),
         Some(&json!({ "endereco": "Rua das Flores, 10" })),
         "os campos ficam em dados[etapa][campo]"
     );
     assert!(
-        resultado.novo_estado.atores_que_agiram.is_empty(),
+        resultado.new_state.actors_who_acted.is_empty(),
         "a etapa nova começa sem ator que agiu"
     );
-    assert!(resultado.aguardando.is_empty());
-    assert!(!resultado.repetida);
-    assert!(resultado.efeitos.is_empty(), "efeitos são da FX-14");
+    assert!(resultado.waiting.is_empty());
+    assert!(!resultado.repeated);
+    assert!(resultado.effects.is_empty(), "efeitos são da FX-14");
     assert_eq!(
         tipos(&resultado),
         vec![
@@ -261,7 +261,7 @@ fn acao_valida_grava_os_campos_e_avanca_para_a_etapa_de_destino() {
         ]
     );
     assert_eq!(
-        resultado.eventos[3].payload,
+        resultado.events[3].payload,
         json!({ "etapa": "confirmacao" }),
         "o evento de entrada diz a etapa nova"
     );
@@ -270,8 +270,8 @@ fn acao_valida_grava_os_campos_e_avanca_para_a_etapa_de_destino() {
 #[test]
 fn dados_das_etapas_anteriores_continuam_na_execucao() {
     let ir = fluxo_simples();
-    let mut estado = iniciar(&ir).expect("início");
-    estado = executar_acao(
+    let mut estado = start(&ir).expect("início");
+    estado = execute_action(
         &ir,
         &estado,
         "confirmar",
@@ -281,9 +281,9 @@ fn dados_das_etapas_anteriores_continuam_na_execucao() {
         &contexto(),
     )
     .expect("primeira ação")
-    .novo_estado;
+    .new_state;
 
-    let resultado = executar_acao(
+    let resultado = execute_action(
         &ir,
         &estado,
         "ok",
@@ -295,12 +295,12 @@ fn dados_das_etapas_anteriores_continuam_na_execucao() {
     .expect("segunda ação");
 
     assert_eq!(
-        resultado.novo_estado.dados.get("coleta"),
+        resultado.new_state.dados.get("coleta"),
         Some(&json!({ "endereco": "Rua A" })),
         "o dado da etapa anterior não é perdido"
     );
     assert_eq!(
-        resultado.novo_estado.no_atual,
+        resultado.new_state.no_atual,
         Destination::Fim {
             id: "concluido".to_owned(),
             resultado: Some("Concluído".to_owned()),
@@ -313,9 +313,9 @@ fn dados_das_etapas_anteriores_continuam_na_execucao() {
 #[test]
 fn o_texto_do_campo_e_gravado_sem_os_espacos_das_pontas() {
     let ir = fluxo_simples();
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
 
-    let resultado = executar_acao(
+    let resultado = execute_action(
         &ir,
         &estado,
         "confirmar",
@@ -327,7 +327,7 @@ fn o_texto_do_campo_e_gravado_sem_os_espacos_das_pontas() {
     .expect("a ação é válida");
 
     assert_eq!(
-        resultado.novo_estado.dados.get("coleta"),
+        resultado.new_state.dados.get("coleta"),
         Some(&json!({ "endereco": "Rua B" }))
     );
 }
@@ -337,9 +337,9 @@ fn o_texto_do_campo_e_gravado_sem_os_espacos_das_pontas() {
 #[test]
 fn campo_exigido_faltando_devolve_a_lista_do_que_falta() {
     let ir = fluxo_simples();
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
 
-    let erro = executar_acao(
+    let erro = execute_action(
         &ir,
         &estado,
         "confirmar",
@@ -379,9 +379,9 @@ fn exige_de_campo_que_a_etapa_nao_declara_avisa_isso() {
             vec![acao_para_fim("ok", None)],
         ),
     ]);
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
 
-    let erro = executar_acao(
+    let erro = execute_action(
         &ir,
         &estado,
         "confirmar",
@@ -420,9 +420,9 @@ fn o_campo_informado_antes_conta_para_o_exige_da_acao_seguinte() {
             vec![acao_para_fim("ok", None)],
         ),
     ]);
-    let mut estado = iniciar(&ir).expect("início");
+    let mut estado = start(&ir).expect("início");
 
-    estado = executar_acao(
+    estado = execute_action(
         &ir,
         &estado,
         "anotar",
@@ -432,9 +432,9 @@ fn o_campo_informado_antes_conta_para_o_exige_da_acao_seguinte() {
         &contexto(),
     )
     .expect("anotar o campo")
-    .novo_estado;
+    .new_state;
 
-    let resultado = executar_acao(
+    let resultado = execute_action(
         &ir,
         &estado,
         "confirmar",
@@ -445,7 +445,7 @@ fn o_campo_informado_antes_conta_para_o_exige_da_acao_seguinte() {
     )
     .expect("o campo já estava gravado");
     assert_eq!(
-        resultado.novo_estado.no_atual,
+        resultado.new_state.no_atual,
         Destination::Etapa {
             id: "confirmacao".to_owned()
         }
@@ -468,9 +468,9 @@ fn campo_com_tipo_errado_e_recusado_com_o_que_veio() {
             vec![acao_para_fim("fim", None)],
         ),
     ]);
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
 
-    let erro = executar_acao(
+    let erro = execute_action(
         &ir,
         &estado,
         "ok",
@@ -510,9 +510,9 @@ fn cada_tipo_de_campo_recusa_o_valor_que_nao_e_dele() {
             vec![acao_para_fim("fim", None)],
         ),
     ]);
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
 
-    let erro = executar_acao(
+    let erro = execute_action(
         &ir,
         &estado,
         "ok",
@@ -558,10 +558,10 @@ fn os_valores_validos_de_cada_tipo_sao_gravados() {
             vec![acao_para_fim("fim", None)],
         ),
     ]);
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
     let anexo = json!({ "nome": "laudo.pdf", "tipo": "application/pdf", "tamanho": 1024 });
 
-    let resultado = executar_acao(
+    let resultado = execute_action(
         &ir,
         &estado,
         "ok",
@@ -579,7 +579,7 @@ fn os_valores_validos_de_cada_tipo_sao_gravados() {
     .expect("todos os valores são do tipo certo");
 
     assert_eq!(
-        resultado.novo_estado.dados.get("cadastro"),
+        resultado.new_state.dados.get("cadastro"),
         Some(&json!({
             "texto": "ok",
             "numero": 42,
@@ -611,9 +611,9 @@ fn opcao_fora_da_lista_e_recusada_com_as_opcoes() {
             vec![acao_para_fim("fim", None)],
         ),
     ]);
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
 
-    let erro = executar_acao(
+    let erro = execute_action(
         &ir,
         &estado,
         "ok",
@@ -634,9 +634,9 @@ fn opcao_fora_da_lista_e_recusada_com_as_opcoes() {
 #[test]
 fn campo_de_outra_etapa_e_recusado_com_os_campos_da_etapa() {
     let ir = fluxo_simples();
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
 
-    let erro = executar_acao(
+    let erro = execute_action(
         &ir,
         &estado,
         "confirmar",
@@ -658,9 +658,9 @@ fn campo_de_outra_etapa_e_recusado_com_os_campos_da_etapa() {
 #[test]
 fn campo_com_o_prefixo_da_etapa_e_recusado_com_a_dica() {
     let ir = fluxo_simples();
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
 
-    let erro = executar_acao(
+    let erro = execute_action(
         &ir,
         &estado,
         "confirmar",
@@ -681,9 +681,9 @@ fn campo_com_o_prefixo_da_etapa_e_recusado_com_a_dica() {
 #[test]
 fn campo_obrigatorio_nao_aceita_valor_vazio() {
     let ir = fluxo_simples();
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
 
-    let erro = executar_acao(
+    let erro = execute_action(
         &ir,
         &estado,
         "confirmar",
@@ -716,10 +716,10 @@ fn campo_opcional_aceita_nulo_e_o_campo_conta_como_vazio() {
             vec![acao_para_fim("fim", None)],
         ),
     ]);
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
 
     // `null` no campo opcional é aceito (limpar)…
-    let com_nulo = executar_acao(
+    let com_nulo = execute_action(
         &ir,
         &estado,
         "limpar",
@@ -730,14 +730,14 @@ fn campo_opcional_aceita_nulo_e_o_campo_conta_como_vazio() {
     )
     .expect("campo opcional aceita nulo");
     assert_eq!(
-        com_nulo.novo_estado.dados.get("coleta"),
+        com_nulo.new_state.dados.get("coleta"),
         Some(&json!({ "bairro": Json::Null }))
     );
 
     // …e não conta como preenchido para o `exige` da ação seguinte.
-    let erro = executar_acao(
+    let erro = execute_action(
         &ir,
-        &com_nulo.novo_estado,
+        &com_nulo.new_state,
         "confirmar",
         &sem_campos(),
         ActionActor::Agent,
@@ -753,9 +753,9 @@ fn campo_opcional_aceita_nulo_e_o_campo_conta_como_vazio() {
 #[test]
 fn ator_fora_dos_atores_da_etapa_e_recusado() {
     let ir = fluxo_simples();
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
 
-    let erro = executar_acao(
+    let erro = execute_action(
         &ir,
         &estado,
         "confirmar",
@@ -776,9 +776,9 @@ fn ator_fora_dos_atores_da_etapa_e_recusado() {
 #[test]
 fn acao_restrita_ao_atendente_recusada_para_o_agente() {
     let ir = fluxo_com_dois_atores();
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
 
-    let erro = executar_acao(
+    let erro = execute_action(
         &ir,
         &estado,
         "assumir",
@@ -801,9 +801,9 @@ fn acao_restrita_ao_atendente_recusada_para_o_agente() {
 #[test]
 fn etapa_com_dois_atores_fica_parcial_e_diz_quem_falta() {
     let ir = fluxo_com_dois_atores();
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
 
-    let resultado = executar_acao(
+    let resultado = execute_action(
         &ir,
         &estado,
         "registrar",
@@ -815,15 +815,15 @@ fn etapa_com_dois_atores_fica_parcial_e_diz_quem_falta() {
     .expect("a ação é válida");
 
     assert_eq!(
-        resultado.novo_estado.no_atual,
+        resultado.new_state.no_atual,
         Destination::Etapa {
             id: "triagem".to_owned()
         },
         "a etapa não avança enquanto o atendente não agir"
     );
-    assert_eq!(resultado.aguardando, vec![ActionActor::Attendant]);
+    assert_eq!(resultado.waiting, vec![ActionActor::Attendant]);
     assert_eq!(
-        resultado.novo_estado.atores_que_agiram,
+        resultado.new_state.actors_who_acted,
         vec![ActionActor::Agent]
     );
     assert_eq!(
@@ -835,7 +835,7 @@ fn etapa_com_dois_atores_fica_parcial_e_diz_quem_falta() {
         "etapa parcial não tem evento de conclusão nem de entrada"
     );
     assert_eq!(
-        resultado.eventos[1].payload["parcial"],
+        resultado.events[1].payload["parcial"],
         json!(true),
         "o evento da ação registra que a etapa ficou parcial"
     );
@@ -844,8 +844,8 @@ fn etapa_com_dois_atores_fica_parcial_e_diz_quem_falta() {
 #[test]
 fn a_etapa_avanca_quando_o_segundo_ator_age() {
     let ir = fluxo_com_dois_atores();
-    let mut estado = iniciar(&ir).expect("início");
-    estado = executar_acao(
+    let mut estado = start(&ir).expect("início");
+    estado = execute_action(
         &ir,
         &estado,
         "registrar",
@@ -855,9 +855,9 @@ fn a_etapa_avanca_quando_o_segundo_ator_age() {
         &contexto(),
     )
     .expect("primeiro ator")
-    .novo_estado;
+    .new_state;
 
-    let resultado = executar_acao(
+    let resultado = execute_action(
         &ir,
         &estado,
         "assumir",
@@ -869,14 +869,14 @@ fn a_etapa_avanca_quando_o_segundo_ator_age() {
     .expect("segundo ator");
 
     assert_eq!(
-        resultado.novo_estado.no_atual,
+        resultado.new_state.no_atual,
         Destination::Etapa {
             id: "depois".to_owned()
         }
     );
-    assert!(resultado.aguardando.is_empty());
+    assert!(resultado.waiting.is_empty());
     assert!(
-        resultado.novo_estado.atores_que_agiram.is_empty(),
+        resultado.new_state.actors_who_acted.is_empty(),
         "a etapa nova não herda quem agiu na anterior"
     );
     assert_eq!(
@@ -896,8 +896,8 @@ fn os_dois_atores_chegam_ao_mesmo_destino_em_qualquer_ordem() {
     // dele. Nada depende de quem começou.
     let ir = fluxo_com_dois_atores();
 
-    let mut agente_primeiro = iniciar(&ir).expect("início");
-    agente_primeiro = executar_acao(
+    let mut agente_primeiro = start(&ir).expect("início");
+    agente_primeiro = execute_action(
         &ir,
         &agente_primeiro,
         "registrar",
@@ -907,8 +907,8 @@ fn os_dois_atores_chegam_ao_mesmo_destino_em_qualquer_ordem() {
         &contexto(),
     )
     .expect("agente primeiro")
-    .novo_estado;
-    let fim_agente_primeiro = executar_acao(
+    .new_state;
+    let fim_agente_primeiro = execute_action(
         &ir,
         &agente_primeiro,
         "assumir",
@@ -919,8 +919,8 @@ fn os_dois_atores_chegam_ao_mesmo_destino_em_qualquer_ordem() {
     )
     .expect("atendente depois");
 
-    let mut atendente_primeiro = iniciar(&ir).expect("início");
-    atendente_primeiro = executar_acao(
+    let mut atendente_primeiro = start(&ir).expect("início");
+    atendente_primeiro = execute_action(
         &ir,
         &atendente_primeiro,
         "assumir",
@@ -930,8 +930,8 @@ fn os_dois_atores_chegam_ao_mesmo_destino_em_qualquer_ordem() {
         &contexto(),
     )
     .expect("atendente primeiro")
-    .novo_estado;
-    let fim_atendente_primeiro = executar_acao(
+    .new_state;
+    let fim_atendente_primeiro = execute_action(
         &ir,
         &atendente_primeiro,
         "registrar",
@@ -943,11 +943,11 @@ fn os_dois_atores_chegam_ao_mesmo_destino_em_qualquer_ordem() {
     .expect("agente depois");
 
     assert_eq!(
-        fim_agente_primeiro.novo_estado.no_atual, fim_atendente_primeiro.novo_estado.no_atual,
+        fim_agente_primeiro.new_state.no_atual, fim_atendente_primeiro.new_state.no_atual,
         "as duas ordens terminam na mesma etapa"
     );
     assert_eq!(
-        fim_agente_primeiro.novo_estado.no_atual,
+        fim_agente_primeiro.new_state.no_atual,
         Destination::Etapa {
             id: "depois".to_owned()
         }
@@ -975,9 +975,9 @@ fn acao_irrestrita_avanca_sozinha() {
             vec![acao_para_fim("ok", None)],
         ),
     ]);
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
 
-    let resultado = executar_acao(
+    let resultado = execute_action(
         &ir,
         &estado,
         "resolver",
@@ -989,12 +989,12 @@ fn acao_irrestrita_avanca_sozinha() {
     .expect("a ação irrestrita é válida");
 
     assert_eq!(
-        resultado.novo_estado.no_atual,
+        resultado.new_state.no_atual,
         Destination::Etapa {
             id: "outro".to_owned()
         }
     );
-    assert!(resultado.aguardando.is_empty());
+    assert!(resultado.waiting.is_empty());
 }
 
 #[test]
@@ -1025,9 +1025,9 @@ fn a_acao_irrestrita_ainda_espera_a_acao_restrita_do_outro_ator() {
             vec![acao_para_fim("ok", None)],
         ),
     ]);
-    let mut estado = iniciar(&ir).expect("início");
+    let mut estado = start(&ir).expect("início");
 
-    let parcial = executar_acao(
+    let parcial = execute_action(
         &ir,
         &estado,
         "resolver",
@@ -1038,16 +1038,16 @@ fn a_acao_irrestrita_ainda_espera_a_acao_restrita_do_outro_ator() {
     )
     .expect("a ação irrestrita é válida");
     assert_eq!(
-        parcial.novo_estado.no_atual,
+        parcial.new_state.no_atual,
         Destination::Etapa {
             id: "triagem".to_owned()
         },
         "o atendente ainda não agiu"
     );
-    assert_eq!(parcial.aguardando, vec![ActionActor::Attendant]);
+    assert_eq!(parcial.waiting, vec![ActionActor::Attendant]);
 
-    estado = parcial.novo_estado;
-    let avancou = executar_acao(
+    estado = parcial.new_state;
+    let avancou = execute_action(
         &ir,
         &estado,
         "encaminhar",
@@ -1058,7 +1058,7 @@ fn a_acao_irrestrita_ainda_espera_a_acao_restrita_do_outro_ator() {
     )
     .expect("o atendente age");
     assert_eq!(
-        avancou.novo_estado.no_atual,
+        avancou.new_state.no_atual,
         Destination::Etapa {
             id: "depois".to_owned()
         },
@@ -1087,9 +1087,9 @@ fn acao_que_vai_para_o_fim_e_decisiva_mesmo_com_outro_ator_pendente() {
             vec![acao_para_fim("ok", None)],
         ),
     ]);
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
 
-    let resultado = executar_acao(
+    let resultado = execute_action(
         &ir,
         &estado,
         "encerrar",
@@ -1101,12 +1101,12 @@ fn acao_que_vai_para_o_fim_e_decisiva_mesmo_com_outro_ator_pendente() {
     .expect("a ação é válida");
 
     assert!(
-        matches!(resultado.novo_estado.no_atual, Destination::Fim { .. }),
+        matches!(resultado.new_state.no_atual, Destination::Fim { .. }),
         "a ação de saída leva ao fim: {:?}",
-        resultado.novo_estado.no_atual
+        resultado.new_state.no_atual
     );
     assert!(
-        resultado.aguardando.is_empty(),
+        resultado.waiting.is_empty(),
         "não há ninguém a esperar depois do fim"
     );
     assert_eq!(
@@ -1119,12 +1119,12 @@ fn acao_que_vai_para_o_fim_e_decisiva_mesmo_com_outro_ator_pendente() {
         "sem `etapa_entrou`: o destino é o fim, que conclui a execução"
     );
     assert_eq!(
-        resultado.novo_estado.status,
+        resultado.new_state.status,
         ExecutionStatus::Completed,
         "o fim conclui a execução na mesma passagem"
     );
     assert!(
-        !resultado.encerra_atendimento,
+        !resultado.ends_service,
         "este fim não encerra o atendimento"
     );
 }
@@ -1149,9 +1149,9 @@ fn a_etapa_com_acao_restrita_de_um_ator_so_nao_espera_o_outro() {
             vec![acao_para_fim("ok", None)],
         ),
     ]);
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
 
-    let resultado = executar_acao(
+    let resultado = execute_action(
         &ir,
         &estado,
         "confirmar",
@@ -1163,12 +1163,12 @@ fn a_etapa_com_acao_restrita_de_um_ator_so_nao_espera_o_outro() {
     .expect("a ação é válida");
 
     assert_eq!(
-        resultado.novo_estado.no_atual,
+        resultado.new_state.no_atual,
         Destination::Etapa {
             id: "depois".to_owned()
         }
     );
-    assert!(resultado.aguardando.is_empty());
+    assert!(resultado.waiting.is_empty());
 }
 
 #[test]
@@ -1187,7 +1187,7 @@ fn os_atores_exigidos_vem_das_acoes_e_na_ordem_do_texto() {
     );
 
     assert_eq!(
-        atores_exigidos(&etapa),
+        required_actors(&etapa),
         vec![ActionActor::Agent, ActionActor::Attendant],
         "sem repetição, sem o ator da ação de fim, na ordem alfabética do texto"
     );
@@ -1211,13 +1211,13 @@ fn campos_faltando_lista_so_os_obrigatorios_na_ordem_do_script() {
         json!({ "endereco": "Rua G", "bairro": "Centro" }),
     );
 
-    assert_eq!(campos_faltando(&etapa, &dados), vec!["periodo".to_owned()]);
+    assert_eq!(missing_fields(&etapa, &dados), vec!["periodo".to_owned()]);
 
     dados.insert(
         "coleta".to_owned(),
         json!({ "endereco": "Rua G", "periodo": "tarde" }),
     );
-    assert!(campos_faltando(&etapa, &dados).is_empty());
+    assert!(missing_fields(&etapa, &dados).is_empty());
 }
 
 // ------------------------------------------------------------------ idempotência
@@ -1225,10 +1225,10 @@ fn campos_faltando_lista_so_os_obrigatorios_na_ordem_do_script() {
 #[test]
 fn repetir_a_chave_nao_gera_segundo_evento() {
     let ir = fluxo_simples();
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
     let entrada = campos(json!({ "endereco": "Rua H" }));
 
-    let primeira = executar_acao(
+    let primeira = execute_action(
         &ir,
         &estado,
         "confirmar",
@@ -1238,12 +1238,12 @@ fn repetir_a_chave_nao_gera_segundo_evento() {
         &contexto(),
     )
     .expect("primeira passagem");
-    assert!(!primeira.repetida);
-    assert!(!primeira.eventos.is_empty());
+    assert!(!primeira.repeated);
+    assert!(!primeira.events.is_empty());
 
-    let segunda = executar_acao(
+    let segunda = execute_action(
         &ir,
-        &primeira.novo_estado,
+        &primeira.new_state,
         "confirmar",
         &entrada,
         ActionActor::Agent,
@@ -1252,18 +1252,18 @@ fn repetir_a_chave_nao_gera_segundo_evento() {
     )
     .expect("a repetição não é erro");
 
-    assert!(segunda.repetida);
-    assert!(segunda.eventos.is_empty(), "repetir não grava evento");
-    assert!(segunda.efeitos.is_empty());
+    assert!(segunda.repeated);
+    assert!(segunda.events.is_empty(), "repetir não grava evento");
+    assert!(segunda.effects.is_empty());
     assert_eq!(
-        segunda.novo_estado, primeira.novo_estado,
+        segunda.new_state, primeira.new_state,
         "o estado não muda na repetição"
     );
 
     // Outra chave, na etapa nova, aplica de verdade.
-    let terceira = executar_acao(
+    let terceira = execute_action(
         &ir,
-        &segunda.novo_estado,
+        &segunda.new_state,
         "ok",
         &sem_campos(),
         ActionActor::Agent,
@@ -1271,15 +1271,15 @@ fn repetir_a_chave_nao_gera_segundo_evento() {
         &contexto(),
     )
     .expect("chave nova aplica");
-    assert!(!terceira.repetida);
-    assert!(!terceira.eventos.is_empty());
+    assert!(!terceira.repeated);
+    assert!(!terceira.events.is_empty());
 }
 
 #[test]
 fn a_chave_repetida_devolve_quem_faltava_quando_a_etapa_ficou_parcial() {
     let ir = fluxo_com_dois_atores();
-    let estado = iniciar(&ir).expect("início");
-    let primeira = executar_acao(
+    let estado = start(&ir).expect("início");
+    let primeira = execute_action(
         &ir,
         &estado,
         "registrar",
@@ -1289,11 +1289,11 @@ fn a_chave_repetida_devolve_quem_faltava_quando_a_etapa_ficou_parcial() {
         &contexto(),
     )
     .expect("primeira passagem");
-    assert_eq!(primeira.aguardando, vec![ActionActor::Attendant]);
+    assert_eq!(primeira.waiting, vec![ActionActor::Attendant]);
 
-    let repetida = executar_acao(
+    let repetida = execute_action(
         &ir,
-        &primeira.novo_estado,
+        &primeira.new_state,
         "registrar",
         &sem_campos(),
         ActionActor::Agent,
@@ -1302,13 +1302,13 @@ fn a_chave_repetida_devolve_quem_faltava_quando_a_etapa_ficou_parcial() {
     )
     .expect("repetição");
 
-    assert!(repetida.repetida);
+    assert!(repetida.repeated);
     assert_eq!(
-        repetida.aguardando,
+        repetida.waiting,
         vec![ActionActor::Attendant],
         "a repetição devolve o mesmo desfecho"
     );
-    assert!(repetida.eventos.is_empty());
+    assert!(repetida.events.is_empty());
 }
 
 // ------------------------------------------------------------------ sem transição escondida
@@ -1316,9 +1316,9 @@ fn a_chave_repetida_devolve_quem_faltava_quando_a_etapa_ficou_parcial() {
 #[test]
 fn acao_inexistente_devolve_as_validas_e_nao_muda_nada() {
     let ir = fluxo_simples();
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
 
-    let erro = executar_acao(
+    let erro = execute_action(
         &ir,
         &estado,
         "concluir",
@@ -1356,9 +1356,9 @@ fn etapa_sem_acao_avisa_que_nao_tem_saida() {
             vec![acao_para_fim("ok", None)],
         ),
     ]);
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
 
-    let erro = executar_acao(
+    let erro = execute_action(
         &ir,
         &estado,
         "qualquer",
@@ -1376,10 +1376,10 @@ fn etapa_sem_acao_avisa_que_nao_tem_saida() {
 #[test]
 fn execucao_ja_encerrada_recusa_acao() {
     let ir = fluxo_simples();
-    let mut estado = iniciar(&ir).expect("início");
+    let mut estado = start(&ir).expect("início");
     estado.status = ExecutionStatus::Completed;
 
-    let erro = executar_acao(
+    let erro = execute_action(
         &ir,
         &estado,
         "confirmar",
@@ -1411,12 +1411,12 @@ fn execucao_parada_numa_decisao_resolve_antes_de_executar_a_acao() {
             id: "confirmacao".to_owned(),
         },
     }];
-    let mut estado = iniciar(&ir).expect("início");
+    let mut estado = start(&ir).expect("início");
     estado.no_atual = Destination::Decisao {
         id: "escolher_rota".to_owned(),
     };
 
-    let resultado = executar_acao(
+    let resultado = execute_action(
         &ir,
         &estado,
         "confirmar",
@@ -1440,7 +1440,7 @@ fn execucao_parada_numa_decisao_resolve_antes_de_executar_a_acao() {
         "a decisão é resolvida antes da ação"
     );
     assert_eq!(
-        resultado.novo_estado.no_atual,
+        resultado.new_state.no_atual,
         Destination::Etapa {
             id: "confirmacao".to_owned()
         }
@@ -1455,9 +1455,9 @@ fn acao_para_etapa_inexistente_e_ir_divergente() {
         Vec::new(),
         vec![acao("ok", None, &[], "etapa_que_nao_existe")],
     )]);
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
 
-    let erro = executar_acao(
+    let erro = execute_action(
         &ir,
         &estado,
         "ok",
@@ -1475,10 +1475,10 @@ fn acao_para_etapa_inexistente_e_ir_divergente() {
 #[test]
 fn a_mesma_entrada_produz_o_mesmo_resultado() {
     let ir = fluxo_com_dois_atores();
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
     let entrada = campos(json!({ "resumo": "troca de produto" }));
 
-    let primeiro = executar_acao(
+    let primeiro = execute_action(
         &ir,
         &estado,
         "registrar",
@@ -1488,7 +1488,7 @@ fn a_mesma_entrada_produz_o_mesmo_resultado() {
         &contexto(),
     )
     .expect("primeira");
-    let segundo = executar_acao(
+    let segundo = execute_action(
         &ir,
         &estado,
         "registrar",
@@ -1513,7 +1513,7 @@ fn a_ir_dourada_de_agendar_visita_roda_do_inicio_ao_fim_da_etapa() {
         std::fs::read_to_string(&caminho).unwrap_or_else(|erro| panic!("{caminho}: {erro}"));
     let ir = Ir::from_json(&texto).expect("a IR dourada é JSON válido");
 
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
     assert_eq!(
         estado.no_atual,
         Destination::Etapa {
@@ -1521,7 +1521,7 @@ fn a_ir_dourada_de_agendar_visita_roda_do_inicio_ao_fim_da_etapa() {
         }
     );
 
-    let coletado = executar_acao(
+    let coletado = execute_action(
         &ir,
         &estado,
         "confirmar",
@@ -1532,15 +1532,15 @@ fn a_ir_dourada_de_agendar_visita_roda_do_inicio_ao_fim_da_etapa() {
     )
     .expect("a ação confirmar é válida");
     assert_eq!(
-        coletado.novo_estado.no_atual,
+        coletado.new_state.no_atual,
         Destination::Etapa {
             id: "confirmacao".to_owned()
         }
     );
 
-    let confirmado = executar_acao(
+    let confirmado = execute_action(
         &ir,
-        &coletado.novo_estado,
+        &coletado.new_state,
         "ok",
         &sem_campos(),
         ActionActor::Agent,
@@ -1549,19 +1549,19 @@ fn a_ir_dourada_de_agendar_visita_roda_do_inicio_ao_fim_da_etapa() {
     )
     .expect("a ação ok é válida");
     assert!(
-        matches!(confirmado.novo_estado.no_atual, Destination::Fim { .. }),
+        matches!(confirmado.new_state.no_atual, Destination::Fim { .. }),
         "{:?}",
-        confirmado.novo_estado.no_atual
+        confirmado.new_state.no_atual
     );
 }
 
 #[test]
 fn o_dado_do_cliente_e_gravado_como_valor_e_nunca_interpretado() {
     let ir = fluxo_simples();
-    let estado = iniciar(&ir).expect("início");
+    let estado = start(&ir).expect("início");
     let cliente = "__import__('os').system('ls')";
 
-    let resultado = executar_acao(
+    let resultado = execute_action(
         &ir,
         &estado,
         "confirmar",
@@ -1573,7 +1573,7 @@ fn o_dado_do_cliente_e_gravado_como_valor_e_nunca_interpretado() {
     .expect("o texto do cliente é só um texto");
 
     assert_eq!(
-        resultado.novo_estado.dados["coleta"]["endereco"],
+        resultado.new_state.dados["coleta"]["endereco"],
         json!(cliente),
         "o valor sai como entrou, sem virar código"
     );
@@ -1584,9 +1584,9 @@ fn o_dado_do_cliente_e_gravado_como_valor_e_nunca_interpretado() {
 #[test]
 fn o_estado_sobrevive_a_ida_e_volta_em_json() {
     let ir = fluxo_simples();
-    let resultado = executar_acao(
+    let resultado = execute_action(
         &ir,
-        &iniciar(&ir).expect("início"),
+        &start(&ir).expect("início"),
         "confirmar",
         &campos(json!({ "endereco": "Rua K" })),
         ActionActor::Agent,
@@ -1595,7 +1595,7 @@ fn o_estado_sobrevive_a_ida_e_volta_em_json() {
     )
     .expect("ação válida");
 
-    let json = serde_json::to_string(&resultado.novo_estado).expect("serializa");
+    let json = serde_json::to_string(&resultado.new_state).expect("serializa");
     let voltou: Estado = serde_json::from_str(&json).expect("lê");
-    assert_eq!(voltou, resultado.novo_estado);
+    assert_eq!(voltou, resultado.new_state);
 }

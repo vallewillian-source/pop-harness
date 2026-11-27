@@ -3,7 +3,7 @@ use std::sync::Arc;
 use poph_fluxos::Limites;
 use poph_fluxos::cache::{RevisionCache, RevisionKey};
 use poph_fluxos::ir::Ir;
-use poph_fluxos::motor::{self, Contexto as ContextEngine, Estado as StateEngine};
+use poph_fluxos::motor::{self, Context as ContextEngine, Estado as StateEngine};
 use poph_fluxos::prompt::render_block;
 use poph_fluxos::regras::{Dados, RuleEvaluator, RuleLimits};
 use poph_jev::{G9_NONE, IdGate, JevFlow, JevResult};
@@ -268,7 +268,7 @@ fn state_of_execution(
         status: execution.status,
         no_atual,
         dados,
-        atores_que_agiram: actors_that_acted,
+        actors_who_acted: actors_that_acted,
         resultado: execution.result.clone(),
         motivo: execution.motivo_fim.clone(),
         keys: Default::default(),
@@ -441,7 +441,7 @@ pub(crate) fn start(
             "a revisão publicada do fluxo `{slug}` não carrega"
         )));
     };
-    let estado = match motor::iniciar(&ir) {
+    let estado = match motor::start(&ir) {
         Ok(estado) => estado,
         Err(error) => {
             return Ok(Beginning::Rejected(format!(
@@ -451,14 +451,14 @@ pub(crate) fn start(
     };
     let evaluator = RuleEvaluator::without_functions();
     let text_of_case = ficha.id.to_string();
-    let mut context = ContextEngine::novo(&evaluator)
-        .com_ficha(&text_of_case)
-        .com_limite_de_saltos(adjustments.jumps);
+    let mut context = ContextEngine::new(&evaluator)
+        .with_case(&text_of_case)
+        .with_jump_limit(adjustments.jumps);
     if let Some(peer) = ficha.peer_externo.as_deref() {
-        context = context.com_cliente(peer);
+        context = context.with_client(peer);
     }
     let effects: Vec<TransitionEffect> =
-        match motor::efeitos_de_entrada(&ir, estado.no_atual.id(), &estado.dados, &context) {
+        match motor::entry_effects(&ir, estado.no_atual.id(), &estado.dados, &context) {
             Ok(effects) => effects.iter().map(effect_of_transition).collect(),
             Err(error) => {
                 return Ok(Beginning::Rejected(format!(
