@@ -333,7 +333,7 @@ check the agent's key and model"). All with the sanitized reason.
 
 ```
 cd apps/pop-harness
-cargo test -p poph-server --test turno_whatsapp --locked
+cargo test -p poph-server --test turn_whatsapp --locked
 ```
 
 Seven cases: a message becomes a reply once (with a count of calls, and the key only in the header); a redelivery does not
@@ -346,7 +346,7 @@ Model failure (HR-26i), with a fake provider and a fake Evolution:
 ```
 cargo test -p poph-agent --test turn --locked failure_model
 cargo test -p poph-agent --test file_library --locked failure_model
-cargo test -p poph-server --test turno_whatsapp --locked falha_do_modelo
+cargo test -p poph-server --test turn_whatsapp --locked model_failure
 ```
 
 No slot and provider refusal (HR-26k), with a fake provider and a fake Evolution:
@@ -354,7 +354,7 @@ No slot and provider refusal (HR-26k), with a fake provider and a fake Evolution
 ```
 cargo test -p poph-agent --test turn --locked missing_slot
 cargo test -p poph-agent --test turn --locked provider_refusal
-cargo test -p poph-server --test turno_whatsapp --locked recusa_do_provedor
+cargo test -p poph-server --test turn_whatsapp --locked provider_refusal
 ```
 
 Proofs: no turn slot in every attempt (three failed turns, no call to the model, nothing in the output, no retry after the
@@ -462,8 +462,8 @@ not lost, the turn does not get stuck as "in progress", the conversation goes ba
 - **How to prove it:**
   - `cargo test -p poph-server --test crash_resilience` — orphan turn closed at startup, conversation goes back to service, provider unavailable,
     cut stream, expired reservation, and console output stuck in `sending`;
-  - `cargo test -p poph-server --test turno_whatsapp` — `turno_interrompido_por_queda_e_retomado_uma_vez_na_subida` (one reply, one send) and
-    `resposta_que_ficou_em_envio_na_queda_sai_na_subida`;
+  - `cargo test -p poph-server --test turn_whatsapp` — `interrupted_turn_after_crash_resumes_once_on_start` (one reply, one send) and
+    `reply_stuck_in_sending_after_crash_goes_out_on_start`;
   - `cargo test -p poph-store --test storage` — `orphan_turns_closes_only_those_started_before_boot` and
     `response_and_output_item_enter_same_write`;
   - run with the real binary, `kill -9` at six points, in `/tmp/hr57-run/queda.py`.

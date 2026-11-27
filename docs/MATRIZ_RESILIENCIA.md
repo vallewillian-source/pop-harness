@@ -160,8 +160,8 @@ summary shows the median and p95 of each scenario.
   Evolution with an immediate reply. Production sending adds the window, the real latency of Evolution and the 1 s
   interval of the send loop. Only the path up to recording and the module's effect were compared.
 - **Duplicate WhatsApp send after a crash was not tested here.** If Evolution already delivered the message before the
-  crash, the reply may go out again on restart. The existing test `resposta_que_ficou_em_envio_na_queda_sai_na_subida`
-  (in `turno_whatsapp.rs`) shows that the reply is resent; I did not check what happens in the real Evolution.
+  crash, the reply may go out again on restart. The existing test `reply_stuck_in_sending_after_crash_goes_out_on_start`
+  (in `turn_whatsapp.rs`) shows that the reply is resent; I did not check what happens in the real Evolution.
 - **Receiver's transaction memory is lost on a crash.** Deduplication after a crash depends on the event key in the
   database. The test `retransmission_after_crash_does_not_make_second_reply` proves this with the memory cleared.
 - **The cause of the 65 model calls for 40 messages was not investigated.**

@@ -252,9 +252,9 @@ the message is completed with no reply and nothing goes out on WhatsApp. Details
 ```
 cd apps/pop-harness
 cargo test -p poph-evolution --locked
-cargo test -p poph-server --test saida_whatsapp --locked
+cargo test -p poph-server --test whatsapp_output --locked
 cargo test -p poph-server --test webhook_evolution --locked
-cargo test -p poph-server --test turno_whatsapp --locked
+cargo test -p poph-server --test turn_whatsapp --locked
 ```
 
 The tests use a fake server on `127.0.0.1` with a script of responses. None of them talks to the real Evolution or to a

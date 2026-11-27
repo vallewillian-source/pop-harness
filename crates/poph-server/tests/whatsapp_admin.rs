@@ -1,4 +1,3 @@
-
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -23,16 +22,15 @@ use tokio::sync::oneshot;
 use tracing_subscriber::fmt::MakeWriter;
 
 const TOKEN_GLOBAL: &str = "pophg_teste-global-hr44b";
-const CHAVE_EVO: &str = "chave-evo-hr44b-ABC123";
-const SEGREDO_WEBHOOK: &str = "segredo-webhook-hr44b";
-const VARIAVEL_SEGREDO: &str = "POPH_EVO_SEGREDO_HR44B";
-const TELEFONE: &str = "5511999990000";
-
+const EVO_KEY: &str = "chave-evo-hr44b-ABC123";
+const WEBHOOK_SECRET: &str = "segredo-webhook-hr44b";
+const SECRET_VAR: &str = "POPH_EVO_SEGREDO_HR44B";
+const PHONE: &str = "5511999990000";
 
 #[derive(Clone)]
-struct Captura(Arc<Mutex<Vec<u8>>>);
+struct Capture(Arc<Mutex<Vec<u8>>>);
 
-impl std::io::Write for Captura {
+impl std::io::Write for Capture {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
         self.0.lock().unwrap().extend_from_slice(bytes);
         Ok(bytes.len())
@@ -42,8 +40,8 @@ impl std::io::Write for Captura {
     }
 }
 
-impl<'a> MakeWriter<'a> for Captura {
-    type Writer = Captura;
+impl<'a> MakeWriter<'a> for Capture {
+    type Writer = Capture;
     fn make_writer(&'a self) -> Self::Writer {
         self.clone()
     }
@@ -51,11 +49,11 @@ impl<'a> MakeWriter<'a> for Captura {
 
 static LOGS: OnceLock<Arc<Mutex<Vec<u8>>>> = OnceLock::new();
 
-fn logs_capturados() -> Arc<Mutex<Vec<u8>>> {
+fn captured_logs() -> Arc<Mutex<Vec<u8>>> {
     LOGS.get_or_init(|| {
         let buffer = Arc::new(Mutex::new(Vec::new()));
         let _ = tracing_subscriber::fmt()
-            .with_writer(Captura(Arc::clone(&buffer)))
+            .with_writer(Capture(Arc::clone(&buffer)))
             .with_ansi(false)
             .with_max_level(tracing::Level::DEBUG)
             .try_init();
@@ -64,64 +62,57 @@ fn logs_capturados() -> Arc<Mutex<Vec<u8>>> {
     .clone()
 }
 
-
 #[derive(Debug, Default)]
 struct Instancia {
-    existe: bool,
-    aberta: bool,
-    criadas: usize,
-    pareamentos: usize,
-    estados: usize,
+    exists: bool,
+    open_conversation: bool,
+    created: usize,
+    pairings: usize,
+    states: usize,
     deslogadas: usize,
-    falhar_ao_criar: bool,
+    fail_on_create: bool,
 }
 
 #[derive(Clone, Default)]
-struct EvolucaoFalsa(Arc<Mutex<Instancia>>);
+struct FakeEvolution(Arc<Mutex<Instancia>>);
 
-impl EvolucaoFalsa {
+impl FakeEvolution {
     fn com<T>(&self, f: impl FnOnce(&mut Instancia) -> T) -> T {
         f(&mut self.0.lock().expect("estado da Evolution falsa"))
     }
-    fn ler<T>(&self, f: impl FnOnce(&Instancia) -> T) -> T {
+    fn read<T>(&self, f: impl FnOnce(&Instancia) -> T) -> T {
         f(&self.0.lock().expect("estado da Evolution falsa"))
     }
 }
 
-fn autorizado(cabecalhos: &HeaderMap) -> bool {
-    cabecalhos
-        .get("apikey")
-        .and_then(|valor| valor.to_str().ok())
-        == Some(CHAVE_EVO)
+fn authorized(headers: &HeaderMap) -> bool {
+    headers.get("apikey").and_then(|value| value.to_str().ok()) == Some(EVO_KEY)
 }
 
-async fn criar(
-    State(evo): State<EvolucaoFalsa>,
-    cabecalhos: HeaderMap,
-) -> (StatusCode, Json<Value>) {
-    if !autorizado(&cabecalhos) {
+async fn criar(State(evo): State<FakeEvolution>, headers: HeaderMap) -> (StatusCode, Json<Value>) {
+    if !authorized(&headers) {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({"message": "Unauthorized"})),
         );
     }
     evo.com(|instancia| {
-        instancia.criadas += 1;
-        if instancia.falhar_ao_criar {
+        instancia.created += 1;
+        if instancia.fail_on_create {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({
-                    "message": format!("apikey {CHAVE_EVO} recusada para o número {TELEFONE}")
+                    "message": format!("apikey {EVO_KEY} recusada para o número {PHONE}")
                 })),
             );
         }
-        if instancia.existe {
+        if instancia.exists {
             return (
                 StatusCode::FORBIDDEN,
                 Json(json!({"message": "Instance \"loja\" already in use"})),
             );
         }
-        instancia.existe = true;
+        instancia.exists = true;
         (
             StatusCode::CREATED,
             Json(json!({"instance": {"instanceName": "loja", "status": "created"}})),
@@ -130,19 +121,19 @@ async fn criar(
 }
 
 async fn conectar(
-    State(evo): State<EvolucaoFalsa>,
+    State(evo): State<FakeEvolution>,
     Path(instancia): Path<String>,
-    cabecalhos: HeaderMap,
+    headers: HeaderMap,
 ) -> (StatusCode, Json<Value>) {
-    if !autorizado(&cabecalhos) {
+    if !authorized(&headers) {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({"message": "Unauthorized"})),
         );
     }
     evo.com(|estado| {
-        estado.pareamentos += 1;
-        if !estado.existe {
+        estado.pairings += 1;
+        if !estado.exists {
             return (
                 StatusCode::NOT_FOUND,
                 Json(json!({"message": "Instance does not exist"})),
@@ -161,32 +152,32 @@ async fn conectar(
     })
 }
 
-async fn estado_conexao(
-    State(evo): State<EvolucaoFalsa>,
+async fn connection_state(
+    State(evo): State<FakeEvolution>,
     Path(instancia): Path<String>,
-    cabecalhos: HeaderMap,
+    headers: HeaderMap,
 ) -> (StatusCode, Json<Value>) {
-    if !autorizado(&cabecalhos) {
+    if !authorized(&headers) {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({"message": "Unauthorized"})),
         );
     }
     evo.com(|estado| {
-        estado.estados += 1;
-        if !estado.existe {
+        estado.states += 1;
+        if !estado.exists {
             return (
                 StatusCode::NOT_FOUND,
                 Json(json!({"message": "Instance does not exist"})),
             );
         }
-        let aberto = estado.aberta;
+        let open_flag = estado.open_conversation;
         (
             StatusCode::OK,
             Json(json!({
                 "instance": {
                     "instanceName": instancia,
-                    "state": if aberto { "open" } else { "close" },
+                    "state": if open_flag { "open" } else { "close" },
                 }
             })),
         )
@@ -194,11 +185,11 @@ async fn estado_conexao(
 }
 
 async fn desconectar(
-    State(evo): State<EvolucaoFalsa>,
-    Path(_instancia): Path<String>,
-    cabecalhos: HeaderMap,
+    State(evo): State<FakeEvolution>,
+    Path(_instance): Path<String>,
+    headers: HeaderMap,
 ) -> (StatusCode, Json<Value>) {
-    if !autorizado(&cabecalhos) {
+    if !authorized(&headers) {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({"message": "Unauthorized"})),
@@ -206,17 +197,20 @@ async fn desconectar(
     }
     evo.com(|estado| {
         estado.deslogadas += 1;
-        estado.aberta = false;
+        estado.open_conversation = false;
     });
     (StatusCode::OK, Json(json!({"status": "SUCCESS"})))
 }
 
-async fn subir_evolucao_falsa() -> (String, EvolucaoFalsa) {
-    let evo = EvolucaoFalsa::default();
-    let roteador = Router::new()
+async fn start_fake_evolution() -> (String, FakeEvolution) {
+    let evo = FakeEvolution::default();
+    let router = Router::new()
         .route("/instance/create", post(criar))
         .route("/instance/connect/{instancia}", get(conectar))
-        .route("/instance/connectionState/{instancia}", get(estado_conexao))
+        .route(
+            "/instance/connectionState/{instancia}",
+            get(connection_state),
+        )
         .route("/instance/logout/{instancia}", delete(desconectar))
         .with_state(evo.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -224,57 +218,56 @@ async fn subir_evolucao_falsa() -> (String, EvolucaoFalsa) {
         .expect("porta efêmera da Evolution falsa");
     let endereco = listener.local_addr().expect("endereço da Evolution falsa");
     tokio::spawn(async move {
-        let _ = axum::serve(listener, roteador).await;
+        let _ = axum::serve(listener, router).await;
     });
     (format!("http://{endereco}"), evo)
 }
 
-
-struct Cenario {
+struct Scenario {
     base: String,
-    cliente: Client,
-    pasta: PathBuf,
+    client: Client,
+    folder: PathBuf,
     store: Arc<Store>,
     org: OrgId,
     agente: AgentId,
     integracao: IntegrationId,
-    integracao_solta: IntegrationId,
-    integracao_sms: IntegrationId,
-    evo: EvolucaoFalsa,
+    loose_integration: IntegrationId,
+    sms_integration: IntegrationId,
+    evo: FakeEvolution,
     logs: Arc<Mutex<Vec<u8>>>,
     desligar: Option<oneshot::Sender<()>>,
 }
 
-struct Resposta {
+struct Response {
     status: StatusCode,
-    corpo: Value,
-    cru: String,
+    body: Value,
+    raw: String,
 }
 
-fn hash_argon2(valor: &str) -> String {
+fn hash_argon2(value: &str) -> String {
     let sal = SaltString::generate(&mut OsRng);
     Argon2::default()
-        .hash_password(valor.as_bytes(), &sal)
+        .hash_password(value.as_bytes(), &sal)
         .expect("hash argon2")
         .to_string()
 }
 
-impl Cenario {
-    async fn novo(rotulo: &str) -> Self {
-        let logs = logs_capturados();
-        let carimbo = SystemTime::now()
+impl Scenario {
+    async fn new(label: &str) -> Self {
+        let logs = captured_logs();
+        let stamp = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        let pasta = std::env::temp_dir().join(format!(
-            "poph-whatsapp-admin-{rotulo}-{}-{carimbo}",
+        let folder = std::env::temp_dir().join(format!(
+            "poph-whatsapp-admin-{label}-{}-{stamp}",
             std::process::id()
         ));
-        let _ = fs::remove_dir_all(&pasta);
-        fs::create_dir_all(pasta.join("dados")).expect("pasta de dados");
+        let _ = fs::remove_dir_all(&folder);
+        fs::create_dir_all(folder.join("dados")).expect("pasta de dados");
 
         let mut config = HarnessConfig::default();
-        config.data.directory = pasta.join("dados");
+        config.data.directory = folder.join("dados");
         config.server.port = 7480;
         config.admin.tokens_globais = vec![GlobalTokenConfig {
             label: "teste".to_owned(),
@@ -310,80 +303,80 @@ impl Cenario {
             .id
             .parse()
             .expect("id da integração");
-        let integracao_solta: IntegrationId = store
+        let loose_integration: IntegrationId = store
             .create_integration(org, agente, "whatsapp".to_owned(), "active".to_owned())
             .expect("cria a integração solta")
             .id
             .parse()
             .expect("id da integração solta");
-        let integracao_sms: IntegrationId = store
+        let sms_integration: IntegrationId = store
             .create_integration(org, agente, "sms".to_owned(), "active".to_owned())
             .expect("cria a integração sms")
             .id
             .parse()
             .expect("id da integração sms");
 
-        let (url_evo, evo) = subir_evolucao_falsa().await;
+        let (url_evo, evo) = start_fake_evolution().await;
         config.evolution = Some(EvolutionConfig {
             url_base: url_evo,
             instances: vec![EvolutionInstanceConfig {
                 org_id: org.to_string(),
                 instance: "loja".to_owned(),
                 integration_id: integracao.to_string(),
-                secret_env: VARIAVEL_SEGREDO.to_owned(),
+                secret_env: SECRET_VAR.to_owned(),
             }],
         });
         config.validar().expect("configuração com Evolution válida");
 
-        let canais: Vec<EvolutionChannel> = channels_from_config(
+        let channels: Vec<EvolutionChannel> = channels_from_config(
             &config,
-            Some(Secret::new(CHAVE_EVO.to_owned())),
-            &|variavel| (variavel == VARIAVEL_SEGREDO).then(|| SEGREDO_WEBHOOK.to_owned()),
+            Some(Secret::new(EVO_KEY.to_owned())),
+            &|variable| (variable == SECRET_VAR).then(|| WEBHOOK_SECRET.to_owned()),
         )
         .expect("canais da configuração");
-        assert_eq!(canais.len(), 1, "só a instância declarada vira canal");
+        assert_eq!(channels.len(), 1, "só a instância declarada vira canal");
 
         let estado = ServerState::new(Arc::clone(&store), config)
             .expect("estado do servidor")
-            .with_evolution_channels(canais);
+            .with_evolution_channels(channels);
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("porta efêmera");
         let endereco = listener.local_addr().expect("endereço local");
-        let (desligar, sinal) = oneshot::channel();
+        let (desligar, signal) = oneshot::channel();
         tokio::spawn(async move {
             let _ = poph_server::serve_at(listener, estado, async {
-                let _ = sinal.await;
+                let _ = signal.await;
             })
             .await;
         });
 
-        let cenario = Self {
+        let scenario = Self {
             base: format!("http://{endereco}"),
-            cliente: Client::builder()
+            client: Client::builder()
                 .timeout(Duration::from_secs(20))
                 .build()
                 .expect("cliente HTTP"),
-            pasta,
+            folder,
             store,
             org,
             agente,
             integracao,
-            integracao_solta,
-            integracao_sms,
+            loose_integration,
+            sms_integration,
             evo,
             logs,
             desligar: Some(desligar),
         };
-        cenario.esperar_subir().await;
-        cenario
+        scenario.wait_for_start().await;
+        scenario
     }
 
-    async fn esperar_subir(&self) {
+    async fn wait_for_start(&self) {
         for _ in 0..500 {
             if let Ok(r) = self
-                .cliente
+                .client
                 .get(format!("{}/healthz", self.base))
                 .send()
                 .await
@@ -396,41 +389,39 @@ impl Cenario {
         panic!("servidor não subiu");
     }
 
-    fn rota(&self, integracao: IntegrationId, fim: &str) -> String {
+    fn route(&self, integracao: IntegrationId, fim: &str) -> String {
         format!(
             "/admin/v1/orgs/{}/agents/{}/integrations/{}/whatsapp/{fim}",
             self.org, self.agente, integracao
         )
     }
 
-    async fn pedir(
+    async fn ask(
         &self,
-        metodo: Method,
-        caminho: &str,
+        method: Method,
+        path: &str,
         token: &str,
-        corpo: Option<Value>,
+        body: Option<Value>,
         if_match: Option<u64>,
-    ) -> Resposta {
-        let mut pedido = self
-            .cliente
-            .request(metodo, format!("{}{caminho}", self.base));
+    ) -> Response {
+        let mut request_body = self.client.request(method, format!("{}{path}", self.base));
         if !token.is_empty() {
-            pedido = pedido.bearer_auth(token);
+            request_body = request_body.bearer_auth(token);
         }
         if let Some(versao) = if_match {
-            pedido = pedido.header("If-Match", versao.to_string());
+            request_body = request_body.header("If-Match", versao.to_string());
         }
-        if let Some(valor) = corpo {
-            pedido = pedido.json(&valor);
+        if let Some(value) = body {
+            request_body = request_body.json(&value);
         }
-        let resposta = pedido.send().await.expect("pedido HTTP");
-        let status = resposta.status();
-        let cru = resposta.text().await.unwrap_or_default();
-        let corpo = serde_json::from_str(&cru).unwrap_or(Value::Null);
-        Resposta { status, corpo, cru }
+        let response = request_body.send().await.expect("pedido HTTP");
+        let status = response.status();
+        let raw = response.text().await.unwrap_or_default();
+        let body = serde_json::from_str(&raw).unwrap_or(Value::Null);
+        Response { status, body, raw }
     }
 
-    fn estado_gravado(&self, integracao: IntegrationId) -> String {
+    fn stored_state(&self, integracao: IntegrationId) -> String {
         self.store
             .get_integration(self.org, self.agente, integracao)
             .expect("integração")
@@ -444,165 +435,165 @@ impl Cenario {
             .version
     }
 
-    async fn token_novo(&self, org: OrgId, rotulo: &str) -> String {
-        let resposta = self
-            .pedir(
+    async fn new_token(&self, org: OrgId, label: &str) -> String {
+        let response = self
+            .ask(
                 Method::POST,
                 &format!("/admin/v1/orgs/{org}/tokens"),
                 TOKEN_GLOBAL,
-                Some(json!({"label": rotulo})),
+                Some(json!({"label": label})),
                 None,
             )
             .await;
-        assert_eq!(resposta.status, StatusCode::CREATED, "{}", resposta.cru);
-        resposta.corpo["value"]
+        assert_eq!(response.status, StatusCode::CREATED, "{}", response.raw);
+        response.body["value"]
             .as_str()
             .expect("valor do token")
             .to_owned()
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
         if let Some(desligar) = self.desligar.take() {
             let _ = desligar.send(());
         }
-        let _ = fs::remove_dir_all(&self.pasta);
+        let _ = fs::remove_dir_all(&self.folder);
     }
 }
 
-fn codigo(corpo: &Value) -> &str {
-    corpo["code"].as_str().unwrap_or("")
+fn code(body: &Value) -> &str {
+    body["code"].as_str().unwrap_or("")
 }
 
 #[tokio::test]
-async fn pareamento_devolve_qr_e_grava_estado() {
-    let c = Cenario::novo("pareamento").await;
-    let rota = c.rota(c.integracao, "qrcode");
+async fn pairing_returns_qr_and_stores_state() {
+    let c = Scenario::new("pareamento").await;
+    let route = c.route(c.integracao, "qrcode");
 
-    let sem_if_match = c.pedir(Method::POST, &rota, TOKEN_GLOBAL, None, None).await;
-    assert_eq!(sem_if_match.status, StatusCode::PRECONDITION_REQUIRED);
-    assert_eq!(codigo(&sem_if_match.corpo), "precondition_required");
-    assert_eq!(c.evo.ler(|e| e.criadas), 0, "nada foi criado na Evolution");
+    let without_if_match = c.ask(Method::POST, &route, TOKEN_GLOBAL, None, None).await;
+    assert_eq!(without_if_match.status, StatusCode::PRECONDITION_REQUIRED);
+    assert_eq!(code(&without_if_match.body), "precondition_required");
+    assert_eq!(c.evo.read(|e| e.created), 0, "nada foi criado na Evolution");
 
-    let resposta = c
-        .pedir(
+    let response = c
+        .ask(
             Method::POST,
-            &rota,
+            &route,
             TOKEN_GLOBAL,
-            Some(json!({"number": TELEFONE})),
+            Some(json!({"number": PHONE})),
             Some(1),
         )
         .await;
-    assert_eq!(resposta.status, StatusCode::OK, "{}", resposta.cru);
-    assert_eq!(resposta.corpo["instance"], "loja");
-    assert_eq!(resposta.corpo["state"], "connecting");
-    assert_eq!(resposta.corpo["connection_state"], "awaiting_scan");
+    assert_eq!(response.status, StatusCode::OK, "{}", response.raw);
+    assert_eq!(response.body["instance"], "loja");
+    assert_eq!(response.body["state"], "connecting");
+    assert_eq!(response.body["connection_state"], "awaiting_scan");
     assert_eq!(
-        resposta.corpo["qrcode"]["base64"],
+        response.body["qrcode"]["base64"],
         "data:image/png;base64,QR-DE-TESTE"
     );
-    assert_eq!(resposta.corpo["qrcode"]["code"], "2@codigo-do-qr");
-    assert_eq!(resposta.corpo["qrcode"]["count"], 3);
-    assert_eq!(resposta.corpo["pairing_code"], "ABCD-1234");
+    assert_eq!(response.body["qrcode"]["code"], "2@codigo-do-qr");
+    assert_eq!(response.body["qrcode"]["count"], 3);
+    assert_eq!(response.body["pairing_code"], "ABCD-1234");
     assert_eq!(
-        resposta.corpo["expira_em"],
+        response.body["expira_em"],
         Value::Null,
         "a Evolution não informa prazo do QR"
     );
-    assert!(!resposta.cru.contains(CHAVE_EVO), "a chave não pode sair");
-    assert!(!resposta.cru.contains(TELEFONE), "o número não pode sair");
+    assert!(!response.raw.contains(EVO_KEY), "a chave não pode sair");
+    assert!(!response.raw.contains(PHONE), "o número não pode sair");
 
-    assert_eq!(c.estado_gravado(c.integracao), "awaiting_scan");
+    assert_eq!(c.stored_state(c.integracao), "awaiting_scan");
     assert_eq!(c.versao(c.integracao), 1, "estado não é edição de versão");
 
-    let registros = c
+    let records = c
         .store
         .audit()
         .list(c.org, Page::default())
         .expect("auditoria da org");
-    let linha = registros
+    let line = records
         .iter()
         .find(|registro| registro.acao == "whatsapp_qrcode")
         .expect("registro de auditoria do pareamento");
-    assert_eq!(linha.entity, "integration");
+    assert_eq!(line.entity, "integration");
     assert_eq!(
-        linha.entity_id.as_deref(),
+        line.entity_id.as_deref(),
         Some(c.integracao.to_string().as_str())
     );
     assert!(
-        !format!("{linha:?}").contains("QR-DE-TESTE"),
+        !format!("{line:?}").contains("QR-DE-TESTE"),
         "o QR não pode ir para a auditoria"
     );
-    assert_eq!(c.evo.ler(|e| e.criadas), 1);
-    assert_eq!(c.evo.ler(|e| e.pareamentos), 1);
+    assert_eq!(c.evo.read(|e| e.created), 1);
+    assert_eq!(c.evo.read(|e| e.pairings), 1);
 
     let denovo = c
-        .pedir(Method::POST, &rota, TOKEN_GLOBAL, None, Some(1))
+        .ask(Method::POST, &route, TOKEN_GLOBAL, None, Some(1))
         .await;
-    assert_eq!(denovo.status, StatusCode::OK, "{}", denovo.cru);
-    assert_eq!(c.evo.ler(|e| e.criadas), 2, "tentou criar de novo");
-    assert_eq!(c.evo.ler(|e| e.pareamentos), 2);
+    assert_eq!(denovo.status, StatusCode::OK, "{}", denovo.raw);
+    assert_eq!(c.evo.read(|e| e.created), 2, "tentou criar de novo");
+    assert_eq!(c.evo.read(|e| e.pairings), 2);
 
-    c.evo.com(|e| e.aberta = true);
-    let conectado = c
-        .pedir(Method::POST, &rota, TOKEN_GLOBAL, None, Some(1))
+    c.evo.com(|e| e.open_conversation = true);
+    let connected = c
+        .ask(Method::POST, &route, TOKEN_GLOBAL, None, Some(1))
         .await;
-    assert_eq!(conectado.status, StatusCode::OK, "{}", conectado.cru);
-    assert_eq!(conectado.corpo["state"], "open");
-    assert_eq!(conectado.corpo["connection_state"], "connected");
-    assert_eq!(conectado.corpo["qrcode"], Value::Null);
-    assert_eq!(c.estado_gravado(c.integracao), "connected");
+    assert_eq!(connected.status, StatusCode::OK, "{}", connected.raw);
+    assert_eq!(connected.body["state"], "open");
+    assert_eq!(connected.body["connection_state"], "connected");
+    assert_eq!(connected.body["qrcode"], Value::Null);
+    assert_eq!(c.stored_state(c.integracao), "connected");
 }
 
 #[tokio::test]
-async fn estado_ao_vivo_reflete_na_integracao() {
-    let c = Cenario::novo("estado").await;
-    let rota = c.rota(c.integracao, "state");
+async fn live_state_reflects_in_integration() {
+    let c = Scenario::new("estado").await;
+    let route = c.route(c.integracao, "state");
     c.evo.com(|e| {
-        e.existe = true;
-        e.aberta = false;
+        e.exists = true;
+        e.open_conversation = false;
     });
 
-    let fechado = c.pedir(Method::GET, &rota, TOKEN_GLOBAL, None, None).await;
-    assert_eq!(fechado.status, StatusCode::OK, "{}", fechado.cru);
-    assert_eq!(fechado.corpo["state"], "close");
-    assert_eq!(fechado.corpo["connection_state"], "disconnected");
-    assert_eq!(c.estado_gravado(c.integracao), "disconnected");
+    let closed = c.ask(Method::GET, &route, TOKEN_GLOBAL, None, None).await;
+    assert_eq!(closed.status, StatusCode::OK, "{}", closed.raw);
+    assert_eq!(closed.body["state"], "close");
+    assert_eq!(closed.body["connection_state"], "disconnected");
+    assert_eq!(c.stored_state(c.integracao), "disconnected");
 
-    c.evo.com(|e| e.aberta = true);
-    let aberto = c.pedir(Method::GET, &rota, TOKEN_GLOBAL, None, None).await;
-    assert_eq!(aberto.status, StatusCode::OK, "{}", aberto.cru);
-    assert_eq!(aberto.corpo["state"], "open");
-    assert_eq!(aberto.corpo["connection_state"], "connected");
-    assert_eq!(aberto.corpo["integration_id"], c.integracao.to_string());
-    assert_eq!(c.estado_gravado(c.integracao), "connected");
+    c.evo.com(|e| e.open_conversation = true);
+    let open_flag = c.ask(Method::GET, &route, TOKEN_GLOBAL, None, None).await;
+    assert_eq!(open_flag.status, StatusCode::OK, "{}", open_flag.raw);
+    assert_eq!(open_flag.body["state"], "open");
+    assert_eq!(open_flag.body["connection_state"], "connected");
+    assert_eq!(open_flag.body["integration_id"], c.integracao.to_string());
+    assert_eq!(c.stored_state(c.integracao), "connected");
     assert_eq!(c.versao(c.integracao), 1, "ler estado não muda a versão");
 
-    c.evo.com(|e| e.existe = false);
-    let sem_instancia = c.pedir(Method::GET, &rota, TOKEN_GLOBAL, None, None).await;
-    assert_eq!(sem_instancia.status, StatusCode::BAD_GATEWAY);
-    assert_eq!(codigo(&sem_instancia.corpo), "evolution_recusou");
-    assert_eq!(sem_instancia.corpo["details"]["evolution_status"], 404);
+    c.evo.com(|e| e.exists = false);
+    let without_instance = c.ask(Method::GET, &route, TOKEN_GLOBAL, None, None).await;
+    assert_eq!(without_instance.status, StatusCode::BAD_GATEWAY);
+    assert_eq!(code(&without_instance.body), "evolution_recusou");
+    assert_eq!(without_instance.body["details"]["evolution_status"], 404);
     assert_eq!(
-        c.estado_gravado(c.integracao),
+        c.stored_state(c.integracao),
         "connected",
         "erro não sobrescreve o último estado bom"
     );
 }
 
 #[tokio::test]
-async fn desconectar_exige_if_match_e_chama_o_logout() {
-    let c = Cenario::novo("desconectar").await;
-    let rota = c.rota(c.integracao, "disconnect");
+async fn disconnect_requires_if_match_and_calls_logout() {
+    let c = Scenario::new("desconectar").await;
+    let route = c.route(c.integracao, "disconnect");
     c.evo.com(|e| {
-        e.existe = true;
-        e.aberta = true;
+        e.exists = true;
+        e.open_conversation = true;
     });
 
-    let sem_if_match = c.pedir(Method::POST, &rota, TOKEN_GLOBAL, None, None).await;
-    assert_eq!(sem_if_match.status, StatusCode::PRECONDITION_REQUIRED);
-    assert_eq!(c.evo.ler(|e| e.deslogadas), 0);
+    let without_if_match = c.ask(Method::POST, &route, TOKEN_GLOBAL, None, None).await;
+    assert_eq!(without_if_match.status, StatusCode::PRECONDITION_REQUIRED);
+    assert_eq!(c.evo.read(|e| e.deslogadas), 0);
 
     c.store
         .update_integration(
@@ -618,32 +609,35 @@ async fn desconectar_exige_if_match_e_chama_o_logout() {
         .expect("edição pela API/CLI concorrente");
     assert_eq!(c.versao(c.integracao), 2);
 
-    let velha = c
-        .pedir(Method::POST, &rota, TOKEN_GLOBAL, None, Some(1))
+    let old = c
+        .ask(Method::POST, &route, TOKEN_GLOBAL, None, Some(1))
         .await;
-    assert_eq!(velha.status, StatusCode::PRECONDITION_FAILED);
-    assert_eq!(codigo(&velha.corpo), "version_conflict");
-    assert_eq!(velha.corpo["details"]["expected_version"], 1);
-    assert_eq!(velha.corpo["details"]["current_version"], 2);
-    assert_eq!(c.evo.ler(|e| e.deslogadas), 0, "nada foi desconectado");
+    assert_eq!(old.status, StatusCode::PRECONDITION_FAILED);
+    assert_eq!(code(&old.body), "version_conflict");
+    assert_eq!(old.body["details"]["expected_version"], 1);
+    assert_eq!(old.body["details"]["current_version"], 2);
+    assert_eq!(c.evo.read(|e| e.deslogadas), 0, "nada foi desconectado");
 
     let certo = c
-        .pedir(Method::POST, &rota, TOKEN_GLOBAL, None, Some(2))
+        .ask(Method::POST, &route, TOKEN_GLOBAL, None, Some(2))
         .await;
-    assert_eq!(certo.status, StatusCode::OK, "{}", certo.cru);
-    assert_eq!(certo.corpo["connection_state"], "disconnected");
-    assert_eq!(certo.corpo["disconnected"], true);
-    assert_eq!(c.evo.ler(|e| e.deslogadas), 1);
-    assert!(!c.evo.ler(|e| e.aberta), "o aparelho continua conectado");
-    assert_eq!(c.estado_gravado(c.integracao), "disconnected");
+    assert_eq!(certo.status, StatusCode::OK, "{}", certo.raw);
+    assert_eq!(certo.body["connection_state"], "disconnected");
+    assert_eq!(certo.body["disconnected"], true);
+    assert_eq!(c.evo.read(|e| e.deslogadas), 1);
+    assert!(
+        !c.evo.read(|e| e.open_conversation),
+        "o aparelho continua conectado"
+    );
+    assert_eq!(c.stored_state(c.integracao), "disconnected");
     assert_eq!(c.versao(c.integracao), 2, "desconectar não sobe a versão");
-    let registros = c
+    let records = c
         .store
         .audit()
         .list(c.org, Page::default())
         .expect("auditoria da org");
     assert!(
-        registros
+        records
             .iter()
             .any(|registro| registro.acao == "whatsapp_disconnect"
                 && registro.entity == "integration"),
@@ -652,114 +646,108 @@ async fn desconectar_exige_if_match_e_chama_o_logout() {
 }
 
 #[tokio::test]
-async fn integracao_inexistente_da_404_nas_tres_rotas() {
-    let c = Cenario::novo("inexistente").await;
+async fn missing_integration_gives_404_on_three_routes() {
+    let c = Scenario::new("inexistente").await;
     let solta = IntegrationId::generate();
-    for (metodo, fim) in [
+    for (method, fim) in [
         (Method::POST, "qrcode"),
         (Method::GET, "state"),
         (Method::POST, "disconnect"),
     ] {
-        let resposta = c
-            .pedir(metodo, &c.rota(solta, fim), TOKEN_GLOBAL, None, Some(1))
+        let response = c
+            .ask(method, &c.route(solta, fim), TOKEN_GLOBAL, None, Some(1))
             .await;
         assert_eq!(
-            resposta.status,
+            response.status,
             StatusCode::NOT_FOUND,
             "rota `{fim}`: {}",
-            resposta.cru
+            response.raw
         );
-        assert_eq!(codigo(&resposta.corpo), "not_found");
+        assert_eq!(code(&response.body), "not_found");
     }
-    assert_eq!(c.evo.ler(|e| e.criadas + e.deslogadas), 0);
+    assert_eq!(c.evo.read(|e| e.created + e.deslogadas), 0);
 }
 
 #[tokio::test]
-async fn integracao_sem_instancia_declarada_da_409() {
-    let c = Cenario::novo("sem-instancia").await;
-    for (metodo, fim) in [
+async fn undeclared_instance_integration_gives_409() {
+    let c = Scenario::new("sem-instancia").await;
+    for (method, fim) in [
         (Method::POST, "qrcode"),
         (Method::GET, "state"),
         (Method::POST, "disconnect"),
     ] {
-        let resposta = c
-            .pedir(
-                metodo,
-                &c.rota(c.integracao_solta, fim),
+        let response = c
+            .ask(
+                method,
+                &c.route(c.loose_integration, fim),
                 TOKEN_GLOBAL,
                 None,
                 Some(1),
             )
             .await;
         assert_eq!(
-            resposta.status,
+            response.status,
             StatusCode::CONFLICT,
             "rota `{fim}`: {}",
-            resposta.cru
+            response.raw
         );
-        assert_eq!(codigo(&resposta.corpo), "whatsapp_nao_configurado");
+        assert_eq!(code(&response.body), "whatsapp_nao_configurado");
     }
-    assert_eq!(c.evo.ler(|e| e.criadas + e.deslogadas), 0);
+    assert_eq!(c.evo.read(|e| e.created + e.deslogadas), 0);
 }
 
 #[tokio::test]
-async fn integracao_que_nao_e_whatsapp_da_409() {
-    let c = Cenario::novo("sms").await;
-    let resposta = c
-        .pedir(
+async fn non_whatsapp_integration_gives_409() {
+    let c = Scenario::new("sms").await;
+    let response = c
+        .ask(
             Method::POST,
-            &c.rota(c.integracao_sms, "qrcode"),
+            &c.route(c.sms_integration, "qrcode"),
             TOKEN_GLOBAL,
             None,
             Some(1),
         )
         .await;
-    assert_eq!(resposta.status, StatusCode::CONFLICT);
-    assert_eq!(codigo(&resposta.corpo), "integracao_nao_e_whatsapp");
-    assert_eq!(resposta.corpo["details"]["kind"], "sms");
+    assert_eq!(response.status, StatusCode::CONFLICT);
+    assert_eq!(code(&response.body), "integracao_nao_e_whatsapp");
+    assert_eq!(response.body["details"]["kind"], "sms");
 }
 
 #[tokio::test]
-async fn segredo_e_numero_nao_vazam_na_resposta_nem_no_log() {
-    let c = Cenario::novo("segredo").await;
-    c.evo.com(|e| e.falhar_ao_criar = true);
-    let resposta = c
-        .pedir(
+async fn secret_and_number_do_not_leak_in_response_or_log() {
+    let c = Scenario::new("segredo").await;
+    c.evo.com(|e| e.fail_on_create = true);
+    let response = c
+        .ask(
             Method::POST,
-            &c.rota(c.integracao, "qrcode"),
+            &c.route(c.integracao, "qrcode"),
             TOKEN_GLOBAL,
-            Some(json!({"number": TELEFONE})),
+            Some(json!({"number": PHONE})),
             Some(1),
         )
         .await;
-    assert_eq!(resposta.status, StatusCode::BAD_GATEWAY, "{}", resposta.cru);
-    assert_eq!(codigo(&resposta.corpo), "evolution_recusou");
+    assert_eq!(response.status, StatusCode::BAD_GATEWAY, "{}", response.raw);
+    assert_eq!(code(&response.body), "evolution_recusou");
     assert!(
-        !resposta.cru.contains(CHAVE_EVO),
+        !response.raw.contains(EVO_KEY),
         "a chave vazou na resposta: {}",
-        resposta.cru
+        response.raw
     );
     assert!(
-        !resposta.cru.contains(TELEFONE),
+        !response.raw.contains(PHONE),
         "o número vazou na resposta: {}",
-        resposta.cru
+        response.raw
     );
     let logs = String::from_utf8_lossy(&c.logs.lock().unwrap().clone()).into_owned();
-    assert!(
-        !logs.contains(CHAVE_EVO),
-        "a chave vazou no log do servidor"
-    );
-    assert!(
-        !logs.contains(TELEFONE),
-        "o número vazou no log do servidor"
-    );
-    assert_eq!(c.estado_gravado(c.integracao), "disconnected");
+    assert!(!logs.contains(EVO_KEY), "a chave vazou no log do servidor");
+    assert!(!logs.contains(PHONE), "o número vazou no log do servidor");
+    assert_eq!(c.stored_state(c.integracao), "disconnected");
 }
 
 #[tokio::test]
-async fn token_de_outra_org_da_403() {
-    let c = Cenario::novo("outra-org").await;
-    let outra = c
+async fn other_org_token_gives_403() {
+    let c = Scenario::new("outra-org").await;
+    let other = c
         .store
         .orgs()
         .create(NewOrg {
@@ -769,21 +757,21 @@ async fn token_de_outra_org_da_403() {
         })
         .expect("cria a outra org")
         .id;
-    let token = c.token_novo(outra, "outra org").await;
-    for (metodo, fim) in [
+    let token = c.new_token(other, "outra org").await;
+    for (method, fim) in [
         (Method::POST, "qrcode"),
         (Method::GET, "state"),
         (Method::POST, "disconnect"),
     ] {
-        let resposta = c
-            .pedir(metodo, &c.rota(c.integracao, fim), &token, None, Some(1))
+        let response = c
+            .ask(method, &c.route(c.integracao, fim), &token, None, Some(1))
             .await;
         assert_eq!(
-            resposta.status,
+            response.status,
             StatusCode::FORBIDDEN,
             "rota `{fim}`: {}",
-            resposta.cru
+            response.raw
         );
     }
-    assert_eq!(c.evo.ler(|e| e.criadas + e.deslogadas), 0);
+    assert_eq!(c.evo.read(|e| e.created + e.deslogadas), 0);
 }
