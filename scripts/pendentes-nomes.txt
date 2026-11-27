@@ -12,12 +12,6 @@ M12a	14	crates/poph/src/main.rs
 M12a	44	crates/poph/src/modelo.rs
 M12a	129	crates/poph/src/retencao.rs
 M12a	1	crates/poph/src/servidor.rs
-M12b	366	crates/poph/tests/cli_flow.rs
-M12b	215	crates/poph/tests/cli_jev.rs
-M12b	110	crates/poph/tests/cli_kb.rs
-M12b	186	crates/poph/tests/cli_matrix.rs
-M12b	343	crates/poph/tests/cli_matrix_modulo.rs
-M12b	94	crates/poph/tests/cli_produto.rs
 M12b	174	crates/poph/tests/cli_retencao.rs
 M12b	229	crates/poph/tests/ferramentas_sem_base.rs
 M12b	46	crates/poph/tests/serve.rs
