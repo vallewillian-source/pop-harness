@@ -639,7 +639,7 @@ impl Scenario {
     }
 
     fn channel(&self, org: OrgId, conversation: ConversationId) -> EvolutionChannel {
-        let integracao = self
+        let integration = self
             .store
             .conversations()
             .get(org, conversation)
@@ -649,7 +649,7 @@ impl Scenario {
         EvolutionChannel {
             org,
             instance: INSTANCE.to_owned(),
-            integration: integracao,
+            integration,
             secret: Some(Secret::new(WEBHOOK_SECRET.to_owned())),
             client: None,
             attachment_limit: 0,
