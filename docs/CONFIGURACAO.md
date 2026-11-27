@@ -282,6 +282,8 @@ Checks: the binary and the compiler used; the configuration file; valid configur
 accepts writes, or can be created); `harness.db` and `rag.db` (SQLite format and schema version, read from the
 `schema_migrations` table, in read-only mode); required variables.
 
+- The build script records the version reported by Cargo's `RUSTC`, without adding a build dependency.
+  `poph doctor` reads that embedded value to report the compiler used for the binary.
 - It writes only a test file in the data folder and deletes it right after.
 - A missing database is a **warning** (create it with `poph migrate`). A database that exists but is not SQLite is an **error**.
 - With the flow engine off, the report shows a **warning**, not an error: cases keep being created, only the engine stays stopped. The caps always appear, because they apply even with the engine off (validation runs first).
@@ -330,6 +332,8 @@ folder. A file that already checks out is not downloaded again.
   and `file`) require `--offline`: the server-backed mode does not exist yet.
 - A business error exits with `1` and a message in Portuguese on stderr; the value of a token only appears when it
   is created. Wrong command-line usage exits with `2` and is decided by the parser.
+- Token generation uses `rand_core` with `getrandom` enabled to obtain randomness from the operating
+  system through `OsRng`.
 - `--json` is a stable format with `versao_relatorio: 1` and never carries a secret.
 
 ## Sections documented elsewhere

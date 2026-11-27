@@ -1827,6 +1827,8 @@ python3 scripts/jev-report.py /tmp/g1-real.json --conjunto tests/jev/g1.jsonl
 
 ## Evaluation datasets
 
+- Use accuracy, abstention and latency to calibrate a gate before enabling it by default.
+  `poph jev eval` requires `TYPESAFE_API_KEY` and reports the missing configuration if the key is absent.
 - The `poph jev eval` input is JSON Lines: one labeled case per line. Empty lines and lines beginning with `#` are ignored.
 - A correct result is a reliable decision equal to the expected label; an error is a reliable decision different from it; an abstention is a fallback or a gate that did not apply.
 - Per-case latency is zero when the decision came from cache. Usage totals include the Jev call usage and therefore do not charge cache hits.

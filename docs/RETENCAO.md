@@ -11,7 +11,9 @@ poph retention show [--json]                # retention days for each org
 poph --org <slug|id> retention show         # one org only
 ```
 
-- `run` deletes. `run --dry-run` only shows what would be removed; the database and the files folder stay as they were.
+- The CLI loads the instance configuration and applies pending database migrations when it opens the store.
+- `run` deletes. `run --dry-run` shows what would be removed, leaves history and files in place, and
+  records the simulated sweep in the audit log.
 - The period comes from `retencao.dias` in `orgs.config_json`. Without that key, the instance setting `retencao.dias` applies (default 30).
 - An invalid value (negative, text, decimal, above 36,500) is an error. The whole org is skipped, and the message says "Nothing was deleted in this org". No org is ever deleted "by default".
 - Output: `0` when no org had an error; `1` when any org did; `2` is incorrect usage.

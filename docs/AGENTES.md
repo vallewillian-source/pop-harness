@@ -140,6 +140,8 @@ a department to exercise the CLI:
 cargo run -p poph --example semear_org -- demo "Org Demonstração"
 ```
 
+The example uses the default `data/` directory unless `POPH_DADOS_DIRETORIO` is set.
+
 ## 6. What is left for HR-13
 
 - Read the agent through `obter_para_turno` (D-05), load the instructions and use the markdown as the stable

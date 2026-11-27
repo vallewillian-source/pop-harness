@@ -1,11 +1,3 @@
-//! `poph jev eval <gate> <arquivo>`: mede um gate do Jev sobre um conjunto rotulado (HR-28).
-//!
-//! Uso: `poph jev eval g1 tests/jev/g1.jsonl` (e `--json` para o relatório estável).
-//!
-//! O comando é a ferramenta de calibração de cada gate: imprime acerto, abstenção e latência, que
-//! são os três números que o PRD §10 exige antes de ligar um gate por padrão. Sem `TYPESAFE_API_KEY`
-//! no ambiente ele não inventa medição: falha com a instrução do que falta.
-
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -16,40 +8,45 @@ use poph_types::BaseMetrics;
 use crate::config;
 use crate::support;
 
-/// Subcomandos do `poph jev`.
 #[derive(Debug, Subcommand)]
-pub enum AcaoJev {
-    /// Mede um gate sobre um conjunto rotulado (JSON Lines com `estado` e `esperado`).
+pub enum JevAction {
+    #[command(
+        about = "Mede um gate sobre um conjunto rotulado (JSON Lines com `estado` e `esperado`)"
+    )]
     Eval(EvalArgs),
 }
 
-/// Opções do `poph jev eval`.
 #[derive(Debug, Args)]
 pub struct EvalArgs {
-    /// Gate a medir: `g1` a `g9`.
+    #[arg(help = "Gate a medir: `g1` a `g9`")]
     pub gate: String,
 
-    /// Arquivo do conjunto rotulado (JSON Lines).
-    pub arquivo: PathBuf,
+    #[arg(
+        value_name = "ARQUIVO",
+        help = "Arquivo do conjunto rotulado (JSON Lines)"
+    )]
+    pub dataset: PathBuf,
 
-    /// Saída em JSON (formato estável, com o detalhe por caso).
-    #[arg(long)]
+    #[arg(long, help = "Saída em JSON (formato estável, com o detalhe por caso)")]
     pub json: bool,
 }
 
-/// Executa o `poph jev`.
-pub fn executar(flag: Option<PathBuf>, ambiente: &config::Environment, acao: AcaoJev) -> ExitCode {
-    match acao {
-        AcaoJev::Eval(args) => match rodar_eval(flag, ambiente, args) {
+pub fn run(
+    flag: Option<PathBuf>,
+    environment: &config::Environment,
+    action: JevAction,
+) -> ExitCode {
+    match action {
+        JevAction::Eval(args) => match run_eval(flag, environment, args) {
             Ok(()) => ExitCode::SUCCESS,
-            Err(mensagem) => support::failure(mensagem),
+            Err(message) => support::failure(message),
         },
     }
 }
 
-fn rodar_eval(
+fn run_eval(
     flag: Option<PathBuf>,
-    ambiente: &config::Environment,
+    environment: &config::Environment,
     args: EvalArgs,
 ) -> Result<(), String> {
     let gate = IdGate::from_text(&args.gate).ok_or_else(|| {
@@ -58,46 +55,46 @@ fn rodar_eval(
             args.gate
         )
     })?;
-    let casos = read_dataset(&args.arquivo).map_err(|erro| erro.to_string())?;
+    let cases = read_dataset(&args.dataset).map_err(|error| error.to_string())?;
 
-    let pasta = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let arquivo = config::resolve_file(flag.as_deref(), ambiente, &pasta);
-    let configuracao = config::load(arquivo.as_deref(), ambiente)
-        .map_err(|erro| format!("configuração inválida: {erro}"))?;
-    let chave = config::secrets(ambiente).typesafe.ok_or_else(|| {
+    let current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let config_path = config::resolve_file(flag.as_deref(), environment, &current_dir);
+    let harness_config = config::load(config_path.as_deref(), environment)
+        .map_err(|error| format!("configuração inválida: {error}"))?;
+    let api_key = config::secrets(environment).typesafe.ok_or_else(|| {
         "defina TYPESAFE_API_KEY no ambiente desta sessão para medir o gate no Jev de verdade"
             .to_owned()
     })?;
-    let cliente =
-        JevClientConfig::from_config(&configuracao.jev, chave).map_err(|erro| erro.to_string())?;
-    let registro = poph_types::Registry::new();
-    let metricas =
-        BaseMetrics::register(&registro).map_err(|erro| format!("métricas base: {erro}"))?;
-    let transporte = JevClient::new(cliente, metricas).map_err(|erro| erro.to_string())?;
-    let motor = JevEngine::new(
-        std::sync::Arc::new(transporte),
-        configuracao.jev.gates,
-        configuracao.jev.model.clone(),
+    let client_config = JevClientConfig::from_config(&harness_config.jev, api_key)
+        .map_err(|error| error.to_string())?;
+    let registry = poph_types::Registry::new();
+    let metrics =
+        BaseMetrics::register(&registry).map_err(|error| format!("métricas base: {error}"))?;
+    let client = JevClient::new(client_config, metrics).map_err(|error| error.to_string())?;
+    let engine = JevEngine::new(
+        std::sync::Arc::new(client),
+        harness_config.jev.gates,
+        harness_config.jev.model.clone(),
     );
 
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .map_err(|erro| format!("não consegui iniciar o runtime: {erro}"))?;
-    let relatorio = runtime.block_on(evaluate_dataset(&motor, gate, &casos));
+        .map_err(|error| format!("não consegui iniciar o runtime: {error}"))?;
+    let report = runtime.block_on(evaluate_dataset(&engine, gate, &cases));
 
     if args.json {
-        let valor = serde_json::json!({
+        let value = serde_json::json!({
             "versao_relatorio": 1,
-            "arquivo": args.arquivo.display().to_string(),
-            "relatorio": relatorio,
+            "arquivo": args.dataset.display().to_string(),
+            "relatorio": report,
         });
         println!(
             "{}",
-            serde_json::to_string_pretty(&valor).unwrap_or_default()
+            serde_json::to_string_pretty(&value).unwrap_or_default()
         );
     } else {
-        print!("{}", relatorio.texto(&args.arquivo.display().to_string()));
+        print!("{}", report.texto(&args.dataset.display().to_string()));
     }
     Ok(())
 }

@@ -17,11 +17,11 @@ mod kb;
 mod logs;
 mod matrix;
 mod matrix_admin;
-mod modelo;
+mod model;
 mod org;
 mod product;
 mod rag;
-mod retencao;
+mod retention;
 mod servidor;
 mod support;
 mod token;
@@ -81,7 +81,7 @@ enum Command {
         subcommand,
         about = "Gerencia o modelo de embedding (`poph model install` baixa e confere o modelo)"
     )]
-    Model(modelo::AcaoModelo),
+    Model(model::ModelAction),
     #[command(
         subcommand,
         about = "Gerencia agentes: identidade, modelo, parâmetros, handoff e categorias"
@@ -135,7 +135,7 @@ enum Command {
         subcommand,
         about = "Jev (decisões rápidas): `eval` mede um gate sobre um conjunto rotulado (HR-28)"
     )]
-    Jev(jev::AcaoJev),
+    Jev(jev::JevAction),
     #[command(
         subcommand,
         about = "Fluxos da org: validar, publicar, listar, mostrar, comparar, formatar e liberar a agentes"
@@ -150,7 +150,7 @@ enum Command {
         subcommand,
         about = "Retenção do histórico: apaga o que venceu (`run`) e mostra a configuração (`show`)"
     )]
-    Retention(retencao::AcaoRetencao),
+    Retention(retention::RetentionAction),
     #[command(
         subcommand,
         about = "Exporta uma org inteira num arquivo único e reconstrói a partir dele (HR-53)"
@@ -198,7 +198,7 @@ fn main() -> ExitCode {
     match command {
         Command::Doctor(args) => run_doctor(cli.config, &environment, args),
         Command::Migrate(args) => run_migrate(cli.config, &environment, args),
-        Command::Model(acao) => modelo::executar(cli.config, &environment, acao),
+        Command::Model(action) => model::run(cli.config, &environment, action),
         Command::Agent(acao) => {
             agent::run_agent(cli.config, &environment, cli.org.as_deref(), acao)
         }
@@ -227,11 +227,11 @@ fn main() -> ExitCode {
             cli.org.as_deref(),
             acao,
         ),
-        Command::Jev(acao) => jev::executar(cli.config, &environment, acao),
+        Command::Jev(action) => jev::run(cli.config, &environment, action),
         Command::Flow(acao) => flow::run(cli.config, &environment, cli.org.as_deref(), acao),
         Command::Ficha(acao) => ficha::executar(cli.config, &environment, cli.org.as_deref(), acao),
-        Command::Retention(acao) => {
-            retencao::executar(cli.config, &environment, cli.org.as_deref(), acao)
+        Command::Retention(action) => {
+            retention::run(cli.config, &environment, cli.org.as_deref(), action)
         }
         Command::Backup(acao) => backup::run(cli.config, &environment, cli.offline, acao),
         Command::Cluster(acao) => cluster::run(cli.config, &environment, acao),

@@ -1,13 +1,3 @@
-//! Ajuda de demonstração da CLI: cria uma org (e um departamento) direto no banco.
-//!
-//! Existe só porque o `poph org` ainda não foi implementado (HR-08). Quando ele existir, este
-//! exemplo pode ser apagado: nada do motor depende dele.
-//!
-//! Uso (com a pasta de dados padrão `data/` ou `POPH_DADOS_DIRETORIO`):
-//! ```text
-//! cargo run -p poph --example semear_org -- demo "Org Demonstração"
-//! ```
-
 use std::path::PathBuf;
 
 use poph_store::{NewDepartment, NewOrg, Store};
@@ -19,30 +9,33 @@ fn main() {
         eprintln!("uso: semear_org <slug> [nome]  (ex.: semear_org demo \"Org Demo\")");
         std::process::exit(2);
     });
-    let nome = args.next().unwrap_or_else(|| format!("Org {slug}"));
+    let name = args.next().unwrap_or_else(|| format!("Org {slug}"));
     let config = HarnessConfig::default();
-    let pasta: PathBuf = std::env::var_os("POPH_DADOS_DIRETORIO")
+    let data_dir: PathBuf = std::env::var_os("POPH_DADOS_DIRETORIO")
         .map(PathBuf::from)
         .unwrap_or(config.data.directory);
-    let store = match Store::open_at(&pasta.join("harness.db"), &pasta.join("rag.db")) {
+    let store = match Store::open_at(&data_dir.join("harness.db"), &data_dir.join("rag.db")) {
         Ok(store) => store,
-        Err(erro) => {
-            eprintln!("não consegui abrir o banco em {}: {erro}", pasta.display());
+        Err(error) => {
+            eprintln!(
+                "não consegui abrir o banco em {}: {error}",
+                data_dir.display()
+            );
             std::process::exit(1);
         }
     };
     let org = match store.orgs().create(NewOrg {
-        name: nome,
+        name,
         slug: slug.clone(),
         config_json: String::new(),
     }) {
         Ok(org) => org,
-        Err(erro) => {
-            eprintln!("não consegui criar a org `{slug}`: {erro}");
+        Err(error) => {
+            eprintln!("não consegui criar a org `{slug}`: {error}");
             std::process::exit(1);
         }
     };
-    let departamento = store
+    let department = store
         .departments()
         .create(
             org.id,
@@ -54,6 +47,6 @@ fn main() {
         .expect("cria o departamento da demo");
     println!("org_id={}", org.id);
     println!("slug={}", org.slug);
-    println!("department_id={}", departamento.id);
+    println!("department_id={}", department.id);
     println!("\nUse: poph --org {slug} agent create --name \"...\"");
 }
