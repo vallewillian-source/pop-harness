@@ -33,8 +33,8 @@ use tokio::sync::oneshot;
 use tracing_subscriber::fmt::MakeWriter;
 
 const PREFIX: &str = "ph";
-const SERVIDOR: &str = "matrix-dev.local";
-const INSTANCIA: &str = "loja";
+const SERVER: &str = "matrix-dev.local";
+const INSTANCE: &str = "loja";
 
 const AS_TOKEN: &str = "CANARIO-AS-mx28-3c1d-TAO-SECRETO";
 const HS_TOKEN: &str = "CANARIO-HS-mx28-77a0-TAO-SECRETO";
@@ -97,7 +97,7 @@ fn logs_as_text() -> String {
 #[derive(Default, Clone)]
 struct FakeRoom {
     name: Option<String>,
-    tipo: Option<String>,
+    kind: Option<String>,
     members: Vec<String>,
     guests: Vec<String>,
     state: BTreeMap<(String, String), Value>,
@@ -125,27 +125,27 @@ fn respond(status: u16, body: Value) -> Response {
 
 fn decode(segment: &str) -> String {
     let bytes = segment.as_bytes();
-    let mut saida = Vec::with_capacity(bytes.len());
+    let mut output = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
             let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or("");
             if let Ok(byte) = u8::from_str_radix(hex, 16) {
-                saida.push(byte);
+                output.push(byte);
                 i += 3;
                 continue;
             }
         }
-        saida.push(bytes[i]);
+        output.push(bytes[i]);
         i += 1;
     }
-    String::from_utf8_lossy(&saida).into_owned()
+    String::from_utf8_lossy(&output).into_owned()
 }
 
 fn query(raw: &str, name: &str) -> Option<String> {
     raw.split('&').find_map(|pair| {
-        let (chave, value) = pair.split_once('=')?;
-        (chave == name).then(|| decode(value))
+        let (key, value) = pair.split_once('=')?;
+        (key == name).then(|| decode(value))
     })
 }
 
@@ -190,9 +190,9 @@ async fn handle_request(
     let sender = query(&raw_query, "user_id").unwrap_or_default();
 
     match (method.as_str(), parts.as_slice()) {
-        ("POST", [registro]) if registro == "register" => {
+        ("POST", [record]) if record == "register" => {
             let localpart = body["username"].as_str().unwrap_or_default();
-            let id = format!("@{localpart}:{SERVIDOR}");
+            let id = format!("@{localpart}:{SERVER}");
             if guard.users.contains_key(&id) {
                 return respond(
                     400,
@@ -215,7 +215,7 @@ async fn handle_request(
                 json!({ "errcode": "M_NOT_FOUND", "error": "Usuário não existe" }),
             ),
         },
-        ("PUT", [profile, id, campo]) if profile == "profile" && campo == "displayname" => {
+        ("PUT", [profile, id, field]) if profile == "profile" && field == "displayname" => {
             guard
                 .users
                 .insert(id.clone(), body["displayname"].as_str().map(str::to_owned));
@@ -224,7 +224,7 @@ async fn handle_request(
         ("POST", [creation]) if creation == "createRoom" => {
             let alias = body["room_alias_name"]
                 .as_str()
-                .map(|localpart| format!("#{localpart}:{SERVIDOR}"));
+                .map(|localpart| format!("#{localpart}:{SERVER}"));
             if let Some(alias) = &alias
                 && guard.aliases.contains_key(alias)
             {
@@ -234,7 +234,7 @@ async fn handle_request(
                 );
             }
             guard.next_room += 1;
-            let room = format!("!criada-{}:{SERVIDOR}", guard.next_room);
+            let room = format!("!criada-{}:{SERVER}", guard.next_room);
             let mut members = Vec::new();
             if !sender.is_empty() {
                 members.push(sender.clone());
@@ -243,7 +243,7 @@ async fn handle_request(
                 room.clone(),
                 FakeRoom {
                     name: body["name"].as_str().map(str::to_owned),
-                    tipo: body["creation_content"]["type"].as_str().map(str::to_owned),
+                    kind: body["creation_content"]["type"].as_str().map(str::to_owned),
                     members,
                     ..FakeRoom::default()
                 },
@@ -253,7 +253,9 @@ async fn handle_request(
             }
             respond(200, json!({ "room_id": room }))
         }
-        ("GET", [diretorio, room, alias]) if diretorio == "directory" && room == "room" => {
+        ("GET", [data_directory, room, alias])
+            if data_directory == "directory" && room == "room" =>
+        {
             match guard.aliases.get(alias) {
                 Some(room) => respond(200, json!({ "room_id": room })),
                 None => respond(
@@ -312,11 +314,11 @@ async fn handle_request(
                 ),
             }
         }
-        ("PUT", [rooms, room, state, tipo, chave @ ..]) if rooms == "rooms" && state == "state" => {
-            let chave = chave.join("/");
+        ("PUT", [rooms, room, state, kind, key @ ..]) if rooms == "rooms" && state == "state" => {
+            let key = key.join("/");
             match guard.rooms.get_mut(room) {
                 Some(target) => {
-                    target.state.insert((tipo.clone(), chave), body);
+                    target.state.insert((kind.clone(), key), body);
                     respond(200, json!({ "event_id": "$estado" }))
                 }
                 None => respond(
@@ -325,10 +327,10 @@ async fn handle_request(
                 ),
             }
         }
-        ("GET", [rooms, room, state, tipo, chave @ ..]) if rooms == "rooms" && state == "state" => {
-            let chave = chave.join("/");
+        ("GET", [rooms, room, state, kind, key @ ..]) if rooms == "rooms" && state == "state" => {
+            let key = key.join("/");
             match guard.rooms.get(room) {
-                Some(target) => match target.state.get(&(tipo.clone(), chave)) {
+                Some(target) => match target.state.get(&(kind.clone(), key)) {
                     Some(body) => respond(200, body.clone()),
                     None => respond(
                         404,
@@ -341,11 +343,11 @@ async fn handle_request(
                 ),
             }
         }
-        ("PUT", [rooms, room, send, tipo, txn]) if rooms == "rooms" && send == "send" => {
+        ("PUT", [rooms, room, send, kind, txn]) if rooms == "rooms" && send == "send" => {
             match guard.rooms.get_mut(room) {
                 Some(target) => {
-                    if !target.messages.iter().any(|(ja, _, _)| ja == txn) {
-                        target.messages.push((txn.clone(), tipo.clone(), body));
+                    if !target.messages.iter().any(|(already, _, _)| already == txn) {
+                        target.messages.push((txn.clone(), kind.clone(), body));
                     }
                     respond(200, json!({ "event_id": format!("$msg_{txn}") }))
                 }
@@ -363,9 +365,9 @@ async fn handle_request(
 }
 
 struct Synapse {
-    endereco: String,
+    address: String,
     state: Arc<Mutex<FakeSynapseState>>,
-    desligar: Option<oneshot::Sender<()>>,
+    shutdown: Option<oneshot::Sender<()>>,
 }
 
 impl Synapse {
@@ -383,8 +385,8 @@ impl Synapse {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("porta efêmera");
-        let endereco = format!("http://{}", listener.local_addr().expect("endereço"));
-        let (desligar, signal) = oneshot::channel();
+        let address = format!("http://{}", listener.local_addr().expect("endereço"));
+        let (shutdown, signal) = oneshot::channel();
         tokio::spawn(async move {
             let _ = axum::serve(listener, app)
                 .with_graceful_shutdown(async {
@@ -393,9 +395,9 @@ impl Synapse {
                 .await;
         });
         Self {
-            endereco,
+            address,
             state,
-            desligar: Some(desligar),
+            shutdown: Some(shutdown),
         }
     }
 
@@ -416,29 +418,25 @@ impl Synapse {
             .expect("trava")
             .rooms
             .iter()
-            .filter(|(_, room)| room.tipo.as_deref() == Some("m.space"))
+            .filter(|(_, room)| room.kind.as_deref() == Some("m.space"))
             .map(|(id, room)| (id.clone(), room.clone()))
             .collect()
     }
 
-    fn room_state(&self, room: &str, tipo: &str, chave: &str) -> Option<Value> {
+    fn room_state(&self, room: &str, kind: &str, key: &str) -> Option<Value> {
         self.state
             .lock()
             .expect("trava")
             .rooms
             .get(room)
-            .and_then(|room| {
-                room.state
-                    .get(&(tipo.to_owned(), chave.to_owned()))
-                    .cloned()
-            })
+            .and_then(|room| room.state.get(&(kind.to_owned(), key.to_owned())).cloned())
     }
 }
 
 impl Drop for Synapse {
     fn drop(&mut self) {
-        if let Some(desligar) = self.desligar.take() {
-            let _ = desligar.send(());
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(());
         }
     }
 }
@@ -490,8 +488,8 @@ impl Scenario {
         }];
         config.matrix = Some(MatrixConfig {
             enabled: true,
-            homeserver_url: synapse.endereco.clone(),
-            server_name: SERVIDOR.to_owned(),
+            homeserver_url: synapse.address.clone(),
+            server_name: SERVER.to_owned(),
             prefix: PREFIX.to_owned(),
             concurrency: 4,
             interval_ms: 50,
@@ -556,7 +554,7 @@ impl Scenario {
             )
             .expect("cria o agente")
             .id;
-        let integracao: IntegrationId = store
+        let integration: IntegrationId = store
             .create_integration(org, agent, "whatsapp".to_owned(), "active".to_owned())
             .expect("cria a integração")
             .id
@@ -568,7 +566,7 @@ impl Scenario {
                 org,
                 NewConversation {
                     agent_id: agent,
-                    integration_id: Some(integracao),
+                    integration_id: Some(integration),
                     canal: "whatsapp".to_owned(),
                     peer_externo: Some(PHONE.to_owned()),
                     target_department: None,
@@ -629,7 +627,7 @@ impl Scenario {
     }
 
     fn ids(&self) -> GhostIds {
-        GhostIds::new(PREFIX, SERVIDOR).expect("ids dos fantasmas")
+        GhostIds::new(PREFIX, SERVER).expect("ids dos fantasmas")
     }
 
     fn delivery(&self) -> Arc<AttendantResponse> {
@@ -650,7 +648,7 @@ impl Scenario {
             .expect("a conversa tem integração");
         EvolutionChannel {
             org,
-            instance: INSTANCIA.to_owned(),
+            instance: INSTANCE.to_owned(),
             integration: integracao,
             secret: Some(Secret::new(WEBHOOK_SECRET.to_owned())),
             client: None,
@@ -750,8 +748,8 @@ async fn serve(state: ServerState) -> (String, oneshot::Sender<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("porta efêmera");
-    let endereco = format!("http://{}", listener.local_addr().expect("endereço"));
-    let (desligar, signal) = oneshot::channel();
+    let address = format!("http://{}", listener.local_addr().expect("endereço"));
+    let (shutdown, signal) = oneshot::channel();
     tokio::spawn(async move {
         let _ = axum::serve(listener, app)
             .with_graceful_shutdown(async {
@@ -759,7 +757,7 @@ async fn serve(state: ServerState) -> (String, oneshot::Sender<()>) {
             })
             .await;
     });
-    (endereco, desligar)
+    (address, shutdown)
 }
 
 struct FakeResponse {
@@ -837,7 +835,7 @@ async fn webhook(base: &str, org: OrgId, body: Value) -> FakeResponse {
     request_with_header(
         base,
         HttpMethod::POST,
-        &format!("/webhook/evolution/{org}/{INSTANCIA}"),
+        &format!("/webhook/evolution/{org}/{INSTANCE}"),
         Some((SECRET_HEADER, WEBHOOK_SECRET)),
         Some(body),
     )
@@ -855,11 +853,11 @@ async fn room_event_with_foreign_ids_leaves_other_org_conversation_untouched() {
         ])
         .with_matrix_as(Arc::new(AsReceiver::new(
             PREFIX,
-            SERVIDOR,
+            SERVER,
             Secret::new(HS_TOKEN.to_owned()),
             scenario.delivery(),
         )));
-    let (base, desligar) = serve(state).await;
+    let (base, shutdown) = serve(state).await;
 
     let body_do_event = json!({
         "type": "m.room.message",
@@ -915,8 +913,8 @@ async fn room_event_with_foreign_ids_leaves_other_org_conversation_untouched() {
     );
     assert_eq!(scenario.status(scenario.org_b), ConversationStatus::Open);
 
-    let porta = HarnessResponsePort::fresh(Arc::clone(&scenario.store));
-    let cruzada = porta.record_response(
+    let port = HarnessResponsePort::fresh(Arc::clone(&scenario.store));
+    let cruzada = port.record_response(
         poph_server::matrix_response::RoomConversation {
             org: scenario.org_a,
             conversation: scenario.conversation_b,
@@ -938,7 +936,7 @@ async fn room_event_with_foreign_ids_leaves_other_org_conversation_untouched() {
         "a tentativa cruzada não grava em B"
     );
 
-    let _ = desligar.send(());
+    let _ = shutdown.send(());
 }
 
 #[tokio::test]
@@ -947,11 +945,11 @@ async fn unknown_room_with_foreign_id_records_metric_without_write() {
     let delivery = scenario.delivery();
     let state = scenario.state().with_matrix_as(Arc::new(AsReceiver::new(
         PREFIX,
-        SERVIDOR,
+        SERVER,
         Secret::new(HS_TOKEN.to_owned()),
         delivery.clone(),
     )));
-    let (base, desligar) = serve(state).await;
+    let (base, shutdown) = serve(state).await;
 
     let response = transaction(
         &base,
@@ -995,7 +993,7 @@ async fn unknown_room_with_foreign_id_records_metric_without_write() {
         "o caso fica no log; capturado até agora: {logs}"
     );
 
-    let _ = desligar.send(());
+    let _ = shutdown.send(());
 }
 
 #[tokio::test]
@@ -1016,7 +1014,7 @@ async fn org_token_cannot_use_other_org_matrix_routes() {
         )
         .expect("espaços"),
     ));
-    let (base, desligar) = serve(state).await;
+    let (base, shutdown) = serve(state).await;
 
     let of_b = format!("/admin/v1/orgs/{}/matrix", scenario.org_b);
     let spaces_of_b = format!("{of_b}/spaces");
@@ -1097,7 +1095,7 @@ async fn org_token_cannot_use_other_org_matrix_routes() {
     assert_eq!(scenario.status(scenario.org_b), ConversationStatus::Open);
 
     let of_a = format!("/admin/v1/orgs/{}/matrix", scenario.org_a);
-    let b_em_a = request(
+    let b_at_a = request(
         &base,
         HttpMethod::GET,
         &of_a,
@@ -1106,7 +1104,7 @@ async fn org_token_cannot_use_other_org_matrix_routes() {
         None,
     )
     .await;
-    assert_eq!(b_em_a.status, StatusCode::FORBIDDEN);
+    assert_eq!(b_at_a.status, StatusCode::FORBIDDEN);
     let owner = request(
         &base,
         HttpMethod::GET,
@@ -1121,7 +1119,7 @@ async fn org_token_cannot_use_other_org_matrix_routes() {
     let without_token = request(&base, HttpMethod::GET, &of_b, None, None, None).await;
     assert_eq!(without_token.status, StatusCode::UNAUTHORIZED);
 
-    let _ = desligar.send(());
+    let _ = shutdown.send(());
 }
 
 #[tokio::test]
@@ -1137,7 +1135,7 @@ async fn space_rejects_department_from_other_org() {
         )
         .expect("espaços"),
     ));
-    let (base, desligar) = serve(state).await;
+    let (base, shutdown) = serve(state).await;
 
     let route_a = format!("/admin/v1/orgs/{}/matrix/spaces", scenario.org_a);
 
@@ -1232,7 +1230,7 @@ async fn space_rejects_department_from_other_org() {
         "o espaço criado leva o nome do departamento da org A"
     );
 
-    let _ = desligar.send(());
+    let _ = shutdown.send(());
 }
 
 #[tokio::test]
@@ -1242,14 +1240,14 @@ async fn webhook_customer_name_stays_in_its_org() {
         scenario.channel(scenario.org_a, scenario.conversation_a),
         scenario.channel(scenario.org_b, scenario.conversation_b),
     ]);
-    let (base, desligar) = serve(state).await;
+    let (base, shutdown) = serve(state).await;
 
     let received = webhook(
         &base,
         scenario.org_a,
         json!({
             "event": "messages.upsert",
-            "instance": INSTANCIA,
+            "instance": INSTANCE,
             "apikey": EVOLUTION_KEY,
             "data": {
                 "key": { "id": "MSG-MX28-1", "remoteJid": JID, "fromMe": false },
@@ -1311,14 +1309,14 @@ async fn webhook_customer_name_stays_in_its_org() {
         "o nome espelhado da org B continua vazio"
     );
 
-    let _ = desligar.send(());
+    let _ = shutdown.send(());
 }
 
 fn files_of_directory(directory: &Path) -> Vec<(String, Vec<u8>)> {
     let mut found = Vec::new();
     let mut pilha = vec![directory.to_path_buf()];
-    while let Some(diretorio) = pilha.pop() {
-        let Ok(entries) = fs::read_dir(&diretorio) else {
+    while let Some(data_directory) = pilha.pop() {
+        let Ok(entries) = fs::read_dir(&data_directory) else {
             continue;
         };
         for entry in entries.flatten() {
@@ -1351,11 +1349,11 @@ async fn canary_tokens_are_absent_from_responses_logs_files_and_queue() {
     ));
     let state = state.with_matrix_as(Arc::new(AsReceiver::new(
         PREFIX,
-        SERVIDOR,
+        SERVER,
         Secret::new(HS_TOKEN.to_owned()),
         scenario.delivery(),
     )));
-    let (base, desligar) = serve(state).await;
+    let (base, shutdown) = serve(state).await;
 
     let of_a = format!("/admin/v1/orgs/{}/matrix", scenario.org_a);
     let of_b = format!("/admin/v1/orgs/{}/matrix", scenario.org_b);
@@ -1423,7 +1421,7 @@ async fn canary_tokens_are_absent_from_responses_logs_files_and_queue() {
         request_with_header(
             &base,
             HttpMethod::GET,
-            &format!("/_matrix/app/v1/users/@{PREFIX}_wa_{PHONE}:{SERVIDOR}"),
+            &format!("/_matrix/app/v1/users/@{PREFIX}_wa_{PHONE}:{SERVER}"),
             Some(("authorization", &format!("Bearer {HS_TOKEN}"))),
             None,
         )
@@ -1433,7 +1431,7 @@ async fn canary_tokens_are_absent_from_responses_logs_files_and_queue() {
         request_with_header(
             &base,
             HttpMethod::POST,
-            &format!("/webhook/evolution/{}/{INSTANCIA}", scenario.org_a),
+            &format!("/webhook/evolution/{}/{INSTANCE}", scenario.org_a),
             Some((SECRET_HEADER, "segredo-errado")),
             Some(json!({"event": "messages.upsert"})),
         )
@@ -1445,7 +1443,7 @@ async fn canary_tokens_are_absent_from_responses_logs_files_and_queue() {
             scenario.org_a,
             json!({
                 "event": "messages.upsert",
-                "instance": INSTANCIA,
+                "instance": INSTANCE,
                 "apikey": EVOLUTION_KEY,
                 "data": {
                     "key": { "id": "MSG-MX28-CANARIO", "remoteJid": JID, "fromMe": false },
@@ -1553,5 +1551,5 @@ async fn canary_tokens_are_absent_from_responses_logs_files_and_queue() {
         }
     }
 
-    let _ = desligar.send(());
+    let _ = shutdown.send(());
 }
