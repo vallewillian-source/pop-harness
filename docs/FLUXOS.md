@@ -288,7 +288,7 @@ marks the dependency as used, because the Rust `unused_dependencies` lint breaks
   without trailing zeros (`123`, `12.5`).
 - `maior` / `menor` compare numbers. Text that is a number compares by its number (`"12"` is greater
   than `"9"`). Text that is not a number, a list, an object or a boolean gives false (the publish
-  warning FLX60). A literal that is not a number is `RegraInvalida`: the rule could never be true.
+  warning FLX60). A literal that is not a number is `regra_invalida`: the rule could never be true.
 - `contem` ignores case and accents. On a list, it is true when any item contains the text.
 - `preenchido` (null, text of only spaces and an empty list do not count as filled) is the same
   rule as `vazio`. The engine uses it for an action's `exige` and a field's `obrigatorio`, so the
@@ -299,19 +299,19 @@ marks the dependency as used, because the Rust `unused_dependencies` lint breaks
   constant computed inside a `def` (`"x" * 1000000000`) is done when the script compiles, and
   Starlark notices the deadline only seconds later (about 4 s for 10⁸, 35 s for 10⁹). So the `def`
   runs in its own thread, the caller waits at most the deadline plus the tolerance, and a rule that
-  passes the limit answers `RegraLimite` at once. The abandoned thread ends by itself.
+  passes the limit answers `regra_limite` at once. The abandoned thread ends by itself.
 - Loading the script follows the same rule: its own thread and a 1 s deadline
-  (`PRAZO_DE_CARGA`) plus the margin. Without it, a published revision like that would stall the
+  (`LOAD_DEADLINE`) plus the margin. Without it, a published revision like that would stall the
   attendance turn.
 - Starlark has no error type for ticks, heap or deadline, so a load or call error counts as a
-  limit when its message says so (covered by a test). Any other error is `RegraInvalida`.
-- Two kinds of error, and both say who is at fault. `RegraInvalida` is a defect of the flow's
+  limit when its message says so (covered by a test). Any other error is `regra_invalida`.
+- Two kinds of error, and both say who is at fault. `regra_invalida` is a defect of the flow's
   author: `funcao` without a `def`, a `def` that returned text, a `def` that failed (missing key,
   division by zero), a literal that is not a number, a field written outside `etapa.campo`.
-  `RegraLimite` means the rule passed a tick, heap, call-depth or deadline limit. Neither stops the
+  `regra_limite` means the rule passed a tick, heap, call-depth or deadline limit. Neither stops the
   process or the turn: the engine (FX-13) marks the execution as `falha` (FLXR01–FLXR03) and the
   Ficha stays open.
-- A malformed `etapa.campo` (no dot, empty step or field) is `RegraInvalida`, not a missing field.
+- A malformed `etapa.campo` (no dot, empty step or field) is `regra_invalida`, not a missing field.
   The compiler (FLX12) already refuses this shape, but the IR can come from outside.
 - `snapshot_from_json`: unreadable text or JSON that is not an object is a rule error (FLXR05 in the
   engine). Nothing is evaluated on half the data.
