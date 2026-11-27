@@ -28,16 +28,16 @@ is marked as such.
 
 | Criterion | What it proves | Where it is |
 |---|---|---|
-| A3: retransmission of the same transaction, one send | Crash after the human reply was recorded, retransmission after restart: one entry in the queue | `retransmissao_depois_da_queda_nao_gera_segunda_resposta` |
-| A3: retransmission of the mirror send | Crash with Synapse having already accepted the message: resend with the same `txnId`, room with one copy only | `queda_no_envio_do_espelho_nao_duplica_a_mensagem` |
-| A4: Synapse down, customer served | Eight replies reach the customer with Synapse down and the module on | `cliente_recebe_resposta_com_synapse_fora_e_modulo_ligado` and the measurement |
-| A4: Synapse down, on return the queue drains in order | Messages accumulated during the outage reach the room in database order, each one once | `volta_do_synapse_esgota_a_fila_em_ordem_sem_duplicata` |
-| A4: slow Synapse does not hold the turn | The reply reaches Evolution before any slow call to Synapse finishes | `resposta_sai_antes_de_o_synapse_lento_responder` and the measurement (5 s scenario) |
-| A5: crash during room creation | Room created in Synapse and the reply lost: on restart, the same room is reused through the alias | `queda_na_criacao_de_sala_nao_duplica_a_sala` |
-| A5: crash during mirroring | See A3 above | `queda_no_envio_do_espelho_nao_duplica_a_mensagem` |
-| A5: crash during the invite batch | The third invite is left pending; on the next pass, all the space's human members are invited | `queda_no_meio_do_lote_de_convites_termina_sem_perda` |
-| A5: crash during recording of the human reply | Crash before the write: the retransmission writes once only | `queda_antes_do_registro_da_resposta_grava_uma_vez` |
-| Poison message | A message permanently refused by Synapse is isolated; the others go out in order | `mensagem_venenosa_e_isolada_e_a_fila_segue` |
+| A3: retransmission of the same transaction, one send | Crash after the human reply was recorded, retransmission after restart: one entry in the queue | `retransmission_after_crash_does_not_make_second_reply` |
+| A3: retransmission of the mirror send | Crash with Synapse having already accepted the message: resend with the same `txnId`, room with one copy only | `crash_during_mirror_send_does_not_duplicate` |
+| A4: Synapse down, customer served | Eight replies reach the customer with Synapse down and the module on | `customer_gets_reply_with_synapse_down_and_module_on` and the measurement |
+| A4: Synapse down, on return the queue drains in order | Messages accumulated during the outage reach the room in database order, each one once | `synapse_return_drains_queue_in_order_without_duplicates` |
+| A4: slow Synapse does not hold the turn | The reply reaches Evolution before any slow call to Synapse finishes | `reply_leaves_before_slow_synapse_answers` and the measurement (5 s scenario) |
+| A5: crash during room creation | Room created in Synapse and the reply lost: on restart, the same room is reused through the alias | `crash_during_room_creation_does_not_duplicate_room` |
+| A5: crash during mirroring | See A3 above | `crash_during_mirror_send_does_not_duplicate` |
+| A5: crash during the invite batch | The third invite is left pending; on the next pass, all the space's human members are invited | `crash_mid_invite_batch_finishes_without_loss` |
+| A5: crash during recording of the human reply | Crash before the write: the retransmission writes once only | `crash_before_reply_record_writes_once` |
+| Poison message | A message permanently refused by Synapse is isolated; the others go out in order | `poison_message_is_isolated_and_queue_continues` |
 
 The tests are in `crates/poph-server/tests/matrix_resiliencia.rs`. There are ten tests that run in a normal `cargo test`
 (about 8 s) and one `#[ignore]`d test: the measurement. The test for the defect found has been running active since the
@@ -121,11 +121,11 @@ summary shows the median and p95 of each scenario.
 
 ## Defect found
 
-**A failed invite in a space's batch was not retried.** Found by the test `convite_falho_no_lote_e_refeito_na_passagem_seguinte`
-(the test name is an identifier; it means "failed invite in the batch is redone on the next pass"), which was marked
+**A failed invite in a space's batch was not retried.** Found by the test `failed_invite_in_batch_is_redone_next_pass`
+(which means: a failed invite in the batch is redone on the next pass), which was marked
 `#[ignore]` until the fix. The fix is in `crates/poph-matrix/src/spaces.rs` (commit `869664d4`) and the test runs active.
 
-- **Reproduction (before the fix):** `cargo test -p poph-server --test matrix_resiliencia -- --ignored convite_falho`
+- **Reproduction (before the fix):** `cargo test -p poph-server --test matrix_resiliencia -- --ignored failed_invite_in_batch`
 - **Result:** fails with `@humano1:matrix-dev.local não foi convidado: a passagem seguinte não refez o convite falho`
   (test assertion message emitted by the code, in Portuguese; in English: "was not invited: the next pass did not redo
   the failed invite"). The first invite failed (Synapse answered 503 once), the first pass recorded a failed invite and
@@ -163,7 +163,7 @@ summary shows the median and p95 of each scenario.
   crash, the reply may go out again on restart. The existing test `resposta_que_ficou_em_envio_na_queda_sai_na_subida`
   (in `turno_whatsapp.rs`) shows that the reply is resent; I did not check what happens in the real Evolution.
 - **Receiver's transaction memory is lost on a crash.** Deduplication after a crash depends on the event key in the
-  database. The test `retransmissao_depois_da_queda_nao_gera_segunda_resposta` proves this with the memory cleared.
+  database. The test `retransmission_after_crash_does_not_make_second_reply` proves this with the memory cleared.
 - **The cause of the 65 model calls for 40 messages was not investigated.**
 
 ## Files in this delivery

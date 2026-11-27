@@ -12,6 +12,6 @@ CSV="$(pwd)/$OUT_DIR/medicao.csv"
 
 MX29_RODADAS="$ROUNDS" MX29_AMOSTRAS="$SAMPLES" MX29_CSV="$CSV" \
   cargo test --locked -p poph-server --test matrix_resiliencia \
-  -- --ignored medicao_cliente_primeiro --nocapture --test-threads=1
+  -- --ignored measure_customer_first --nocapture --test-threads=1
 
 echo "CSV: $CSV"

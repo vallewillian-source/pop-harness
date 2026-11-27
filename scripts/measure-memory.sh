@@ -68,7 +68,7 @@ ENABLED=0
 SEED_START=$(date +%s%N)
 MX30_PASTA="$DIR" MX30_SALAS="$ROOMS" MX30_MENSAGENS_POR_SALA="$MESSAGES" MX30_LIGADO="$ENABLED" \
     cargo test --locked -p poph-server --test matrix_medicao_memoria -- --ignored --nocapture \
-    semeia_conversas_para_a_medicao_de_memoria >"$ROOT/logs/semeadura-$MODE-$ROOMS-$MESSAGES-$ROUND.log" 2>&1 \
+    seeds_conversations_for_memory_measurement >"$ROOT/logs/semeadura-$MODE-$ROOMS-$MESSAGES-$ROUND.log" 2>&1 \
     || fail "seeding failed; see $ROOT/logs/semeadura-$MODE-$ROOMS-$MESSAGES-$ROUND.log"
 SEED_END=$(date +%s%N)
 SEED_MS=$(( (SEED_END - SEED_START) / 1000000 ))

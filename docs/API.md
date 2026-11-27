@@ -175,7 +175,7 @@ na saída. Não há rótulos por org: o atraso é o pior entre as orgs ligadas.
 
 Logs do módulo: org, conversa e código curto do erro (por exemplo `M_FORBIDDEN` ou
 `armazenamento_indisponivel`). Não vão texto de cliente, telefone, corpo de mensagem nem token; o teste
-`valor_canario_nunca_aparece_no_log_do_modulo` confere isso.
+`canary_value_never_appears_in_module_log` confere isso.
 
 Limites: as chamadas do receptor do Application Service não contam (o receptor só recebe, não chama o
 Synapse). A latência é medida por operação do espelho, não por chamada HTTP individual do cliente do

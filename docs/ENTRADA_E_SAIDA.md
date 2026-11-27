@@ -58,7 +58,7 @@ dispatches it again. The cost is "at least once" on input as well.
 | `pending` | created by the turn, not yet attempted | `enfileirar_saida` |
 | `sending` | **already recorded before calling the channel**; if the process dies here, resumption resends | `iniciar_envio` |
 | `sent` | the channel confirmed | `confirmar_envio` |
-| `failed` | definitive error or attempts exhausted | `falhar_envio` |
+| `failed` | definitive error or attempts exhausted | `fail_send` |
 
 `attempts` counts **real send attempts** (not state transitions). A transient failure keeps the item in `sending`
 with `last_error`, and the in-memory backoff decides when to try again; if the process restarts, the item is retried
