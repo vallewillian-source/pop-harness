@@ -124,3 +124,65 @@ Gaps:
 Notes from the removed comments:
 
 - Changing the agent status through the API is a `PATCH` that requires `If-Match`. The test sets the status in the repository instead, because the removed comment said the API path was not the point of this check.
+
+## `crash_resilience.rs` (was `resiliencia_queda.rs`)
+
+Covers resilience when the process dies or the model provider fails in the middle of a turn (HR-57). Each test starts a real server on an ephemeral port, with the turn running on a fake LLM provider. No external network and no key is used. The database is temporary.
+
+What it checks:
+
+- A turn left `running` by a previous process becomes `failed` at startup, with a reason, and the conversation accepts the next message at once.
+- The client's message is never lost.
+- A provider failure (down, timeout, cut stream) ends the turn as `failed` with a reason, with no invented answer and no duplicated answer.
+- A test turn reservation expires, so a conversation is not stuck in `409` forever.
+
+Tests: `turno_interrompido_vira_falha_na_subida_e_a_conversa_aceita_a_proxima_mensagem` (now `turn_interrupted_becomes_failed_on_boot_and_the_conversation_accepts_the_next_message`), `modelo_indisponivel_deixa_turno_falho_sem_perder_a_mensagem`, `stream_cortado_no_meio_deixa_turno_falho_sem_resposta_parcial`, `saida_do_console_presa_em_sending_e_confirmada_na_subida`, `reserva_de_turno_de_teste_vence`.
+
+Gaps:
+
+- The header says the real `kill -9` run is a script at `/tmp/hr57-run/queda.py`. That script is not in the repository, and the directory does not exist on the current machine. The `kill -9` case is covered here only by simulating the leftover state in the database.
+
+Notes from the removed comments:
+
+- The "no batching window" line means the test does not wait 2 seconds per turn for the grouping window.
+- Each boot-recovery test checks four things in order: the turn becomes failed with a reason; the client message is still stored; the conversation accepts a new message without a 409 left over from the crash; the new question is answered once, with no duplicated answer.
+
+## `cluster_reload.rs`
+
+Covers reloading the cluster map (HR-50a) end to end, with a real server and a real file.
+
+What it checks:
+
+- `POST /admin/v1/cluster/reload` with the global token re-reads `cluster.toml` from the running process. It returns a fingerprint before and after, a summary of both maps, and what changed.
+- Editing the file changes the map. An organization that moves to another instance shows up in `orgs_que_trocaram`.
+- An invalid file returns `400 cluster_invalido` and keeps the old map. A later reload with the good file confirms the old map was the one in use.
+- No token returns `401`. An organization token returns `403`, because reload needs the global token.
+- A missing file returns to single-instance mode.
+- No response carries the shared secret, and the fingerprint does not carry it either.
+
+Tests: `recarga_le_o_arquivo_do_processo_vivo_e_aponta_o_que_mudou` (now `reload_reads_the_live_process_file_and_reports_what_changed`) and `recarga_exige_token_global` (now `reload_requires_global_token`).
+
+Gaps: none recorded in the header beyond the claims above.
+
+Notes from the removed comments:
+
+- Since HR-50b the map is applied for real: an organization missing from `[orgs]` goes to `default_instance`. This test creates an organization at run time to get an organization token, so the default is the local instance. Otherwise the request would be forwarded to `b`, which does not exist in this test.
+
+## `file_content.rs` (was `conteudo_arquivo.rs`)
+
+Covers file content served through the admin API (HR-46b). Two routes return bytes: the file in an agent's library, and an attachment of a message in the test chat.
+
+What it checks:
+
+- `200` with bytes identical to what was uploaded, SHA-256 checked on both sides, the stored MIME as `Content-Type`, and a `Content-Disposition` with a sanitized file name.
+- `401` without a token. `403` with a token from another organization. `404` for an unknown id, for a file of another agent in the same organization, for an attachment outside its path (organization, agent, conversation, message), and for a blob missing from disk.
+- No response carries the blob path (`data/blobs`, `<org>/<sha256>`). The metadata route still has no `blob_path`.
+
+Tests: `biblioteca_conteudo_entrega_os_bytes_com_cabecalhos` (now `library_content_serves_bytes_with_headers`), `biblioteca_conteudo_isola_org_agente_e_id` (now `library_content_isolates_org_agent_and_id`), `anexo_conteudo_entrega_os_bytes_do_chat_de_teste` (now `attachment_content_serves_bytes_from_the_test_chat`).
+
+Gaps: none recorded in the header beyond the claims above.
+
+Notes from the removed comments:
+
+- The PNG used in the tests is a minimal file (signature and IHDR), the same one the other tests use.
+- The attachment helper uses the same path format the inbound receiver writes.

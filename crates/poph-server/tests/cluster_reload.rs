@@ -1,15 +1,3 @@
-//! Recarga do mapa de cluster (HR-50a), de ponta a ponta: servidor de verdade, arquivo de verdade.
-//!
-//! O que se prova:
-//! - `POST /admin/v1/cluster/reload` com token global relê o `cluster.toml` do processo vivo e
-//!   devolve impressão digital antes/depois, resumo dos dois mapas e o que mudou;
-//! - editar o arquivo muda o mapa (org que troca de instância aparece em `orgs_que_trocaram`);
-//! - arquivo inválido responde `400 cluster_invalido` e **mantém o mapa antigo** (a recarga
-//!   seguinte, com o arquivo bom, confirma que o mapa em uso era o anterior);
-//! - sem token → `401`; token de org → `403` (a recarga exige token global);
-//! - arquivo ausente volta para o modo instância única;
-//! - o segredo compartilhado nunca aparece em resposta (nem o fingerprint o carrega).
-
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -29,21 +17,17 @@ use serde_json::{Value, json};
 use tokio::sync::oneshot;
 
 const TOKEN_GLOBAL: &str = "pophg_teste-global-hr50a";
-const SEGREDO: &str = "SENTINELA-SEGREDO-CLUSTER-hr50a";
+const SECRET: &str = "SENTINELA-SEGREDO-CLUSTER-hr50a";
 
-fn hash_argon2(valor: &str) -> String {
+fn hash_argon2(value: &str) -> String {
     let sal = SaltString::generate(&mut OsRng);
     Argon2::default()
-        .hash_password(valor.as_bytes(), &sal)
+        .hash_password(value.as_bytes(), &sal)
         .expect("hash argon2")
         .to_string()
 }
 
-// Desde a HR-50b o mapa é aplicado de verdade: org fora do `[orgs]` vai para
-// `default_instance`. Este cenário cria uma org em tempo de execução (para ter um token de org),
-// então a padrão é a instância local — senão o pedido seria encaminhado para `b`, que não existe
-// neste teste.
-const MAPA_ORIGINAL: &str = r#"
+const MAP_ORIGINAL: &str = r#"
 instance_id = "a"
 default_instance = "a"
 
@@ -60,8 +44,7 @@ org_01 = "a"
 org_02 = "b"
 "#;
 
-/// Mapa com `org_01` movida para a instância b.
-const MAPA_TROCADO: &str = r#"
+const MAP_SWAPPED: &str = r#"
 instance_id = "a"
 default_instance = "a"
 
@@ -78,8 +61,7 @@ org_01 = "b"
 org_02 = "b"
 "#;
 
-/// `org_01` aponta para uma instância que não existe: tem de ser recusado sem trocar o mapa.
-const MAPA_INVALIDO: &str = r#"
+const MAP_INVALID: &str = r#"
 instance_id = "a"
 default_instance = "b"
 
@@ -95,37 +77,37 @@ url = "http://127.0.0.1:7482"
 org_01 = "c"
 "#;
 
-struct Resposta {
+struct Response {
     status: StatusCode,
-    corpo: Value,
-    cru: String,
+    body: Value,
+    raw: String,
 }
 
-struct Cenario {
+struct Scenario {
     base: String,
-    cliente: Client,
-    pasta: PathBuf,
-    caminho_cluster: PathBuf,
+    client: Client,
+    folder: PathBuf,
+    cluster_path: PathBuf,
     desligar: Option<oneshot::Sender<()>>,
 }
 
-impl Cenario {
-    async fn novo(rotulo: &str) -> Self {
-        let carimbo = SystemTime::now()
+impl Scenario {
+    async fn new(label: &str) -> Self {
+        let timestamp = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        let pasta = std::env::temp_dir().join(format!(
-            "poph-cluster-reload-{rotulo}-{}-{carimbo}",
+        let folder = std::env::temp_dir().join(format!(
+            "poph-cluster-reload-{label}-{}-{timestamp}",
             std::process::id()
         ));
-        let _ = fs::remove_dir_all(&pasta);
-        fs::create_dir_all(pasta.join("dados")).expect("pasta de dados");
-        let caminho_cluster = pasta.join("cluster.toml");
-        fs::write(&caminho_cluster, MAPA_ORIGINAL).expect("cluster.toml");
+        let _ = fs::remove_dir_all(&folder);
+        fs::create_dir_all(folder.join("dados")).expect("pasta de dados");
+        let cluster_path = folder.join("cluster.toml");
+        fs::write(&cluster_path, MAP_ORIGINAL).expect("cluster.toml");
 
         let mut config = HarnessConfig::default();
-        config.data.directory = pasta.join("dados");
+        config.data.directory = folder.join("dados");
         config.admin.tokens_globais = vec![GlobalTokenConfig {
             label: "teste".to_owned(),
             hash: hash_argon2(TOKEN_GLOBAL),
@@ -133,44 +115,44 @@ impl Cenario {
         config.validar().expect("configuração válida");
 
         let store = Arc::new(Store::open(&config).expect("abre o banco"));
-        let segredo = Secret::new(SEGREDO.to_owned());
-        let mapa = load(&caminho_cluster, Some(&segredo)).expect("mapa inicial válido");
+        let secret = Secret::new(SECRET.to_owned());
+        let map = load(&cluster_path, Some(&secret)).expect("mapa inicial válido");
         let estado = ServerState::new(Arc::clone(&store), config)
             .expect("estado do servidor")
             .with_cluster(LiveCluster {
-                path: caminho_cluster.clone(),
-                config: mapa,
-                secret: Some(segredo),
+                path: cluster_path.clone(),
+                config: map,
+                secret: Some(secret),
             });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("porta efêmera");
         let endereco = listener.local_addr().expect("endereço local");
-        let (desligar, sinal) = oneshot::channel();
+        let (desligar, signal) = oneshot::channel();
         tokio::spawn(async move {
             let _ = poph_server::serve_at(listener, estado, async {
-                let _ = sinal.await;
+                let _ = signal.await;
             })
             .await;
         });
-        let cenario = Self {
+        let scenario = Self {
             base: format!("http://{endereco}"),
-            cliente: Client::builder()
+            client: Client::builder()
                 .timeout(Duration::from_secs(30))
                 .build()
                 .expect("cliente HTTP"),
-            pasta,
-            caminho_cluster,
+            folder,
+            cluster_path,
             desligar: Some(desligar),
         };
-        cenario.esperar_subir().await;
-        cenario
+        scenario.wait_boot().await;
+        scenario
     }
 
-    async fn esperar_subir(&self) {
+    async fn wait_boot(&self) {
         for _ in 0..500 {
             if let Ok(r) = self
-                .cliente
+                .client
                 .get(format!("{}/healthz", self.base))
                 .send()
                 .await
@@ -183,187 +165,161 @@ impl Cenario {
         panic!("servidor não subiu");
     }
 
-    fn escrever_mapa(&self, texto: &str) {
-        fs::write(&self.caminho_cluster, texto).expect("escreve cluster.toml");
+    fn write_map(&self, texto: &str) {
+        fs::write(&self.cluster_path, texto).expect("escreve cluster.toml");
     }
 
-    async fn recarregar(&self, token: &str) -> Resposta {
-        self.pedir(Method::POST, "/admin/v1/cluster/reload", token, None)
+    async fn reload(&self, token: &str) -> Response {
+        self.ask(Method::POST, "/admin/v1/cluster/reload", token, None)
             .await
     }
 
-    async fn pedir(
-        &self,
-        metodo: Method,
-        caminho: &str,
-        token: &str,
-        corpo: Option<Value>,
-    ) -> Resposta {
-        let mut pedido = self
-            .cliente
-            .request(metodo, format!("{}{caminho}", self.base));
+    async fn ask(&self, method: Method, path: &str, token: &str, body: Option<Value>) -> Response {
+        let mut request = self.client.request(method, format!("{}{path}", self.base));
         if !token.is_empty() {
-            pedido = pedido.bearer_auth(token);
+            request = request.bearer_auth(token);
         }
-        if let Some(valor) = corpo {
-            pedido = pedido.json(&valor);
+        if let Some(value) = body {
+            request = request.json(&value);
         }
-        let resposta = pedido.send().await.expect("pedido HTTP");
-        let status = resposta.status();
-        let cru = resposta.text().await.unwrap_or_default();
-        let corpo = serde_json::from_str(&cru).unwrap_or(Value::Null);
-        Resposta { status, corpo, cru }
+        let response = request.send().await.expect("pedido HTTP");
+        let status = response.status();
+        let raw = response.text().await.unwrap_or_default();
+        let body = serde_json::from_str(&raw).unwrap_or(Value::Null);
+        Response { status, body, raw }
     }
 
-    /// Cria uma org e um token só dela (para provar o 403 da recarga).
-    async fn token_de_org(&self) -> String {
+    async fn org_token(&self) -> String {
         let org = self
-            .pedir(
+            .ask(
                 Method::POST,
                 "/admin/v1/orgs",
                 TOKEN_GLOBAL,
                 Some(json!({"name": "Org do cluster", "slug": "org-do-cluster"})),
             )
             .await;
-        assert_eq!(org.status, StatusCode::CREATED, "{}", org.cru);
-        let id = org.corpo["id"].as_str().expect("id da org");
+        assert_eq!(org.status, StatusCode::CREATED, "{}", org.raw);
+        let id = org.body["id"].as_str().expect("id da org");
         let token = self
-            .pedir(
+            .ask(
                 Method::POST,
                 &format!("/admin/v1/orgs/{id}/tokens"),
                 TOKEN_GLOBAL,
                 Some(json!({"label": "org"})),
             )
             .await;
-        assert_eq!(token.status, StatusCode::CREATED, "{}", token.cru);
-        token.corpo["value"]
+        assert_eq!(token.status, StatusCode::CREATED, "{}", token.raw);
+        token.body["value"]
             .as_str()
             .expect("valor do token")
             .to_owned()
     }
 }
 
-impl Drop for Cenario {
+impl Drop for Scenario {
     fn drop(&mut self) {
         if let Some(desligar) = self.desligar.take() {
             let _ = desligar.send(());
         }
-        let _ = fs::remove_dir_all(&self.pasta);
+        let _ = fs::remove_dir_all(&self.folder);
     }
 }
 
 #[tokio::test]
-async fn recarga_le_o_arquivo_do_processo_vivo_e_aponta_o_que_mudou() {
-    let c = Cenario::novo("troca").await;
+async fn reload_reads_the_live_process_file_and_reports_what_changed() {
+    let c = Scenario::new("troca").await;
 
-    // Primeira recarga: nada mudou desde a subida.
-    let primeira = c.recarregar(TOKEN_GLOBAL).await;
-    assert_eq!(primeira.status, StatusCode::OK, "{}", primeira.cru);
-    assert_eq!(primeira.corpo["mudou"], json!(false));
+    let first = c.reload(TOKEN_GLOBAL).await;
+    assert_eq!(first.status, StatusCode::OK, "{}", first.raw);
+    assert_eq!(first.body["mudou"], json!(false));
     assert_eq!(
-        primeira.corpo["fingerprint_antes"],
-        primeira.corpo["fingerprint_depois"]
+        first.body["fingerprint_antes"],
+        first.body["fingerprint_depois"]
     );
-    assert_eq!(primeira.corpo["depois"]["modo"], json!("cluster"));
-    assert_eq!(primeira.corpo["depois"]["instance_id"], json!("a"));
-    assert_eq!(primeira.corpo["depois"]["segredo_configurado"], json!(true));
-    let fingerprint_original = primeira.corpo["fingerprint_depois"]
+    assert_eq!(first.body["depois"]["modo"], json!("cluster"));
+    assert_eq!(first.body["depois"]["instance_id"], json!("a"));
+    assert_eq!(first.body["depois"]["segredo_configurado"], json!(true));
+    let fingerprint_original = first.body["fingerprint_depois"]
         .as_str()
         .expect("fingerprint")
         .to_owned();
 
-    // Edita o arquivo e recarrega: o mapa novo vale na hora.
-    c.escrever_mapa(MAPA_TROCADO);
-    let segunda = c.recarregar(TOKEN_GLOBAL).await;
-    assert_eq!(segunda.status, StatusCode::OK, "{}", segunda.cru);
-    assert_eq!(segunda.corpo["mudou"], json!(true));
+    c.write_map(MAP_SWAPPED);
+    let second = c.reload(TOKEN_GLOBAL).await;
+    assert_eq!(second.status, StatusCode::OK, "{}", second.raw);
+    assert_eq!(second.body["mudou"], json!(true));
     assert_eq!(
-        segunda.corpo["fingerprint_antes"],
+        second.body["fingerprint_antes"],
         json!(fingerprint_original),
         "a impressão anterior é a do mapa que estava em uso"
     );
     assert_ne!(
-        segunda.corpo["fingerprint_depois"],
+        second.body["fingerprint_depois"],
         json!(fingerprint_original)
     );
-    let trocas = segunda.corpo["orgs_que_trocaram"]
-        .as_array()
-        .expect("trocas");
+    let trocas = second.body["orgs_que_trocaram"].as_array().expect("trocas");
     assert_eq!(trocas.len(), 1, "só org_01 trocou: {trocas:?}");
     assert_eq!(trocas[0]["org"], json!("org_01"));
     assert_eq!(trocas[0]["de"], json!("a"));
     assert_eq!(trocas[0]["para"], json!("b"));
-    let fingerprint_trocado = segunda.corpo["fingerprint_depois"]
+    let fingerprint_changed = second.body["fingerprint_depois"]
         .as_str()
         .expect("fingerprint")
         .to_owned();
 
-    // Arquivo inválido: 400 e o mapa antigo continua em uso.
-    c.escrever_mapa(MAPA_INVALIDO);
-    let invalida = c.recarregar(TOKEN_GLOBAL).await;
-    assert_eq!(invalida.status, StatusCode::BAD_REQUEST, "{}", invalida.cru);
-    assert_eq!(invalida.corpo["code"], json!("cluster_invalido"));
-    let problemas = invalida.corpo["details"]["problemas"]
+    c.write_map(MAP_INVALID);
+    let invalid = c.reload(TOKEN_GLOBAL).await;
+    assert_eq!(invalid.status, StatusCode::BAD_REQUEST, "{}", invalid.raw);
+    assert_eq!(invalid.body["code"], json!("cluster_invalido"));
+    let problems = invalid.body["details"]["problemas"]
         .as_array()
         .expect("problemas");
     assert!(
-        problemas
+        problems
             .iter()
             .any(|p| p.as_str().is_some_and(|p| p.contains("orgs.org_01"))),
-        "o problema aponta a chave: {problemas:?}"
+        "o problema aponta a chave: {problems:?}"
     );
 
-    // Volta o arquivo ao mapa trocado: a recarga confirma que o mapa em uso era o bom anterior.
-    c.escrever_mapa(MAPA_TROCADO);
-    let volta = c.recarregar(TOKEN_GLOBAL).await;
-    assert_eq!(volta.status, StatusCode::OK, "{}", volta.cru);
+    c.write_map(MAP_SWAPPED);
+    let restore = c.reload(TOKEN_GLOBAL).await;
+    assert_eq!(restore.status, StatusCode::OK, "{}", restore.raw);
     assert_eq!(
-        volta.corpo["fingerprint_antes"],
-        json!(fingerprint_trocado),
+        restore.body["fingerprint_antes"],
+        json!(fingerprint_changed),
         "o arquivo inválido não trocou o mapa em uso"
     );
-    assert_eq!(volta.corpo["mudou"], json!(false));
+    assert_eq!(restore.body["mudou"], json!(false));
 
-    // Sem arquivo: volta ao modo instância única (é o que a recarga reflete).
-    fs::remove_file(&c.caminho_cluster).expect("remove cluster.toml");
-    let sem_arquivo = c.recarregar(TOKEN_GLOBAL).await;
-    assert_eq!(sem_arquivo.status, StatusCode::OK, "{}", sem_arquivo.cru);
-    assert_eq!(
-        sem_arquivo.corpo["depois"]["modo"],
-        json!("instancia_unica")
-    );
-    assert_eq!(sem_arquivo.corpo["mudou"], json!(true));
+    fs::remove_file(&c.cluster_path).expect("remove cluster.toml");
+    let no_file = c.reload(TOKEN_GLOBAL).await;
+    assert_eq!(no_file.status, StatusCode::OK, "{}", no_file.raw);
+    assert_eq!(no_file.body["depois"]["modo"], json!("instancia_unica"));
+    assert_eq!(no_file.body["mudou"], json!(true));
 
-    // Nenhuma resposta carrega o segredo compartilhado (nem o fingerprint).
-    for corpo in [
-        primeira.cru,
-        segunda.cru,
-        invalida.cru,
-        volta.cru,
-        sem_arquivo.cru,
-    ] {
+    for body in [first.raw, second.raw, invalid.raw, restore.raw, no_file.raw] {
         assert!(
-            !corpo.contains(SEGREDO),
-            "segredo do cluster vazou na resposta: {corpo}"
+            !body.contains(SECRET),
+            "segredo do cluster vazou na resposta: {body}"
         );
     }
 }
 
 #[tokio::test]
-async fn recarga_exige_token_global() {
-    let c = Cenario::novo("autorizacao").await;
+async fn reload_requires_global_token() {
+    let c = Scenario::new("autorizacao").await;
 
-    let sem_token = c.recarregar("").await;
+    let no_token = c.reload("").await;
     assert_eq!(
-        sem_token.status,
+        no_token.status,
         StatusCode::UNAUTHORIZED,
         "{}",
-        sem_token.cru
+        no_token.raw
     );
 
-    let de_org = c.token_de_org().await;
-    let barrada = c.recarregar(&de_org).await;
-    assert_eq!(barrada.status, StatusCode::FORBIDDEN, "{}", barrada.cru);
-    assert_eq!(barrada.corpo["code"], json!("forbidden"));
-    assert!(!barrada.cru.contains(SEGREDO));
+    let of_org = c.org_token().await;
+    let barrada = c.reload(&of_org).await;
+    assert_eq!(barrada.status, StatusCode::FORBIDDEN, "{}", barrada.raw);
+    assert_eq!(barrada.body["code"], json!("forbidden"));
+    assert!(!barrada.raw.contains(SECRET));
 }

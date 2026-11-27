@@ -622,7 +622,7 @@ responderam 200". Todos os testes abaixo estão em `crates/poph-server/tests/api
 | Integrações | não se aplica (exceção) | a CLI não tem o recurso; a API é a referência (`integracoes_ciclo_isolamento_e_segredos`) |
 | Conversas, mensagens, turnos e `reopen` | não se aplica (exceção) | a CLI não tem comando de conversa; provado por `conversas_mensagens_turnos_isolam_org_e_mostram_dados` |
 | Chat de teste (SSE, anexos, cancelamento, duas abas) | não se aplica (exceção) | a CLI não tem comando de chat de teste; provado por `crates/poph-server/tests/teste_chat.rs` |
-| Conteúdo de arquivo (biblioteca e anexo) | não se aplica (exceção) | a CLI lê o blob local e não tem comando de chat de teste; provado por `crates/poph-server/tests/conteudo_arquivo.rs` |
+| Conteúdo de arquivo (biblioteca e anexo) | não se aplica (exceção) | a CLI lê o blob local e não tem comando de chat de teste; provado por `crates/poph-server/tests/file_content.rs` |
 
 Outras provas exigidas pela HR-21, cada uma num teste só:
 
@@ -896,7 +896,7 @@ não a API.
 
 **Sem CLI:** não há subcomando que baixe por HTTP; a CLI lê o blob direto do disco. Por isso as duas
 rotas estão no inventário como exceção, e a prova é o teste de servidor
-(`crates/poph-server/tests/conteudo_arquivo.rs`).
+(`crates/poph-server/tests/file_content.rs`).
 
 ## Roteamento entre instâncias: mapa e recarga (HR-50a)
 

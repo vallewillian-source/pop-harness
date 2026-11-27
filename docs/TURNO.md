@@ -460,7 +460,7 @@ not lost, the turn does not get stuck as "in progress", the conversation goes ba
 - **Known limit:** a message from the Console's test chat (`channel = "test"`) is **not** in the `inbox`. If it dies before the turn ends, it stays
   recorded and without an automatic reply after startup (the operator resends it). The channel path (WhatsApp) resumes and replies once.
 - **How to prove it:**
-  - `cargo test -p poph-server --test resiliencia_queda` — orphan turn closed at startup, conversation goes back to service, provider unavailable,
+  - `cargo test -p poph-server --test crash_resilience` — orphan turn closed at startup, conversation goes back to service, provider unavailable,
     cut stream, expired reservation, and console output stuck in `sending`;
   - `cargo test -p poph-server --test turno_whatsapp` — `turno_interrompido_por_queda_e_retomado_uma_vez_na_subida` (one reply, one send) and
     `resposta_que_ficou_em_envio_na_queda_sai_na_subida`;
