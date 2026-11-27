@@ -1,25 +1,3 @@
-//! A passagem que lê a árvore sintática do script e monta a IR (FX-10).
-//!
-//! Ler a **árvore** (em vez de executar o script e coletar chamadas) é o que dá linha e coluna em
-//! cada diagnóstico e o que permite recusar no lugar certo o que não é declaração — inclusive uma
-//! `def` com nome de declaração, que antes estourava em tempo de carga.
-//!
-//! Nada aqui executa o script. Não há chamada ao interpretador nem alocação guiada por dado do
-//! autor: `"x" * 1000000000` no topo do arquivo é erro de forma em microssegundos, não um pico de
-//! 2 GB. A única avaliação de Starlark do compilador é a carga do módulo
-//! ([`crate::language::load_module`]), que roda **depois** de a forma estar válida e com os
-//! limites ligados.
-//!
-//! Duas passagens, de propósito:
-//!
-//! 1. **Coleta:** cada declaração vira uma estrutura bruta, com a posição de cada pedaço. É onde a
-//!    forma local é conferida (argumento desconhecido, tipo errado, id inválido, aridade do
-//!    combinador).
-//! 2. **Fechamento:** com todas as declarações conhecidas, resolve destino (`inicio`, `vai_para`,
-//!    `entao`, `senao`), confere regra contra etapa/campo, detecta ciclo entre decisões e emite os
-//!    avisos de alcance e de uso. Uma decisão pode citar etapa declarada depois dela, e uma `def`
-//!    usada antes de ser definida: só nesta passagem isso é sabido.
-
 use std::collections::{BTreeMap, BTreeSet};
 
 use poph_types::{ActionActor, FieldKind};
@@ -37,26 +15,17 @@ use crate::ir::{
 };
 use crate::language::is_allowed_name;
 
-/// Argumentos de uma chamada do script.
 type ArgsAst<'a> = &'a CallArgsP<AstNoPayload>;
 
-/// Teto de nós (etapas + decisões + fins), `FLUXOS_LINGUAGEM.md` §3.4.
 pub const MAX_NOS: usize = 60;
-/// Teto recomendado de `quando`/`nao_quando`.
-const MAX_TEXTO_GATILHO: usize = 400;
-/// Teto recomendado de `instrucao`.
-const MAX_TEXTO_INSTRUCAO: usize = 1000;
-/// Menor id aceito.
+const MAX_TRIGGER_TEXT: usize = 400;
+const MAX_INSTRUCTION_TEXT: usize = 1000;
 const ID_MIN: usize = 2;
-/// Maior id aceito.
 const ID_MAX: usize = 64;
 
-/// Argumentos de `fluxo(...)`.
-const ARGS_FLUXO: &[&str] = &["id", "nome", "descricao", "inicio", "gatilho"];
-/// Argumentos de `gatilho(...)`.
-const ARGS_GATILHO: &[&str] = &["quando", "nao_quando", "exemplos"];
-/// Argumentos de `etapa(...)`.
-const ARGS_ETAPA: &[&str] = &[
+const ARGS_FLOW: &[&str] = &["id", "nome", "descricao", "inicio", "gatilho"];
+const ARGS_TRIGGER: &[&str] = &["quando", "nao_quando", "exemplos"];
+const ARGS_STEP: &[&str] = &[
     "id",
     "nome",
     "instrucao",
@@ -65,204 +34,177 @@ const ARGS_ETAPA: &[&str] = &[
     "acoes",
     "ao_entrar",
 ];
-/// Argumentos nomeados de `campo(...)`, além dos dois posicionais.
-const ARGS_CAMPO: &[&str] = &["id", "rotulo", "tipo", "obrigatorio", "opcoes", "ajuda"];
-/// Argumentos nomeados de `acao(...)`, além dos dois posicionais.
-const ARGS_ACAO: &[&str] = &["id", "rotulo", "vai_para", "exige", "ator", "efeitos"];
-/// Argumentos nomeados de `fim(...)`, além do id posicional.
-const ARGS_FIM: &[&str] = &["id", "resultado", "encerra_atendimento"];
-/// Argumentos de `decisao(...)`.
-const ARGS_DECISAO: &[&str] = &["id", "se", "entao", "senao"];
-/// Argumentos de `notificar_whatsapp(...)`.
-const ARGS_NOTIFICAR: &[&str] = &["para", "mensagem"];
+const ARGS_FIELD: &[&str] = &["id", "rotulo", "tipo", "obrigatorio", "opcoes", "ajuda"];
+const ARGS_ACTION: &[&str] = &["id", "rotulo", "vai_para", "exige", "ator", "efeitos"];
+const ARGS_END: &[&str] = &["id", "resultado", "encerra_atendimento"];
+const ARGS_DECISION: &[&str] = &["id", "se", "entao", "senao"];
+const ARGS_NOTIFY: &[&str] = &["para", "mensagem"];
 
-/// Ponto do script (1-based, como o autor conta).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Pos {
-    linha: u32,
-    coluna: u32,
+    line: u32,
+    column: u32,
 }
 
-/// Um item de uma chamada: nomeado ou posicional.
 struct Item<'a> {
     nome: Option<String>,
     expr: &'a AstExpr,
 }
 
-/// Destino antes de saber o que existe no fluxo.
 #[derive(Clone)]
-enum DestinoBruto {
-    /// Id de etapa ou decisão (ainda não resolvido).
-    Alvo { id: String, pos: Pos },
-    /// `fim(...)` já lido.
+enum RawDestination {
+    Target { id: String, pos: Pos },
     Fim { fim: Fim, pos: Pos },
-    /// Não foi declarado ou foi recusado: já diagnosticado.
-    Invalido,
+    Invalid,
 }
 
-/// Regra antes de saber o que existe no fluxo.
 #[derive(Clone)]
-enum RegraBruta {
-    /// `igual`, `diferente`, `maior`, `menor`, `contem`, `vazio`.
-    Folha { regra: Rule, pos: Pos },
-    /// `funcao("nome")`.
-    Funcao { nome: String, pos: Pos },
-    /// `e`, `ou`, `nao`.
-    Grupo {
-        regra: Rule,
-        filhos: Vec<RegraBruta>,
+enum RawRule {
+    Leaf {
+        rule: Rule,
         pos: Pos,
     },
-    /// Recusada: já diagnosticada.
-    Invalida,
+    Funcao {
+        nome: String,
+        pos: Pos,
+    },
+    Group {
+        rule: Rule,
+        children: Vec<RawRule>,
+        pos: Pos,
+    },
+    Invalid,
 }
 
-/// Ação com o destino ainda bruto.
 #[derive(Clone)]
-struct AcaoBruta {
+struct RawAction {
     acao: Acao,
-    destino: DestinoBruto,
+    destination: RawDestination,
 }
 
-/// Etapa coletada, com as posições que os avisos precisam.
 #[derive(Clone)]
-struct EtapaColetada {
+struct CollectedStep {
     etapa: Etapa,
-    acoes: Vec<AcaoBruta>,
+    actions: Vec<RawAction>,
     pos: Pos,
-    pos_campos: BTreeMap<String, Pos>,
+    fields_pos: BTreeMap<String, Pos>,
 }
 
-/// Decisão coletada.
 #[derive(Clone)]
-struct DecisaoColetada {
+struct CollectedDecision {
     id: String,
-    regra: RegraBruta,
-    entao: DestinoBruto,
-    senao: DestinoBruto,
+    rule: RawRule,
+    then: RawDestination,
+    otherwise: RawDestination,
     pos: Pos,
 }
 
-/// Efeito com a posição do texto e de qual etapa veio.
-struct EfeitoColetado {
-    efeito: Effect,
-    pos_texto: Pos,
+struct CollectedEffect {
+    effect: Effect,
+    text_pos: Pos,
     etapa: String,
-    ao_entrar: bool,
+    on_enter: bool,
 }
 
-/// O que as ações e as regras usam de cada etapa.
 #[derive(Default, Clone)]
-struct UsoCampos {
-    exigidos: BTreeSet<String>,
-    lidos: BTreeSet<String>,
+struct FieldUses {
+    required: BTreeSet<String>,
+    read: BTreeSet<String>,
 }
 
-/// Estado da compilação de forma.
-struct Forma<'a> {
+struct Form<'a> {
     fonte: &'a str,
-    modulo: &'a AstModule,
+    module: &'a AstModule,
     diags: Vec<Diagnostic>,
     fluxo: Option<Fluxo>,
-    pos_fluxo: Pos,
+    flow_pos: Pos,
     gatilho: Option<Gatilho>,
-    inicio: Option<(String, Pos)>,
-    etapas: Vec<EtapaColetada>,
-    idx_etapas: BTreeMap<String, usize>,
-    decisoes: Vec<DecisaoColetada>,
-    idx_decisoes: BTreeMap<String, usize>,
-    fins: Vec<Fim>,
-    pos_fins: BTreeMap<String, Pos>,
+    start: Option<(String, Pos)>,
+    stages: Vec<CollectedStep>,
+    idx_stages: BTreeMap<String, usize>,
+    decisions: Vec<CollectedDecision>,
+    idx_decisions: BTreeMap<String, usize>,
+    ends: Vec<Fim>,
+    ends_pos: BTreeMap<String, Pos>,
     defs: Vec<Def>,
     pos_defs: BTreeMap<String, Pos>,
-    efeitos: Vec<EfeitoColetado>,
-    usos: BTreeMap<String, UsoCampos>,
+    effects: Vec<CollectedEffect>,
+    uses: BTreeMap<String, FieldUses>,
 }
 
-/// Compila a forma: monta a IR e devolve os diagnósticos.
-///
-/// `modulo` é o resultado do parse (o chamador já tratou tamanho e erro de sintaxe). A IR só sai
-/// quando **não há erro**; com aviso ela sai normal.
-pub(crate) fn compila(fonte: &str, modulo: &AstModule) -> (Option<Ir>, Vec<Diagnostic>) {
-    let um = Pos {
-        linha: 1,
-        coluna: 1,
-    };
-    let mut forma = Forma {
+pub(crate) fn compile(fonte: &str, module: &AstModule) -> (Option<Ir>, Vec<Diagnostic>) {
+    let um = Pos { line: 1, column: 1 };
+    let mut form = Form {
         fonte,
-        modulo,
+        module,
         diags: Vec::new(),
         fluxo: None,
-        pos_fluxo: um,
+        flow_pos: um,
         gatilho: None,
-        inicio: None,
-        etapas: Vec::new(),
-        idx_etapas: BTreeMap::new(),
-        decisoes: Vec::new(),
-        idx_decisoes: BTreeMap::new(),
-        fins: Vec::new(),
-        pos_fins: BTreeMap::new(),
+        start: None,
+        stages: Vec::new(),
+        idx_stages: BTreeMap::new(),
+        decisions: Vec::new(),
+        idx_decisions: BTreeMap::new(),
+        ends: Vec::new(),
+        ends_pos: BTreeMap::new(),
         defs: Vec::new(),
         pos_defs: BTreeMap::new(),
-        efeitos: Vec::new(),
-        usos: BTreeMap::new(),
+        effects: Vec::new(),
+        uses: BTreeMap::new(),
     };
-    forma.coleta_topo();
-    let ir = forma.fecha();
-    (ir, forma.diags)
+    form.collect_top();
+    let ir = form.close();
+    (ir, form.diags)
 }
 
-impl<'a> Forma<'a> {
-    // ---------------------------------------------------------------- utilidades
-
+impl<'a> Form<'a> {
     fn pos(&self, span: Span) -> Pos {
-        let resolvido = self.modulo.file_span(span).resolve_span();
+        let resolvido = self.module.file_span(span).resolve_span();
         Pos {
-            linha: resolvido.begin.line as u32 + 1,
-            coluna: resolvido.begin.column as u32 + 1,
+            line: resolvido.begin.line as u32 + 1,
+            column: resolvido.begin.column as u32 + 1,
         }
     }
 
-    fn erro(&mut self, codigo: Code, mensagem: impl Into<String>, pos: Pos) {
+    fn error(&mut self, code: Code, mensagem: impl Into<String>, pos: Pos) {
         self.diags
-            .push(Diagnostic::error(codigo, mensagem, pos.linha, pos.coluna));
+            .push(Diagnostic::error(code, mensagem, pos.line, pos.column));
     }
 
-    fn aviso(&mut self, codigo: Code, mensagem: impl Into<String>, pos: Pos) {
+    fn warning(&mut self, code: Code, mensagem: impl Into<String>, pos: Pos) {
         self.diags
-            .push(Diagnostic::warning(codigo, mensagem, pos.linha, pos.coluna));
+            .push(Diagnostic::warning(code, mensagem, pos.line, pos.column));
     }
 
-    fn tem_erro(&self) -> bool {
+    fn has_error(&self) -> bool {
         self.diags.iter().any(Diagnostic::is_error)
     }
 
-    // ---------------------------------------------------------------- passagem 1: topo
-
-    fn coleta_topo(&mut self) {
-        self.coleta_lista(self.modulo.statement());
+    fn collect_top(&mut self) {
+        self.collect_list(self.module.statement());
     }
 
-    fn coleta_lista(&mut self, stmt: &'a AstStmt) {
-        let itens: Vec<&'a AstStmt> = match &stmt.node {
-            Stmt::Statements(itens) => itens.iter().collect(),
+    fn collect_list(&mut self, stmt: &'a AstStmt) {
+        let items: Vec<&'a AstStmt> = match &stmt.node {
+            Stmt::Statements(items) => items.iter().collect(),
             _ => vec![stmt],
         };
-        for item in itens {
-            self.coleta_item(item);
+        for item in items {
+            self.collect_item(item);
         }
     }
 
-    fn coleta_item(&mut self, item: &'a AstStmt) {
+    fn collect_item(&mut self, item: &'a AstStmt) {
         let pos = self.pos(item.span);
         match &item.node {
-            Stmt::Def(def) => self.coleta_def(def, item, pos),
+            Stmt::Def(def) => self.collect_def(def, item, pos),
             Stmt::Expression(expr) => match &expr.node {
-                Expr::Call(alvo, args) => {
-                    let nome = match &alvo.node {
+                Expr::Call(target, args) => {
+                    let nome = match &target.node {
                         Expr::Identifier(ident) => ident.node.ident.clone(),
                         _ => {
-                            self.erro(
+                            self.error(
                                 Code::InvalidTopLevel,
                                 "No topo do arquivo só pode haver `fluxo(...)`, `etapa(...)`, `decisao(...)` e `def`; isto é uma chamada de atributo.",
                                 pos,
@@ -271,50 +213,50 @@ impl<'a> Forma<'a> {
                         }
                     };
                     match nome.as_str() {
-                        "fluxo" => self.coleta_fluxo(args, pos),
-                        "etapa" => self.coleta_etapa(args, pos),
-                        "decisao" => self.coleta_decisao(args, pos),
-                        outro => self.erro(
+                        "fluxo" => self.collect_flow(args, pos),
+                        "etapa" => self.collect_step(args, pos),
+                        "decisao" => self.collect_decision(args, pos),
+                        other => self.error(
                             Code::InvalidTopLevel,
                             format!(
-                                "`{outro}(...)` não é declaração de fluxo: no topo do arquivo só pode haver `fluxo(...)`, `etapa(...)`, `decisao(...)` e `def`."
+                                "`{other}(...)` não é declaração de fluxo: no topo do arquivo só pode haver `fluxo(...)`, `etapa(...)`, `decisao(...)` e `def`."
                             ),
                             pos,
                         ),
                     }
                 }
-                _ => self.erro(
+                _ => self.error(
                     Code::InvalidTopLevel,
                     "No topo do arquivo só pode haver `fluxo(...)`, `etapa(...)`, `decisao(...)` e `def`. Tire esta expressão solta.",
                     pos,
                 ),
             },
-            Stmt::Assign(_) => self.erro(
+            Stmt::Assign(_) => self.error(
                 Code::InvalidTopLevel,
                 "No topo do arquivo não existe atribuição (`x = ...`): só `fluxo(...)`, `etapa(...)`, `decisao(...)` e `def`.",
                 pos,
             ),
-            Stmt::AssignModify(..) => self.erro(
+            Stmt::AssignModify(..) => self.error(
                 Code::InvalidTopLevel,
                 "No topo do arquivo não existe atribuição (`x += ...`): só `fluxo(...)`, `etapa(...)`, `decisao(...)` e `def`.",
                 pos,
             ),
-            Stmt::For(_) => self.erro(
+            Stmt::For(_) => self.error(
                 Code::Dialect,
                 "Laço (`for`) não existe no topo de um fluxo: só `fluxo(...)`, `etapa(...)`, `decisao(...)` e `def`.",
                 pos,
             ),
-            Stmt::If(..) | Stmt::IfElse(..) => self.erro(
+            Stmt::If(..) | Stmt::IfElse(..) => self.error(
                 Code::Dialect,
                 "Condição (`if`) não existe no topo de um fluxo: a bifurcação do atendimento é `decisao(...)`.",
                 pos,
             ),
-            Stmt::Load(_) => self.erro(
+            Stmt::Load(_) => self.error(
                 Code::Dialect,
                 "`load` não faz parte da linguagem de fluxos: um fluxo não importa outro arquivo.",
                 pos,
             ),
-            Stmt::Return(_) | Stmt::Break | Stmt::Continue | Stmt::Pass | Stmt::Statements(_) => self.erro(
+            Stmt::Return(_) | Stmt::Break | Stmt::Continue | Stmt::Pass | Stmt::Statements(_) => self.error(
                 Code::InvalidTopLevel,
                 "No topo do arquivo só pode haver `fluxo(...)`, `etapa(...)`, `decisao(...)` e `def`.",
                 pos,
@@ -322,55 +264,52 @@ impl<'a> Forma<'a> {
         }
     }
 
-    /// Lê os argumentos de uma chamada, recusando `*`/`**`.
-    fn itens_de(&mut self, args: ArgsAst<'a>, onde: &str, pos: Pos) -> Vec<Item<'a>> {
-        let mut itens = Vec::new();
+    fn items_of(&mut self, args: ArgsAst<'a>, location: &str, pos: Pos) -> Vec<Item<'a>> {
+        let mut items = Vec::new();
         for arg in &args.args {
             match &arg.node {
-                Argument::Positional(expr) => itens.push(Item { nome: None, expr }),
-                Argument::Named(nome, expr) => itens.push(Item {
+                Argument::Positional(expr) => items.push(Item { nome: None, expr }),
+                Argument::Named(nome, expr) => items.push(Item {
                     nome: Some(nome.node.clone()),
                     expr,
                 }),
-                Argument::Args(_) | Argument::KwArgs(_) => self.erro(
+                Argument::Args(_) | Argument::KwArgs(_) => self.error(
                     Code::UnknownArgument,
                     format!(
-                        "{onde} não aceita `*`/`**` na chamada: escreva os argumentos um a um."
+                        "{location} não aceita `*`/`**` na chamada: escreva os argumentos um a um."
                     ),
                     pos,
                 ),
             }
         }
-        itens
+        items
     }
 
-    // ---------------------------------------------------------------- fluxo
-
-    fn coleta_fluxo(&mut self, args: ArgsAst<'a>, pos: Pos) {
+    fn collect_flow(&mut self, args: ArgsAst<'a>, pos: Pos) {
         if self.fluxo.is_some() {
-            self.erro(
+            self.error(
                 Code::MissingFlow,
                 "O arquivo declara `fluxo(...)` mais de uma vez. Um arquivo é um fluxo: deixe só um.",
                 pos,
             );
             return;
         }
-        self.pos_fluxo = pos;
-        let itens = self.itens_de(args, "`fluxo`", pos);
-        let mut leitor = Leitor::novo("`fluxo`", pos, ARGS_FLUXO, itens);
-        let id = leitor.texto(self, "id");
-        let nome = leitor.texto(self, "nome");
-        let descricao = leitor.texto(self, "descricao");
-        let inicio = leitor.texto(self, "inicio");
-        let gatilho = leitor.item(self, "gatilho");
-        let pos_id = leitor.pos_de("id").unwrap_or(pos);
-        let pos_inicio = leitor.pos_de("inicio");
-        leitor.fecha(self);
+        self.flow_pos = pos;
+        let items = self.items_of(args, "`fluxo`", pos);
+        let mut reader = Reader::new("`fluxo`", pos, ARGS_FLOW, items);
+        let id = reader.texto(self, "id");
+        let nome = reader.texto(self, "nome");
+        let descricao = reader.texto(self, "descricao");
+        let start = reader.texto(self, "inicio");
+        let gatilho = reader.item(self, "gatilho");
+        let pos_id = reader.pos_of("id").unwrap_or(pos);
+        let start_pos = reader.pos_of("inicio");
+        reader.close(self);
 
         if let Some(id) = &id
-            && !id_valido(id)
+            && !valid_id(id)
         {
-            self.erro(
+            self.error(
                 Code::InvalidId,
                 format!(
                     "O id `{id}` não é válido: use minúsculas, números e `_`, de {ID_MIN} a {ID_MAX} caracteres, por exemplo `agendar_visita`."
@@ -378,12 +317,12 @@ impl<'a> Forma<'a> {
                 pos_id,
             );
         }
-        if let Some(inicio) = &inicio {
-            self.inicio = Some((inicio.clone(), pos_inicio.unwrap_or(pos)));
+        if let Some(start) = &start {
+            self.start = Some((start.clone(), start_pos.unwrap_or(pos)));
         }
         if let Some(expr) = gatilho {
-            let pos_gatilho = self.pos(expr.span);
-            self.coleta_gatilho(expr, pos_gatilho);
+            let trigger_pos = self.pos(expr.span);
+            self.collect_trigger(expr, trigger_pos);
         }
         self.fluxo = Some(Fluxo {
             id: id.unwrap_or_default(),
@@ -392,237 +331,233 @@ impl<'a> Forma<'a> {
         });
     }
 
-    fn coleta_gatilho(&mut self, expr: &'a AstExpr, pos: Pos) {
-        let Some((nome, itens)) = self.como_chamada(expr, "o `gatilho` do fluxo") else {
+    fn collect_trigger(&mut self, expr: &'a AstExpr, pos: Pos) {
+        let Some((nome, items)) = self.as_call(expr, "o `gatilho` do fluxo") else {
             return;
         };
         if nome != "gatilho" {
-            self.erro(
+            self.error(
                 Code::WrongType,
                 format!("O `gatilho` do fluxo precisa ser `gatilho(quando = ..., nao_quando = ..., exemplos = [...])`, não `{nome}(...)`."),
                 pos,
             );
             return;
         }
-        let mut leitor = Leitor::novo("`gatilho`", pos, ARGS_GATILHO, itens);
-        let quando = leitor.texto(self, "quando");
-        let nao_quando = leitor.texto(self, "nao_quando");
-        let exemplos_expr = leitor.item(self, "exemplos");
-        let pos_quando = leitor.pos_de("quando").unwrap_or(pos);
-        let pos_nao_quando = leitor.pos_de("nao_quando").unwrap_or(pos);
-        let exemplos = match exemplos_expr {
-            Some(expr) => self.lista_texto(expr, "`exemplos` do gatilho"),
+        let mut reader = Reader::new("`gatilho`", pos, ARGS_TRIGGER, items);
+        let when_text = reader.texto(self, "quando");
+        let not_when_text = reader.texto(self, "nao_quando");
+        let examples_expr = reader.item(self, "exemplos");
+        let when_pos = reader.pos_of("quando").unwrap_or(pos);
+        let not_when_pos = reader.pos_of("nao_quando").unwrap_or(pos);
+        let examples = match examples_expr {
+            Some(expr) => self.list_text(expr, "`exemplos` do gatilho"),
             None => Vec::new(),
         };
-        leitor.fecha(self);
+        reader.close(self);
 
-        for (chave, texto, pos_texto) in [
-            ("quando", quando.as_deref(), pos_quando),
-            ("nao_quando", nao_quando.as_deref(), pos_nao_quando),
+        for (chave, texto, text_pos) in [
+            ("quando", when_text.as_deref(), when_pos),
+            ("nao_quando", not_when_text.as_deref(), not_when_pos),
         ] {
             let Some(texto) = texto else { continue };
-            if !variaveis(texto).is_empty() {
-                self.erro(
+            if !variables(texto).is_empty() {
+                self.error(
                     Code::ForbiddenInterpolation,
                     format!("`gatilho.{chave}` tem `{{...}}`, mas esse texto não interpola: o Jev lê o texto como está."),
-                    pos_texto,
+                    text_pos,
                 );
             }
-            if texto.chars().count() > MAX_TEXTO_GATILHO {
-                self.aviso(
+            if texto.chars().count() > MAX_TRIGGER_TEXT {
+                self.warning(
                     Code::LongText,
                     format!(
-                        "`gatilho.{chave}` tem {} caracteres; o recomendado é até {MAX_TEXTO_GATILHO}.",
+                        "`gatilho.{chave}` tem {} caracteres; o recomendado é até {MAX_TRIGGER_TEXT}.",
                         texto.chars().count()
                     ),
-                    pos_texto,
+                    text_pos,
                 );
             }
         }
-        if exemplos.is_empty() {
-            self.aviso(
+        if examples.is_empty() {
+            self.warning(
                 Code::TriggerWithoutExamples,
                 "O gatilho não tem `exemplos`: com 2 ou 3 falas típicas do cliente o Jev acerta mais.",
                 pos,
             );
         }
-        if nao_quando.is_none() {
-            self.aviso(
+        if not_when_text.is_none() {
+            self.warning(
                 Code::TriggerWithoutNegative,
                 "O gatilho não tem `nao_quando`: diga em que situação o fluxo NÃO deve começar.",
                 pos,
             );
         }
         self.gatilho = Some(Gatilho {
-            when: quando.unwrap_or_default(),
-            not_when: nao_quando,
-            examples: exemplos,
+            when: when_text.unwrap_or_default(),
+            not_when: not_when_text,
+            examples,
         });
     }
 
-    // ---------------------------------------------------------------- etapa
-
-    fn coleta_etapa(&mut self, args: ArgsAst<'a>, pos: Pos) {
-        let itens = self.itens_de(args, "`etapa`", pos);
-        let mut leitor = Leitor::novo("`etapa`", pos, ARGS_ETAPA, itens);
-        let id = leitor.texto(self, "id");
-        let nome = leitor.texto(self, "nome");
-        let instrucao = leitor.texto(self, "instrucao");
-        let atores_expr = leitor.item(self, "atores");
-        let campos_expr = leitor.item(self, "campos");
-        let acoes_expr = leitor.item(self, "acoes");
-        let ao_entrar_expr = leitor.item(self, "ao_entrar");
-        let pos_id = leitor.pos_de("id").unwrap_or(pos);
-        let pos_instrucao = leitor.pos_de("instrucao").unwrap_or(pos);
-        leitor.fecha(self);
+    fn collect_step(&mut self, args: ArgsAst<'a>, pos: Pos) {
+        let items = self.items_of(args, "`etapa`", pos);
+        let mut reader = Reader::new("`etapa`", pos, ARGS_STEP, items);
+        let id = reader.texto(self, "id");
+        let nome = reader.texto(self, "nome");
+        let instruction = reader.texto(self, "instrucao");
+        let actors_expr = reader.item(self, "atores");
+        let fields_expr = reader.item(self, "campos");
+        let actions_expr = reader.item(self, "acoes");
+        let on_enter_expr = reader.item(self, "ao_entrar");
+        let pos_id = reader.pos_of("id").unwrap_or(pos);
+        let instruction_pos = reader.pos_of("instrucao").unwrap_or(pos);
+        reader.close(self);
 
         let id = id.unwrap_or_default();
         if !id.is_empty() {
-            if !id_valido(&id) {
-                self.erro(
+            if !valid_id(&id) {
+                self.error(
                     Code::InvalidId,
                     format!("O id de etapa `{id}` não é válido: use minúsculas, números e `_`, de {ID_MIN} a {ID_MAX} caracteres."),
                     pos_id,
                 );
             }
             if self.id_ocupado(&id) {
-                self.erro(
+                self.error(
                     Code::DuplicateId,
                     format!("O id `{id}` está declarado mais de uma vez. Cada etapa e cada decisão tem id único no fluxo."),
                     pos_id,
                 );
             }
         }
-        if let Some(texto) = &instrucao {
-            if !variaveis(texto).is_empty() {
-                self.erro(
+        if let Some(texto) = &instruction {
+            if !variables(texto).is_empty() {
+                self.error(
                     Code::ForbiddenInterpolation,
                     format!(
                         "A `instrucao` da etapa `{id}` tem `{{...}}`, mas instrução não interpola: o agente lê o texto como está. Use variável só em `mensagem_ao_cliente` e `notificar_whatsapp`."
                     ),
-                    pos_instrucao,
+                    instruction_pos,
                 );
             }
-            if texto.chars().count() > MAX_TEXTO_INSTRUCAO {
-                self.aviso(
+            if texto.chars().count() > MAX_INSTRUCTION_TEXT {
+                self.warning(
                     Code::LongText,
                     format!(
-                        "A `instrucao` da etapa `{id}` tem {} caracteres; o recomendado é até {MAX_TEXTO_INSTRUCAO}, porque entra no prompt a cada turno.",
+                        "A `instrucao` da etapa `{id}` tem {} caracteres; o recomendado é até {MAX_INSTRUCTION_TEXT}, porque entra no prompt a cada turno.",
                         texto.chars().count()
                     ),
-                    pos_instrucao,
+                    instruction_pos,
                 );
             }
         }
 
-        let mut atores_acao: Vec<ActionActor> = Vec::new();
-        if let Some(expr) = atores_expr {
-            let pos_atores = self.pos(expr.span);
-            for ator in self.lista_texto(expr, &format!("`atores` da etapa `{id}`")) {
-                match ActionActor::from_text(&ator) {
-                    Ok(ator) => atores_acao.push(ator),
-                    Err(_) => self.erro(
+        let mut acting_actors: Vec<ActionActor> = Vec::new();
+        if let Some(expr) = actors_expr {
+            let actors_pos = self.pos(expr.span);
+            for actor in self.list_text(expr, &format!("`atores` da etapa `{id}`")) {
+                match ActionActor::from_text(&actor) {
+                    Ok(actor) => acting_actors.push(actor),
+                    Err(_) => self.error(
                         Code::InvalidRuleOrActor,
-                        format!("A etapa `{id}` tem o ator `{ator}`; use `agente` ou `atendente` (o cliente não é ator)."),
-                        pos_atores,
+                        format!("A etapa `{id}` tem o ator `{actor}`; use `agente` ou `atendente` (o cliente não é ator)."),
+                        actors_pos,
                     ),
                 }
             }
         }
-        if atores_acao.is_empty() {
-            atores_acao.push(ActionActor::Agent);
+        if acting_actors.is_empty() {
+            acting_actors.push(ActionActor::Agent);
         }
-        let mut unicos: Vec<ActionActor> = Vec::new();
-        for ator in atores_acao {
-            if !unicos.contains(&ator) {
-                unicos.push(ator);
+        let mut unique: Vec<ActionActor> = Vec::new();
+        for actor in acting_actors {
+            if !unique.contains(&actor) {
+                unique.push(actor);
             }
         }
-        let atores_acao = unicos;
+        let acting_actors = unique;
 
-        self.usos.insert(id.clone(), UsoCampos::default());
+        self.uses.insert(id.clone(), FieldUses::default());
 
-        let (campos, pos_campos) = match campos_expr {
-            Some(expr) => self.coleta_campos(expr, &id),
+        let (campos, fields_pos) = match fields_expr {
+            Some(expr) => self.collect_fields(expr, &id),
             None => (Vec::new(), BTreeMap::new()),
         };
-        let acoes = match acoes_expr {
-            Some(expr) => self.coleta_acoes(expr, &id, &campos, &atores_acao),
+        let actions = match actions_expr {
+            Some(expr) => self.collect_actions(expr, &id, &campos, &acting_actors),
             None => Vec::new(),
         };
-        let mut ao_entrar = Vec::new();
-        if let Some(expr) = ao_entrar_expr {
-            let onde = format!("`ao_entrar` da etapa `{id}`");
-            for efeito in self.coleta_efeitos(expr, &onde) {
-                ao_entrar.push(efeito.efeito.clone());
-                self.efeitos.push(EfeitoColetado {
-                    efeito: efeito.efeito,
-                    pos_texto: efeito.pos_texto,
+        let mut on_enter = Vec::new();
+        if let Some(expr) = on_enter_expr {
+            let location = format!("`ao_entrar` da etapa `{id}`");
+            for effect in self.collect_effects(expr, &location) {
+                on_enter.push(effect.effect.clone());
+                self.effects.push(CollectedEffect {
+                    effect: effect.effect,
+                    text_pos: effect.text_pos,
                     etapa: id.clone(),
-                    ao_entrar: true,
+                    on_enter: true,
                 });
             }
         }
 
-        // Ator listado na etapa sem nenhuma ação dele: na prática ele não tem o que fazer aqui.
-        // Só vale quando toda ação é restrita (ação sem `ator` qualquer um dos atores executa).
-        if !acoes.is_empty() && acoes.iter().all(|a| a.acao.actor.is_some()) {
-            for ator in &atores_acao {
-                if acoes.iter().any(|a| a.acao.actor == Some(*ator)) {
+        if !actions.is_empty() && actions.iter().all(|a| a.acao.actor.is_some()) {
+            for actor in &acting_actors {
+                if actions.iter().any(|a| a.acao.actor == Some(*actor)) {
                     continue;
                 }
-                let pos_atores = atores_expr.map(|expr| self.pos(expr.span)).unwrap_or(pos);
-                self.aviso(
+                let actors_pos = actors_expr.map(|expr| self.pos(expr.span)).unwrap_or(pos);
+                self.warning(
                     Code::ActorWithoutAction,
                     format!(
                         "A etapa `{id}` permite o `{}`, mas nenhuma ação é dele: na prática ele não tem o que fazer aqui.",
-                        ator.as_text()
+                        actor.as_text()
                     ),
-                    pos_atores,
+                    actors_pos,
                 );
             }
         }
 
-        let indice = self.etapas.len();
-        self.idx_etapas.insert(id.clone(), indice);
-        self.etapas.push(EtapaColetada {
+        let index = self.stages.len();
+        self.idx_stages.insert(id.clone(), index);
+        self.stages.push(CollectedStep {
             etapa: Etapa {
                 id,
                 nome: nome.unwrap_or_default(),
-                instruction: instrucao,
-                action_actors: atores_acao,
+                instruction,
+                action_actors: acting_actors,
                 campos,
                 actions: Vec::new(),
-                on_enter: ao_entrar,
+                on_enter,
             },
-            acoes,
+            actions,
             pos,
-            pos_campos,
+            fields_pos,
         });
     }
 
     fn id_ocupado(&self, id: &str) -> bool {
-        self.idx_etapas.contains_key(id) || self.idx_decisoes.contains_key(id)
+        self.idx_stages.contains_key(id) || self.idx_decisions.contains_key(id)
     }
 
-    fn coleta_campos(
+    fn collect_fields(
         &mut self,
         expr: &'a AstExpr,
         etapa: &str,
     ) -> (Vec<Campo>, BTreeMap<String, Pos>) {
         let mut campos = Vec::new();
-        let mut posicoes = BTreeMap::new();
-        let mut vistos: BTreeSet<String> = BTreeSet::new();
-        let onde_lista = format!("`campos` da etapa `{etapa}`");
-        for item in self.lista_itens(expr, &onde_lista) {
+        let mut positions = BTreeMap::new();
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        let location_list = format!("`campos` da etapa `{etapa}`");
+        for item in self.list_items(expr, &location_list) {
             let pos = self.pos(item.span);
-            let Some((nome, itens)) =
-                self.como_chamada(item, &format!("um item de `campos` da etapa `{etapa}`"))
+            let Some((nome, items)) =
+                self.as_call(item, &format!("um item de `campos` da etapa `{etapa}`"))
             else {
                 continue;
             };
             if nome != "campo" {
-                self.erro(
+                self.error(
                     Code::WrongType,
                     format!(
                         "`campos` da etapa `{etapa}` aceita só `campo(...)`, não `{nome}(...)`."
@@ -631,60 +566,60 @@ impl<'a> Forma<'a> {
                 );
                 continue;
             }
-            let mut leitor = Leitor::novo("`campo`", pos, ARGS_CAMPO, itens);
-            let id = leitor.posicional_texto(self, 0);
-            let rotulo = leitor.posicional_texto(self, 1);
-            let tipo_expr = leitor.item(self, "tipo");
-            let obrigatorio_expr = leitor.item(self, "obrigatorio");
-            let opcoes_expr = leitor.item(self, "opcoes");
-            let ajuda = leitor.texto(self, "ajuda");
-            let pos_id = leitor.pos_de("__pos0").unwrap_or(pos);
-            let pos_rotulo = leitor.pos_de("__pos1").unwrap_or(pos);
-            let pos_tipo = leitor.pos_de("tipo").unwrap_or(pos);
-            let _pos_obrigatorio = leitor.pos_de("obrigatorio").unwrap_or(pos);
-            let pos_opcoes = leitor.pos_de("opcoes").unwrap_or(pos);
-            leitor.fecha(self);
+            let mut reader = Reader::new("`campo`", pos, ARGS_FIELD, items);
+            let id = reader.positional_text(self, 0);
+            let label = reader.positional_text(self, 1);
+            let kind_expr = reader.item(self, "tipo");
+            let required_expr = reader.item(self, "obrigatorio");
+            let options_expr = reader.item(self, "opcoes");
+            let help = reader.texto(self, "ajuda");
+            let pos_id = reader.pos_of("__pos0").unwrap_or(pos);
+            let label_pos = reader.pos_of("__pos1").unwrap_or(pos);
+            let kind_pos = reader.pos_of("tipo").unwrap_or(pos);
+            let _required_pos = reader.pos_of("obrigatorio").unwrap_or(pos);
+            let options_pos = reader.pos_of("opcoes").unwrap_or(pos);
+            reader.close(self);
 
             let id = id.unwrap_or_default();
-            if !id.is_empty() && !id_valido(&id) {
-                self.erro(
+            if !id.is_empty() && !valid_id(&id) {
+                self.error(
                     Code::InvalidId,
                     format!("O id do campo `{id}` na etapa `{etapa}` não é válido: use minúsculas, números e `_`, de {ID_MIN} a {ID_MAX} caracteres."),
                     pos_id,
                 );
             }
-            let mut repetido = false;
-            if !id.is_empty() && !vistos.insert(id.clone()) {
-                self.erro(
+            let mut repeated = false;
+            if !id.is_empty() && !seen.insert(id.clone()) {
+                self.error(
                     Code::DuplicateId,
                     format!("O campo `{id}` está declarado duas vezes na etapa `{etapa}`."),
                     pos_id,
                 );
-                repetido = true;
+                repeated = true;
             }
-            if rotulo.is_none() {
-                self.erro(
+            if label.is_none() {
+                self.error(
                     Code::MissingArgument,
                     format!(
                         "O campo `{etapa}.{id}` não recebeu o rótulo (segundo argumento): `campo(\"{id}\", \"Rótulo\")`."
                     ),
-                    pos_rotulo,
+                    label_pos,
                 );
             }
-            let tipo = match tipo_expr {
+            let tipo = match kind_expr {
                 Some(expr) => {
-                    let bruto = self
+                    let raw = self
                         .texto(expr, &format!("`tipo` do campo `{etapa}.{id}`"))
                         .unwrap_or_default();
-                    match FieldKind::from_text(&bruto) {
+                    match FieldKind::from_text(&raw) {
                         Ok(tipo) => tipo,
                         Err(_) => {
-                            self.erro(
+                            self.error(
                                 Code::UnknownType,
                                 format!(
-                                    "O campo `{etapa}.{id}` tem tipo `{bruto}`; use texto, numero, data, booleano, opcao ou anexo."
+                                    "O campo `{etapa}.{id}` tem tipo `{raw}`; use texto, numero, data, booleano, opcao ou anexo."
                                 ),
-                                pos_tipo,
+                                kind_pos,
                             );
                             FieldKind::Text
                         }
@@ -692,113 +627,113 @@ impl<'a> Forma<'a> {
                 }
                 None => FieldKind::Text,
             };
-            let obrigatorio = match obrigatorio_expr {
+            let is_required = match required_expr {
                 Some(expr) => self
-                    .booleano(expr, &format!("`obrigatorio` do campo `{etapa}.{id}`"))
+                    .boolean(expr, &format!("`obrigatorio` do campo `{etapa}.{id}`"))
                     .unwrap_or(false),
                 None => false,
             };
-            let mut opcoes = Vec::new();
-            if let Some(expr) = opcoes_expr {
-                opcoes = self.lista_texto(expr, &format!("`opcoes` do campo `{etapa}.{id}`"));
-                let mut vistas = BTreeSet::new();
-                for opcao in &opcoes {
-                    if !vistas.insert(opcao.clone()) {
-                        self.erro(
+            let mut options = Vec::new();
+            if let Some(expr) = options_expr {
+                options = self.list_text(expr, &format!("`opcoes` do campo `{etapa}.{id}`"));
+                let mut seen_options = BTreeSet::new();
+                for option in &options {
+                    if !seen_options.insert(option.clone()) {
+                        self.error(
                             Code::InvalidOptions,
-                            format!("O campo `{etapa}.{id}` repete a opção `{opcao}`."),
-                            pos_opcoes,
+                            format!("O campo `{etapa}.{id}` repete a opção `{option}`."),
+                            options_pos,
                         );
                     }
                 }
             }
-            if tipo == FieldKind::Option && opcoes.len() < 2 {
-                self.erro(
+            if tipo == FieldKind::Option && options.len() < 2 {
+                self.error(
                     Code::InvalidOptions,
                     format!(
                         "O campo `{etapa}.{id}` é `opcao` e precisa de pelo menos duas `opcoes`."
                     ),
-                    if opcoes_expr.is_some() {
-                        pos_opcoes
+                    if options_expr.is_some() {
+                        options_pos
                     } else {
                         pos_id
                     },
                 );
             }
-            if tipo != FieldKind::Option && !opcoes.is_empty() {
-                self.erro(
+            if tipo != FieldKind::Option && !options.is_empty() {
+                self.error(
                     Code::InvalidOptions,
                     format!(
                         "O campo `{etapa}.{id}` tem `opcoes`, mas o tipo é `{}`: `opcoes` só vale com `tipo = \"opcao\"`.",
                         tipo.as_text()
                     ),
-                    pos_opcoes,
+                    options_pos,
                 );
             }
-            if repetido {
+            if repeated {
                 continue;
             }
-            posicoes.insert(id.clone(), pos_id);
+            positions.insert(id.clone(), pos_id);
             campos.push(Campo {
                 id,
-                label: rotulo.unwrap_or_default(),
+                label: label.unwrap_or_default(),
                 tipo,
-                required: obrigatorio,
-                options: opcoes,
-                help: ajuda,
+                required: is_required,
+                options,
+                help,
             });
         }
-        (campos, posicoes)
+        (campos, positions)
     }
 
-    fn coleta_acoes(
+    fn collect_actions(
         &mut self,
         expr: &'a AstExpr,
         etapa: &str,
         campos: &[Campo],
-        atores: &[ActionActor],
-    ) -> Vec<AcaoBruta> {
-        let mut acoes = Vec::new();
-        let mut vistos: BTreeSet<String> = BTreeSet::new();
-        let ids_campos: BTreeSet<&str> = campos.iter().map(|c| c.id.as_str()).collect();
-        let onde_lista = format!("`acoes` da etapa `{etapa}`");
-        for item in self.lista_itens(expr, &onde_lista) {
+        actors: &[ActionActor],
+    ) -> Vec<RawAction> {
+        let mut actions = Vec::new();
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        let field_ids: BTreeSet<&str> = campos.iter().map(|c| c.id.as_str()).collect();
+        let location_list = format!("`acoes` da etapa `{etapa}`");
+        for item in self.list_items(expr, &location_list) {
             let pos = self.pos(item.span);
-            let Some((nome, itens)) =
-                self.como_chamada(item, &format!("um item de `acoes` da etapa `{etapa}`"))
+            let Some((nome, items)) =
+                self.as_call(item, &format!("um item de `acoes` da etapa `{etapa}`"))
             else {
                 continue;
             };
             if nome != "acao" {
-                self.erro(
+                self.error(
                     Code::WrongType,
                     format!("`acoes` da etapa `{etapa}` aceita só `acao(...)`, não `{nome}(...)`."),
                     pos,
                 );
                 continue;
             }
-            let mut leitor = Leitor::novo("`acao`", pos, ARGS_ACAO, itens);
-            let id = leitor.posicional_texto(self, 0);
-            let rotulo = leitor.posicional_texto(self, 1);
-            let vai_para = leitor.item(self, "vai_para");
-            let exige_expr = leitor.item(self, "exige");
-            let ator_expr = leitor.item(self, "ator");
-            let efeitos_expr = leitor.item(self, "efeitos");
-            let pos_vai_para = leitor.pos_de("vai_para").unwrap_or(pos);
-            let pos_exige = leitor.pos_de("exige").unwrap_or(pos);
-            let pos_ator = leitor.pos_de("ator").unwrap_or(pos);
-            leitor.fecha(self);
+            let mut reader = Reader::new("`acao`", pos, ARGS_ACTION, items);
+            let id = reader.positional_text(self, 0);
+            let label = reader.positional_text(self, 1);
+            let goes_to = reader.item(self, "vai_para");
+            let requires_expr = reader.item(self, "exige");
+            let actor_expr = reader.item(self, "ator");
+            let effects_expr = reader.item(self, "efeitos");
+            let goes_to_pos = reader.pos_of("vai_para").unwrap_or(pos);
+            let requires_pos = reader.pos_of("exige").unwrap_or(pos);
+            let actor_pos = reader.pos_of("ator").unwrap_or(pos);
+            reader.close(self);
 
             let id = id.unwrap_or_default();
-            if !id.is_empty() && !id_valido(&id) {
-                self.erro(
+            if !id.is_empty() && !valid_id(&id) {
+                self.error(
                     Code::InvalidId,
                     format!("O id da ação `{id}` na etapa `{etapa}` não é válido: use minúsculas, números e `_`, de {ID_MIN} a {ID_MAX} caracteres."),
                     pos,
                 );
             }
-            if rotulo.is_none() {
-                self.erro(
+            if label.is_none() {
+                self.error(
                     Code::MissingArgument,
                     format!(
                         "A ação `{etapa}.{id}` não recebeu o rótulo (segundo argumento): `acao(\"{id}\", \"Rótulo\", vai_para = ...)`."
@@ -806,47 +741,47 @@ impl<'a> Forma<'a> {
                     pos,
                 );
             }
-            let mut exige = Vec::new();
-            if let Some(expr) = exige_expr {
-                let onde_exige = format!("`exige` da ação `{etapa}.{id}`");
-                for campo in self.lista_texto(expr, &onde_exige) {
-                    if !ids_campos.contains(campo.as_str()) {
-                        self.erro(
+            let mut requires = Vec::new();
+            if let Some(expr) = requires_expr {
+                let requires_location = format!("`exige` da ação `{etapa}.{id}`");
+                for campo in self.list_text(expr, &requires_location) {
+                    if !field_ids.contains(campo.as_str()) {
+                        self.error(
                             Code::UnknownRequirement,
                             format!("A ação `{etapa}.{id}` exige o campo `{campo}`, que não existe na etapa `{etapa}`."),
-                            pos_exige,
+                            requires_pos,
                         );
                         continue;
                     }
-                    if let Some(uso) = self.usos.get_mut(etapa) {
-                        uso.exigidos.insert(campo.clone());
+                    if let Some(usage) = self.uses.get_mut(etapa) {
+                        usage.required.insert(campo.clone());
                     }
-                    exige.push(campo);
+                    requires.push(campo);
                 }
             }
-            let ator = match ator_expr {
+            let actor = match actor_expr {
                 Some(expr) => {
-                    let bruto = self
+                    let raw = self
                         .texto(expr, &format!("`ator` da ação `{etapa}.{id}`"))
                         .unwrap_or_default();
-                    match ActionActor::from_text(&bruto) {
-                        Ok(ator) => {
-                            if !atores.contains(&ator) {
-                                self.erro(
+                    match ActionActor::from_text(&raw) {
+                        Ok(actor) => {
+                            if !actors.contains(&actor) {
+                                self.error(
                                     Code::InvalidRuleOrActor,
                                     format!(
-                                        "A ação `{etapa}.{id}` é do ator `{bruto}`, que não está em `atores` da etapa `{etapa}`. Inclua `{bruto}` em `atores` ou tire o `ator` da ação."
+                                        "A ação `{etapa}.{id}` é do ator `{raw}`, que não está em `atores` da etapa `{etapa}`. Inclua `{raw}` em `atores` ou tire o `ator` da ação."
                                     ),
-                                    pos_ator,
+                                    actor_pos,
                                 );
                             }
-                            Some(ator)
+                            Some(actor)
                         }
                         Err(_) => {
-                            self.erro(
+                            self.error(
                                 Code::InvalidRuleOrActor,
-                                format!("A ação `{etapa}.{id}` tem `ator = \"{bruto}\"`; use `agente` ou `atendente` (ou deixe vazio)."),
-                                pos_ator,
+                                format!("A ação `{etapa}.{id}` tem `ator = \"{raw}\"`; use `agente` ou `atendente` (ou deixe vazio)."),
+                                actor_pos,
                             );
                             None
                         }
@@ -854,106 +789,105 @@ impl<'a> Forma<'a> {
                 }
                 None => None,
             };
-            let destino = match vai_para {
-                Some(expr) => self.destino(expr, &format!("a ação `{etapa}.{id}`")),
+            let destination = match goes_to {
+                Some(expr) => self.destination(expr, &format!("a ação `{etapa}.{id}`")),
                 None => {
-                    self.erro(
+                    self.error(
                         Code::MissingArgument,
                         format!("A ação `{etapa}.{id}` não recebeu `vai_para`: diga para qual etapa, decisão ou `fim(...)` ela leva."),
-                        pos_vai_para,
+                        goes_to_pos,
                     );
-                    DestinoBruto::Invalido
+                    RawDestination::Invalid
                 }
             };
-            let mut efeitos = Vec::new();
-            if let Some(expr) = efeitos_expr {
-                let onde_efeitos = format!("`efeitos` da ação `{etapa}.{id}`");
-                for efeito in self.coleta_efeitos(expr, &onde_efeitos) {
-                    efeitos.push(efeito.efeito.clone());
-                    self.efeitos.push(EfeitoColetado {
-                        efeito: efeito.efeito,
-                        pos_texto: efeito.pos_texto,
+            let mut effects = Vec::new();
+            if let Some(expr) = effects_expr {
+                let effects_location = format!("`efeitos` da ação `{etapa}.{id}`");
+                for effect in self.collect_effects(expr, &effects_location) {
+                    effects.push(effect.effect.clone());
+                    self.effects.push(CollectedEffect {
+                        effect: effect.effect,
+                        text_pos: effect.text_pos,
                         etapa: etapa.to_owned(),
-                        ao_entrar: false,
+                        on_enter: false,
                     });
                 }
             }
-            let mut segue = true;
-            if !id.is_empty() && !vistos.insert(id.clone()) {
-                self.erro(
+            let mut follows = true;
+            if !id.is_empty() && !seen.insert(id.clone()) {
+                self.error(
                     Code::DuplicateId,
                     format!("A ação `{id}` está declarada duas vezes na etapa `{etapa}`."),
                     pos,
                 );
-                segue = false;
+                follows = false;
             }
-            if !segue {
+            if !follows {
                 continue;
             }
-            acoes.push(AcaoBruta {
+            actions.push(RawAction {
                 acao: Acao {
                     id,
-                    label: rotulo.unwrap_or_default(),
-                    requires: exige,
-                    actor: ator,
+                    label: label.unwrap_or_default(),
+                    requires,
+                    actor,
                     goes_to: Destination::Etapa { id: String::new() },
-                    effects: efeitos,
+                    effects,
                 },
-                destino,
+                destination,
             });
         }
-        acoes
+        actions
     }
 
-    fn coleta_efeitos(&mut self, expr: &'a AstExpr, onde: &str) -> Vec<EfeitoLido> {
+    fn collect_effects(&mut self, expr: &'a AstExpr, location: &str) -> Vec<ReadEffect> {
         let mut saida = Vec::new();
-        for item in self.lista_itens(expr, onde) {
+        for item in self.list_items(expr, location) {
             let pos = self.pos(item.span);
-            let Some((nome, itens)) = self.como_chamada(item, onde) else {
+            let Some((nome, items)) = self.as_call(item, location) else {
                 continue;
             };
-            let mut pos_texto_final = pos;
-            let efeito = match nome.as_str() {
+            let mut text_end_pos = pos;
+            let effect = match nome.as_str() {
                 "mensagem_ao_cliente" => {
-                    let mut leitor = Leitor::novo("`mensagem_ao_cliente`", pos, &[], itens);
-                    let texto = leitor.posicional_texto(self, 0);
-                    let pos_texto = leitor.pos_de("__pos0").unwrap_or(pos);
-                    leitor.fecha(self);
+                    let mut reader = Reader::new("`mensagem_ao_cliente`", pos, &[], items);
+                    let texto = reader.positional_text(self, 0);
+                    let text_pos = reader.pos_of("__pos0").unwrap_or(pos);
+                    reader.close(self);
                     let Some(texto) = texto else {
-                        self.erro(
+                        self.error(
                             Code::MissingArgument,
-                            format!("{onde} tem `mensagem_ao_cliente()` sem o texto: `mensagem_ao_cliente(\"Texto enviado ao cliente\")`."),
+                            format!("{location} tem `mensagem_ao_cliente()` sem o texto: `mensagem_ao_cliente(\"Texto enviado ao cliente\")`."),
                             pos,
                         );
                         continue;
                     };
-                    self.confere_formato_das_variaveis(&texto, onde, pos_texto);
-                    pos_texto_final = pos_texto;
+                    self.check_variable_format(&texto, location, text_pos);
+                    text_end_pos = text_pos;
                     Effect::MessageToCustomer { texto }
                 }
                 "notificar_whatsapp" => {
-                    let mut leitor =
-                        Leitor::novo("`notificar_whatsapp`", pos, ARGS_NOTIFICAR, itens);
-                    let para = leitor.texto(self, "para");
-                    let mensagem = leitor.texto(self, "mensagem");
-                    let pos_para = leitor.pos_de("para").unwrap_or(pos);
-                    let pos_mensagem = leitor.pos_de("mensagem").unwrap_or(pos);
-                    leitor.fecha(self);
+                    let mut reader = Reader::new("`notificar_whatsapp`", pos, ARGS_NOTIFY, items);
+                    let para = reader.texto(self, "para");
+                    let mensagem = reader.texto(self, "mensagem");
+                    let to_pos = reader.pos_of("para").unwrap_or(pos);
+                    let message_pos = reader.pos_of("mensagem").unwrap_or(pos);
+                    reader.close(self);
                     let para = match para {
                         Some(para) => {
                             if para.len() < 10 || !para.chars().all(|c| c.is_ascii_digit()) {
-                                self.erro(
+                                self.error(
                                     Code::InvalidNumber,
                                     format!("O número `{para}` não serve: use dígitos com DDI, por exemplo `5521999990000`."),
-                                    pos_para,
+                                    to_pos,
                                 );
                             }
                             para
                         }
                         None => {
-                            self.erro(
+                            self.error(
                                 Code::MissingArgument,
-                                format!("{onde} tem `notificar_whatsapp` sem `para`: indique o número que recebe a notificação."),
+                                format!("{location} tem `notificar_whatsapp` sem `para`: indique o número que recebe a notificação."),
                                 pos,
                             );
                             String::new()
@@ -961,21 +895,21 @@ impl<'a> Forma<'a> {
                     };
                     let mensagem = match mensagem {
                         Some(mensagem) => {
-                            pos_texto_final = pos_mensagem;
-                            self.confere_formato_das_variaveis(&mensagem, onde, pos_mensagem);
-                            if variaveis(&mensagem).is_empty() {
-                                self.aviso(
+                            text_end_pos = message_pos;
+                            self.check_variable_format(&mensagem, location, message_pos);
+                            if variables(&mensagem).is_empty() {
+                                self.warning(
                                     Code::NotificationWithoutVariable,
-                                    format!("{onde} notifica a equipe sem nenhuma variável: ela recebe sempre o mesmo texto, sem saber de qual atendimento se trata."),
-                                    pos_mensagem,
+                                    format!("{location} notifica a equipe sem nenhuma variável: ela recebe sempre o mesmo texto, sem saber de qual atendimento se trata."),
+                                    message_pos,
                                 );
                             }
                             mensagem
                         }
                         None => {
-                            self.erro(
+                            self.error(
                                 Code::MissingArgument,
-                                format!("{onde} tem `notificar_whatsapp` sem `mensagem`: escreva o texto da notificação."),
+                                format!("{location} tem `notificar_whatsapp` sem `mensagem`: escreva o texto da notificação."),
                                 pos,
                             );
                             String::new()
@@ -984,335 +918,320 @@ impl<'a> Forma<'a> {
                     Effect::NotifyWhatsApp { para, mensagem }
                 }
                 "encaminhar" => {
-                    let mut leitor = Leitor::novo("`encaminhar`", pos, &[], itens);
-                    let departamento = leitor.posicional_texto(self, 0);
-                    leitor.fecha(self);
+                    let mut reader = Reader::new("`encaminhar`", pos, &[], items);
+                    let departamento = reader.positional_text(self, 0);
+                    reader.close(self);
                     match departamento {
                         Some(departamento) => Effect::Encaminhar { departamento },
                         None => {
-                            self.erro(
+                            self.error(
                                 Code::MissingArgument,
-                                format!("{onde} tem `encaminhar()` sem o departamento: `encaminhar(\"Logística\")`."),
+                                format!("{location} tem `encaminhar()` sem o departamento: `encaminhar(\"Logística\")`."),
                                 pos,
                             );
                             continue;
                         }
                     }
                 }
-                outro => {
-                    self.erro(
+                other => {
+                    self.error(
                         Code::InvalidTopLevel,
-                        format!("{onde} usa o efeito `{outro}(...)`; use `mensagem_ao_cliente`, `notificar_whatsapp` ou `encaminhar`."),
+                        format!("{location} usa o efeito `{other}(...)`; use `mensagem_ao_cliente`, `notificar_whatsapp` ou `encaminhar`."),
                         pos,
                     );
                     continue;
                 }
             };
-            saida.push(EfeitoLido {
-                efeito,
-                pos_texto: pos_texto_final,
+            saida.push(ReadEffect {
+                effect,
+                text_pos: text_end_pos,
             });
         }
         saida
     }
 
-    // ---------------------------------------------------------------- decisão
-
-    fn coleta_decisao(&mut self, args: ArgsAst<'a>, pos: Pos) {
-        let itens = self.itens_de(args, "`decisao`", pos);
-        let mut leitor = Leitor::novo("`decisao`", pos, ARGS_DECISAO, itens);
-        let id = leitor.texto(self, "id");
-        let se_expr = leitor.item(self, "se");
-        let entao_expr = leitor.item(self, "entao");
-        let senao_expr = leitor.item(self, "senao");
-        let pos_id = leitor.pos_de("id").unwrap_or(pos);
-        let pos_se = leitor.pos_de("se").unwrap_or(pos);
-        let pos_entao = leitor.pos_de("entao").unwrap_or(pos);
-        let pos_senao = leitor.pos_de("senao").unwrap_or(pos);
-        leitor.fecha(self);
+    fn collect_decision(&mut self, args: ArgsAst<'a>, pos: Pos) {
+        let items = self.items_of(args, "`decisao`", pos);
+        let mut reader = Reader::new("`decisao`", pos, ARGS_DECISION, items);
+        let id = reader.texto(self, "id");
+        let se_expr = reader.item(self, "se");
+        let then_expr = reader.item(self, "entao");
+        let otherwise_expr = reader.item(self, "senao");
+        let pos_id = reader.pos_of("id").unwrap_or(pos);
+        let pos_se = reader.pos_of("se").unwrap_or(pos);
+        let then_pos = reader.pos_of("entao").unwrap_or(pos);
+        let otherwise_pos = reader.pos_of("senao").unwrap_or(pos);
+        reader.close(self);
 
         let id = id.unwrap_or_default();
         if !id.is_empty() {
-            if !id_valido(&id) {
-                self.erro(
+            if !valid_id(&id) {
+                self.error(
                     Code::InvalidId,
                     format!("O id de decisão `{id}` não é válido: use minúsculas, números e `_`, de {ID_MIN} a {ID_MAX} caracteres."),
                     pos_id,
                 );
             }
             if self.id_ocupado(&id) {
-                self.erro(
+                self.error(
                     Code::DuplicateId,
                     format!("O id `{id}` está declarado mais de uma vez. Cada etapa e cada decisão tem id único no fluxo."),
                     pos_id,
                 );
             }
         }
-        let regra = match se_expr {
-            Some(expr) => self.regra(expr, &format!("a decisão `{id}`")),
+        let rule = match se_expr {
+            Some(expr) => self.rule(expr, &format!("a decisão `{id}`")),
             None => {
-                self.erro(
+                self.error(
                     Code::MissingArgument,
                     format!("A decisão `{id}` não recebeu `se`: escreva a regra, por exemplo `se = igual(\"coleta.periodo\", \"manhã\")`."),
                     pos_se,
                 );
-                RegraBruta::Invalida
+                RawRule::Invalid
             }
         };
-        let entao = match entao_expr {
-            Some(expr) => self.destino(expr, &format!("o ramo `entao` da decisão `{id}`")),
+        let then = match then_expr {
+            Some(expr) => self.destination(expr, &format!("o ramo `entao` da decisão `{id}`")),
             None => {
-                self.erro(
+                self.error(
                     Code::MissingArgument,
                     format!("A decisão `{id}` não recebeu `entao`: diga para onde vai quando a regra é verdadeira."),
-                    pos_entao,
+                    then_pos,
                 );
-                DestinoBruto::Invalido
+                RawDestination::Invalid
             }
         };
-        let senao = match senao_expr {
-            Some(expr) => self.destino(expr, &format!("o ramo `senao` da decisão `{id}`")),
+        let otherwise = match otherwise_expr {
+            Some(expr) => self.destination(expr, &format!("o ramo `senao` da decisão `{id}`")),
             None => {
-                self.erro(
+                self.error(
                     Code::MissingArgument,
                     format!("A decisão `{id}` não recebeu `senao`: toda decisão tem os dois ramos (`senao` é obrigatório)."),
-                    pos_senao,
+                    otherwise_pos,
                 );
-                DestinoBruto::Invalido
+                RawDestination::Invalid
             }
         };
 
-        let indice = self.decisoes.len();
-        self.idx_decisoes.insert(id.clone(), indice);
-        self.decisoes.push(DecisaoColetada {
+        let index = self.decisions.len();
+        self.idx_decisions.insert(id.clone(), index);
+        self.decisions.push(CollectedDecision {
             id,
-            regra,
-            entao,
-            senao,
+            rule,
+            then,
+            otherwise,
             pos,
         });
     }
 
-    fn regra(&mut self, expr: &'a AstExpr, onde: &str) -> RegraBruta {
+    fn rule(&mut self, expr: &'a AstExpr, location: &str) -> RawRule {
         let pos = self.pos(expr.span);
-        let Some((nome, itens)) = self.como_chamada(expr, &format!("a regra de {onde}")) else {
-            return RegraBruta::Invalida;
+        let Some((nome, items)) = self.as_call(expr, &format!("a regra de {location}")) else {
+            return RawRule::Invalid;
         };
         match nome.as_str() {
             "igual" | "diferente" | "maior" | "menor" | "contem" => {
-                let mut leitor = Leitor::novo(&format!("`{nome}`"), pos, &[], itens);
-                let campo = leitor.posicional_texto(self, 0);
-                let valor = leitor.posicional_texto(self, 1);
-                let pos_campo = leitor.pos_de("__pos0").unwrap_or(pos);
-                let pos_valor = leitor.pos_de("__pos1").unwrap_or(pos);
-                leitor.fecha(self);
-                let sem_campo = campo.is_none();
-                let (Some(campo), Some(valor)) = (campo, valor) else {
-                    let pos_erro = if sem_campo { pos } else { pos_valor };
-                    self.erro(
+                let mut reader = Reader::new(&format!("`{nome}`"), pos, &[], items);
+                let campo = reader.positional_text(self, 0);
+                let value = reader.positional_text(self, 1);
+                let field_pos = reader.pos_of("__pos0").unwrap_or(pos);
+                let value_pos = reader.pos_of("__pos1").unwrap_or(pos);
+                reader.close(self);
+                let without_field = campo.is_none();
+                let (Some(campo), Some(value)) = (campo, value) else {
+                    let error_pos = if without_field { pos } else { value_pos };
+                    self.error(
                         Code::MalformedCombinator,
-                        format!("{onde} usa `{nome}` sem o campo e o valor: `{nome}(\"etapa.campo\", \"valor\")`."),
-                        pos_erro,
+                        format!("{location} usa `{nome}` sem o campo e o valor: `{nome}(\"etapa.campo\", \"valor\")`."),
+                        error_pos,
                     );
-                    return RegraBruta::Invalida;
+                    return RawRule::Invalid;
                 };
-                let regra = match nome.as_str() {
-                    "igual" => Rule::Igual {
-                        campo,
-                        value: valor,
-                    },
-                    "diferente" => Rule::Diferente {
-                        campo,
-                        value: valor,
-                    },
-                    "maior" => Rule::Maior {
-                        campo,
-                        value: valor,
-                    },
-                    "menor" => Rule::Menor {
-                        campo,
-                        value: valor,
-                    },
-                    _ => Rule::Contem {
-                        campo,
-                        value: valor,
-                    },
+                let rule = match nome.as_str() {
+                    "igual" => Rule::Igual { campo, value },
+                    "diferente" => Rule::Diferente { campo, value },
+                    "maior" => Rule::Maior { campo, value },
+                    "menor" => Rule::Menor { campo, value },
+                    _ => Rule::Contem { campo, value },
                 };
-                RegraBruta::Folha {
-                    regra,
-                    pos: pos_campo,
+                RawRule::Leaf {
+                    rule,
+                    pos: field_pos,
                 }
             }
             "vazio" => {
-                let mut leitor = Leitor::novo("`vazio`", pos, &[], itens);
-                let campo = leitor.posicional_texto(self, 0);
-                let pos_campo = leitor.pos_de("__pos0").unwrap_or(pos);
-                leitor.fecha(self);
+                let mut reader = Reader::new("`vazio`", pos, &[], items);
+                let campo = reader.positional_text(self, 0);
+                let field_pos = reader.pos_of("__pos0").unwrap_or(pos);
+                reader.close(self);
                 let Some(campo) = campo else {
-                    self.erro(
+                    self.error(
                         Code::MalformedCombinator,
-                        format!("{onde} usa `vazio` sem o campo: `vazio(\"etapa.campo\")`."),
+                        format!("{location} usa `vazio` sem o campo: `vazio(\"etapa.campo\")`."),
                         pos,
                     );
-                    return RegraBruta::Invalida;
+                    return RawRule::Invalid;
                 };
-                RegraBruta::Folha {
-                    regra: Rule::Vazio { campo },
-                    pos: pos_campo,
+                RawRule::Leaf {
+                    rule: Rule::Vazio { campo },
+                    pos: field_pos,
                 }
             }
             "funcao" => {
-                let mut leitor = Leitor::novo("`funcao`", pos, &[], itens);
-                let nome_def = leitor.posicional_texto(self, 0);
-                leitor.fecha(self);
-                let Some(nome_def) = nome_def else {
-                    self.erro(
+                let mut reader = Reader::new("`funcao`", pos, &[], items);
+                let def_name = reader.positional_text(self, 0);
+                reader.close(self);
+                let Some(def_name) = def_name else {
+                    self.error(
                         Code::InvalidRuleOrActor,
-                        format!("{onde} usa `funcao()` sem o nome: `funcao(\"minha_regra\")`."),
+                        format!("{location} usa `funcao()` sem o nome: `funcao(\"minha_regra\")`."),
                         pos,
                     );
-                    return RegraBruta::Invalida;
+                    return RawRule::Invalid;
                 };
-                RegraBruta::Funcao {
-                    nome: nome_def,
+                RawRule::Funcao {
+                    nome: def_name,
                     pos,
                 }
             }
             "e" | "ou" | "nao" => {
                 let mut posicionais = Vec::new();
-                for item in &itens {
+                for item in &items {
                     if item.nome.is_some() {
                         let p = self.pos(item.expr.span);
-                        self.erro(
+                        self.error(
                             Code::MalformedCombinator,
-                            format!("{onde} usa `{nome}` com argumento nomeado; `{nome}` recebe os combinadores em sequência."),
+                            format!("{location} usa `{nome}` com argumento nomeado; `{nome}` recebe os combinadores em sequência."),
                             p,
                         );
                         continue;
                     }
                     posicionais.push(item.expr);
                 }
-                let valido = if nome == "nao" {
+                let valid = if nome == "nao" {
                     posicionais.len() == 1
                 } else {
                     posicionais.len() >= 2
                 };
-                if !valido {
-                    let esperado = if nome == "nao" {
+                if !valid {
+                    let expected = if nome == "nao" {
                         "exatamente 1 argumento".to_owned()
                     } else {
                         "2 ou mais argumentos".to_owned()
                     };
-                    self.erro(
+                    self.error(
                         Code::MalformedCombinator,
                         format!(
-                            "{onde} usa `{nome}` com {} argumento(s); `{nome}` recebe {esperado}.",
+                            "{location} usa `{nome}` com {} argumento(s); `{nome}` recebe {expected}.",
                             posicionais.len()
                         ),
                         pos,
                     );
-                    return RegraBruta::Invalida;
+                    return RawRule::Invalid;
                 }
-                let mut filhos = Vec::new();
-                for filho in posicionais {
-                    filhos.push(self.regra(filho, onde));
+                let mut children = Vec::new();
+                for child in posicionais {
+                    children.push(self.rule(child, location));
                 }
-                let regra = match nome.as_str() {
+                let rule = match nome.as_str() {
                     "e" => Rule::E { args: Vec::new() },
                     "ou" => Rule::Ou { args: Vec::new() },
                     _ => Rule::Nao { args: Vec::new() },
                 };
-                RegraBruta::Grupo { regra, filhos, pos }
+                RawRule::Group {
+                    rule,
+                    children,
+                    pos,
+                }
             }
-            outro => {
-                self.erro(
+            other => {
+                self.error(
                     Code::InvalidRuleOrActor,
                     format!(
-                        "{onde} tem `se = {outro}(...)`, que não é combinador nem `funcao(\"nome\")`. Use `igual`, `diferente`, `maior`, `menor`, `contem`, `vazio`, `e`, `ou`, `nao` ou `funcao`."
+                        "{location} tem `se = {other}(...)`, que não é combinador nem `funcao(\"nome\")`. Use `igual`, `diferente`, `maior`, `menor`, `contem`, `vazio`, `e`, `ou`, `nao` ou `funcao`."
                     ),
                     pos,
                 );
-                RegraBruta::Invalida
+                RawRule::Invalid
             }
         }
     }
 
-    // ---------------------------------------------------------------- destino e def
-
-    fn destino(&mut self, expr: &'a AstExpr, onde: &str) -> DestinoBruto {
+    fn destination(&mut self, expr: &'a AstExpr, location: &str) -> RawDestination {
         let pos = self.pos(expr.span);
         match &expr.node {
-            Expr::Literal(AstLiteral::String(texto)) => DestinoBruto::Alvo {
+            Expr::Literal(AstLiteral::String(texto)) => RawDestination::Target {
                 id: texto.node.clone(),
                 pos,
             },
-            Expr::Call(alvo, args) => {
-                let nome = match &alvo.node {
+            Expr::Call(target, args) => {
+                let nome = match &target.node {
                     Expr::Identifier(ident) => ident.node.ident.clone(),
                     _ => String::new(),
                 };
                 if nome != "fim" {
-                    self.erro(
+                    self.error(
                         Code::WrongType,
-                        format!("{onde} precisa apontar para o id de uma etapa, de uma decisão ou para `fim(\"id\")`, não para `{nome}(...)`."),
+                        format!("{location} precisa apontar para o id de uma etapa, de uma decisão ou para `fim(\"id\")`, não para `{nome}(...)`."),
                         pos,
                     );
-                    return DestinoBruto::Invalido;
+                    return RawDestination::Invalid;
                 }
-                let itens = self.itens_de(args, "`fim`", pos);
-                let mut leitor = Leitor::novo("`fim`", pos, ARGS_FIM, itens);
-                let id = leitor.posicional_texto(self, 0);
-                let resultado = leitor.texto(self, "resultado");
-                let encerra_expr = leitor.item(self, "encerra_atendimento");
-                let pos_id = leitor.pos_de("__pos0").unwrap_or(pos);
-                leitor.fecha(self);
+                let items = self.items_of(args, "`fim`", pos);
+                let mut reader = Reader::new("`fim`", pos, ARGS_END, items);
+                let id = reader.positional_text(self, 0);
+                let resultado = reader.texto(self, "resultado");
+                let end_expr = reader.item(self, "encerra_atendimento");
+                let pos_id = reader.pos_of("__pos0").unwrap_or(pos);
+                reader.close(self);
                 let Some(id) = id else {
-                    self.erro(
+                    self.error(
                         Code::MissingArgument,
                         format!(
-                            "{onde} usa `fim()` sem id: `fim(\"concluido\", resultado = \"...\")`."
+                            "{location} usa `fim()` sem id: `fim(\"concluido\", resultado = \"...\")`."
                         ),
                         pos,
                     );
-                    return DestinoBruto::Invalido;
+                    return RawDestination::Invalid;
                 };
-                if !id_valido(&id) {
-                    self.erro(
+                if !valid_id(&id) {
+                    self.error(
                         Code::InvalidId,
                         format!("O id do fim `{id}` não é válido: use minúsculas, números e `_`, de {ID_MIN} a {ID_MAX} caracteres."),
                         pos_id,
                     );
                 }
-                let encerra_atendimento = match encerra_expr {
+                let ends_service = match end_expr {
                     Some(expr) => self
-                        .booleano(expr, &format!("`encerra_atendimento` do fim `{id}`"))
+                        .boolean(expr, &format!("`encerra_atendimento` do fim `{id}`"))
                         .unwrap_or(false),
                     None => false,
                 };
-                DestinoBruto::Fim {
+                RawDestination::Fim {
                     fim: Fim {
                         id,
                         resultado,
-                        ends_service: encerra_atendimento,
+                        ends_service,
                     },
                     pos,
                 }
             }
             _ => {
-                self.erro(
+                self.error(
                     Code::WrongType,
-                    format!("{onde} precisa apontar para o id de uma etapa, de uma decisão ou para `fim(\"id\")`, não para {}.", descreve(expr)),
+                    format!("{location} precisa apontar para o id de uma etapa, de uma decisão ou para `fim(\"id\")`, não para {}.", descreve(expr)),
                     pos,
                 );
-                DestinoBruto::Invalido
+                RawDestination::Invalid
             }
         }
     }
 
-    fn coleta_def(&mut self, def: &'a DefP<AstNoPayload>, item: &'a AstStmt, pos: Pos) {
+    fn collect_def(&mut self, def: &'a DefP<AstNoPayload>, item: &'a AstStmt, pos: Pos) {
         let nome = def.name.node.ident.clone();
         if is_allowed_name(&nome) {
-            self.erro(
+            self.error(
                 Code::InvalidDef,
                 format!("`{nome}` é nome reservado da linguagem de fluxos; escolha outro nome para a função de regra."),
                 pos,
@@ -1320,76 +1239,69 @@ impl<'a> Forma<'a> {
             return;
         }
         if self.pos_defs.contains_key(&nome) {
-            self.erro(
+            self.error(
                 Code::InvalidDef,
                 format!("Existe mais de uma `def {nome}`: cada função de regra tem nome único."),
                 pos,
             );
             return;
         }
-        let parametros: Vec<String> = def
+        let params: Vec<String> = def
             .params
             .iter()
             .filter_map(|parametro| parametro.ident().map(|i| i.node.ident.clone()))
             .collect();
-        let so_dados = def.params.len() == 1
+        let only_data = def.params.len() == 1
             && def
                 .params
                 .first()
                 .map(|parametro| matches!(parametro.node, Parameter::Normal(..)))
                 .unwrap_or(false)
-            && parametros == vec!["dados".to_owned()];
-        if !so_dados {
-            let escrito = parametros.join(", ");
-            self.erro(
+            && params == vec!["dados".to_owned()];
+        if !only_data {
+            let escrito = params.join(", ");
+            self.error(
                 Code::InvalidDef,
                 format!("`def {nome}({escrito})` precisa receber um único argumento chamado `dados`: `def {nome}(dados):`."),
                 pos,
             );
         }
-        let inicio = item.span.begin().get() as usize;
+        let start = item.span.begin().get() as usize;
         let fim = (def.body.span.end().get() as usize).max(item.span.end().get() as usize);
-        // O fim do trecho cai no começo da declaração seguinte (ou no fim do arquivo), então ele
-        // traz junto as linhas em branco que vêm depois da `def`. Espaço em branco não é função:
-        // aparar aqui é o que deixa a IR independente da formatação do arquivo, e é o que permite
-        // ao formatador (FX-16) reimprimir a `def` sem depender do espaçamento que veio depois
-        // dela.
         let fonte = self
             .fonte
-            .get(inicio..fim)
-            .map(|trecho| trecho.trim_end().to_owned())
+            .get(start..fim)
+            .map(|excerpt| excerpt.trim_end().to_owned())
             .unwrap_or_default();
         self.pos_defs.insert(nome.clone(), pos);
         self.defs.push(Def { nome, fonte });
     }
 
-    // ---------------------------------------------------------------- leitura de valores
-
-    fn como_chamada(&mut self, expr: &'a AstExpr, onde: &str) -> Option<(String, Vec<Item<'a>>)> {
+    fn as_call(&mut self, expr: &'a AstExpr, location: &str) -> Option<(String, Vec<Item<'a>>)> {
         match &expr.node {
-            Expr::Call(alvo, args) => {
-                let nome = match &alvo.node {
+            Expr::Call(target, args) => {
+                let nome = match &target.node {
                     Expr::Identifier(ident) => ident.node.ident.clone(),
                     _ => {
                         let pos = self.pos(expr.span);
-                        self.erro(
+                        self.error(
                             Code::InvalidTopLevel,
-                            format!("{onde} precisa ser a chamada de uma declaração da linguagem, não uma chamada de atributo."),
+                            format!("{location} precisa ser a chamada de uma declaração da linguagem, não uma chamada de atributo."),
                             pos,
                         );
                         return None;
                     }
                 };
                 let pos = self.pos(expr.span);
-                let itens = self.itens_de(args, &format!("`{nome}`"), pos);
-                Some((nome, itens))
+                let items = self.items_of(args, &format!("`{nome}`"), pos);
+                Some((nome, items))
             }
             _ => {
                 let pos = self.pos(expr.span);
-                self.erro(
+                self.error(
                     Code::WrongType,
                     format!(
-                        "{onde} precisa ser uma chamada de declaração, não {}.",
+                        "{location} precisa ser uma chamada de declaração, não {}.",
                         descreve(expr)
                     ),
                     pos,
@@ -1399,16 +1311,16 @@ impl<'a> Forma<'a> {
         }
     }
 
-    fn lista_itens(&mut self, expr: &'a AstExpr, onde: &str) -> Vec<&'a AstExpr> {
+    fn list_items(&mut self, expr: &'a AstExpr, location: &str) -> Vec<&'a AstExpr> {
         match &expr.node {
-            Expr::List(itens) => itens.iter().collect(),
-            Expr::Tuple(itens) => itens.iter().collect(),
+            Expr::List(items) => items.iter().collect(),
+            Expr::Tuple(items) => items.iter().collect(),
             _ => {
                 let pos = self.pos(expr.span);
-                self.erro(
+                self.error(
                     Code::WrongType,
                     format!(
-                        "{onde} precisa ser uma lista `[...]`, não {}.",
+                        "{location} precisa ser uma lista `[...]`, não {}.",
                         descreve(expr)
                     ),
                     pos,
@@ -1418,36 +1330,36 @@ impl<'a> Forma<'a> {
         }
     }
 
-    fn lista_texto(&mut self, expr: &'a AstExpr, onde: &str) -> Vec<String> {
+    fn list_text(&mut self, expr: &'a AstExpr, location: &str) -> Vec<String> {
         let mut saida = Vec::new();
-        for item in self.lista_itens(expr, onde) {
-            if let Some(texto) = self.texto(item, onde) {
+        for item in self.list_items(expr, location) {
+            if let Some(texto) = self.texto(item, location) {
                 saida.push(texto);
             }
         }
         saida
     }
 
-    fn texto(&mut self, expr: &'a AstExpr, onde: &str) -> Option<String> {
+    fn texto(&mut self, expr: &'a AstExpr, location: &str) -> Option<String> {
         if let Expr::Literal(AstLiteral::String(texto)) = &expr.node {
             return Some(texto.node.clone());
         }
         let pos = self.pos(expr.span);
         let mensagem = if expr_calculada(expr) {
             format!(
-                "{onde} precisa ser um valor literal (texto entre aspas): calcule o valor antes de escrever o fluxo."
+                "{location} precisa ser um valor literal (texto entre aspas): calcule o valor antes de escrever o fluxo."
             )
         } else {
             format!(
-                "{onde} precisa ser um texto entre aspas, não {}.",
+                "{location} precisa ser um texto entre aspas, não {}.",
                 descreve(expr)
             )
         };
-        self.erro(Code::WrongType, mensagem, pos);
+        self.error(Code::WrongType, mensagem, pos);
         None
     }
 
-    fn booleano(&mut self, expr: &'a AstExpr, onde: &str) -> Option<bool> {
+    fn boolean(&mut self, expr: &'a AstExpr, location: &str) -> Option<bool> {
         if let Expr::Identifier(ident) = &expr.node {
             match ident.node.ident.as_str() {
                 "True" => return Some(true),
@@ -1456,10 +1368,10 @@ impl<'a> Forma<'a> {
             }
         }
         let pos = self.pos(expr.span);
-        self.erro(
+        self.error(
             Code::WrongType,
             format!(
-                "{onde} precisa ser `True` ou `False`, não {}.",
+                "{location} precisa ser `True` ou `False`, não {}.",
                 descreve(expr)
             ),
             pos,
@@ -1467,96 +1379,94 @@ impl<'a> Forma<'a> {
         None
     }
 
-    // ---------------------------------------------------------------- passagem 2
-
-    fn fecha(&mut self) -> Option<Ir> {
-        self.confere_nomes();
+    fn close(&mut self) -> Option<Ir> {
+        self.check_names();
 
         let Some(fluxo) = self.fluxo.clone() else {
-            self.erro(
+            self.error(
                 Code::MissingFlow,
                 "O arquivo não declara `fluxo(...)`. Um arquivo é um fluxo: comece por `fluxo(id = ..., nome = ..., inicio = ..., gatilho = gatilho(...))`.",
-                self.pos_fluxo,
+                self.flow_pos,
             );
             return None;
         };
 
-        let mut inicio = String::new();
-        match self.inicio.clone() {
+        let mut start = String::new();
+        match self.start.clone() {
             Some((id, pos)) => {
-                if self.idx_etapas.contains_key(&id) {
-                    inicio = id;
+                if self.idx_stages.contains_key(&id) {
+                    start = id;
                 } else {
-                    self.erro(
+                    self.error(
                         Code::UnknownDestination,
                         format!("`inicio = \"{id}\"` não é uma etapa declarada. Use o id de uma `etapa(...)` do arquivo."),
                         pos,
                     );
                 }
             }
-            None => self.erro(
+            None => self.error(
                 Code::MissingArgument,
                 "`fluxo` não recebeu `inicio`: indique o id da etapa em que o atendimento começa.",
-                self.pos_fluxo,
+                self.flow_pos,
             ),
         }
 
-        let mut grafo: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut graph: BTreeMap<String, Vec<String>> = BTreeMap::new();
 
-        let etapas_coletadas = self.etapas.clone();
-        let mut etapas: Vec<Etapa> = Vec::with_capacity(etapas_coletadas.len());
-        for coletada in etapas_coletadas {
-            let id = coletada.etapa.id.clone();
-            let mut etapa = coletada.etapa;
-            let mut acoes = Vec::with_capacity(coletada.acoes.len());
-            for bruta in coletada.acoes {
-                let onde = format!("a ação `{id}.{}`", bruta.acao.id);
-                let destino = self.resolve(bruta.destino, &onde);
-                if let Some(alvo) = destino.is_open() {
-                    grafo.entry(id.clone()).or_default().push(alvo.to_owned());
+        let collected_steps = self.stages.clone();
+        let mut stages: Vec<Etapa> = Vec::with_capacity(collected_steps.len());
+        for collected in collected_steps {
+            let id = collected.etapa.id.clone();
+            let mut etapa = collected.etapa;
+            let mut actions = Vec::with_capacity(collected.actions.len());
+            for raw_action in collected.actions {
+                let location = format!("a ação `{id}.{}`", raw_action.acao.id);
+                let destination = self.resolve(raw_action.destination, &location);
+                if let Some(target) = destination.is_open() {
+                    graph.entry(id.clone()).or_default().push(target.to_owned());
                 }
-                let mut acao = bruta.acao;
-                acao.goes_to = destino;
-                acoes.push(acao);
+                let mut acao = raw_action.acao;
+                acao.goes_to = destination;
+                actions.push(acao);
             }
-            etapa.actions = acoes;
-            etapas.push(etapa);
+            etapa.actions = actions;
+            stages.push(etapa);
         }
 
-        let decisoes_coletadas = self.decisoes.clone();
-        let mut decisoes: Vec<Decisao> = Vec::with_capacity(decisoes_coletadas.len());
-        for coletada in &decisoes_coletadas {
-            let id = coletada.id.clone();
-            let entao = self.resolve(
-                clone_bruto(&coletada.entao),
+        let collected_decisions = self.decisions.clone();
+        let mut decisions: Vec<Decisao> = Vec::with_capacity(collected_decisions.len());
+        for collected in &collected_decisions {
+            let id = collected.id.clone();
+            let then = self.resolve(
+                clone_raw(&collected.then),
                 &format!("o ramo `entao` da decisão `{id}`"),
             );
-            let senao = self.resolve(
-                clone_bruto(&coletada.senao),
+            let otherwise = self.resolve(
+                clone_raw(&collected.otherwise),
                 &format!("o ramo `senao` da decisão `{id}`"),
             );
-            for destino in [&entao, &senao] {
-                if let Some(alvo) = destino.is_open() {
-                    grafo.entry(id.clone()).or_default().push(alvo.to_owned());
+            for destination in [&then, &otherwise] {
+                if let Some(target) = destination.is_open() {
+                    graph.entry(id.clone()).or_default().push(target.to_owned());
                 }
             }
-            let se = self.fecha_regra(&coletada.regra, &format!("a decisão `{id}`"));
-            decisoes.push(Decisao {
+            let se = self.close_rule(&collected.rule, &format!("a decisão `{id}`"));
+            decisions.push(Decisao {
                 id,
                 se,
-                then_branch: entao,
-                else_branch: senao,
+                then_branch: then,
+                else_branch: otherwise,
             });
         }
 
-        self.confere_ciclo(&grafo);
-        self.confere_alcance(&grafo, &inicio, &etapas, &decisoes_coletadas);
-        self.confere_uso_dos_campos(&etapas);
-        self.confere_uso_das_defs(&decisoes);
-        self.confere_efeitos(&etapas);
-        self.confere_teto_de_nos();
+        self.check_cycle(&graph);
+        self.check_reach(&graph, &start, &stages, &collected_decisions);
+        self.check_field_uses(&stages);
+        self.check_def_uses(&decisions);
+        self.check_effects(&stages);
+        self.check_node_cap();
 
-        if self.tem_erro() {
+        if self.has_error() {
             return None;
         }
 
@@ -1568,48 +1478,48 @@ impl<'a> Forma<'a> {
                 not_when: None,
                 examples: Vec::new(),
             }),
-            start: inicio,
-            stages: etapas,
-            decisions: decisoes,
-            ends: self.fins.clone(),
+            start,
+            stages,
+            decisions,
+            ends: self.ends.clone(),
             defs: self.defs.clone(),
         })
     }
 
-    fn resolve(&mut self, bruto: DestinoBruto, onde: &str) -> Destination {
-        match bruto {
-            DestinoBruto::Alvo { id, pos } => {
-                if self.idx_etapas.contains_key(&id) {
+    fn resolve(&mut self, raw_dest: RawDestination, location: &str) -> Destination {
+        match raw_dest {
+            RawDestination::Target { id, pos } => {
+                if self.idx_stages.contains_key(&id) {
                     Destination::Etapa { id }
-                } else if self.idx_decisoes.contains_key(&id) {
+                } else if self.idx_decisions.contains_key(&id) {
                     Destination::Decisao { id }
                 } else {
-                    self.erro(
+                    self.error(
                         Code::UnknownDestination,
-                        format!("{onde} aponta para `{id}`, que não é etapa nem decisão declarada. Use o id de uma `etapa(...)` ou de uma `decisao(...)`."),
+                        format!("{location} aponta para `{id}`, que não é etapa nem decisão declarada. Use o id de uma `etapa(...)` ou de uma `decisao(...)`."),
                         pos,
                     );
                     Destination::Etapa { id }
                 }
             }
-            DestinoBruto::Fim { fim, pos } => {
-                match self.pos_fins.get(&fim.id).copied() {
-                    Some(pos_anterior) => {
-                        let anterior = self.fins.iter().find(|f| f.id == fim.id).cloned();
-                        if anterior.as_ref() != Some(&fim) {
-                            self.erro(
+            RawDestination::Fim { fim, pos } => {
+                match self.ends_pos.get(&fim.id).copied() {
+                    Some(previous_pos) => {
+                        let previous = self.ends.iter().find(|f| f.id == fim.id).cloned();
+                        if previous.as_ref() != Some(&fim) {
+                            self.error(
                                 Code::DivergentEnd,
                                 format!(
                                     "O fim `{}` aparece com argumentos diferentes aqui e na linha {}: use o mesmo `fim(...)` nos dois lugares.",
-                                    fim.id, pos_anterior.linha
+                                    fim.id, previous_pos.line
                                 ),
                                 pos,
                             );
                         }
                     }
                     None => {
-                        self.pos_fins.insert(fim.id.clone(), pos);
-                        self.fins.push(fim.clone());
+                        self.ends_pos.insert(fim.id.clone(), pos);
+                        self.ends.push(fim.clone());
                     }
                 }
                 Destination::Fim {
@@ -1618,112 +1528,116 @@ impl<'a> Forma<'a> {
                     ends_service: fim.ends_service,
                 }
             }
-            DestinoBruto::Invalido => Destination::Etapa { id: String::new() },
+            RawDestination::Invalid => Destination::Etapa { id: String::new() },
         }
     }
 
-    fn fecha_regra(&mut self, bruta: &RegraBruta, onde: &str) -> Rule {
-        match bruta {
-            RegraBruta::Folha { regra, pos } => {
-                if let Some(campo) = campo_da_regra(regra) {
-                    self.confere_campo_da_regra(&campo, regra, onde, *pos);
+    fn close_rule(&mut self, raw_action: &RawRule, place: &str) -> Rule {
+        match raw_action {
+            RawRule::Leaf { rule, pos } => {
+                if let Some(campo) = field_of_rule(rule) {
+                    self.check_rule_field(&campo, rule, place, *pos);
                 }
-                regra.clone()
+                rule.clone()
             }
-            RegraBruta::Funcao { nome, pos } => {
+            RawRule::Funcao { nome, pos } => {
                 if !self.pos_defs.contains_key(nome) {
-                    self.erro(
+                    self.error(
                         Code::InvalidRuleOrActor,
-                        format!("{onde} usa `funcao(\"{nome}\")`, mas não existe `def {nome}(dados)` no arquivo."),
+                        format!("{place} usa `funcao(\"{nome}\")`, mas não existe `def {nome}(dados)` no arquivo."),
                         *pos,
                     );
                 }
                 Rule::Funcao { nome: nome.clone() }
             }
-            RegraBruta::Grupo { regra, filhos, pos } => {
-                self.confere_contradicao(regra, filhos, onde, *pos);
+            RawRule::Group {
+                rule,
+                children,
+                pos,
+            } => {
+                self.check_contradiction(rule, children, place, *pos);
                 let mut args = Vec::new();
-                for filho in filhos {
-                    args.push(self.fecha_regra(filho, onde));
+                for child in children {
+                    args.push(self.close_rule(child, place));
                 }
-                match regra {
+                match rule {
                     Rule::E { .. } => Rule::E { args },
                     Rule::Ou { .. } => Rule::Ou { args },
                     _ => Rule::Nao { args },
                 }
             }
-            RegraBruta::Invalida => Rule::Vazio {
+            RawRule::Invalid => Rule::Vazio {
                 campo: String::new(),
             },
         }
     }
 
-    fn confere_campo_da_regra(&mut self, campo: &str, regra: &Rule, onde: &str, pos: Pos) {
+    fn check_rule_field(&mut self, campo: &str, rule: &Rule, location: &str, pos: Pos) {
         let Some((etapa, nome)) = campo.split_once('.') else {
-            self.erro(
+            self.error(
                 Code::MalformedCombinator,
                 format!(
-                    "{onde} compara `{campo}`; use `etapa.campo`, por exemplo `coleta.endereco`."
+                    "{location} compara `{campo}`; use `etapa.campo`, por exemplo `coleta.endereco`."
                 ),
                 pos,
             );
             return;
         };
-        if !id_valido(etapa) || !id_valido(nome) {
-            self.erro(
+        if !valid_id(etapa) || !valid_id(nome) {
+            self.error(
                 Code::MalformedCombinator,
-                format!("{onde} compara `{campo}`; use `etapa.campo`, com ids em minúsculas (por exemplo `coleta.endereco`)."),
+                format!("{location} compara `{campo}`; use `etapa.campo`, com ids em minúsculas (por exemplo `coleta.endereco`)."),
                 pos,
             );
             return;
         }
-        let Some(indice) = self.idx_etapas.get(etapa).copied() else {
-            self.erro(
+        let Some(index) = self.idx_stages.get(etapa).copied() else {
+            self.error(
                 Code::UnknownField,
-                format!("{onde} compara `{campo}`, mas a etapa `{etapa}` não existe."),
+                format!("{location} compara `{campo}`, mas a etapa `{etapa}` não existe."),
                 pos,
             );
             return;
         };
-        let campo_info = self.etapas[indice]
+        let field_info = self.stages[index]
             .etapa
             .campos
             .iter()
             .find(|c| c.id == nome)
             .cloned();
-        let Some(campo_info) = campo_info else {
-            self.erro(
+        let Some(field_info) = field_info else {
+            self.error(
                 Code::UnknownField,
                 format!(
-                    "{onde} compara `{campo}`, mas a etapa `{etapa}` não tem o campo `{nome}`."
+                    "{location} compara `{campo}`, mas a etapa `{etapa}` não tem o campo `{nome}`."
                 ),
                 pos,
             );
             return;
         };
-        if let Some(uso) = self.usos.get_mut(etapa) {
-            uso.lidos.insert(nome.to_owned());
+        if let Some(usage) = self.uses.get_mut(etapa) {
+            usage.read.insert(nome.to_owned());
         }
-        match regra {
-            Rule::Igual { value: valor, .. } | Rule::Diferente { value: valor, .. } => {
-                if !campo_info.options.is_empty() && !campo_info.options.iter().any(|o| o == valor)
+        match rule {
+            Rule::Igual { value, .. } | Rule::Diferente { value, .. } => {
+                if !field_info.options.is_empty() && !field_info.options.iter().any(|o| o == value)
                 {
-                    self.aviso(
+                    self.warning(
                         Code::OutsideOptions,
                         format!(
-                            "{onde} compara `{campo}` com `{valor}`, que não é uma das opções ({}): o teste nunca casa.",
-                            campo_info.options.join(", ")
+                            "{location} compara `{campo}` com `{value}`, que não é uma das opções ({}): o teste nunca casa.",
+                            field_info.options.join(", ")
                         ),
                         pos,
                     );
                 }
             }
-            Rule::Maior { .. } | Rule::Menor { .. } if campo_info.tipo != FieldKind::Number => {
-                self.aviso(
+            Rule::Maior { .. } | Rule::Menor { .. } if field_info.tipo != FieldKind::Number => {
+                self.warning(
                     Code::TextComparison,
                     format!(
-                        "{onde} usa `maior`/`menor` com `{campo}`, mas o campo é `{}`: mude o tipo para `numero` ou use `igual`.",
-                        campo_info.tipo.as_text()
+                        "{location} usa `maior`/`menor` com `{campo}`, mas o campo é `{}`: mude o tipo para `numero` ou use `igual`.",
+                        field_info.tipo.as_text()
                     ),
                     pos,
                 );
@@ -1732,146 +1646,146 @@ impl<'a> Forma<'a> {
         }
     }
 
-    fn confere_contradicao(&mut self, regra: &Rule, filhos: &[RegraBruta], onde: &str, pos: Pos) {
-        let folhas: Vec<&Rule> = filhos
+    fn check_contradiction(&mut self, rule: &Rule, children: &[RawRule], location: &str, pos: Pos) {
+        let leaves: Vec<&Rule> = children
             .iter()
-            .filter_map(|filho| match filho {
-                RegraBruta::Folha { regra, .. } => Some(regra),
+            .filter_map(|child| match child {
+                RawRule::Leaf { rule, .. } => Some(rule),
                 _ => None,
             })
             .collect();
-        let eh_e = matches!(regra, Rule::E { .. });
-        let eh_ou = matches!(regra, Rule::Ou { .. });
-        let mut avisos: Vec<String> = Vec::new();
-        for (i, a) in folhas.iter().enumerate() {
-            for b in folhas.iter().skip(i + 1) {
-                let (campo_a, valor_a, tipo_a) = folha_chave(a);
-                let (campo_b, valor_b, tipo_b) = folha_chave(b);
+        let eh_e = matches!(rule, Rule::E { .. });
+        let eh_ou = matches!(rule, Rule::Ou { .. });
+        let mut warnings: Vec<String> = Vec::new();
+        for (i, a) in leaves.iter().enumerate() {
+            for b in leaves.iter().skip(i + 1) {
+                let (field_a, value_a, kind_a) = leaf_key(a);
+                let (field_b, value_b, kind_b) = leaf_key(b);
                 if eh_e
-                    && campo_a.is_some()
-                    && campo_a == campo_b
-                    && valor_a == valor_b
+                    && field_a.is_some()
+                    && field_a == field_b
+                    && value_a == value_b
                     && matches!(
-                        (tipo_a, tipo_b),
+                        (kind_a, kind_b),
                         ("igual", "diferente") | ("diferente", "igual")
                     )
                 {
-                    avisos.push(format!(
-                        "{onde} não pode ser verdadeira com `{campo}` igual e diferente de `{valor}` ao mesmo tempo.",
-                        campo = campo_a.unwrap_or(""),
-                        valor = valor_a.unwrap_or("")
+                    warnings.push(format!(
+                        "{location} não pode ser verdadeira com `{campo}` igual e diferente de `{value}` ao mesmo tempo.",
+                        campo = field_a.unwrap_or(""),
+                        value = value_a.unwrap_or("")
                     ));
                 }
                 if eh_ou && a == b {
-                    avisos.push(format!(
-                        "{onde} repete o mesmo teste duas vezes na mesma disjunção (`ou`)."
+                    warnings.push(format!(
+                        "{location} repete o mesmo teste duas vezes na mesma disjunção (`ou`)."
                     ));
                 }
             }
         }
-        for mensagem in avisos {
-            self.aviso(Code::ContradictoryCondition, mensagem, pos);
+        for mensagem in warnings {
+            self.warning(Code::ContradictoryCondition, mensagem, pos);
         }
     }
 
-    fn confere_ciclo(&mut self, grafo: &BTreeMap<String, Vec<String>>) {
+    fn check_cycle(&mut self, graph: &BTreeMap<String, Vec<String>>) {
         let mut estado: BTreeMap<String, u8> = BTreeMap::new();
-        let mut caminho: Vec<String> = Vec::new();
-        let mut ciclo: Option<Vec<String>> = None;
-        let raizes: Vec<String> = self.idx_decisoes.keys().cloned().collect();
-        for raiz in &raizes {
-            if ciclo.is_some() {
+        let mut path: Vec<String> = Vec::new();
+        let mut cycle: Option<Vec<String>> = None;
+        let roots: Vec<String> = self.idx_decisions.keys().cloned().collect();
+        for root in &roots {
+            if cycle.is_some() {
                 break;
             }
-            self.visita_ciclo(raiz, grafo, &mut estado, &mut caminho, &mut ciclo);
+            self.visit_cycle(root, graph, &mut estado, &mut path, &mut cycle);
         }
-        let Some(ciclo) = ciclo else { return };
-        let pos = raizes
+        let Some(cycle) = cycle else { return };
+        let pos = roots
             .iter()
-            .position(|r| Some(r) == ciclo.first())
+            .position(|r| Some(r) == cycle.first())
             .and_then(|_| {
-                self.idx_decisoes
-                    .get(&ciclo[0])
-                    .and_then(|i| self.decisoes.get(*i))
+                self.idx_decisions
+                    .get(&cycle[0])
+                    .and_then(|i| self.decisions.get(*i))
                     .map(|d| d.pos)
             })
-            .unwrap_or(self.pos_fluxo);
-        self.erro(
+            .unwrap_or(self.flow_pos);
+        self.error(
             Code::DecisionCycle,
             format!(
                 "As decisões formam um ciclo ({}): um fluxo não pode voltar a uma decisão já avaliada.",
-                ciclo.join(" → ")
+                cycle.join(" → ")
             ),
             pos,
         );
     }
 
-    fn visita_ciclo(
+    fn visit_cycle(
         &self,
         no: &str,
-        grafo: &BTreeMap<String, Vec<String>>,
+        graph: &BTreeMap<String, Vec<String>>,
         estado: &mut BTreeMap<String, u8>,
-        caminho: &mut Vec<String>,
-        ciclo: &mut Option<Vec<String>>,
+        path: &mut Vec<String>,
+        cycle: &mut Option<Vec<String>>,
     ) {
-        if ciclo.is_some() || !self.idx_decisoes.contains_key(no) {
+        if cycle.is_some() || !self.idx_decisions.contains_key(no) {
             return;
         }
         match estado.get(no).copied().unwrap_or(0) {
             1 => {
-                let mut encontrado: Vec<String> = caminho
+                let mut found: Vec<String> = path
                     .iter()
-                    .skip_while(|atual| atual.as_str() != no)
+                    .skip_while(|current| current.as_str() != no)
                     .cloned()
                     .collect();
-                encontrado.push(no.to_owned());
-                *ciclo = Some(encontrado);
+                found.push(no.to_owned());
+                *cycle = Some(found);
                 return;
             }
             2 => return,
             _ => {}
         }
         estado.insert(no.to_owned(), 1);
-        caminho.push(no.to_owned());
-        if let Some(destinos) = grafo.get(no) {
-            for destino in destinos {
-                self.visita_ciclo(destino, grafo, estado, caminho, ciclo);
+        path.push(no.to_owned());
+        if let Some(destinations) = graph.get(no) {
+            for destination in destinations {
+                self.visit_cycle(destination, graph, estado, path, cycle);
             }
         }
-        caminho.pop();
+        path.pop();
         estado.insert(no.to_owned(), 2);
     }
 
-    fn confere_alcance(
+    fn check_reach(
         &mut self,
-        grafo: &BTreeMap<String, Vec<String>>,
-        inicio: &str,
-        etapas: &[Etapa],
-        decisoes: &[DecisaoColetada],
+        graph: &BTreeMap<String, Vec<String>>,
+        start: &str,
+        stages: &[Etapa],
+        decisions: &[CollectedDecision],
     ) {
-        let mut alcancados: BTreeSet<String> = BTreeSet::new();
-        if !inicio.is_empty() {
-            let mut pilha = vec![inicio.to_owned()];
+        let mut reached: BTreeSet<String> = BTreeSet::new();
+        if !start.is_empty() {
+            let mut pilha = vec![start.to_owned()];
             while let Some(no) = pilha.pop() {
-                if no.is_empty() || !alcancados.insert(no.clone()) {
+                if no.is_empty() || !reached.insert(no.clone()) {
                     continue;
                 }
-                if let Some(destinos) = grafo.get(&no) {
-                    for destino in destinos {
-                        pilha.push(destino.clone());
+                if let Some(destinations) = graph.get(&no) {
+                    for destination in destinations {
+                        pilha.push(destination.clone());
                     }
                 }
             }
         }
-        let mut posicoes: BTreeMap<String, Pos> = BTreeMap::new();
-        for etapa in &self.etapas {
-            posicoes.insert(etapa.etapa.id.clone(), etapa.pos);
+        let mut positions: BTreeMap<String, Pos> = BTreeMap::new();
+        for etapa in &self.stages {
+            positions.insert(etapa.etapa.id.clone(), etapa.pos);
         }
-        let mut avisos: Vec<(Code, String, Pos)> = Vec::new();
-        for etapa in etapas {
-            let pos = posicoes.get(&etapa.id).copied().unwrap_or(self.pos_fluxo);
+        let mut warnings: Vec<(Code, String, Pos)> = Vec::new();
+        for etapa in stages {
+            let pos = positions.get(&etapa.id).copied().unwrap_or(self.flow_pos);
             if etapa.actions.is_empty() {
-                avisos.push((
+                warnings.push((
                     Code::StageWithoutAction,
                     format!(
                         "A etapa `{}` não tem nenhuma `acao(...)`: o atendimento não sai dela. Acrescente uma ação com `vai_para`.",
@@ -1880,56 +1794,56 @@ impl<'a> Forma<'a> {
                     pos,
                 ));
             }
-            if !inicio.is_empty() && !alcancados.contains(&etapa.id) {
-                avisos.push((
+            if !start.is_empty() && !reached.contains(&etapa.id) {
+                warnings.push((
                     Code::Unreachable,
                     format!(
-                        "A etapa `{}` não é alcançável a partir de `inicio = \"{inicio}\"`. Confira os `vai_para`.",
+                        "A etapa `{}` não é alcançável a partir de `inicio = \"{start}\"`. Confira os `vai_para`.",
                         etapa.id
                     ),
                     pos,
                 ));
             }
         }
-        for decisao in decisoes {
-            if !inicio.is_empty() && !alcancados.contains(&decisao.id) {
-                avisos.push((
+        for decisao in decisions {
+            if !start.is_empty() && !reached.contains(&decisao.id) {
+                warnings.push((
                     Code::Unreachable,
                     format!(
-                        "A decisão `{}` não é alcançável a partir de `inicio = \"{inicio}\"`.",
+                        "A decisão `{}` não é alcançável a partir de `inicio = \"{start}\"`.",
                         decisao.id
                     ),
                     decisao.pos,
                 ));
             }
         }
-        for (codigo, mensagem, pos) in avisos {
-            self.aviso(codigo, mensagem, pos);
+        for (code, mensagem, pos) in warnings {
+            self.warning(code, mensagem, pos);
         }
     }
 
-    fn confere_uso_dos_campos(&mut self, etapas: &[Etapa]) {
-        let mut avisos: Vec<(String, Pos)> = Vec::new();
-        for etapa in etapas {
-            let usos = self.usos.get(&etapa.id).cloned().unwrap_or_default();
-            let pos_etapa = self
-                .idx_etapas
+    fn check_field_uses(&mut self, stages: &[Etapa]) {
+        let mut warnings: Vec<(String, Pos)> = Vec::new();
+        for etapa in stages {
+            let uses = self.uses.get(&etapa.id).cloned().unwrap_or_default();
+            let step_pos = self
+                .idx_stages
                 .get(&etapa.id)
-                .and_then(|i| self.etapas.get(*i))
+                .and_then(|i| self.stages.get(*i))
                 .map(|e| e.pos)
-                .unwrap_or(self.pos_fluxo);
-            let posicoes: BTreeMap<String, Pos> = self
-                .idx_etapas
+                .unwrap_or(self.flow_pos);
+            let positions: BTreeMap<String, Pos> = self
+                .idx_stages
                 .get(&etapa.id)
-                .and_then(|i| self.etapas.get(*i))
-                .map(|e| e.pos_campos.clone())
+                .and_then(|i| self.stages.get(*i))
+                .map(|e| e.fields_pos.clone())
                 .unwrap_or_default();
             for campo in &etapa.campos {
-                if usos.exigidos.contains(&campo.id) || usos.lidos.contains(&campo.id) {
+                if uses.required.contains(&campo.id) || uses.read.contains(&campo.id) {
                     continue;
                 }
-                let pos = posicoes.get(&campo.id).copied().unwrap_or(pos_etapa);
-                avisos.push((
+                let pos = positions.get(&campo.id).copied().unwrap_or(step_pos);
+                warnings.push((
                     format!(
                         "O campo `{}.{}` não é exigido por nenhuma ação nem lido por nenhuma regra: ninguém usa o valor.",
                         etapa.id, campo.id
@@ -1938,15 +1852,15 @@ impl<'a> Forma<'a> {
                 ));
             }
         }
-        for (mensagem, pos) in avisos {
-            self.aviso(Code::UnusedField, mensagem, pos);
+        for (mensagem, pos) in warnings {
+            self.warning(Code::UnusedField, mensagem, pos);
         }
     }
 
-    fn confere_uso_das_defs(&mut self, decisoes: &[Decisao]) {
-        let mut usadas: BTreeSet<String> = BTreeSet::new();
-        for decisao in decisoes {
-            coleta_funcoes(&decisao.se, &mut usadas);
+    fn check_def_uses(&mut self, decisions: &[Decisao]) {
+        let mut used_functions: BTreeSet<String> = BTreeSet::new();
+        for decisao in decisions {
+            collect_functions(&decisao.se, &mut used_functions);
         }
         let defs: Vec<(String, Pos)> = self
             .defs
@@ -1956,15 +1870,15 @@ impl<'a> Forma<'a> {
                     .pos_defs
                     .get(&def.nome)
                     .copied()
-                    .unwrap_or(self.pos_fluxo);
+                    .unwrap_or(self.flow_pos);
                 (def.nome.clone(), pos)
             })
             .collect();
         for (nome, pos) in defs {
-            if usadas.contains(&nome) {
+            if used_functions.contains(&nome) {
                 continue;
             }
-            self.aviso(
+            self.warning(
                 Code::UnusedDef,
                 format!(
                     "A função `{nome}` está definida e nenhuma decisão usa `funcao(\"{nome}\")`. Chame ou apague."
@@ -1974,19 +1888,19 @@ impl<'a> Forma<'a> {
         }
     }
 
-    fn confere_efeitos(&mut self, etapas: &[Etapa]) {
+    fn check_effects(&mut self, stages: &[Etapa]) {
         let mut campos: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
-        for etapa in etapas {
+        for etapa in stages {
             campos.insert(
                 etapa.id.as_str(),
                 etapa.campos.iter().map(|c| c.id.as_str()).collect(),
             );
         }
-        let pendentes: Vec<(String, String, Pos, String, bool)> = self
-            .efeitos
+        let pending: Vec<(String, String, Pos, String, bool)> = self
+            .effects
             .iter()
             .filter_map(|coletado| {
-                let (texto, o_que) = match &coletado.efeito {
+                let (texto, what) = match &coletado.effect {
                     Effect::MessageToCustomer { texto } => (texto.clone(), "mensagem ao cliente"),
                     Effect::NotifyWhatsApp { mensagem, .. } => {
                         (mensagem.clone(), "notificação para a equipe")
@@ -1995,205 +1909,203 @@ impl<'a> Forma<'a> {
                 };
                 Some((
                     texto,
-                    o_que.to_owned(),
-                    coletado.pos_texto,
+                    what.to_owned(),
+                    coletado.text_pos,
                     coletado.etapa.clone(),
-                    coletado.ao_entrar,
+                    coletado.on_enter,
                 ))
             })
             .collect();
-        let mut avisos: Vec<(Code, String, Pos)> = Vec::new();
-        for (texto, o_que, pos, etapa_do_efeito, ao_entrar) in pendentes {
-            for variavel in variaveis(&texto) {
-                let Some((nome_etapa, nome_campo)) = variavel.split_once('.') else {
+        let mut warnings: Vec<(Code, String, Pos)> = Vec::new();
+        for (texto, what, pos, effect_step, on_enter) in pending {
+            for variable in variables(&texto) {
+                let Some((step_name, field_name)) = variable.split_once('.') else {
                     continue;
                 };
-                if variavel == "ficha.id" || variavel == "cliente.peer" {
+                if variable == "ficha.id" || variable == "cliente.peer" {
                     continue;
                 }
-                let existe = campos
-                    .get(nome_etapa)
-                    .map(|campos| campos.contains(nome_campo))
+                let exists = campos
+                    .get(step_name)
+                    .map(|campos| campos.contains(field_name))
                     .unwrap_or(false);
-                if !existe {
-                    avisos.push((
+                if !exists {
+                    warnings.push((
                         Code::VariableWithoutField,
                         format!(
-                            "A {o_que} usa `{{{variavel}}}`, mas a etapa `{nome_etapa}` não tem o campo `{nome_campo}`: no atendimento sai vazio."
+                            "A {what} usa `{{{variable}}}`, mas a etapa `{step_name}` não tem o campo `{field_name}`: no atendimento sai vazio."
                         ),
                         pos,
                     ));
                     continue;
                 }
-                if ao_entrar && nome_etapa == etapa_do_efeito {
-                    avisos.push((
+                if on_enter && step_name == effect_step {
+                    warnings.push((
                         Code::VariableFromOwnStep,
                         format!(
-                            "`ao_entrar` da etapa `{etapa_do_efeito}` usa `{{{variavel}}}`, que só é preenchido dentro da própria etapa: a mensagem sai com o texto vazio."
+                            "`ao_entrar` da etapa `{effect_step}` usa `{{{variable}}}`, que só é preenchido dentro da própria etapa: a mensagem sai com o texto vazio."
                         ),
                         pos,
                     ));
                 }
             }
         }
-        for (codigo, mensagem, pos) in avisos {
-            self.aviso(codigo, mensagem, pos);
+        for (code, mensagem, pos) in warnings {
+            self.warning(code, mensagem, pos);
         }
     }
 
-    fn confere_teto_de_nos(&mut self) {
-        let nos = self.etapas.len() + self.idx_decisoes.len() + self.fins.len();
-        if nos > MAX_NOS {
-            let pos = self.pos_fluxo;
-            self.erro(
+    fn check_node_cap(&mut self) {
+        let nodes = self.stages.len() + self.idx_decisions.len() + self.ends.len();
+        if nodes > MAX_NOS {
+            let pos = self.flow_pos;
+            self.error(
                 Code::NodeLimit,
-                format!("O fluxo tem {nos} nós e o limite é {MAX_NOS}. Junte etapas parecidas ou divida o fluxo."),
+                format!("O fluxo tem {nodes} nós e o limite é {MAX_NOS}. Junte etapas parecidas ou divida o fluxo."),
                 pos,
             );
         }
     }
 
-    // ---------------------------------------------------------------- nomes e variáveis
-
-    fn confere_nomes(&mut self) {
-        let locais = BTreeSet::new();
-        self.confere_nomes_stmt(self.modulo.statement(), &locais);
+    fn check_names(&mut self) {
+        let locations = BTreeSet::new();
+        self.check_names_stmt(self.module.statement(), &locations);
     }
 
-    fn confere_nomes_stmt(&mut self, stmt: &'a AstStmt, locais: &BTreeSet<String>) {
+    fn check_names_stmt(&mut self, stmt: &'a AstStmt, locations: &BTreeSet<String>) {
         match &stmt.node {
-            Stmt::Statements(itens) => {
-                for item in itens {
-                    self.confere_nomes_stmt(item, locais);
+            Stmt::Statements(items) => {
+                for item in items {
+                    self.check_names_stmt(item, locations);
                 }
             }
             Stmt::Def(def) => {
-                let mut escopo = locais.clone();
+                let mut scope = locations.clone();
                 for parametro in &def.params {
                     if let Some(ident) = parametro.ident() {
-                        escopo.insert(ident.node.ident.clone());
+                        scope.insert(ident.node.ident.clone());
                     }
                 }
-                coleta_assigns_stmt(&def.body, &mut escopo);
-                self.confere_nomes_stmt(&def.body, &escopo);
+                collect_assigns_stmt(&def.body, &mut scope);
+                self.check_names_stmt(&def.body, &scope);
             }
-            Stmt::Expression(expr) => self.confere_nomes_expr(expr, locais),
-            Stmt::Assign(assign) => self.confere_nomes_expr(&assign.rhs, locais),
-            Stmt::AssignModify(_, _, expr) => self.confere_nomes_expr(expr, locais),
-            Stmt::Return(Some(expr)) => self.confere_nomes_expr(expr, locais),
+            Stmt::Expression(expr) => self.check_names_expr(expr, locations),
+            Stmt::Assign(assign) => self.check_names_expr(&assign.rhs, locations),
+            Stmt::AssignModify(_, _, expr) => self.check_names_expr(expr, locations),
+            Stmt::Return(Some(expr)) => self.check_names_expr(expr, locations),
             Stmt::Return(None) | Stmt::Break | Stmt::Continue | Stmt::Pass | Stmt::Load(_) => {}
-            Stmt::If(cond, corpo) => {
-                self.confere_nomes_expr(cond, locais);
-                self.confere_nomes_stmt(corpo, locais);
+            Stmt::If(cond, body) => {
+                self.check_names_expr(cond, locations);
+                self.check_names_stmt(body, locations);
             }
             Stmt::IfElse(cond, ramos) => {
-                self.confere_nomes_expr(cond, locais);
-                self.confere_nomes_stmt(&ramos.0, locais);
-                self.confere_nomes_stmt(&ramos.1, locais);
+                self.check_names_expr(cond, locations);
+                self.check_names_stmt(&ramos.0, locations);
+                self.check_names_stmt(&ramos.1, locations);
             }
             Stmt::For(para) => {
-                self.confere_nomes_expr(&para.over, locais);
-                self.confere_nomes_stmt(&para.body, locais);
+                self.check_names_expr(&para.over, locations);
+                self.check_names_stmt(&para.body, locations);
             }
         }
     }
 
-    fn confere_nomes_expr(&mut self, expr: &'a AstExpr, locais: &BTreeSet<String>) {
+    fn check_names_expr(&mut self, expr: &'a AstExpr, locations: &BTreeSet<String>) {
         match &expr.node {
-            Expr::Identifier(ident) => self.confere_nome(ident, locais),
-            Expr::Tuple(itens) | Expr::List(itens) => {
-                for item in itens {
-                    self.confere_nomes_expr(item, locais);
+            Expr::Identifier(ident) => self.check_name(ident, locations),
+            Expr::Tuple(items) | Expr::List(items) => {
+                for item in items {
+                    self.check_names_expr(item, locations);
                 }
             }
-            Expr::Dict(pares) => {
-                for (chave, valor) in pares {
-                    self.confere_nomes_expr(chave, locais);
-                    self.confere_nomes_expr(valor, locais);
+            Expr::Dict(pairs) => {
+                for (chave, value) in pairs {
+                    self.check_names_expr(chave, locations);
+                    self.check_names_expr(value, locations);
                 }
             }
-            Expr::Dot(alvo, _) => self.confere_nomes_expr(alvo, locais),
-            Expr::Call(alvo, args) => {
-                self.confere_nomes_expr(alvo, locais);
+            Expr::Dot(target, _) => self.check_names_expr(target, locations),
+            Expr::Call(target, args) => {
+                self.check_names_expr(target, locations);
                 for arg in &args.args {
-                    self.confere_nomes_expr(arg.expr(), locais);
+                    self.check_names_expr(arg.expr(), locations);
                 }
             }
-            Expr::Index(par) => {
-                self.confere_nomes_expr(&par.0, locais);
-                self.confere_nomes_expr(&par.1, locais);
+            Expr::Index(pair) => {
+                self.check_names_expr(&pair.0, locations);
+                self.check_names_expr(&pair.1, locations);
             }
-            Expr::Index2(par) => {
-                self.confere_nomes_expr(&par.0, locais);
-                self.confere_nomes_expr(&par.1, locais);
-                self.confere_nomes_expr(&par.2, locais);
+            Expr::Index2(pair) => {
+                self.check_names_expr(&pair.0, locations);
+                self.check_names_expr(&pair.1, locations);
+                self.check_names_expr(&pair.2, locations);
             }
-            Expr::Slice(alvo, a, b, c) => {
-                self.confere_nomes_expr(alvo, locais);
-                for parte in [a, b, c].into_iter().flatten() {
-                    self.confere_nomes_expr(parte, locais);
+            Expr::Slice(target, a, b, c) => {
+                self.check_names_expr(target, locations);
+                for part in [a, b, c].into_iter().flatten() {
+                    self.check_names_expr(part, locations);
                 }
             }
-            Expr::Lambda(lambda) => self.confere_nomes_expr(&lambda.body, locais),
+            Expr::Lambda(lambda) => self.check_names_expr(&lambda.body, locations),
             Expr::Not(expr) | Expr::Minus(expr) | Expr::Plus(expr) | Expr::BitNot(expr) => {
-                self.confere_nomes_expr(expr, locais);
+                self.check_names_expr(expr, locations);
             }
             Expr::Op(a, _, b) => {
-                self.confere_nomes_expr(a, locais);
-                self.confere_nomes_expr(b, locais);
+                self.check_names_expr(a, locations);
+                self.check_names_expr(b, locations);
             }
             Expr::If(trio) => {
-                self.confere_nomes_expr(&trio.0, locais);
-                self.confere_nomes_expr(&trio.1, locais);
-                self.confere_nomes_expr(&trio.2, locais);
+                self.check_names_expr(&trio.0, locations);
+                self.check_names_expr(&trio.1, locations);
+                self.check_names_expr(&trio.2, locations);
             }
-            Expr::ListComprehension(corpo, para, clausulas) => {
-                let mut escopo = locais.clone();
-                coleta_assigns_target(&para.var, &mut escopo);
-                self.confere_nomes_expr(&para.over, &escopo);
+            Expr::ListComprehension(body, para, clausulas) => {
+                let mut scope = locations.clone();
+                collect_assigns_target(&para.var, &mut scope);
+                self.check_names_expr(&para.over, &scope);
                 for clausula in clausulas {
                     match clausula {
                         Clause::For(para) => {
-                            coleta_assigns_target(&para.var, &mut escopo);
-                            self.confere_nomes_expr(&para.over, &escopo);
+                            collect_assigns_target(&para.var, &mut scope);
+                            self.check_names_expr(&para.over, &scope);
                         }
-                        Clause::If(cond) => self.confere_nomes_expr(cond, &escopo),
+                        Clause::If(cond) => self.check_names_expr(cond, &scope),
                     }
                 }
-                self.confere_nomes_expr(corpo, &escopo);
+                self.check_names_expr(body, &scope);
             }
-            Expr::DictComprehension(par, para, clausulas) => {
-                let mut escopo = locais.clone();
-                coleta_assigns_target(&para.var, &mut escopo);
-                self.confere_nomes_expr(&para.over, &escopo);
+            Expr::DictComprehension(pair, para, clausulas) => {
+                let mut scope = locations.clone();
+                collect_assigns_target(&para.var, &mut scope);
+                self.check_names_expr(&para.over, &scope);
                 for clausula in clausulas {
                     match clausula {
                         Clause::For(para) => {
-                            coleta_assigns_target(&para.var, &mut escopo);
-                            self.confere_nomes_expr(&para.over, &escopo);
+                            collect_assigns_target(&para.var, &mut scope);
+                            self.check_names_expr(&para.over, &scope);
                         }
-                        Clause::If(cond) => self.confere_nomes_expr(cond, &escopo),
+                        Clause::If(cond) => self.check_names_expr(cond, &scope),
                     }
                 }
-                self.confere_nomes_expr(&par.0, &escopo);
-                self.confere_nomes_expr(&par.1, &escopo);
+                self.check_names_expr(&pair.0, &scope);
+                self.check_names_expr(&pair.1, &scope);
             }
             Expr::FString(f) => {
-                for parte in &f.expressions {
-                    self.confere_nomes_expr(parte, locais);
+                for part in &f.expressions {
+                    self.check_names_expr(part, locations);
                 }
             }
             Expr::Literal(_) => {}
         }
     }
 
-    fn confere_nome(&mut self, ident: &'a AstIdent, locais: &BTreeSet<String>) {
+    fn check_name(&mut self, ident: &'a AstIdent, locations: &BTreeSet<String>) {
         let nome = ident.node.ident.as_str();
-        if is_allowed_name(nome) || locais.contains(nome) {
+        if is_allowed_name(nome) || locations.contains(nome) {
             return;
         }
         let pos = self.pos(ident.span);
-        self.erro(
+        self.error(
             Code::UnknownName,
             format!(
                 "`{nome}` não existe na linguagem de fluxos: o script não tem relógio, rede, arquivo nem aleatório. Use as etapas, os campos e os combinadores do fluxo."
@@ -2202,26 +2114,23 @@ impl<'a> Forma<'a> {
         );
     }
 
-    fn confere_formato_das_variaveis(&mut self, texto: &str, onde: &str, pos: Pos) {
-        for variavel in variaveis(texto) {
-            let valida = variavel == "ficha.id"
-                || variavel == "cliente.peer"
-                || variavel
+    fn check_variable_format(&mut self, texto: &str, location: &str, pos: Pos) {
+        for variable in variables(texto) {
+            let valid_var = variable == "ficha.id"
+                || variable == "cliente.peer"
+                || variable
                     .split_once('.')
                     .map(|(etapa, campo)| {
-                        etapa != "ficha"
-                            && etapa != "cliente"
-                            && id_valido(etapa)
-                            && id_valido(campo)
+                        etapa != "ficha" && etapa != "cliente" && valid_id(etapa) && valid_id(campo)
                     })
                     .unwrap_or(false);
-            if valida {
+            if valid_var {
                 continue;
             }
-            self.erro(
+            self.error(
                 Code::InvalidVariable,
                 format!(
-                    "{onde} usa `{{{variavel}}}`, que não existe. As variáveis são `{{etapa.campo}}`, `{{ficha.id}}` e `{{cliente.peer}}`."
+                    "{location} usa `{{{variable}}}`, que não existe. As variáveis são `{{etapa.campo}}`, `{{ficha.id}}` e `{{cliente.peer}}`."
                 ),
                 pos,
             );
@@ -2229,18 +2138,15 @@ impl<'a> Forma<'a> {
     }
 }
 
-/// Efeito lido da árvore, ainda sem saber de qual etapa veio.
-struct EfeitoLido {
-    efeito: Effect,
-    pos_texto: Pos,
+struct ReadEffect {
+    effect: Effect,
+    text_pos: Pos,
 }
 
-// ------------------------------------------------------------------ auxiliares
-
-fn id_valido(id: &str) -> bool {
+fn valid_id(id: &str) -> bool {
     let mut chars = id.chars();
     match chars.next() {
-        Some(primeiro) if primeiro.is_ascii_lowercase() => {}
+        Some(first) if first.is_ascii_lowercase() => {}
         _ => return false,
     }
     id.len() >= ID_MIN
@@ -2248,16 +2154,15 @@ fn id_valido(id: &str) -> bool {
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
 }
 
-/// Quais variáveis `{...}` aparecem no texto, na ordem.
-pub(crate) fn variaveis(texto: &str) -> Vec<String> {
+pub(crate) fn variables(texto: &str) -> Vec<String> {
     let mut saida = Vec::new();
-    let mut resto = texto;
-    while let Some(inicio) = resto.find('{') {
-        let depois = &resto[inicio + 1..];
-        match depois.find('}') {
+    let mut rest = texto;
+    while let Some(start) = rest.find('{') {
+        let after = &rest[start + 1..];
+        match after.find('}') {
             Some(fim) => {
-                saida.push(depois[..fim].to_owned());
-                resto = &depois[fim + 1..];
+                saida.push(after[..fim].to_owned());
+                rest = &after[fim + 1..];
             }
             None => break,
         }
@@ -2277,9 +2182,9 @@ fn descreve(expr: &AstExpr) -> String {
         Expr::Identifier(ident) => match ident.node.ident.as_str() {
             "True" | "False" => "um booleano".to_owned(),
             "None" => "`None`".to_owned(),
-            outro => format!("o nome `{outro}`"),
+            other => format!("o nome `{other}`"),
         },
-        Expr::Call(alvo, _) => match &alvo.node {
+        Expr::Call(target, _) => match &target.node {
             Expr::Identifier(ident) => format!("a chamada `{}(...)`", ident.node.ident),
             _ => "uma chamada".to_owned(),
         },
@@ -2295,8 +2200,8 @@ fn expr_calculada(expr: &AstExpr) -> bool {
     )
 }
 
-fn campo_da_regra(regra: &Rule) -> Option<String> {
-    match regra {
+fn field_of_rule(rule: &Rule) -> Option<String> {
+    match rule {
         Rule::Igual { campo, .. }
         | Rule::Diferente { campo, .. }
         | Rule::Maior { campo, .. }
@@ -2307,151 +2212,134 @@ fn campo_da_regra(regra: &Rule) -> Option<String> {
     }
 }
 
-fn clone_bruto(bruto: &DestinoBruto) -> DestinoBruto {
-    match bruto {
-        DestinoBruto::Alvo { id, pos } => DestinoBruto::Alvo {
+fn clone_raw(raw: &RawDestination) -> RawDestination {
+    match raw {
+        RawDestination::Target { id, pos } => RawDestination::Target {
             id: id.clone(),
             pos: *pos,
         },
-        DestinoBruto::Fim { fim, pos } => DestinoBruto::Fim {
+        RawDestination::Fim { fim, pos } => RawDestination::Fim {
             fim: fim.clone(),
             pos: *pos,
         },
-        DestinoBruto::Invalido => DestinoBruto::Invalido,
+        RawDestination::Invalid => RawDestination::Invalid,
     }
 }
 
-fn folha_chave(regra: &Rule) -> (Option<&str>, Option<&str>, &'static str) {
-    match regra {
-        Rule::Igual {
-            campo,
-            value: valor,
-        } => (Some(campo), Some(valor), "igual"),
-        Rule::Diferente {
-            campo,
-            value: valor,
-        } => (Some(campo), Some(valor), "diferente"),
-        Rule::Maior {
-            campo,
-            value: valor,
-        } => (Some(campo), Some(valor), "maior"),
-        Rule::Menor {
-            campo,
-            value: valor,
-        } => (Some(campo), Some(valor), "menor"),
-        Rule::Contem {
-            campo,
-            value: valor,
-        } => (Some(campo), Some(valor), "contem"),
+fn leaf_key(rule: &Rule) -> (Option<&str>, Option<&str>, &'static str) {
+    match rule {
+        Rule::Igual { campo, value } => (Some(campo), Some(value), "igual"),
+        Rule::Diferente { campo, value } => (Some(campo), Some(value), "diferente"),
+        Rule::Maior { campo, value } => (Some(campo), Some(value), "maior"),
+        Rule::Menor { campo, value } => (Some(campo), Some(value), "menor"),
+        Rule::Contem { campo, value } => (Some(campo), Some(value), "contem"),
         Rule::Vazio { campo } => (Some(campo), None, "vazio"),
         _ => (None, None, ""),
     }
 }
 
-fn coleta_funcoes(regra: &Rule, saida: &mut BTreeSet<String>) {
-    match regra {
+fn collect_functions(rule: &Rule, saida: &mut BTreeSet<String>) {
+    match rule {
         Rule::Funcao { nome } => {
             saida.insert(nome.clone());
         }
         Rule::E { args } | Rule::Ou { args } | Rule::Nao { args } => {
-            for filho in args {
-                coleta_funcoes(filho, saida);
+            for child in args {
+                collect_functions(child, saida);
             }
         }
         _ => {}
     }
 }
 
-fn coleta_assigns_stmt(stmt: &AstStmt, escopo: &mut BTreeSet<String>) {
+fn collect_assigns_stmt(stmt: &AstStmt, scope: &mut BTreeSet<String>) {
     match &stmt.node {
-        Stmt::Statements(itens) => {
-            for item in itens {
-                coleta_assigns_stmt(item, escopo);
+        Stmt::Statements(items) => {
+            for item in items {
+                collect_assigns_stmt(item, scope);
             }
         }
-        Stmt::Assign(assign) => coleta_assigns_target(&assign.lhs, escopo),
-        Stmt::AssignModify(alvo, _, _) => coleta_assigns_target(alvo, escopo),
-        Stmt::If(_, corpo) => coleta_assigns_stmt(corpo, escopo),
+        Stmt::Assign(assign) => collect_assigns_target(&assign.lhs, scope),
+        Stmt::AssignModify(target, _, _) => collect_assigns_target(target, scope),
+        Stmt::If(_, body) => collect_assigns_stmt(body, scope),
         Stmt::IfElse(_, ramos) => {
-            coleta_assigns_stmt(&ramos.0, escopo);
-            coleta_assigns_stmt(&ramos.1, escopo);
+            collect_assigns_stmt(&ramos.0, scope);
+            collect_assigns_stmt(&ramos.1, scope);
         }
         Stmt::For(para) => {
-            coleta_assigns_target(&para.var, escopo);
-            coleta_assigns_stmt(&para.body, escopo);
+            collect_assigns_target(&para.var, scope);
+            collect_assigns_stmt(&para.body, scope);
         }
         Stmt::Def(def) => {
-            escopo.insert(def.name.node.ident.clone());
+            scope.insert(def.name.node.ident.clone());
         }
         _ => {}
     }
 }
 
-fn coleta_assigns_target(alvo: &AstAssignTarget, escopo: &mut BTreeSet<String>) {
+fn collect_assigns_target(target: &AstAssignTarget, scope: &mut BTreeSet<String>) {
     use starlark::syntax::ast::AssignTarget;
-    match &alvo.node {
+    match &target.node {
         AssignTarget::Identifier(ident) => {
-            escopo.insert(ident.node.ident.clone());
+            scope.insert(ident.node.ident.clone());
         }
-        AssignTarget::Tuple(itens) => {
-            for item in itens {
-                coleta_assigns_target(item, escopo);
+        AssignTarget::Tuple(items) => {
+            for item in items {
+                collect_assigns_target(item, scope);
             }
         }
         AssignTarget::Index(_) | AssignTarget::Dot(..) => {}
     }
 }
 
-/// Leitor de argumentos de uma chamada: consome por nome ou por posição e cobra o que sobrar.
-struct Leitor<'a> {
-    onde: String,
+struct Reader<'a> {
+    place: String,
     conhecidos: &'static [&'static str],
-    itens: Vec<Item<'a>>,
-    usados: Vec<bool>,
-    posicoes: BTreeMap<String, Pos>,
+    items: Vec<Item<'a>>,
+    used_names: Vec<bool>,
+    positions: BTreeMap<String, Pos>,
 }
 
-impl<'a> Leitor<'a> {
-    fn novo(
-        onde: &str,
+impl<'a> Reader<'a> {
+    fn new(
+        location: &str,
         _pos: Pos,
         conhecidos: &'static [&'static str],
-        itens: Vec<Item<'a>>,
+        items: Vec<Item<'a>>,
     ) -> Self {
-        let usados = vec![false; itens.len()];
+        let used_names = vec![false; items.len()];
         Self {
-            onde: onde.to_owned(),
+            place: location.to_owned(),
             conhecidos,
-            itens,
-            usados,
-            posicoes: BTreeMap::new(),
+            items,
+            used_names,
+            positions: BTreeMap::new(),
         }
     }
 
-    fn item(&mut self, forma: &mut Forma<'a>, nome: &str) -> Option<&'a AstExpr> {
-        for (i, item) in self.itens.iter().enumerate() {
-            if item.nome.as_deref() == Some(nome) && !self.usados[i] {
-                self.usados[i] = true;
-                let pos = forma.pos(item.expr.span);
-                self.posicoes.insert(nome.to_owned(), pos);
+    fn item(&mut self, form: &mut Form<'a>, nome: &str) -> Option<&'a AstExpr> {
+        for (i, item) in self.items.iter().enumerate() {
+            if item.nome.as_deref() == Some(nome) && !self.used_names[i] {
+                self.used_names[i] = true;
+                let pos = form.pos(item.expr.span);
+                self.positions.insert(nome.to_owned(), pos);
                 return Some(item.expr);
             }
         }
         None
     }
 
-    /// O `indice`-ésimo argumento posicional (contando todos, e não só os que sobraram).
-    fn posicional(&mut self, indice: usize) -> Option<&'a AstExpr> {
+    fn positional(&mut self, index: usize) -> Option<&'a AstExpr> {
         let mut visto = 0usize;
-        for (i, item) in self.itens.iter().enumerate() {
+        for (i, item) in self.items.iter().enumerate() {
             if item.nome.is_some() {
                 continue;
             }
-            if visto == indice {
-                if self.usados[i] {
+            if visto == index {
+                if self.used_names[i] {
                     return None;
                 }
-                self.usados[i] = true;
+                self.used_names[i] = true;
                 return Some(item.expr);
             }
             visto += 1;
@@ -2459,32 +2347,31 @@ impl<'a> Leitor<'a> {
         None
     }
 
-    fn pos_de(&self, chave: &str) -> Option<Pos> {
-        self.posicoes.get(chave).copied()
+    fn pos_of(&self, chave: &str) -> Option<Pos> {
+        self.positions.get(chave).copied()
     }
 
-    fn texto(&mut self, forma: &mut Forma<'a>, nome: &str) -> Option<String> {
-        let expr = self.item(forma, nome)?;
-        let onde = format!("o argumento `{nome}` de {}", self.onde);
-        forma.texto(expr, &onde)
+    fn texto(&mut self, form: &mut Form<'a>, nome: &str) -> Option<String> {
+        let expr = self.item(form, nome)?;
+        let location = format!("o argumento `{nome}` de {}", self.place);
+        form.texto(expr, &location)
     }
 
-    fn posicional_texto(&mut self, forma: &mut Forma<'a>, indice: usize) -> Option<String> {
-        let expr = self.posicional(indice)?;
-        let pos = forma.pos(expr.span);
-        self.posicoes.insert(format!("__pos{indice}"), pos);
-        let onde = format!("o argumento posicional {} de {}", indice + 1, self.onde);
-        forma.texto(expr, &onde)
+    fn positional_text(&mut self, form: &mut Form<'a>, index: usize) -> Option<String> {
+        let expr = self.positional(index)?;
+        let pos = form.pos(expr.span);
+        self.positions.insert(format!("__pos{index}"), pos);
+        let place = format!("o argumento posicional {} de {}", index + 1, self.place);
+        form.texto(expr, &place)
     }
 
-    /// Cobra o que sobrar: argumento nomeado desconhecido ou posicional a mais.
-    fn fecha(&mut self, forma: &mut Forma<'a>) {
+    fn close(&mut self, form: &mut Form<'a>) {
         let mut sobras: Vec<(Option<String>, Pos)> = Vec::new();
-        for (i, item) in self.itens.iter().enumerate() {
-            if self.usados.get(i).copied().unwrap_or(false) {
+        for (i, item) in self.items.iter().enumerate() {
+            if self.used_names.get(i).copied().unwrap_or(false) {
                 continue;
             }
-            let pos = forma.pos(item.expr.span);
+            let pos = form.pos(item.expr.span);
             sobras.push((item.nome.clone(), pos));
         }
         let conhecidos = if self.conhecidos.is_empty() {
@@ -2492,15 +2379,17 @@ impl<'a> Leitor<'a> {
         } else {
             format!(" Os argumentos são: {}.", self.conhecidos.join(", "))
         };
-        let onde = self.onde.clone();
+        let location = self.place.clone();
         for (nome, pos) in sobras {
             let mensagem = match nome {
                 Some(nome) => format!(
-                    "{onde} não tem o argumento `{nome}`.{conhecidos} Confira a escrita: argumento com nome errado é recusado em vez de ignorado."
+                    "{location} não tem o argumento `{nome}`.{conhecidos} Confira a escrita: argumento com nome errado é recusado em vez de ignorado."
                 ),
-                None => format!("{onde} não aceita esse argumento posicional a mais.{conhecidos}"),
+                None => {
+                    format!("{location} não aceita esse argumento posicional a mais.{conhecidos}")
+                }
             };
-            forma.erro(Code::UnknownArgument, mensagem, pos);
+            form.error(Code::UnknownArgument, mensagem, pos);
         }
     }
 }

@@ -314,6 +314,14 @@ marks the dependency as used, because the Rust `unused_dependencies` lint breaks
 - `snapshot_from_json`: unreadable text or JSON that is not an object is a rule error (FLXR05 in the
   engine). Nothing is evaluated on half the data.
 
+### 8.4 Script compilation (`compilador/forma`)
+
+- The script is read as a syntax tree and is never executed: there is no interpreter call and no allocation guided by script data. The only Starlark evaluation is loading the module (`language::load_module`), which runs after the shape is valid and the limits are set. A single huge string in the script is refused as a shape error, not as a memory spike.
+- Two passes, on purpose. **Collection** turns each declaration into a raw structure that keeps the position of each piece, and checks the local shape (unknown argument, wrong type, invalid id, combinator arity). **Closure** runs with every declaration known: it resolves destinations (`inicio`, `vai_para`, `entao`, `senao`), checks each rule against its step and field, detects decision cycles and emits the reach and use warnings. A decision may point to a step declared later, and a `def` may be used before it is defined; only the closure pass can know that.
+- The IR is produced only when there is no error. Warnings do not block it.
+- `FLX62` (step with an actor and no action for that actor) is reported only when every action in the step is restricted to an actor. An action without `ator` is run by any actor, so the warning would be false.
+- The body of a `def` loses its trailing blank lines. The text of a `def` runs up to the next declaration and would otherwise carry the spacing after it. The IR must not depend on the file's formatting, so the canonical formatter can print the `def` again without that spacing.
+
 ## Medidas
 
 **Máquina:** Fedora 44, x86_64, AMD Ryzen 5 5600GT (6 núcleos, 12 threads), 32 GB de RAM.

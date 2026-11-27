@@ -191,7 +191,7 @@ pub fn compilar(fonte: &str, limites: &Limites) -> Compilado {
         }
     };
 
-    let (ir, mut de_forma) = forma::compila(fonte, &modulo);
+    let (ir, mut de_forma) = forma::compile(fonte, &modulo);
     diagnosticos.append(&mut de_forma);
 
     // Teto de nós da configuração (`fluxos.max_nos`). O teto de forma (60) já foi conferido pela
