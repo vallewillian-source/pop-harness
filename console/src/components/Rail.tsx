@@ -165,8 +165,8 @@ export function Rail({
     onToggleCompact?: () => void;
 }) {
     const { translate: t } = useI18n();
-    const { sessao: session } = useSession();
-    const { health: dados, disconnected: withoutConnection, degradada: degraded } = useHealth();
+    const { session } = useSession();
+    const { health: dados, disconnected: withoutConnection, degraded } = useHealth();
     const { pathname } = useLocation();
     const buttonTop = useRef<HTMLButtonElement>(null);
     const buttonFooter = useRef<HTMLButtonElement>(null);
@@ -183,15 +183,15 @@ export function Rail({
     const [nameAgent, setNameAgent] = useState("");
 
     const orgs = session?.orgs ?? [];
-    const selected = session?.escopo === "org" ? (orgs[0]?.id ?? "") : orgOpen;
+    const selected = session?.scope === "org" ? (orgs[0]?.id ?? "") : orgOpen;
     const listOrgs = partsUrl.length === 1 && partsUrl[0] === "orgs";
     const situationCluster: SituationCluster = withoutConnection
-        ? "sem-conexao"
+        ? "offline"
         : degraded
-          ? "degradada"
+          ? "degraded"
           : dados
             ? "ok"
-            : "verificando";
+            : "checking";
     const context: ContextNavigation = {
         orgId: orgOpen || null,
         agentId: agentOpen || null,
@@ -278,7 +278,7 @@ export function Rail({
             ) : (
                 <SelectorOrganization
                     orgs={orgs}
-                    escopo={session?.escopo ?? "global"}
+                    scope={session?.scope ?? "global"}
                     selected={selected}
                     listOrgs={listOrgs}
                     compact={compact}
@@ -288,7 +288,7 @@ export function Rail({
 
             {routeAgent ? (
                 <>
-                    {ITEMS_COCKPIT_AGENT.filter((item) => item.grupo === "").map((item) => (
+                    {ITEMS_COCKPIT_AGENT.filter((item) => item.group === "").map((item) => (
                         <NavItemEntry
                             key={item.id}
                             item={item}
@@ -298,11 +298,11 @@ export function Rail({
                         />
                     ))}
                     {!compact && (
-                        <div className="sofa-sidebar-rail__section-title poph-rail__secao--frase">
+                        <div className="sofa-sidebar-rail__section-title poph-rail__section--phrase">
                             {navigationGroupLabel(GROUP_DIAGNOSTIC_AGENT)}
                         </div>
                     )}
-                    {ITEMS_COCKPIT_AGENT.filter((item) => item.grupo !== "").map((item) => (
+                    {ITEMS_COCKPIT_AGENT.filter((item) => item.group !== "").map((item) => (
                         <NavItemEntry
                             key={item.id}
                             item={item}
@@ -319,7 +319,7 @@ export function Rail({
                             {navigationGroupLabel(group)}
                         </div>
                         {ITEMS_NAVIGATION.filter(
-                            (item) => item.grupo === group && !hidesOrgsList(item),
+                            (item) => item.group === group && !hidesOrgsList(item),
                         ).map((item) => (
                             <Fragment key={item.id}>
                                 <NavItemEntry

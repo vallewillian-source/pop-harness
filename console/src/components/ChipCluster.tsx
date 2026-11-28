@@ -3,20 +3,20 @@ import type { SofaIconProps } from "@sofacoding/sofa-ui";
 import { useI18n } from "../i18n";
 import type { TranslationKey } from "../i18n/catalog";
 
-export type SituationCluster = "ok" | "degradada" | "sem-conexao" | "verificando";
+export type SituationCluster = "ok" | "degraded" | "offline" | "checking";
 
 const LABELS: Record<SituationCluster, TranslationKey> = {
     ok: "orgs.clusterOk",
-    degradada: "orgs.clusterDegraded",
-    "sem-conexao": "orgs.clusterOffline",
-    verificando: "orgs.clusterChecking",
+    degraded: "orgs.clusterDegraded",
+    offline: "orgs.clusterOffline",
+    checking: "orgs.clusterChecking",
 };
 
 const CLASS_NAMES: Record<SituationCluster, string> = {
     ok: "poph-rail__cluster-point",
-    degradada: "poph-rail__cluster-point poph-rail__cluster-point--alert",
-    "sem-conexao": "poph-rail__cluster-point poph-rail__cluster-point--alert",
-    verificando: "poph-rail__cluster-point poph-rail__cluster-point--neutral",
+    degraded: "poph-rail__cluster-point poph-rail__cluster-point--alert",
+    offline: "poph-rail__cluster-point poph-rail__cluster-point--alert",
+    checking: "poph-rail__cluster-point poph-rail__cluster-point--neutral",
 };
 
 function IconServer(props: SofaIconProps) {

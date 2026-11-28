@@ -8,7 +8,7 @@ const INTERVAL_HEALTH_MS = 15_000;
 export type SituationHealth = {
     health: Health | null;
     disconnected: boolean;
-    degradada: boolean;
+    degraded: boolean;
 };
 
 export function useHealth(): SituationHealth {
@@ -41,7 +41,7 @@ export function useHealth(): SituationHealth {
         };
     }, []);
 
-    return { health: dados, disconnected: withoutConnection, degradada: degraded };
+    return { health: dados, disconnected: withoutConnection, degraded };
 }
 
 export function useMemoryProcess(): number | null {

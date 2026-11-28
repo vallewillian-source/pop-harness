@@ -5,10 +5,10 @@ import { useI18n } from "../i18n";
 import "../styles/chat-test.css";
 
 export type PreviewImage = {
-    origem: FileOrigin;
+    origin: FileOrigin;
     estado: "carregando" | "pronta" | "erro";
     src: string | null;
-    erro: string | null;
+    error: string | null;
 };
 
 type Props = {
@@ -27,11 +27,11 @@ export function PreviewFileTest({ preview, onClose, onTryNew }: Props) {
             }}
             title={
                 preview
-                    ? t("testChat.previewTitle", { name: preview.origem.nome })
+                    ? t("testChat.previewTitle", { name: preview.origin.nome })
                     : t("testChat.previewTitlePlain")
             }
             description={
-                preview?.origem.de === "agente"
+                preview?.origin.de === "agente"
                     ? t("testChat.previewFromAgent")
                     : t("testChat.previewFromClient")
             }
@@ -45,7 +45,7 @@ export function PreviewFileTest({ preview, onClose, onTryNew }: Props) {
             )}
             {preview?.estado === "erro" && (
                 <SofaBanner tone="danger" title={t("testChat.previewErrorTitle")}>
-                    <p>{preview.erro}</p>
+                    <p>{preview.error}</p>
                     <SofaButton variant="secondary" onClick={onTryNew}>
                         {t("testChat.retry")}
                     </SofaButton>
@@ -56,9 +56,9 @@ export function PreviewFileTest({ preview, onClose, onTryNew }: Props) {
                     className="poph-preview-file__image"
                     src={preview.src}
                     alt={
-                        preview.origem.de === "agente"
-                            ? t("testChat.imageFromAgent", { name: preview.origem.nome })
-                            : t("testChat.imageFromClient", { name: preview.origem.nome })
+                        preview.origin.de === "agente"
+                            ? t("testChat.imageFromAgent", { name: preview.origin.nome })
+                            : t("testChat.imageFromClient", { name: preview.origin.nome })
                     }
                 />
             )}

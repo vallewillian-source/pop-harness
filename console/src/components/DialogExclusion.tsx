@@ -34,9 +34,9 @@ export type DialogExclusionProps = {
     onDelete?: () => void;
 };
 
-function messageError(error: unknown): { texto: string; codigo?: string } {
+function messageError(error: unknown): { texto: string; code?: string } {
     if (error instanceof ApiError) {
-        return { texto: error.message, codigo: error.code };
+        return { texto: error.message, code: error.code };
     }
     if (error instanceof Error) {
         return { texto: error.message };
@@ -64,7 +64,7 @@ export function DialogExclusion({
     const [typed, setTyped] = useState("");
     const [forcar, setForce] = useState(false);
     const [sending, setSending] = useState(false);
-    const [error, setError] = useState<{ texto: string; codigo?: string } | null>(null);
+    const [error, setError] = useState<{ texto: string; code?: string } | null>(null);
     const [refusedByLink, setRefusedByLink] = useState(false);
 
     useEffect(() => {
@@ -131,9 +131,9 @@ export function DialogExclusion({
                 {error && (
                     <SofaBanner tone="danger" title={t("orgs.deleteRefusedTitle")}>
                         <span>{error.texto}</span>
-                        {error.codigo && (
+                        {error.code && (
                             <div className="poph-mono-muted" style={{ marginTop: 4 }}>
-                                {t("orgs.deleteCode", { code: error.codigo })}
+                                {t("orgs.deleteCode", { code: error.code })}
                             </div>
                         )}
                         {refusedByLink && (

@@ -84,13 +84,13 @@ function IconArrows() {
 
 export function SelectorOrganization({
     orgs,
-    escopo: scope,
+    scope,
     selected,
     listOrgs,
     compact,
 }: {
     orgs: Org[];
-    escopo: "global" | "org";
+    scope: "global" | "org";
     selected: string;
     listOrgs: boolean;
     compact: boolean;

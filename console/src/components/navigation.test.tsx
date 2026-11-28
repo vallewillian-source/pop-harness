@@ -22,7 +22,7 @@ const stateHealth = vi.hoisted(() => ({
     current: {
         health: { version: "0.9.1" } as { version: string } | null,
         disconnected: false,
-        degradada: false,
+        degraded: false,
     },
 }));
 vi.mock("./health", () => ({ useHealth: () => stateHealth.current }));
@@ -58,7 +58,7 @@ function prepareSession(
         KEY_SESSION,
         JSON.stringify({
             token: scope === "org" ? "poph_teste" : "pophg_teste",
-            escopo: scope,
+            scope,
             orgs,
         }),
     );
@@ -580,28 +580,28 @@ describe("menu montado com a sessão", () => {
             const finding = container.querySelector(".poph-rail__cluster-point");
             const cssClass = finding?.className ?? "";
             unmount();
-            return { cssClass, titulo: finding?.closest(".poph-rail__cluster")?.getAttribute("title") };
+            return { cssClass, title: finding?.closest(".poph-rail__cluster")?.getAttribute("title") };
         };
 
-        stateHealth.current = { health: { version: "0.9.1" }, disconnected: false, degradada: false };
+        stateHealth.current = { health: { version: "0.9.1" }, disconnected: false, degraded: false };
         expect(point()).toEqual({
             cssClass: "poph-rail__cluster-point",
-            titulo: "POP Harness Cluster · instância respondendo",
+            title: "POP Harness Cluster · instância respondendo",
         });
 
-        stateHealth.current = { health: null, disconnected: false, degradada: true };
-        expect(point().titulo).toBe("POP Harness Cluster · instância degradada");
+        stateHealth.current = { health: null, disconnected: false, degraded: true };
+        expect(point().title).toBe("POP Harness Cluster · instância degradada");
         expect(point().cssClass).toContain("poph-rail__cluster-point--alert");
 
-        stateHealth.current = { health: null, disconnected: true, degradada: false };
-        expect(point().titulo).toBe("POP Harness Cluster · sem conexão com a instância");
+        stateHealth.current = { health: null, disconnected: true, degraded: false };
+        expect(point().title).toBe("POP Harness Cluster · sem conexão com a instância");
         expect(point().cssClass).toContain("poph-rail__cluster-point--alert");
 
-        stateHealth.current = { health: null, disconnected: false, degradada: false };
-        expect(point().titulo).toBe("POP Harness Cluster · verificando a instância");
+        stateHealth.current = { health: null, disconnected: false, degraded: false };
+        expect(point().title).toBe("POP Harness Cluster · verificando a instância");
         expect(point().cssClass).toContain("poph-rail__cluster-point--neutral");
 
-        stateHealth.current = { health: { version: "0.9.1" }, disconnected: false, degradada: false };
+        stateHealth.current = { health: { version: "0.9.1" }, disconnected: false, degraded: false };
     });
 
     it("fora das telas de organização, sem organização aberta, diz Selecionar organização", () => {
@@ -952,7 +952,7 @@ describe("CF-07: seletor de agente no topo do rail", () => {
     function prepareServer(
         options: {
             agents?: Agente[];
-            standalone?: { agente: Agente } | { falha: true };
+            standalone?: { agente: Agente } | { failure: true };
             failureList?: boolean;
         } = {},
     ) {
@@ -1171,7 +1171,7 @@ describe("CF-07: seletor de agente no topo do rail", () => {
     });
 
     it("agente da URL que não existe mais aparece como não encontrado, sem quebrar a tela", async () => {
-        prepareServer({ standalone: { falha: true } });
+        prepareServer({ standalone: { failure: true } });
         build("/orgs/org_1/agents/agt_9/instructions");
 
         const gatilho = await screen.findByRole("combobox", { name: "Agente: Agente não encontrado" });

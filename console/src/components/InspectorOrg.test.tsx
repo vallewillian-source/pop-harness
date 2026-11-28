@@ -52,11 +52,11 @@ function stateMatrix(extra: Partial<Record<string, unknown>> = {}) {
 }
 
 type Scenario = {
-    agentes?: Agente[] | "erro";
+    agents?: Agente[] | "erro";
     matrix?: ReturnType<typeof stateMatrix> | "erro";
 };
 
-function servidor({ agentes: agents = [AGENT_MATRIX], matrix = stateMatrix() }: Scenario = {}) {
+function servidor({ agents = [AGENT_MATRIX], matrix = stateMatrix() }: Scenario = {}) {
     const fake = new FakeServer();
     fake.respond("GET", "/agents", () =>
         agents === "erro"
@@ -230,7 +230,7 @@ describe("InspetorOrg · agentes vinculados", () => {
     });
 
     it("agente sem modelo cai no padrão do servidor, sem inventar nome de modelo", async () => {
-        servidor({ agentes: [{ ...AGENT_MATRIX, model: undefined, status: "inactive" }] });
+        servidor({ agents: [{ ...AGENT_MATRIX, model: undefined, status: "inactive" }] });
         const { drawer } = build();
 
         expect(
@@ -239,7 +239,7 @@ describe("InspetorOrg · agentes vinculados", () => {
     });
 
     it("organização sem agente mostra o estado vazio honesto", async () => {
-        servidor({ agentes: [] });
+        servidor({ agents: [] });
         const { drawer } = build();
 
         expect(
@@ -249,7 +249,7 @@ describe("InspetorOrg · agentes vinculados", () => {
     });
 
     it("falha na listagem de agentes aparece só no bloco, sem derrubar a gaveta", async () => {
-        servidor({ agentes: "erro" });
+        servidor({ agents: "erro" });
         const { drawer } = build();
 
         const notice = await within(drawer).findByText("não consegui carregar os agentes");
@@ -265,7 +265,7 @@ describe("InspetorOrg · agentes vinculados", () => {
             name: `Atendente ${index}`,
             slug: `atendente-${index}`,
         }));
-        servidor({ agentes: muitos });
+        servidor({ agents: muitos });
         const { drawer } = build();
 
         expect(await within(drawer).findByText("Atendente 0")).toBeInTheDocument();
@@ -348,7 +348,7 @@ describe("InspetorOrg · comando de teste", () => {
     });
 
     it("sem agente ativo o comando fica com o marcador <agente>", async () => {
-        servidor({ agentes: [] });
+        servidor({ agents: [] });
         const { drawer } = build();
 
         expect(

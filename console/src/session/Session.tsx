@@ -24,12 +24,12 @@ export type Scope = "global" | "org";
 
 export type Session = {
     token: string;
-    "escopo": Scope;
+    scope: Scope;
     orgs: Org[];
 };
 
 type Context = {
-    "sessao": Session | null;
+    session: Session | null;
     "expired": boolean;
     "signIn": (token: string) => Promise<Session>;
     "signOut": () => void;
@@ -53,7 +53,7 @@ function readFromTab(): Session | null {
         if (typeof loaded.token !== "string" || !Array.isArray(loaded.orgs)) return null;
         return {
             token: loaded.token,
-            "escopo": loaded["escopo"] === "org" ? "org" : "global",
+            scope: loaded["scope"] === "org" ? "org" : "global",
             orgs: loaded.orgs as Org[],
         };
     } catch {
@@ -129,7 +129,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
             const list = await request<OrgList>("/admin/v1/orgs?limit=200", {}, { "encerraSessao": false });
             const copy: Session = {
                 token: clean,
-                "escopo": tokenScope(clean, list.items),
+                scope: tokenScope(clean, list.items),
                 orgs: list.items,
             };
             saveToTab(copy);
@@ -155,7 +155,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const clearExpiryNotice = useCallback(() => setExpired(false), []);
 
     const value = useMemo<Context>(
-        () => ({ "sessao": session, "expired": expired, "signIn": signIn, "signOut": signOut, "reloadOrgs": reloadOrgs, "clearExpiryNotice": clearExpiryNotice }),
+        () => ({ session, "expired": expired, "signIn": signIn, "signOut": signOut, "reloadOrgs": reloadOrgs, "clearExpiryNotice": clearExpiryNotice }),
         [session, expired, signIn, signOut, reloadOrgs, clearExpiryNotice],
     );
 

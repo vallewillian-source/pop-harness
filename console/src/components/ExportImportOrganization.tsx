@@ -35,14 +35,14 @@ function withoutDescribedBy(control: SofaFieldControlProps) {
     return { ...rest, "aria-describedby": describedBy };
 }
 
-function sums(report: ImportReport): { inseridas: number; atualizadas: number } {
+function sums(report: ImportReport): { inserted: number; updated: number } {
     let inserted = 0;
     let updated = 0;
     for (const line of Object.values(report.tables)) {
         inserted += line.inserted;
         updated += line.updated;
     }
-    return { inseridas: inserted, atualizadas: updated };
+    return { inserted, updated };
 }
 
 function numero(value: number): string {
@@ -185,10 +185,10 @@ function ReportImport({ report }: { report: ImportReport }) {
                     : t("orgs.backupReportWritten")}{" "}
                 {t("orgs.backupReportTotals", {
                     total: numero(report.total),
-                    inserted: numero(totais.inseridas),
-                    updated: numero(totais.atualizadas),
+                    inserted: numero(totais.inserted),
+                    updated: numero(totais.updated),
                 })}
-                {totais.inseridas === 0 && totais.atualizadas === 0
+                {totais.inserted === 0 && totais.updated === 0
                     ? t("orgs.backupReportNoChange")
                     : ""}
             </p>

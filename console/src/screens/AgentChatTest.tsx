@@ -506,15 +506,15 @@ export function AgentChatTest() {
     async function openPreview(source: FileOrigin) {
         if (!activeRef.current) return;
         const order = ++orderPreviewRef.current;
-        setPreview({ origem: source, estado: "carregando", src: null, erro: null });
+        setPreview({ origin: source, estado: "carregando", src: null, error: null });
         try {
             const file = await downloadContent(source.path);
             const src = await readAsDataUrl(file.blob, source.mime);
             if (order !== orderPreviewRef.current) return;
-            setPreview({ origem: source, estado: "pronta", src, erro: null });
+            setPreview({ origin: source, estado: "pronta", src, error: null });
         } catch (failure) {
             if (order !== orderPreviewRef.current) return;
-            setPreview({ origem: source, estado: "erro", src: null, erro: message(failure) });
+            setPreview({ origin: source, estado: "erro", src: null, error: message(failure) });
         }
     }
 
@@ -977,7 +977,7 @@ export function AgentChatTest() {
                                 preview={preview}
                                 onClose={closePreview}
                                 onTryNew={() => {
-                                    if (preview) void openPreview(preview.origem);
+                                    if (preview) void openPreview(preview.origin);
                                 }}
                             />
 

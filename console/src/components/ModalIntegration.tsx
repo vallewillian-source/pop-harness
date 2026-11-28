@@ -67,10 +67,10 @@ export function fieldErrorApi(campo: string): string | null {
 
 export function stateInitialSecrets(integracao: Integracao | null): string[] | null {
     if (!integracao) return [];
-    const filled = integracao.segredos_preenchidos;
+    const filled = integracao["segredos_preenchidos"];
     if (Array.isArray(filled)) return filled;
     if (filled === null) return null;
-    return integracao.tem_segredo ? null : [];
+    return integracao["tem_segredo"] ? null : [];
 }
 
 function toneConnection(estado: string): SofaStatusTone {
@@ -91,7 +91,7 @@ type StateManifest =
     | { situacao: "carregando" }
     | { situacao: "pronto"; manifesto: PluginManifest }
     | { situacao: "sem_formulario" }
-    | { situacao: "falha"; mensagem: string; messageKey?: TranslationKey; codigo?: string; tipKey?: TranslationKey };
+    | { situacao: "falha"; mensagem: string; messageKey?: TranslationKey; code?: string; tipKey?: TranslationKey };
 
 const MANIFEST_TIP_KEYS: Record<string, TranslationKey> = {
     manifesto_indisponivel: "integrations.manifestTipUnavailable",
@@ -196,7 +196,7 @@ export function ModalIntegration({
                                 situacao: "falha",
                                 mensagem: "",
                                 messageKey: "integrations.manifestInvalidError",
-                                codigo: "manifesto_invalido",
+                                code: "manifesto_invalido",
                             });
                             return;
                         }
@@ -220,7 +220,7 @@ export function ModalIntegration({
                             setManifest({
                                 situacao: "falha",
                                 mensagem: failure.message,
-                                codigo: failure.code,
+                                code: failure.code,
                                 tipKey: MANIFEST_TIP_KEYS[failure.code],
                             });
                             return;
@@ -495,9 +495,9 @@ export function ModalIntegration({
                     <SofaBanner tone="danger" title={t("integrations.manifestErrorTitle")}>
                         {manifesto.messageKey ? t(manifesto.messageKey) : manifesto.mensagem}
                         {manifesto.tipKey ? ` ${t(manifesto.tipKey)}` : ""}
-                        {manifesto.codigo ? (
+                        {manifesto.code ? (
                             <span className="poph-mono-muted">
-                                {t("integrations.manifestErrorCode", { code: manifesto.codigo })}
+                                {t("integrations.manifestErrorCode", { code: manifesto.code })}
                             </span>
                         ) : null}
                     </SofaBanner>
@@ -527,7 +527,7 @@ export function ModalIntegration({
                     )}
                 </SofaField>
 
-                {secretsFilled === null && integracao?.tem_segredo !== false && (
+                {secretsFilled === null && integracao?.["tem_segredo"] !== false && (
                     <p className="poph-mono-muted" style={{ margin: 0 }}>
                         {t("integrations.unreadableSecretsNote")}
                     </p>

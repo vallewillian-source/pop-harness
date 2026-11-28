@@ -43,14 +43,14 @@ export function validateInstructions(value: Structured): ErrorsForm {
     return errors;
 }
 
-function fieldError(failure: ApiError): "ferramentas" | "nome" | null {
+function fieldError(failure: ApiError): "tools" | "nome" | null {
     const details = failure.details as Record<string, unknown> | null | undefined;
     const campo = typeof details?.["field"] === "string" ? details["field"] : "";
-    if (campo.startsWith("tools")) return "ferramentas";
+    if (campo.startsWith("tools")) return "tools";
     if (campo.startsWith("identity")) return "nome";
     if (campo === "structured") {
         const motivo = typeof details?.["reason"] === "string" ? details["reason"] : "";
-        if (motivo.includes("ferramenta")) return "ferramentas";
+        if (motivo.includes("ferramenta")) return "tools";
     }
     return null;
 }
@@ -166,8 +166,8 @@ export function AgentInstructions() {
             if (failure instanceof ApiError) {
                 const campo = fieldError(failure);
                 const motivo = reasonError(failure);
-                if (campo === "ferramentas") {
-                    setErrors({ ferramentas: motivo });
+                if (campo === "tools") {
+                    setErrors({ tools: motivo });
                 } else if (campo === "nome") {
                     setErrors({ nome: motivo });
                 } else {

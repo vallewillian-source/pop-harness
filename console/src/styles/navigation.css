@@ -155,7 +155,7 @@
     background: var(--pop-success);
 }
 
-.poph-shell .sofa-sidebar-rail__section-title.poph-rail__secao--frase {
+.poph-shell .sofa-sidebar-rail__section-title.poph-rail__section--phrase {
     padding: 16px 9px 6px;
     font-size: 10.5px;
     font-weight: var(--pop-font-weight-medium, 500);

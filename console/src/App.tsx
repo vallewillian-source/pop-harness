@@ -21,7 +21,7 @@ import { Operation } from "./screens/Operation";
 import { Matrix } from "./screens/Matrix";
 
 function RememberLastOrg() {
-    const { "sessao": session } = useSession();
+    const { session } = useSession();
     const { pathname } = useLocation();
     useEffect(() => {
         const [root, orgId] = pathname.split("/").filter(Boolean);
@@ -32,7 +32,7 @@ function RememberLastOrg() {
 }
 
 function Protegido() {
-    const { "sessao": session } = useSession();
+    const { session } = useSession();
     if (!session) {
         return <Navigate to="/login" replace />;
     }
@@ -47,12 +47,12 @@ function Protegido() {
 }
 
 function SessionHome() {
-    const { "sessao": session } = useSession();
+    const { session } = useSession();
     return <Navigate to={resolveDefaultOrgPath(session?.orgs ?? [])} replace />;
 }
 
 function LoginOrSignIn() {
-    const { "sessao": session } = useSession();
+    const { session } = useSession();
     return session ? <Navigate to={resolveDefaultOrgPath(session.orgs)} replace /> : <Login />;
 }
 

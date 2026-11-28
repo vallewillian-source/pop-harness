@@ -21,8 +21,8 @@ export type DialogDeleteCategoryProps = {
 };
 
 type Links = {
-    produtos: CategoryProduct[];
-    agentes: AgentSummary[];
+    products: CategoryProduct[];
+    agents: AgentSummary[];
 };
 
 export function DialogDeleteCategory({
@@ -48,7 +48,7 @@ export function DialogDeleteCategory({
             agentsUsingCategory(org, category.id),
         ])
             .then(([products, agents]) => {
-                if (!cancelled) setLinks({ produtos: products, agentes: agents });
+                if (!cancelled) setLinks({ products, agents });
             })
             .catch(() => {
                 if (!cancelled) setFailureVerify(true);
@@ -63,8 +63,8 @@ export function DialogDeleteCategory({
 
     if (!category) return null;
 
-    const withoutLink = links !== null && links.produtos.length === 0 && links.agentes.length === 0;
-    const quantityProducts = links?.produtos.length ?? 0;
+    const withoutLink = links !== null && links.products.length === 0 && links.agents.length === 0;
+    const quantityProducts = links?.products.length ?? 0;
 
     function consequencia() {
         if (loading) {
@@ -84,34 +84,34 @@ export function DialogDeleteCategory({
                 </p>
             );
         }
-        const names = links.agentes.map((agente) => agente.name).join(", ");
+        const names = links.agents.map((agente) => agente.name).join(", ");
         const productsText =
-            links.produtos.length === 1
+            links.products.length === 1
                 ? translate("structure.deleteCatProductOne")
-                : translate("structure.deleteCatProductMany", { count: links.produtos.length });
+                : translate("structure.deleteCatProductMany", { count: links.products.length });
         const productsPronoun =
-            links.produtos.length === 1
+            links.products.length === 1
                 ? translate("structure.deleteCatProductsPronounOne")
                 : translate("structure.deleteCatProductsPronounMany");
         const agentsText =
-            links.agentes.length === 1
+            links.agents.length === 1
                 ? translate("structure.deleteCatAgentOne")
-                : translate("structure.deleteCatAgentMany", { count: links.agentes.length });
+                : translate("structure.deleteCatAgentMany", { count: links.agents.length });
         return (
             <div className="poph-stack" style={{ gap: "var(--pop-spacing-sm, 8px)" }}>
-                {links.produtos.length > 0 && (
+                {links.products.length > 0 && (
                     <p style={{ margin: 0, color: "var(--pop-text-secondary)", lineHeight: 1.6 }}>
                         {translate("structure.deleteCatProductsLine", {
                             products: productsText,
                             pronoun: productsPronoun,
                         })}{" "}
                         <strong>
-                            {links.produtos.map((product) => product.name).join(", ")}
+                            {links.products.map((product) => product.name).join(", ")}
                         </strong>
                         .
                     </p>
                 )}
-                {links.agentes.length > 0 && (
+                {links.agents.length > 0 && (
                     <p style={{ margin: 0, color: "var(--pop-text-secondary)", lineHeight: 1.6 }}>
                         {translate("structure.deleteCatAgentsLine", { agents: agentsText })}{" "}
                         <strong>{names}</strong>.

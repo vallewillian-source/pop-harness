@@ -15,16 +15,16 @@ export const SEARCH_GROUP_KEYS: Record<
     commands: "shell.searchGroupCommands",
 };
 
-export type ScreenSearchable = { rotulo: string; caminho: string };
+export type ScreenSearchable = { label: string; path: string };
 
 export type CommandSearchable = { texto: string; descricao: string };
 
 export type OptionSearch = {
     chave: string;
-    grupo: GroupSearch;
-    rotulo: string;
+    group: GroupSearch;
+    label: string;
     detail?: string;
-    destination: { tipo: "caminho"; caminho: string } | { tipo: "comando"; texto: string };
+    destination: { tipo: "caminho"; path: string } | { tipo: "comando"; texto: string };
 };
 
 export function pophCommands(): CommandSearchable[] {
@@ -71,27 +71,27 @@ export function searchEverything(
     for (const org of filterOrgs(orgs, term)) {
         options.push({
             chave: `org-${org.id}`,
-            grupo: "orgs",
-            rotulo: org.name,
+            group: "orgs",
+            label: org.name,
             detail: org.slug,
-            destination: { tipo: "caminho", caminho: `/orgs/${org.id}` },
+            destination: { tipo: "caminho", path: `/orgs/${org.id}` },
         });
     }
     for (const view of screens) {
-        if (!home(view.rotulo)) continue;
+        if (!home(view.label)) continue;
         options.push({
-            chave: `tela-${view.caminho}`,
-            grupo: "screens",
-            rotulo: view.rotulo,
-            destination: { tipo: "caminho", caminho: view.caminho },
+            chave: `tela-${view.path}`,
+            group: "screens",
+            label: view.label,
+            destination: { tipo: "caminho", path: view.path },
         });
     }
     for (const command of commands) {
         if (!home(command.texto, command.descricao)) continue;
         options.push({
             chave: `comando-${command.texto}`,
-            grupo: "commands",
-            rotulo: command.texto,
+            group: "commands",
+            label: command.texto,
             detail: command.descricao,
             destination: { tipo: "comando", texto: command.texto },
         });

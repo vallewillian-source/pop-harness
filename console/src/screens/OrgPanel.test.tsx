@@ -20,10 +20,10 @@ const ORG: Org = {
     updated_at: 1_700_000_000_000,
 };
 
-function prepareSession(token: string, escopo: "global" | "org") {
+function prepareSession(token: string, scope: "global" | "org") {
     window.sessionStorage.setItem(
         "poph-console.sessao",
-        JSON.stringify({ token, escopo, orgs: [ORG] }),
+        JSON.stringify({ token, scope, orgs: [ORG] }),
     );
 }
 

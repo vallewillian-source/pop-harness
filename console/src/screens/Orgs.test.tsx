@@ -42,10 +42,10 @@ const ARCHIVED = org({
     config: {} as unknown as Org["config"],
 });
 
-function prepareSession(token: string, escopo: "global" | "org", items: Org[]) {
+function prepareSession(token: string, scope: "global" | "org", items: Org[]) {
     window.sessionStorage.setItem(
         "poph-console.sessao",
-        JSON.stringify({ token, escopo, orgs: items }),
+        JSON.stringify({ token, scope, orgs: items }),
     );
 }
 

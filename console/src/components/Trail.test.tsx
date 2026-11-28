@@ -18,7 +18,7 @@ describe("trilha (função)", () => {
     it("em rota de agente tem três passos: organização, agente e aba", () => {
         const crumbs = trail("/orgs/org_1/agents/agt_1/instructions", ORGS, "Bia");
 
-        expect(crumbs.map((crumb) => crumb.rotulo)).toEqual([
+        expect(crumbs.map((crumb) => crumb.label)).toEqual([
             "Clínica Aurora",
             "Bia",
             "Instruções",
@@ -31,7 +31,7 @@ describe("trilha (função)", () => {
     it("na raiz do agente o agente é a migalha atual, sem link", () => {
         const crumbs = trail("/orgs/org_1/agents/agt_1", ORGS, "Bia");
 
-        expect(crumbs.map((crumb) => crumb.rotulo)).toEqual(["Clínica Aurora", "Bia"]);
+        expect(crumbs.map((crumb) => crumb.label)).toEqual(["Clínica Aurora", "Bia"]);
         expect(crumbs[0]?.para).toBe("/orgs/org_1");
         expect(crumbs[1]?.para).toBeUndefined();
     });
@@ -39,7 +39,7 @@ describe("trilha (função)", () => {
     it("sem nome publicado, mostra Agente no lugar do nome", () => {
         const crumbs = trail("/orgs/org_1/agents/agt_1/model-jev", ORGS);
 
-        expect(crumbs.map((crumb) => crumb.rotulo)).toEqual([
+        expect(crumbs.map((crumb) => crumb.label)).toEqual([
             "Clínica Aurora",
             "Agente",
             "Modelo e Jev",
@@ -47,13 +47,13 @@ describe("trilha (função)", () => {
     });
 
     it("a aba Chat de teste e as telas fora do agente mantêm os rótulos", () => {
-        expect(trail("/orgs/org_1/agents/agt_1/test-chat", ORGS, "Bia").map((m) => m.rotulo)).toContain("Chat de teste");
-        expect(trail("/orgs/org_1/structure", ORGS).map((m) => m.rotulo)).toEqual([
+        expect(trail("/orgs/org_1/agents/agt_1/test-chat", ORGS, "Bia").map((m) => m.label)).toContain("Chat de teste");
+        expect(trail("/orgs/org_1/structure", ORGS).map((m) => m.label)).toEqual([
             "Organizações",
             "Clínica Aurora",
             "Estrutura",
         ]);
-        expect(trail("/orgs/org_1/operacao", ORGS).map((m) => m.rotulo)).toEqual([
+        expect(trail("/orgs/org_1/operacao", ORGS).map((m) => m.label)).toEqual([
             "Organizações",
             "Clínica Aurora",
             "Saúde da instância",
@@ -63,7 +63,7 @@ describe("trilha (função)", () => {
     it("a lista de agentes da organização continua com Organizações e Agentes", () => {
         const crumbs = trail("/orgs/org_1/agents", ORGS);
 
-        expect(crumbs.map((crumb) => crumb.rotulo)).toEqual([
+        expect(crumbs.map((crumb) => crumb.label)).toEqual([
             "Organizações",
             "Clínica Aurora",
             "Agentes",
@@ -198,12 +198,12 @@ describe("Trilha i18n", () => {
     it("translates breadcrumbs and agent tabs to en-US", () => {
         setLocale("en-US");
 
-        expect(trail("/orgs/org_1/agents/agt_1/model-jev", ORGS).map((m) => m.rotulo)).toEqual([
+        expect(trail("/orgs/org_1/agents/agt_1/model-jev", ORGS).map((m) => m.label)).toEqual([
             "Clínica Aurora",
             "Agent",
             "Model and Jev",
         ]);
-        expect(trail("/orgs/org_1/operacao", ORGS).map((m) => m.rotulo)).toEqual([
+        expect(trail("/orgs/org_1/operacao", ORGS).map((m) => m.label)).toEqual([
             "Organizations",
             "Clínica Aurora",
             "Instance health",

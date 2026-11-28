@@ -32,7 +32,7 @@ function withoutDescribedBy(control: SofaFieldControlProps) {
 export type ErrorsForm = {
     nome?: string;
     principles?: string;
-    ferramentas?: string;
+    tools?: string;
 };
 
 export type FormInstructionsProps = {
@@ -381,9 +381,9 @@ export function FormInstructions({
                 title={t("instructions.sectionTools")}
                 descricao={t("instructions.sectionToolsDescription")}
             >
-                {errors.ferramentas && (
+                {errors.tools && (
                     <p role="alert" className="poph-section-error">
-                        {errors.ferramentas}
+                        {errors.tools}
                     </p>
                 )}
                 <div className="poph-list-tools">

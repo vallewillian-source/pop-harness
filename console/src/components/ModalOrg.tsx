@@ -23,10 +23,10 @@ import type { TranslationKey } from "../i18n/catalog";
 
 const SLUG = /^[a-z0-9-]{3,64}$/;
 
-const SITUATIONS: { value: string; rotulo: TranslationKey }[] = [
-    { value: "active", rotulo: "orgs.statusActive" },
-    { value: "inactive", rotulo: "orgs.statusInactive" },
-    { value: "archived", rotulo: "orgs.statusArchived" },
+const SITUATIONS: { value: string; label: TranslationKey }[] = [
+    { value: "active", label: "orgs.statusActive" },
+    { value: "inactive", label: "orgs.statusInactive" },
+    { value: "archived", label: "orgs.statusArchived" },
 ];
 
 export type ModalOrgProps = {
@@ -276,7 +276,7 @@ export function ModalOrg({ opened: isOpen, onClose, org, onSave }: ModalOrgProps
                             >
                                 {SITUATIONS.map((option) => (
                                     <option key={option.value} value={option.value}>
-                                        {t(option.rotulo)}
+                                        {t(option.label)}
                                     </option>
                                 ))}
                             </SofaSelect>

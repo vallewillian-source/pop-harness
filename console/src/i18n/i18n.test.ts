@@ -146,7 +146,7 @@ describe("mounted shell", () => {
             "poph-console.sessao",
             JSON.stringify({
                 token: "pophg_teste",
-                "escopo": "global",
+                "scope": "global",
                 orgs: [{ id: "org_1", name: "Loja Antiga", slug: "loja-antiga", status: "active" }],
             }),
         );

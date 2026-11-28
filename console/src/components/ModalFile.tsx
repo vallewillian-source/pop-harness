@@ -31,7 +31,7 @@ export type ModalFileProps = {
     onSend: (file: LibraryFile) => void;
 };
 
-type Errors = { arquivo?: string; nome?: string; descricao?: string };
+type Errors = { file?: string; nome?: string; descricao?: string };
 
 function withoutDescribedBy(control: SofaFieldControlProps) {
     const { describedBy, ...rest } = control;
@@ -77,19 +77,19 @@ export function ModalFile({ org, agente, opened: isOpen, onClose, onSend }: Moda
         setChosen(file);
         setErrorGeneral(null);
         if (!file) {
-            setErrors((current) => ({ ...current, arquivo: undefined }));
+            setErrors((current) => ({ ...current, file: undefined }));
             return;
         }
-        setErrors((current) => ({ ...current, arquivo: errorSize(file.size) ?? undefined }));
+        setErrors((current) => ({ ...current, file: errorSize(file.size) ?? undefined }));
     }
 
     function validar(): Errors {
         const freshItems: Errors = {};
         if (!chosen) {
-            freshItems.arquivo = t("files.chooseFile");
+            freshItems.file = t("files.chooseFile");
         } else {
             const size = errorSize(chosen.size);
-            if (size) freshItems.arquivo = size;
+            if (size) freshItems.file = size;
         }
         if (nome.trim().length > LIMIT_FILE_NAME) {
             freshItems.nome = t("files.nameTooLong", { limit: LIMIT_FILE_NAME });
@@ -120,7 +120,7 @@ export function ModalFile({ org, agente, opened: isOpen, onClose, onSend }: Moda
                 const motivo =
                     typeof details?.["reason"] === "string" ? details["reason"] : null;
                 if (motivo && failure.status === 400) {
-                    setErrors({ arquivo: motivo });
+                    setErrors({ file: motivo });
                     return;
                 }
                 setErrorGeneral(t("files.apiErrorWithCode", {
@@ -178,7 +178,7 @@ export function ModalFile({ org, agente, opened: isOpen, onClose, onSend }: Moda
                 <SofaField
                     label={t("files.fileLabel")}
                     hint={t("files.fileHint")}
-                    error={errors.arquivo}
+                    error={errors.file}
                     required
                     htmlFor="poph-arquivo-escolha"
                 >
@@ -187,14 +187,14 @@ export function ModalFile({ org, agente, opened: isOpen, onClose, onSend }: Moda
                             {...withoutDescribedBy(control)}
                             type="file"
                             accept={TIPOS_ACEITOS}
-                            invalid={Boolean(errors.arquivo)}
+                            invalid={Boolean(errors.file)}
                             onChange={(evento) =>
                                 onChoose(evento.target.files?.[0] ?? null)
                             }
                         />
                     )}
                 </SofaField>
-                {chosen && !errors.arquivo && (
+                {chosen && !errors.file && (
                     <p className="poph-mono-muted" style={{ margin: 0 }}>
                         {t("files.chosenFile", {
                             name: chosen.name,

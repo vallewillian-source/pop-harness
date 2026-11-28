@@ -76,7 +76,7 @@ function screensAvailable(context: ContextNavigation): ScreenSearchable[] {
     return items.flatMap((item) => {
         if (item.estado !== "ativo") return [];
         const path = item.route(context);
-        return path ? [{ rotulo: item.caption, caminho: path }] : [];
+        return path ? [{ label: item.caption, path }] : [];
     });
 }
 
@@ -84,7 +84,7 @@ const DURATION_NOTICE_MS = 3000;
 
 function SearchGlobal({ screens, placeholder }: { screens: ScreenSearchable[]; placeholder: string }) {
     const { translate } = useI18n();
-    const { sessao: session } = useSession();
+    const { session } = useSession();
     const guard = useGuardChanges();
     const campo = useRef<HTMLInputElement>(null);
     const idBase = useId();
@@ -143,7 +143,7 @@ function SearchGlobal({ screens, placeholder }: { screens: ScreenSearchable[]; p
 
     function run(option: OptionSearch) {
         if (option.destination.tipo === "caminho") {
-            goTo(option.destination.caminho);
+            goTo(option.destination.path);
         } else {
             copyCommand(option.destination.texto);
         }
@@ -226,7 +226,7 @@ function SearchGlobal({ screens, placeholder }: { screens: ScreenSearchable[]; p
                         GROUPS_SEARCH.map((group) => {
                             const ofGroup = options
                                 .map((option, position) => ({ option, position }))
-                                .filter(({ option }) => option.grupo === group);
+                                .filter(({ option }) => option.group === group);
                             if (ofGroup.length === 0) return null;
                             const idTitle = `${idBase}-grupo-${GROUPS_SEARCH.indexOf(group)}`;
                             return (
@@ -251,7 +251,7 @@ function SearchGlobal({ screens, placeholder }: { screens: ScreenSearchable[]; p
                                                 onClick={() => run(option)}
                                             >
                                                 <span className="poph-search__label-option">
-                                                    {option.rotulo}
+                                                    {option.label}
                                                 </span>
                                                 {option.detail && (
                                                     <span className="poph-search__slug">
@@ -345,13 +345,13 @@ export function Topbar({
     onOpenShortcuts: () => void;
 }) {
     const { translate } = useI18n();
-    const { sessao: session, signOut: exit } = useSession();
+    const { session, signOut: exit } = useSession();
     const navigate = useNavigate();
     const { pathname } = useLocation();
-    const { health: dados, disconnected: withoutConnection, degradada: degraded } = useHealth();
+    const { health: dados, disconnected: withoutConnection, degraded } = useHealth();
     const memory = useMemoryProcess();
     const tokenScope =
-        session?.escopo === "org"
+        session?.scope === "org"
             ? translate("shell.tokenScopeOrg")
             : translate("shell.tokenScopeGlobal");
     const context = contextUrl(pathname);

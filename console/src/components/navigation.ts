@@ -46,7 +46,7 @@ export function navigationGroupLabel(group: NavigationGroup): string {
 
 export interface ItemNavigation {
     id: string;
-    grupo: NavigationGroup | "";
+    group: NavigationGroup | "";
     readonly caption: string;
     icon: ComponentType<SofaIconProps>;
     route: (context: ContextNavigation) => string | null;
@@ -63,7 +63,7 @@ export const GROUPS_NAVIGATION: readonly NavigationGroup[] = ["tenants", "runtim
 export const ITEMS_NAVIGATION: ItemNavigation[] = [
     {
         id: "organizations",
-        grupo: "tenants",
+        group: "tenants",
         get caption() {
             return translate("navigation.organizations");
         },
@@ -77,7 +77,7 @@ export const ITEMS_NAVIGATION: ItemNavigation[] = [
     },
     {
         id: "structure",
-        grupo: "tenants",
+        group: "tenants",
         get caption() {
             return translate("navigation.structure");
         },
@@ -89,7 +89,7 @@ export const ITEMS_NAVIGATION: ItemNavigation[] = [
     },
     {
         id: "products",
-        grupo: "tenants",
+        group: "tenants",
         get caption() {
             return translate("navigation.products");
         },
@@ -101,7 +101,7 @@ export const ITEMS_NAVIGATION: ItemNavigation[] = [
     },
     {
         id: "agents",
-        grupo: "tenants",
+        group: "tenants",
         get caption() {
             return translate("navigation.agents");
         },
@@ -114,7 +114,7 @@ export const ITEMS_NAVIGATION: ItemNavigation[] = [
     },
     {
         id: "model-jev",
-        grupo: "runtime",
+        group: "runtime",
         get caption() {
             return translate("navigation.modelJev");
         },
@@ -127,7 +127,7 @@ export const ITEMS_NAVIGATION: ItemNavigation[] = [
     },
     {
         id: "turn-inspection",
-        grupo: "runtime",
+        group: "runtime",
         get caption() {
             return translate("navigation.turnInspection");
         },
@@ -139,7 +139,7 @@ export const ITEMS_NAVIGATION: ItemNavigation[] = [
     },
     {
         id: "test-chat",
-        grupo: "runtime",
+        group: "runtime",
         get caption() {
             return translate("navigation.testChat");
         },
@@ -152,7 +152,7 @@ export const ITEMS_NAVIGATION: ItemNavigation[] = [
     },
     {
         id: "whatsapp",
-        grupo: "system",
+        group: "system",
         get caption() {
             return translate("navigation.whatsapp");
         },
@@ -164,7 +164,7 @@ export const ITEMS_NAVIGATION: ItemNavigation[] = [
     },
     {
         id: "matrix",
-        grupo: "system",
+        group: "system",
         get caption() {
             return translate("navigation.matrix");
         },
@@ -176,7 +176,7 @@ export const ITEMS_NAVIGATION: ItemNavigation[] = [
     },
     {
         id: "plugins",
-        grupo: "system",
+        group: "system",
         get caption() {
             return translate("navigation.plugins");
         },
@@ -188,7 +188,7 @@ export const ITEMS_NAVIGATION: ItemNavigation[] = [
     },
     {
         id: "instance-health",
-        grupo: "system",
+        group: "system",
         get caption() {
             return translate("navigation.instanceHealth");
         },
@@ -205,7 +205,7 @@ export const GROUP_DIAGNOSTIC_AGENT: NavigationGroup = "diagnostics";
 export const ITEMS_COCKPIT_AGENT: ItemNavigation[] = [
     {
         id: "cockpit-instructions",
-        grupo: "",
+        group: "",
         get caption() {
             return translate("navigation.cockpitInstructions");
         },
@@ -220,7 +220,7 @@ export const ITEMS_COCKPIT_AGENT: ItemNavigation[] = [
     },
     {
         id: "cockpit-knowledge",
-        grupo: "",
+        group: "",
         get caption() {
             return translate("navigation.cockpitKnowledge");
         },
@@ -233,7 +233,7 @@ export const ITEMS_COCKPIT_AGENT: ItemNavigation[] = [
     },
     {
         id: "cockpit-files",
-        grupo: "",
+        group: "",
         get caption() {
             return translate("navigation.cockpitFiles");
         },
@@ -246,7 +246,7 @@ export const ITEMS_COCKPIT_AGENT: ItemNavigation[] = [
     },
     {
         id: "cockpit-routing",
-        grupo: "",
+        group: "",
         get caption() {
             return translate("navigation.cockpitRouting");
         },
@@ -259,7 +259,7 @@ export const ITEMS_COCKPIT_AGENT: ItemNavigation[] = [
     },
     {
         id: "cockpit-model-jev",
-        grupo: "",
+        group: "",
         get caption() {
             return translate("navigation.cockpitModelJev");
         },
@@ -272,7 +272,7 @@ export const ITEMS_COCKPIT_AGENT: ItemNavigation[] = [
     },
     {
         id: "cockpit-test-chat",
-        grupo: GROUP_DIAGNOSTIC_AGENT,
+        group: GROUP_DIAGNOSTIC_AGENT,
         get caption() {
             return translate("navigation.cockpitTestChat");
         },
@@ -285,7 +285,7 @@ export const ITEMS_COCKPIT_AGENT: ItemNavigation[] = [
     },
     {
         id: "cockpit-turn-inspection",
-        grupo: GROUP_DIAGNOSTIC_AGENT,
+        group: GROUP_DIAGNOSTIC_AGENT,
         get caption() {
             return translate("navigation.cockpitTurnInspection");
         },

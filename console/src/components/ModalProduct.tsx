@@ -79,7 +79,7 @@ type Errors = {
 
 const FIELDS_API: Record<string, keyof Errors> = {
     category_id: "category",
-    categoria: "category",
+    "categoria": "category",
     name: "nome",
     nome: "nome",
     slug: "slug",

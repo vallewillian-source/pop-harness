@@ -157,10 +157,10 @@ type Notice = { tom: "warn" | "danger"; title: string; texto: string };
 
 export function Orgs() {
     const { translate: t, locale } = useI18n();
-    const { sessao, reloadOrgs } = useSession();
+    const { session, reloadOrgs } = useSession();
     const navigate = useNavigate();
     const { tryNavigate } = useGuardChanges();
-    const [orgs, setOrgs] = useState<OrgInList[]>(sessao?.orgs ?? []);
+    const [orgs, setOrgs] = useState<OrgInList[]>(session?.orgs ?? []);
     const [instances, setInstances] = useState<ListInstance[] | null>(null);
     const [telemetry, setTelemetry] = useState<Telemetry | null>(null);
     const [loading, setLoading] = useState(true);
@@ -176,7 +176,7 @@ export function Orgs() {
     const lastClick = useRef<{ id: string; at: number } | null>(null);
     const pendingFocus = useRef<string | null>(null);
 
-    const canManage = sessao?.escopo !== "org";
+    const canManage = session?.scope !== "org";
 
     const mapInstances = useMemo(
         () => new Map((instances ?? []).map((instancia) => [instancia.id, instancia])),

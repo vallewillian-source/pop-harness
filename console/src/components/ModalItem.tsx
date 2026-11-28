@@ -39,13 +39,13 @@ export type ModalItemProps = {
     onSave: (item: KnowledgeItem) => void;
 };
 
-type Errors = { titulo?: string; conteudo?: string; ordem?: string };
+type Errors = { title?: string; content?: string; ordem?: string };
 
 const FIELDS_API: Record<string, keyof Errors> = {
-    title: "titulo",
-    titulo: "titulo",
-    content: "conteudo",
-    conteudo: "conteudo",
+    title: "title",
+    "titulo": "title",
+    content: "content",
+    "conteudo": "content",
 };
 
 function withoutDescribedBy(control: SofaFieldControlProps) {
@@ -95,14 +95,14 @@ export function ModalItem({ org, group, opened: isOpen, onClose, item, onSave }:
     function validar(): Errors {
         const freshItems: Errors = {};
         if (!title.trim()) {
-            freshItems.titulo = t("knowledge.itemTitleRequired");
+            freshItems.title = t("knowledge.itemTitleRequired");
         } else if (title.trim().length > LIMIT_ITEM_TITLE) {
-            freshItems.titulo = t("knowledge.itemTitleTooLong", { limit: LIMIT_ITEM_TITLE });
+            freshItems.title = t("knowledge.itemTitleTooLong", { limit: LIMIT_ITEM_TITLE });
         }
         if (!content.trim()) {
-            freshItems.conteudo = t("knowledge.itemContentRequired");
+            freshItems.content = t("knowledge.itemContentRequired");
         } else if (characters > LIMIT_ITEM_CONTENT) {
-            freshItems.conteudo = t("knowledge.itemContentTooLong", {
+            freshItems.content = t("knowledge.itemContentTooLong", {
                 limit: LIMIT_ITEM_CONTENT,
                 count: characters,
             });
@@ -241,7 +241,7 @@ export function ModalItem({ org, group, opened: isOpen, onClose, item, onSave }:
                 <SofaField
                     label={t("knowledge.itemTitleLabel")}
                     hint={t("knowledge.itemTitleHint", { limit: LIMIT_ITEM_TITLE })}
-                    error={errors.titulo}
+                    error={errors.title}
                     required
                     htmlFor="poph-item-titulo"
                 >
@@ -258,7 +258,7 @@ export function ModalItem({ org, group, opened: isOpen, onClose, item, onSave }:
                 <SofaField
                     label={t("knowledge.itemContentLabel")}
                     hint={t("knowledge.itemContentHint", { limit: LIMIT_ITEM_CONTENT })}
-                    error={errors.conteudo}
+                    error={errors.content}
                     required
                     htmlFor="poph-item-conteudo"
                 >

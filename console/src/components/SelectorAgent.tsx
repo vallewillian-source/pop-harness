@@ -50,7 +50,7 @@ function messageError(failure: unknown): string {
 
 type List =
     | { estado: "carregando" }
-    | { estado: "pronto"; agentes: Agente[] }
+    | { estado: "pronto"; agents: Agente[] }
     | { estado: "erro"; mensagem: string };
 
 function IconArrows() {
@@ -121,14 +121,14 @@ export function SelectorAgent({
     const read = useRef(new Map<string, Agente[]>());
     const [list, setList] = useState<List>(() =>
         read.current.has(orgId)
-            ? { estado: "pronto", agentes: read.current.get(orgId) ?? [] }
+            ? { estado: "pronto", agents: read.current.get(orgId) ?? [] }
             : { estado: "carregando" },
     );
 
     useEffect(() => {
         const guarded = read.current.get(orgId);
         if (guarded) {
-            setList({ estado: "pronto", agentes: guarded });
+            setList({ estado: "pronto", agents: guarded });
             return;
         }
         let ended = false;
@@ -144,7 +144,7 @@ export function SelectorAgent({
                 ended = true;
                 clearTimeout(deadline);
                 read.current.set(orgId, agents);
-                setList({ estado: "pronto", agentes: agents });
+                setList({ estado: "pronto", agents });
             })
             .catch((failure: unknown) => {
                 if (ended) return;
@@ -158,7 +158,7 @@ export function SelectorAgent({
         };
     }, [orgId]);
 
-    const agents = list.estado === "pronto" ? list.agentes : [];
+    const agents = list.estado === "pronto" ? list.agents : [];
     const fromList = agents.find((agente) => agente.id === agentId) ?? null;
     const needReadStandalone = list.estado === "pronto" && !fromList && agentId !== "";
     const keyOne_off = `${orgId}/${agentId}`;

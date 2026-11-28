@@ -44,7 +44,7 @@ const AGENTS_WITH_STATUS = {
 function prepareSession() {
     window.sessionStorage.setItem(
         KEY_SESSION,
-        JSON.stringify({ token: "pophg_teste", escopo: "global", orgs: TWO_ORGS }),
+        JSON.stringify({ token: "pophg_teste", scope: "global", orgs: TWO_ORGS }),
     );
 }
 

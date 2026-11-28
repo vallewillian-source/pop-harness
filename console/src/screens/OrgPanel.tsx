@@ -114,8 +114,8 @@ export function OrgPanel() {
     const [detailError, setErrorDetail] = useState<string | null>(null);
     const [editing, setEditing] = useState(false);
     const [deleting, setDeleting] = useState(false);
-    const { sessao } = useSession();
-    const canManage = sessao?.escopo !== "org";
+    const { session } = useSession();
+    const canManage = session?.scope !== "org";
 
     const load = useCallback(async () => {
         setLoading(true);

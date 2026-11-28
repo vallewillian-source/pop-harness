@@ -11,7 +11,7 @@ import { useOrgAgents } from "../components/totalAgents";
 
 export function Shell({ children }: { children: ReactNode }) {
     const { translate } = useI18n();
-    const { sessao: session } = useSession();
+    const { session } = useSession();
     const { pathname } = useLocation();
     const [shortcuts, setShortcuts] = useState(false);
     const [railCompact, setRailCompact] = useState(false);

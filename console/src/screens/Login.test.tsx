@@ -97,7 +97,7 @@ describe("Login", () => {
         expect(await screen.findByText("lista de organizações")).toBeInTheDocument();
         const recorded = JSON.parse(window.sessionStorage.getItem("poph-console.sessao") ?? "{}");
         expect(recorded.token).toBe("pophg_teste");
-        expect(recorded.escopo).toBe("global");
+        expect(recorded.scope).toBe("global");
     });
 
     it("com organizações e nenhuma lembrada, token válido abre a primeira da lista", async () => {

@@ -31,7 +31,7 @@ function prepareSession(token: string, scope: "global" | "org", orgs = THREE_ORG
         KEY_SESSION,
         JSON.stringify({
             token,
-            escopo: scope,
+            scope,
             orgs,
         }),
     );

@@ -267,7 +267,7 @@ export function PanelWhatsApp({
                     {connectionLabel(estado)}
                 </span>
                 <span className="poph-mono-muted">
-                    {integracao.tem_segredo
+                    {integracao["tem_segredo"]
                         ? t("integrations.whatsappSecretSaved")
                         : t("integrations.whatsappNoSecret")}
                 </span>
