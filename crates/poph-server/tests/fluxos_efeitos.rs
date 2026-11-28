@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
@@ -6,6 +7,7 @@ use std::time::Duration;
 
 use axum::Json;
 use axum::Router;
+use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::post;
@@ -18,12 +20,14 @@ use poph_server::flow_effects::{
     FlowEffectOptions, FlowEffectReport, FlowEffects, RETRY_LIMIT_REASON, effect_of_transition,
 };
 use poph_server::flow_metrics::FlowMetrics;
+use poph_server::http_effects::HttpEffectRegistry;
 use poph_server::whatsapp_output::{WhatsAppOutput, WhatsAppOutputOptions};
 use poph_store::ConversationStatus;
 use poph_store::{
     Agente, ExecutionStart, ExecutionState, FlowEffect, NewAgent, NewConversation, NewDepartment,
     NewOrg, Store, StoredExecution, TransitionEffect,
 };
+use poph_types::config::{HttpEffectConfig, HttpEffectsConfig};
 use poph_types::{
     DepartmentId, EffectState, EventActor, ExecutionStatus, FlowId, HarnessConfig, IntegrationId,
     OrgId, RecordEventKind, RecordId, RecordStatus, Registry as MetricsRegistry, RevisionId,
@@ -1036,4 +1040,568 @@ async fn exhausted_attempts_become_failed_with_correct_reason() {
     assert_eq!(queue[0].attempts, 2, "o teto de tentativas vale");
     assert_eq!(queue[0].ultimo_erro.as_deref(), Some(RETRY_LIMIT_REASON));
     assert_eq!(scenario.metrics.failed_effects.value(), 1);
+}
+
+const CALENDAR_AUTH: &str = "Bearer segredo-agenda-fx-teste";
+const CALENDAR_VAR: &str = "POPH_HTTP_EFFECT_CALENDAR_AUTHORIZATION";
+const CALENDAR_PATH: &str = "/internal/v1/cases/calendar-effects";
+const START: &str = "2027-01-10T14:00:00-03:00";
+const END: &str = "2027-01-10T15:00:00-03:00";
+
+#[derive(Clone, Debug)]
+struct Call {
+    authorization: Option<String>,
+    idempotency: Option<String>,
+    content_type: Option<String>,
+    body: Value,
+}
+
+#[derive(Clone)]
+struct FakeCalendar {
+    calls: Arc<Mutex<Vec<Call>>>,
+    script: Arc<Mutex<Vec<(u16, Value)>>>,
+    delay: Duration,
+}
+
+async fn receive_calendar(
+    State(receiver): State<FakeCalendar>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> (StatusCode, Json<Value>) {
+    let header = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned)
+    };
+    let index = {
+        let mut calls = receiver.calls.lock().unwrap();
+        calls.push(Call {
+            authorization: header("authorization"),
+            idempotency: header("idempotency-key"),
+            content_type: header("content-type"),
+            body: serde_json::from_slice(&body).unwrap_or(Value::Null),
+        });
+        calls.len() - 1
+    };
+    if !receiver.delay.is_zero() {
+        tokio::time::sleep(receiver.delay).await;
+    }
+    let script = receiver.script.lock().unwrap();
+    let (status, reply) = script
+        .get(index)
+        .or_else(|| script.last())
+        .cloned()
+        .unwrap_or((200, json!({})));
+    (
+        StatusCode::from_u16(status).expect("status do roteiro"),
+        Json(reply),
+    )
+}
+
+async fn start_fake_calendar(
+    script: Vec<(u16, Value)>,
+    delay: Duration,
+) -> (String, FakeCalendar, tokio::task::JoinHandle<()>) {
+    let receiver = FakeCalendar {
+        calls: Arc::new(Mutex::new(Vec::new())),
+        script: Arc::new(Mutex::new(script)),
+        delay,
+    };
+    let router = Router::new()
+        .route(CALENDAR_PATH, post(receive_calendar))
+        .with_state(receiver.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("porta efêmera da agenda falsa");
+    let endereco = listener.local_addr().expect("endereço da agenda falsa");
+    let task = tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+    (format!("http://{endereco}"), receiver, task)
+}
+
+fn calendar_registry(
+    org: OrgId,
+    base: &str,
+    timeout_ms: u64,
+    secret: Option<&str>,
+) -> Arc<HttpEffectRegistry> {
+    let mut kinds = BTreeMap::new();
+    kinds.insert(
+        "sincronizar_agenda".to_owned(),
+        HttpEffectConfig {
+            url: format!("{base}{CALENDAR_PATH}"),
+            authorization_env: CALENDAR_VAR.to_owned(),
+            timeout_ms,
+        },
+    );
+    let mut config: HttpEffectsConfig = BTreeMap::new();
+    config.insert(org, kinds);
+    let secret = secret.map(str::to_owned);
+    Arc::new(
+        HttpEffectRegistry::from_config(&config, |name| {
+            if name == CALENDAR_VAR {
+                secret.clone().map(Secret::new)
+            } else {
+                None
+            }
+        })
+        .expect("registro da agenda"),
+    )
+}
+
+fn calendar(
+    operation: &str,
+    start: Option<&str>,
+    end: Option<&str>,
+    title: Option<&str>,
+    location: Option<&str>,
+    executor: Option<&str>,
+) -> TransitionEffect {
+    effect_of_transition(&ProducedEffect {
+        chave: "acao:boas_vindas.agendar/0".to_owned(),
+        no: "acao:boas_vindas.agendar".to_owned(),
+        index: 0,
+        effect: Effect::SyncCalendar {
+            operation: operation.to_owned(),
+            start: start.map(str::to_owned),
+            end: end.map(str::to_owned),
+            title: title.map(str::to_owned),
+            location: location.map(str::to_owned),
+            executor: executor.map(str::to_owned),
+        },
+    })
+}
+
+fn calendar_calls(receiver: &FakeCalendar) -> Vec<Call> {
+    receiver.calls.lock().unwrap().clone()
+}
+
+#[tokio::test]
+async fn calendar_create_sends_literal_context_body_and_headers() {
+    let (base, receiver, task) =
+        start_fake_calendar(vec![(200, json!({"status": "ok"}))], Duration::ZERO).await;
+    let scenario = Scenario::fresh("agenda-create", Instancia::NoChannel, Vec::new()).await;
+    let opened = scenario.open(vec![calendar(
+        "create",
+        Some(START),
+        Some(END),
+        Some("Visita"),
+        Some("Rua A, 10"),
+        Some("exec_123"),
+    )]);
+    let execution = opened.execution.id;
+    let effect = scenario.case_effects(execution).remove(0);
+
+    let report = scenario
+        .effects()
+        .with_http_effects(calendar_registry(
+            scenario.org,
+            &base,
+            5_000,
+            Some(CALENDAR_AUTH),
+        ))
+        .cycle_for_org(scenario.org)
+        .await
+        .expect("ciclo");
+    assert_eq!(report.sent, 1);
+
+    let calls = calendar_calls(&receiver);
+    assert_eq!(calls.len(), 1);
+    let call = &calls[0];
+    assert_eq!(call.authorization.as_deref(), Some(CALENDAR_AUTH));
+    assert_eq!(
+        call.idempotency.as_deref(),
+        Some(effect.id.to_string().as_str())
+    );
+    assert_eq!(call.content_type.as_deref(), Some("application/json"));
+    assert_eq!(
+        call.body,
+        json!({
+            "context": {
+                "org_id": scenario.org.to_string(),
+                "ficha_id": scenario.ficha.to_string(),
+                "execution_id": execution.to_string(),
+                "effect_id": effect.id.to_string(),
+                "effect_key": "acao:boas_vindas.agendar/0",
+                "flow_id": scenario.fluxo.to_string(),
+            },
+            "operation": "create",
+            "event": {
+                "start": START,
+                "end": END,
+                "title": "Visita",
+                "location": "Rua A, 10",
+                "executor_id": "exec_123",
+            },
+        })
+    );
+    assert_eq!(scenario.case_effects(execution)[0].state, EffectState::Sent);
+    task.abort();
+}
+
+#[tokio::test]
+async fn calendar_minimal_create_and_remove_omit_absent_members() {
+    let (base, receiver, task) = start_fake_calendar(vec![(200, json!({}))], Duration::ZERO).await;
+    let scenario = Scenario::fresh("agenda-minima", Instancia::NoChannel, Vec::new()).await;
+    scenario.open(vec![calendar(
+        "create",
+        Some(START),
+        None,
+        None,
+        None,
+        None,
+    )]);
+    let other = scenario.other_case(None);
+    scenario.open_in_case(
+        other,
+        vec![calendar("remove", None, None, None, None, None)],
+    );
+
+    let report = scenario
+        .effects()
+        .with_http_effects(calendar_registry(
+            scenario.org,
+            &base,
+            5_000,
+            Some(CALENDAR_AUTH),
+        ))
+        .cycle_for_org(scenario.org)
+        .await
+        .expect("ciclo");
+    assert_eq!(report.sent, 2);
+
+    let calls = calendar_calls(&receiver);
+    let create = calls
+        .iter()
+        .find(|call| call.body["operation"] == "create")
+        .expect("chamada de criação");
+    assert_eq!(create.body["event"], json!({"start": START}));
+    let remove = calls
+        .iter()
+        .find(|call| call.body["operation"] == "remove")
+        .expect("chamada de remoção");
+    assert!(remove.body.get("event").is_none(), "remove não leva evento");
+    assert_eq!(remove.body["context"]["ficha_id"], json!(other.to_string()));
+    task.abort();
+}
+
+#[tokio::test]
+async fn calendar_without_configuration_waits_without_request() {
+    let (_base, receiver, task) = start_fake_calendar(Vec::new(), Duration::ZERO).await;
+    let scenario = Scenario::fresh("agenda-sem-config", Instancia::NoChannel, Vec::new()).await;
+    let opened = scenario.open(vec![calendar(
+        "create",
+        Some(START),
+        None,
+        Some("Visita"),
+        None,
+        None,
+    )]);
+    let execution = opened.execution.id;
+
+    let report = scenario
+        .effects()
+        .cycle_for_org(scenario.org)
+        .await
+        .expect("ciclo");
+    assert_eq!(report.deferred, 1, "sem configuração a espera é o desfecho");
+    assert_eq!(report.permanent_failures, 0);
+    let queue = scenario.case_effects(execution);
+    assert_eq!(queue[0].state, EffectState::Pending);
+    assert_eq!(queue[0].attempts, 0);
+    assert!(calendar_calls(&receiver).is_empty());
+    task.abort();
+}
+
+#[tokio::test]
+async fn calendar_without_credential_in_environment_waits() {
+    let (base, receiver, task) = start_fake_calendar(Vec::new(), Duration::ZERO).await;
+    let scenario = Scenario::fresh("agenda-sem-credencial", Instancia::NoChannel, Vec::new()).await;
+    let opened = scenario.open(vec![calendar(
+        "create",
+        Some(START),
+        None,
+        Some("Visita"),
+        None,
+        None,
+    )]);
+    let execution = opened.execution.id;
+
+    let report = scenario
+        .effects()
+        .with_http_effects(calendar_registry(scenario.org, &base, 5_000, None))
+        .cycle_for_org(scenario.org)
+        .await
+        .expect("ciclo");
+    assert_eq!(report.deferred, 1);
+    let queue = scenario.case_effects(execution);
+    assert_eq!(queue[0].state, EffectState::Pending);
+    assert_eq!(queue[0].attempts, 0);
+    assert!(calendar_calls(&receiver).is_empty());
+    task.abort();
+}
+
+#[tokio::test]
+async fn calendar_transient_status_retries_with_the_same_key() {
+    let (base, receiver, task) = start_fake_calendar(
+        vec![
+            (
+                503,
+                json!({"error": {"code": "INTERNAL", "message": "indisponível"}}),
+            ),
+            (200, json!({})),
+        ],
+        Duration::ZERO,
+    )
+    .await;
+    let scenario = Scenario::fresh("agenda-transitoria", Instancia::NoChannel, Vec::new()).await;
+    let opened = scenario.open(vec![calendar(
+        "create",
+        Some(START),
+        None,
+        Some("Visita"),
+        None,
+        None,
+    )]);
+    let execution = opened.execution.id;
+    let effects = scenario.effects().with_http_effects(calendar_registry(
+        scenario.org,
+        &base,
+        5_000,
+        Some(CALENDAR_AUTH),
+    ));
+
+    let report = effects.cycle_for_org(scenario.org).await.expect("1º ciclo");
+    assert_eq!(report.transient_failures, 1);
+    let queue = scenario.case_effects(execution);
+    assert_eq!(queue[0].state, EffectState::Pending, "volta para a fila");
+    assert_eq!(queue[0].attempts, 1);
+    let reason = queue[0].ultimo_erro.clone().unwrap_or_default();
+    assert!(
+        reason.contains("HTTP 503") && reason.contains("INTERNAL"),
+        "motivo: {reason}"
+    );
+
+    scenario.advance(50);
+    let report = effects.cycle_for_org(scenario.org).await.expect("2º ciclo");
+    assert_eq!(report.sent, 1);
+    let calls = calendar_calls(&receiver);
+    assert_eq!(calls.len(), 2, "uma nova tentativa");
+    assert!(calls[0].idempotency.is_some());
+    assert_eq!(calls[0].idempotency, calls[1].idempotency, "mesma chave");
+    assert_eq!(scenario.case_effects(execution)[0].state, EffectState::Sent);
+    task.abort();
+}
+
+#[tokio::test]
+async fn calendar_permanent_4xx_fails_once_and_keeps_only_the_code() {
+    let (base, receiver, task) = start_fake_calendar(
+        vec![(
+            422,
+            json!({"error": {
+                "code": "EXECUTOR_NOT_FOUND",
+                "message": "executor sumiu da agenda do cliente",
+                "details": {},
+                "request_id": "req-agenda-1",
+            }}),
+        )],
+        Duration::ZERO,
+    )
+    .await;
+    let scenario = Scenario::fresh("agenda-permanente", Instancia::NoChannel, Vec::new()).await;
+    let opened = scenario.open(vec![calendar(
+        "create",
+        Some(START),
+        None,
+        Some("Visita"),
+        None,
+        Some("exec_999"),
+    )]);
+    let execution = opened.execution.id;
+    let effects = scenario.effects().with_http_effects(calendar_registry(
+        scenario.org,
+        &base,
+        5_000,
+        Some(CALENDAR_AUTH),
+    ));
+
+    let report = effects.cycle_for_org(scenario.org).await.expect("ciclo");
+    assert_eq!(report.permanent_failures, 1, "4xx não repete");
+    let queue = scenario.case_effects(execution);
+    assert_eq!(queue[0].state, EffectState::Failed);
+    let reason = queue[0].ultimo_erro.clone().unwrap_or_default();
+    assert!(reason.contains("EXECUTOR_NOT_FOUND"), "motivo: {reason}");
+    assert!(!reason.contains("sumiu"), "o corpo cru não é gravado");
+    assert_eq!(scenario.metrics.failed_effects.value(), 1);
+    assert_eq!(calendar_calls(&receiver).len(), 1);
+
+    scenario.advance(50);
+    let report = effects.cycle_for_org(scenario.org).await.expect("2º ciclo");
+    assert_eq!(report, FlowEffectReport::default(), "não volta a tentar");
+    assert_eq!(calendar_calls(&receiver).len(), 1);
+    task.abort();
+}
+
+#[tokio::test]
+async fn calendar_timeout_is_transient() {
+    let (base, _receiver, task) =
+        start_fake_calendar(vec![(200, json!({}))], Duration::from_millis(400)).await;
+    let scenario = Scenario::fresh("agenda-tempo", Instancia::NoChannel, Vec::new()).await;
+    let opened = scenario.open(vec![calendar(
+        "create",
+        Some(START),
+        None,
+        Some("Visita"),
+        None,
+        None,
+    )]);
+    let execution = opened.execution.id;
+
+    let report = scenario
+        .effects()
+        .with_http_effects(calendar_registry(
+            scenario.org,
+            &base,
+            50,
+            Some(CALENDAR_AUTH),
+        ))
+        .cycle_for_org(scenario.org)
+        .await
+        .expect("ciclo");
+    assert_eq!(report.transient_failures, 1, "estouro de tempo repete");
+    let queue = scenario.case_effects(execution);
+    assert_eq!(queue[0].state, EffectState::Pending);
+    assert!(
+        queue[0]
+            .ultimo_erro
+            .as_deref()
+            .is_some_and(|reason| reason.contains("tempo esgotado")),
+        "motivo: {:?}",
+        queue[0].ultimo_erro
+    );
+    task.abort();
+}
+
+#[tokio::test]
+async fn calendar_secret_stays_out_of_logs_and_stored_reason() {
+    let (base, _receiver, task) = start_fake_calendar(
+        vec![(
+            401,
+            json!({"error": {
+                "code": "UNAUTHORIZED",
+                "message": format!("credencial recebida: {CALENDAR_AUTH}"),
+            }}),
+        )],
+        Duration::ZERO,
+    )
+    .await;
+    let scenario = Scenario::fresh("agenda-segredo", Instancia::NoChannel, Vec::new()).await;
+    let opened = scenario.open(vec![calendar(
+        "create",
+        Some(START),
+        None,
+        Some("Visita"),
+        None,
+        None,
+    )]);
+    let execution = opened.execution.id;
+
+    let report = scenario
+        .effects()
+        .with_http_effects(calendar_registry(
+            scenario.org,
+            &base,
+            5_000,
+            Some(CALENDAR_AUTH),
+        ))
+        .cycle_for_org(scenario.org)
+        .await
+        .expect("ciclo");
+    assert_eq!(report.permanent_failures, 1);
+    let token = "segredo-agenda-fx-teste";
+    let logs = String::from_utf8_lossy(&captured_logs().lock().unwrap()).to_string();
+    assert!(!logs.contains(token), "a credencial não pode ir para o log");
+    let queue = scenario.case_effects(execution);
+    let reason = queue[0].ultimo_erro.clone().unwrap_or_default();
+    assert!(reason.contains("UNAUTHORIZED"));
+    assert!(!reason.contains(token), "nem no motivo gravado");
+    let events = format!("{:?}", scenario.events(scenario.ficha));
+    assert!(!events.contains(token), "nem nos eventos da Ficha");
+    task.abort();
+}
+
+#[tokio::test]
+async fn calendar_body_over_16_kib_fails_without_request() {
+    let (base, receiver, task) = start_fake_calendar(vec![(200, json!({}))], Duration::ZERO).await;
+    let scenario = Scenario::fresh("agenda-grande", Instancia::NoChannel, Vec::new()).await;
+    let title = "a".repeat(17 * 1024);
+    let opened = scenario.open(vec![calendar(
+        "create",
+        Some(START),
+        None,
+        Some(&title),
+        None,
+        None,
+    )]);
+    let execution = opened.execution.id;
+
+    let report = scenario
+        .effects()
+        .with_http_effects(calendar_registry(
+            scenario.org,
+            &base,
+            5_000,
+            Some(CALENDAR_AUTH),
+        ))
+        .cycle_for_org(scenario.org)
+        .await
+        .expect("ciclo");
+    assert_eq!(report.permanent_failures, 1);
+    let queue = scenario.case_effects(execution);
+    assert_eq!(queue[0].state, EffectState::Failed);
+    assert!(
+        queue[0]
+            .ultimo_erro
+            .as_deref()
+            .is_some_and(|reason| reason.contains("16 KiB")),
+        "motivo: {:?}",
+        queue[0].ultimo_erro
+    );
+    assert!(calendar_calls(&receiver).is_empty(), "nada sai da máquina");
+    task.abort();
+}
+
+#[tokio::test]
+async fn calendar_and_whatsapp_effects_share_one_cycle() {
+    let (base, receiver, task) = start_fake_calendar(vec![(200, json!({}))], Duration::ZERO).await;
+    let scenario = Scenario::fresh("agenda-mista", Instancia::Normal, Vec::new()).await;
+    let opened = scenario.open(vec![
+        notify("aviso"),
+        calendar("create", Some(START), None, Some("Visita"), None, None),
+    ]);
+    let execution = opened.execution.id;
+
+    let report = scenario
+        .effects()
+        .with_http_effects(calendar_registry(
+            scenario.org,
+            &base,
+            5_000,
+            Some(CALENDAR_AUTH),
+        ))
+        .cycle_for_org(scenario.org)
+        .await
+        .expect("ciclo");
+    assert_eq!(report.sent, 2, "WhatsApp e agenda no mesmo ciclo");
+    assert_eq!(scenario.records().len(), 1, "um envio ao WhatsApp");
+    assert_eq!(calendar_calls(&receiver).len(), 1, "um envio à agenda");
+    assert!(
+        scenario
+            .case_effects(execution)
+            .iter()
+            .all(|effect| effect.state == EffectState::Sent)
+    );
+    task.abort();
 }

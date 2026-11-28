@@ -15,6 +15,7 @@ use crate::cipher::CipherKey;
 use crate::cluster::LiveCluster;
 use crate::evolution::EvolutionChannel;
 use crate::flow_metrics::FlowMetrics;
+use crate::http_effects::HttpEffectRegistry;
 use crate::manifests::ManifestCatalog;
 
 #[derive(Debug, Clone)]
@@ -46,6 +47,7 @@ pub struct ServerState {
     matrix_connection: Option<Arc<crate::matrix_beginning::ConnectionSignal>>,
     matrix_spaces: Option<Arc<crate::matrix_beginning::ModuleSpaces>>,
     pub flow_cache: Arc<RevisionCache>,
+    pub http_effects: Arc<HttpEffectRegistry>,
     flow_metrics: Option<Arc<FlowMetrics>>,
     cluster: Arc<RwLock<LiveCluster>>,
     seen_nonces: Arc<Mutex<HashMap<String, Instant>>>,
@@ -91,6 +93,7 @@ impl ServerState {
         } else {
             None
         };
+        let http_effects = Arc::new(HttpEffectRegistry::from_environment(&config.http_effects)?);
         Ok(Self {
             store,
             config: Arc::new(config),
@@ -117,6 +120,7 @@ impl ServerState {
             )))),
             seen_nonces: Arc::new(Mutex::new(HashMap::new())),
             flow_cache,
+            http_effects,
             flow_metrics,
         })
     }

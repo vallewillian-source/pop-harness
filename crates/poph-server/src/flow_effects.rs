@@ -10,6 +10,9 @@ use serde_json::Value;
 
 use crate::evolution::EvolutionChannel;
 use crate::flow_metrics::FlowMetrics;
+use crate::http_effects::{
+    CALENDAR_KIND, CalendarContext, HttpEffect, HttpEffectRegistry, calendar_body,
+};
 use crate::state::ServerState;
 
 #[derive(Debug, Clone)]
@@ -53,6 +56,7 @@ pub struct FlowEffects {
     channels: Vec<NotificationChannel>,
     metrics: Option<Arc<FlowMetrics>>,
     options: FlowEffectOptions,
+    http_effects: Arc<HttpEffectRegistry>,
 }
 
 enum Plan {
@@ -75,6 +79,11 @@ enum Delivery {
         conversation_id: poph_types::ConversationId,
         department: poph_types::DepartmentId,
         name: String,
+    },
+    Http {
+        endpoint: Arc<HttpEffect>,
+        key: String,
+        body: Vec<u8>,
     },
 }
 
@@ -106,7 +115,13 @@ impl FlowEffects {
             channels,
             metrics,
             options,
+            http_effects: Arc::default(),
         }
+    }
+
+    pub fn with_http_effects(mut self, registry: Arc<HttpEffectRegistry>) -> Self {
+        self.http_effects = registry;
+        self
     }
 
     fn channel_for(&self, org: OrgId, integration: IntegrationId) -> Option<&NotificationChannel> {
@@ -349,6 +364,33 @@ impl FlowEffects {
                     name: department.name,
                 }))
             }
+            CALENDAR_KIND => {
+                let Some(endpoint) = self.http_effects.get(org, CALENDAR_KIND) else {
+                    return Ok(Plan::Wait(
+                        "a agenda não tem endereço configurado para esta organização",
+                    ));
+                };
+                if !endpoint.is_authorized() {
+                    return Ok(Plan::Wait("a credencial da agenda não está no ambiente"));
+                }
+                let execution = self.store.executions().get(org, effect.execucao_id)?;
+                let context = CalendarContext {
+                    org,
+                    ficha: effect.ficha_id,
+                    execution: effect.execucao_id,
+                    effect: effect.id,
+                    key: &effect.key,
+                    flow: execution.fluxo_id,
+                };
+                match calendar_body(&context, &payload) {
+                    Ok(body) => Ok(Plan::Deliver(Delivery::Http {
+                        endpoint,
+                        key: effect.id.to_string(),
+                        body,
+                    })),
+                    Err(reason) => Ok(Plan::Fail(reason)),
+                }
+            }
             other => Ok(Plan::Fail(format!(
                 "tipo de efeito desconhecido na fila: `{other}`"
             ))),
@@ -425,6 +467,11 @@ impl FlowEffects {
                     })?;
                 Ok(Some(name))
             }
+            Delivery::Http {
+                endpoint,
+                key,
+                body,
+            } => endpoint.post(&key, body).await.map(|()| None),
         }
     }
 
@@ -504,7 +551,7 @@ impl FlowEffects {
     }
 }
 
-enum DeliveryFailure {
+pub(crate) enum DeliveryFailure {
     Transient(String),
     Permanent(String),
 }
@@ -529,13 +576,16 @@ pub fn start(state: &ServerState) -> Option<tokio::task::JoinHandle<()>> {
     if !state.config.flows.enabled {
         return None;
     }
-    let effects = Arc::new(FlowEffects::new(
-        Arc::clone(&state.store),
-        &state.evolution_channels,
-        state.config.blobs(),
-        state.flow_metrics(),
-        FlowEffectOptions::default(),
-    ));
+    let effects = Arc::new(
+        FlowEffects::new(
+            Arc::clone(&state.store),
+            &state.evolution_channels,
+            state.config.blobs(),
+            state.flow_metrics(),
+            FlowEffectOptions::default(),
+        )
+        .with_http_effects(Arc::clone(&state.http_effects)),
+    );
     let interval = effects.options.interval;
     Some(tokio::spawn(async move {
         loop {

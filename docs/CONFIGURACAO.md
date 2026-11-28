@@ -150,6 +150,36 @@ Changing the arguments under that ID returns a conflict. The receiving service m
 durable uniqueness for the same turn and call ID, including when a request reaches it and the
 Harness times out waiting for the response.
 
+### Flow effect HTTP delivery
+
+Flow effects that go to an external service are declared per organization under
+`[http_effects."<organization UUID>".<effect kind>]`. The only kind delivered today is
+`sincronizar_agenda`, which sends the calendar effect of a Ficha to the cases service. The kind
+`agendar_transicao` is accepted in this section, but it has no producer and no delivery yet (PA-138b).
+Any other kind is a configuration error.
+
+~~~toml
+[http_effects."0199a11d-2000-7000-8000-000000000001".sincronizar_agenda]
+url = "https://pop-api-cases.internal/internal/v1/cases/calendar-effects"
+authorization_env = "POPH_HTTP_EFFECT_CALENDAR_AUTHORIZATION"
+timeout_ms = 5000
+~~~
+
+`url` must start with `http://` or `https://`. Redirects, proxies and automatic HTTP retries are
+disabled: the effect worker owns the retries. `timeout_ms` defaults to 5000 and accepts 1–60000.
+`authorization_env` must start with `POPH_HTTP_EFFECT_` and names an environment variable that
+holds the complete `Authorization` header value, such as `Bearer <service token>`. The value is read
+at startup and never written to the configuration file, logs or the effect row.
+
+A missing organization, a missing kind or a missing credential is not a failure: the effect stays
+`pendente` and is checked again later, without consuming an attempt. A variable that is set but
+not a valid header value stops the server at startup. An unknown kind, a bad URL or a bad
+`timeout_ms` stops the configuration at startup, with the field named in the error.
+
+Every request is a `POST` with `Idempotency-Key` set to the effect ID, `Content-Type:
+application/json` and a body of at most 16 KiB. See [FLUXOS.md](FLUXOS.md#4-efeitos) for the body
+and the status mapping.
+
 ## Environment variables
 
 Non-secret fields (they override the file):

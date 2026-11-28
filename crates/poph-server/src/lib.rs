@@ -11,6 +11,7 @@ pub mod flow_metrics;
 pub mod flow_service;
 pub mod flow_transition;
 pub mod forwarding;
+pub mod http_effects;
 pub mod manifests;
 pub mod matrix_beginning;
 pub mod matrix_expiry;

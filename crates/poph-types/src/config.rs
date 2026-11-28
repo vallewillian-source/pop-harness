@@ -41,16 +41,31 @@ pub struct HarnessConfig {
     pub site_chat: SiteChatConfig,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub http_tools: HttpToolsConfig,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub http_effects: HttpEffectsConfig,
 }
 
 pub type HttpToolsConfig = BTreeMap<OrgId, BTreeMap<String, HttpToolConfig>>;
+
+pub type HttpEffectsConfig = BTreeMap<OrgId, BTreeMap<String, HttpEffectConfig>>;
+
+pub const HTTP_EFFECT_KINDS: [&str; 2] = ["sincronizar_agenda", "agendar_transicao"];
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HttpEffectConfig {
+    pub url: String,
+    pub authorization_env: String,
+    #[serde(default = "default_http_timeout_ms")]
+    pub timeout_ms: u64,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HttpToolConfig {
     pub url: String,
     pub method: HttpToolMethod,
-    #[serde(default = "default_http_tool_timeout_ms")]
+    #[serde(default = "default_http_timeout_ms")]
     pub timeout_ms: u64,
     pub authorization_env: String,
     pub description: String,
@@ -58,7 +73,7 @@ pub struct HttpToolConfig {
     pub response_fields: BTreeMap<String, String>,
 }
 
-fn default_http_tool_timeout_ms() -> u64 {
+fn default_http_timeout_ms() -> u64 {
     5_000
 }
 
@@ -607,6 +622,7 @@ impl HarnessConfig {
             });
         }
         validate_http_tools(&self.http_tools)?;
+        validate_http_effects(&self.http_effects)?;
         validate_plugins(&self.plugins)?;
         if let Some(evolution) = &self.evolution {
             validate_url("evolution.url_base", &evolution.url_base)?;
@@ -1084,6 +1100,40 @@ fn validate_http_tools(tools: &HttpToolsConfig) -> DomainResult<()> {
     Ok(())
 }
 
+fn validate_http_effects(effects: &HttpEffectsConfig) -> DomainResult<()> {
+    for definitions in effects.values() {
+        for (kind, definition) in definitions {
+            if !HTTP_EFFECT_KINDS.contains(&kind.as_str()) {
+                return Err(invalid(
+                    "http_effects",
+                    format!("tipo de efeito sem entrega HTTP: {kind}"),
+                ));
+            }
+            validate_url("http_effects.url", &definition.url)?;
+            if !(1..=60_000).contains(&definition.timeout_ms) {
+                return Err(invalid(
+                    "http_effects.timeout_ms",
+                    "informe de 1 a 60000 ms",
+                ));
+            }
+            if !definition
+                .authorization_env
+                .starts_with("POPH_HTTP_EFFECT_")
+                || !definition
+                    .authorization_env
+                    .bytes()
+                    .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+            {
+                return Err(invalid(
+                    "http_effects.authorization_env",
+                    "use o nome de uma variável POPH_HTTP_EFFECT_*",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_url(field: &'static str, url: &str) -> DomainResult<()> {
     let trimmed = url.trim();
     if !(trimmed.starts_with("http://") || trimmed.starts_with("https://")) {
@@ -1441,6 +1491,76 @@ mod tests {
     #[test]
     fn defaults_are_valid() {
         assert_eq!(HarnessConfig::default().validar(), Ok(()));
+    }
+
+    fn http_effect_config(kind: &str, definition: HttpEffectConfig) -> HarnessConfig {
+        let org: OrgId = "0199a11d-2000-7000-8000-000000000001".parse().expect("org");
+        let mut kinds = BTreeMap::new();
+        kinds.insert(kind.to_owned(), definition);
+        let mut cfg = HarnessConfig::default();
+        cfg.http_effects.insert(org, kinds);
+        cfg
+    }
+
+    fn valid_http_effect() -> HttpEffectConfig {
+        HttpEffectConfig {
+            url: "https://pop-api-cases.internal/internal/v1/cases/calendar-effects".to_owned(),
+            authorization_env: "POPH_HTTP_EFFECT_CALENDAR_AUTHORIZATION".to_owned(),
+            timeout_ms: 5_000,
+        }
+    }
+
+    #[test]
+    fn http_effects_accept_calendar_and_parked_schedule_kinds() {
+        let cfg = http_effect_config("sincronizar_agenda", valid_http_effect());
+        assert_eq!(cfg.validar(), Ok(()));
+        let cfg = http_effect_config("agendar_transicao", valid_http_effect());
+        assert_eq!(cfg.validar(), Ok(()));
+    }
+
+    #[test]
+    fn http_effects_refuse_kinds_without_http_delivery() {
+        let cfg = http_effect_config("notificar_whatsapp", valid_http_effect());
+        match cfg.validar() {
+            Err(DomainError::Validation { field, .. }) => assert_eq!(field, "http_effects"),
+            other => panic!("esperado erro de validação, veio {other:?}"),
+        }
+    }
+
+    #[test]
+    fn http_effects_name_the_bad_timeout_and_credential_variable() {
+        let mut definition = valid_http_effect();
+        definition.timeout_ms = 0;
+        let cfg = http_effect_config("sincronizar_agenda", definition);
+        match cfg.validar() {
+            Err(DomainError::Validation { field, .. }) => {
+                assert_eq!(field, "http_effects.timeout_ms")
+            }
+            other => panic!("esperado erro de validação, veio {other:?}"),
+        }
+
+        let mut definition = valid_http_effect();
+        definition.authorization_env = "POPH_HTTP_TOOL_CALENDAR".to_owned();
+        let cfg = http_effect_config("sincronizar_agenda", definition);
+        match cfg.validar() {
+            Err(DomainError::Validation { field, .. }) => {
+                assert_eq!(field, "http_effects.authorization_env")
+            }
+            other => panic!("esperado erro de validação, veio {other:?}"),
+        }
+    }
+
+    #[test]
+    fn http_effects_url_must_be_http_or_https() {
+        let mut definition = valid_http_effect();
+        definition.url = "pop-api-cases.internal/calendar".to_owned();
+        let cfg = http_effect_config("sincronizar_agenda", definition);
+        match cfg.validar() {
+            Err(DomainError::Validation { field, .. }) => {
+                assert_eq!(field, "http_effects.url")
+            }
+            other => panic!("esperado erro de validação, veio {other:?}"),
+        }
     }
 
     #[test]

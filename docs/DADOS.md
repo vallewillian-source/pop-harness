@@ -387,6 +387,12 @@ Regras que o banco garante sozinho (teste `crates/poph-store/tests/flows_migrati
   rebuilds `fluxo_efeitos` in one transaction, keeps every id, state, payload and index, and only widens the `tipo` check.
   `agendar_transicao` is accepted by the database but is not enabled (PA-138b not released).
 
+A entrega HTTP de `sincronizar_agenda` não cria tabela nem coluna. A configuração fica em
+`[http_effects]` ([CONFIGURACAO.md](CONFIGURACAO.md)) e o estado do efeito continua nas colunas
+acima (`estado`, `tentativas`, `ultimo_erro`, `proxima_tentativa`). O motivo gravado em `ultimo_erro`
+é fixo e pode trazer só o código de erro do serviço. O recibo que impede a segunda criação do evento
+fica no pop-api (`pa_ficha_effect_receipts`, a ser criado pela A-03), não no Harness.
+
 Decisões que o leitor do esquema precisa saber:
 
 - **`fluxo_execucoes.fluxo_id` e `revisao_id` ficam sem chave estrangeira.** Apagar um fluxo não pode
