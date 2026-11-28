@@ -141,6 +141,14 @@ const CONVERSATION_TABLES: &[Table] = &[
         name: "site_events",
         key: &["conversation_id", "seq"],
     },
+    Table {
+        name: "adapter_conversations",
+        key: &["id"],
+    },
+    Table {
+        name: "adapter_message_keys",
+        key: &["conversation_id", "idempotency_key"],
+    },
 ];
 
 struct NaturalKey {

@@ -1,3 +1,4 @@
+mod adapter_chat;
 mod agent_flows;
 mod agents;
 mod analytics;
@@ -342,6 +343,7 @@ pub fn router(state: ServerState) -> Router {
             axum::routing::delete(matrix::disable_space),
         )
         .merge(matrix_as::routes())
+        .merge(adapter_chat::routes())
         .merge(site_chat::routes())
         .with_state(state.clone());
 
@@ -505,6 +507,10 @@ pub fn document() -> utoipa::openapi::OpenApi {
         flows::diff, flows::preview, flows::format,
         cases::list, cases::show, cases::events, cases::start_flow, cases::apply_action,
         cases::abandon, cases::close,
+        adapter_chat::create,
+        adapter_chat::show,
+        adapter_chat::write_message,
+        adapter_chat::history,
         site_chat::create,
         site_chat::submit,
         site_chat::turn,
@@ -550,6 +556,8 @@ pub fn document() -> utoipa::openapi::OpenApi {
         test_chat::TestMessageData,
         site_chat::CreateBody,
         site_chat::MessageBody,
+        adapter_chat::CreateBody,
+        adapter_chat::MessageBody,
         matrix::MatrixStateJson,
         matrix::DelayJson,
         matrix::SpaceJson,
@@ -579,6 +587,7 @@ pub fn document() -> utoipa::openapi::OpenApi {
         (name = "fichas", description = "Fichas do atendimento, execuções de fluxo e ações humanas"),
         (name = "usage", description = "Uso agregado de tokens"),
         (name = "analytics", description = "Leitura agregada do atendimento: contadores e execuções ativas por nó"),
+        (name = "adapter-conversations", description = "Conversas de adaptadores confiáveis: e-mail e POP Bot, com Ficha opcional"),
     ),
     modifiers(&SecurityScheme)
 )]

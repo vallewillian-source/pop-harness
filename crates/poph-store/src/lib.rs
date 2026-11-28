@@ -251,6 +251,10 @@ impl Store {
         SiteChat(self)
     }
 
+    pub fn adapter_chat(&self) -> AdapterChat<'_> {
+        AdapterChat(self)
+    }
+
     pub fn conversations(&self) -> Conversas<'_> {
         Conversas(self)
     }

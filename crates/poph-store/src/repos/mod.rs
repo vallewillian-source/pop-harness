@@ -5,6 +5,7 @@ use rusqlite::{Connection, OptionalExtension, Row};
 use crate::error::StoreError;
 use crate::model::Status;
 
+mod adapter_chat;
 mod agents;
 mod analytics;
 mod boxes;
@@ -32,6 +33,11 @@ mod turns;
 mod usage;
 pub use usage::{AgentUsage, DayUsage, TokenUsage, Usage};
 
+pub use adapter_chat::{
+    AdapterChat, AdapterConversation, AdapterMessage, AdapterSubmission, LIMIT_AUTHOR_NAME,
+    LIMIT_EXTERNAL_MESSAGE_ID, LIMIT_EXTERNAL_REF, LIMIT_IDEMPOTENCY_KEY, NewAdapterMessage,
+    RESERVED_CHANNELS,
+};
 pub use agents::{Agents, agents_by_provider_at};
 pub use analytics::{Analytics, NodeCount, OperationalSummary};
 pub use boxes::{Inbox, Outbox};

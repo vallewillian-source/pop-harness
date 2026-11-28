@@ -1021,6 +1021,26 @@ fn cases() -> Vec<IsolationCase> {
             "/admin/v1/orgs/{org_id}/site-conversations/{id}/events/stream",
             Empty,
         ),
+        isolation_case(
+            "post",
+            "/admin/v1/orgs/{org_id}/agents/{agent_id}/adapter-conversations",
+            Json(r#"{"channel":"email","external_ref":"Invadido"}"#),
+        ),
+        isolation_case(
+            "get",
+            "/admin/v1/orgs/{org_id}/adapter-conversations/{id}",
+            Empty,
+        ),
+        isolation_case(
+            "post",
+            "/admin/v1/orgs/{org_id}/adapter-conversations/{id}/messages",
+            Json(r#"{"text":"Invadido","origin":"customer","idempotency_key":"invasao"}"#),
+        ),
+        isolation_case(
+            "get",
+            "/admin/v1/orgs/{org_id}/adapter-conversations/{id}/messages",
+            Empty,
+        ),
     ]
 }
 
@@ -1176,6 +1196,9 @@ fn expected_control(method: &str, model: &str) -> Option<u16> {
     }
     if model.ends_with("/site-conversations/{id}/turns/{turn_id}") {
         return None;
+    }
+    if model.contains("/adapter-conversations/{id}") {
+        return Some(404);
     }
     Some(200)
 }

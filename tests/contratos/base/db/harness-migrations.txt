@@ -17,3 +17,4 @@
 18|0018_usage_tokens
 19|0019_site_conversations
 20|0020_flow_http_effects
+21|0021_adapter_conversations

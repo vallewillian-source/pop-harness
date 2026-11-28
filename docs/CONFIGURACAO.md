@@ -106,6 +106,13 @@ list defaults to empty. It accepts `consultar_base`, `buscar_produto`, `cart_add
 this list are refused. The setting is server-side and requires no additional credential.
 See [Site conversations](API.md#site-conversations) for the HTTP contract.
 
+### Adapter conversation settings
+
+`[adapter_chat]` configures the administrative routes for trusted e-mail and bot adapters. The
+`max_text_bytes` limit defaults to 16384 and accepts 1–262144 UTF-8 bytes. It applies to each message
+written by the adapter. The setting is server-side and requires no additional credential.
+See [Adapter conversations](API.md#adapter-conversations) for the HTTP contract.
+
 ### Internal HTTP tools
 
 Declare a tool under `[http_tools."<organization UUID>".<tool name>]` in the server's `poph.toml`.

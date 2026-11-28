@@ -354,6 +354,10 @@ Colunas:
 | Conversas do site | POST | `/admin/v1/orgs/{org_id}/site-conversations/{id}/turns/{turn_id}/cancel` | exceção: sem equivalente na CLI | n/a | sim | sim |
 | Conversas do site | GET | `/admin/v1/orgs/{org_id}/site-conversations/{id}/events` | exceção: sem equivalente na CLI | n/a | n/a | sim |
 | Conversas do site | GET | `/admin/v1/orgs/{org_id}/site-conversations/{id}/events/stream` | exceção: sem equivalente na CLI | n/a | n/a | sim |
+| Conversas de adaptador | POST | `/admin/v1/orgs/{org_id}/agents/{agent_id}/adapter-conversations` | exceção: sem equivalente na CLI | n/a | sim | sim |
+| Conversas de adaptador | GET | `/admin/v1/orgs/{org_id}/adapter-conversations/{id}` | exceção: sem equivalente na CLI | n/a | n/a | sim |
+| Conversas de adaptador | POST | `/admin/v1/orgs/{org_id}/adapter-conversations/{id}/messages` | exceção: sem equivalente na CLI | n/a | sim | sim |
+| Conversas de adaptador | GET | `/admin/v1/orgs/{org_id}/adapter-conversations/{id}/messages` | exceção: sem equivalente na CLI | n/a | n/a | sim |
 
 ## Fechar conversa (MX-06)
 
@@ -1494,6 +1498,37 @@ with `details.field`. An agent with an enabled tool outside the site's server-si
 returns 422 `agent_not_public`. The runtime checks the policy again when it starts a turn.
 Site turns cannot create Cases, transfer conversations, enqueue outbound channel work or
 notify a human. Attachments and lead capture are reserved for later versions.
+
+## Adapter conversations
+
+A trusted adapter, such as the e-mail channel or the POP Bot, calls these routes under
+`/admin/v1/orgs/{org_id}` with an organization-scoped service credential. The adapter owns delivery and
+brings its own idempotency keys; the Harness owns the conversation, the Case and the history. These routes
+record messages in either direction and never start a turn or enqueue outbound channel work. The adapter
+turn is a later capability.
+
+| Method and path | Contract |
+| --- | --- |
+| `POST /agents/{agent_id}/adapter-conversations` | Takes `{"channel":"…","external_ref":"…","create_case":true}`. `create_case` defaults to true and opens a Case together with the conversation; false leaves the conversation without a Case, now and at close. Returns the conversation object. A new active `(org, agent, channel, external_ref)` answers 201; the existing one answers 200. A conversation in `open` or `transferred` is resumed; after `closed`, the next call creates another conversation and, with `create_case`, another Case. |
+| `GET /adapter-conversations/{id}` | Returns `{id, org_id, agent_id, channel, external_ref, create_case, status, version, created_at, updated_at, last_message_at, ficha_id}`. `ficha_id` is null when the conversation has no Case. |
+| `POST /adapter-conversations/{id}/messages` | Takes `{"text":"…","origin":"…","idempotency_key":"…","author_name":"…","external_message_id":"…"}`. `origin` is `customer` (inbound user message, stored with origin `agent`), `human` (outbound assistant message, origin `human`) or `agent` (outbound assistant message, origin `agent`). Text has 1 to `adapter_chat.max_text_bytes` UTF-8 bytes. `idempotency_key` has 1–128 characters; `author_name` and `external_message_id` accept up to 128 characters and are optional. Returns the message with 201. The same key and payload returns 200 with the same message; the same key with another payload returns 409 `idempotency_conflict`; a closed conversation returns 409 `conversa_encerrada`. |
+| `GET /adapter-conversations/{id}/messages?before=<id>&limit=<n>` | Returns `{"messages":[...]}` in descending message ID order. Each row has `id`, `role` (`user` or `assistant`), `origin`, `author_name`, `text`, `external_message_id` and `created_at`. The cursor is exclusive and omitted on the first page. The limit defaults to 50 and accepts 1–100. |
+
+The channel matches `[a-z0-9_-]{1,32}`. The channels `test`, `site`, `whatsapp`, `matrix` and `api` are
+reserved and answered with 422 `validation_error` with `details.field` = `channel`, because each one has its
+own rules. An agent outside the organization answers 404 on creation.
+
+Adapter conversations appear in the general routes: `/conversations` lists them with the informed channel,
+the detail and the close, transfer and reopen routes accept them, and conversation analytics counts them
+under that channel. They carry no integration and no participant policy: the adapter is responsible for the
+customer and for the agent in the organization. The Matrix mirror skips only `site`, so an `email`
+conversation is mirrored like any other channel; the conversation JSON exposes `matrix_room_id` when the
+Matrix module is linked and the room is ready.
+
+A message and its idempotency record are written in one transaction. These routes never write `outbox`
+rows. The organization bearer token follows the usual 401 and 403 rules. Lookup within the requested
+organization returns 404 for missing conversations, conversations of another channel and conversations of
+another organization.
 
 ## Server internals: boot order, Console delivery and tokens (EN-13c)
 

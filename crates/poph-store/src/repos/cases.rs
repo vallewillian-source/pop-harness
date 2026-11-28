@@ -418,6 +418,17 @@ pub(crate) fn close_case_for_conversation(
             id
         }
         None => {
+            let without_case: bool = conn
+                .query_row(
+                    "SELECT EXISTS (SELECT 1 FROM adapter_conversations
+                                     WHERE org_id = ?1 AND id = ?2 AND create_case = 0)",
+                    params![org, conversation],
+                    |row| row.get(0),
+                )
+                .map_err(StoreError::from)?;
+            if without_case {
+                return Ok(false);
+            }
             let case = RecordId::generate().to_string();
             let inserted = conn
                 .execute(

@@ -39,6 +39,7 @@ pub struct HarnessConfig {
     pub plugins: PluginsConfig,
     pub admin: AdminConfig,
     pub site_chat: SiteChatConfig,
+    pub adapter_chat: AdapterChatConfig,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub http_tools: HttpToolsConfig,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -119,6 +120,20 @@ impl SiteChatConfig {
                 | "cart_clear"
                 | REGISTER_LEAD
         ) && self.allowed_tools.contains(name)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct AdapterChatConfig {
+    pub max_text_bytes: usize,
+}
+
+impl Default for AdapterChatConfig {
+    fn default() -> Self {
+        Self {
+            max_text_bytes: 16 * 1024,
+        }
     }
 }
 
@@ -619,6 +634,12 @@ impl HarnessConfig {
                 field: "site_chat.allowed_tools",
                 reason: "a lista contém uma ferramenta indisponível para conversas do site"
                     .to_owned(),
+            });
+        }
+        if !(1..=256 * 1024).contains(&self.adapter_chat.max_text_bytes) {
+            return Err(DomainError::Validation {
+                field: "adapter_chat.max_text_bytes",
+                reason: "informe de 1 a 262144 bytes".to_owned(),
             });
         }
         validate_http_tools(&self.http_tools)?;

@@ -76,12 +76,16 @@
       {
         "nome": "0020_flow_http_effects",
         "versao": 20
+      },
+      {
+        "nome": "0021_adapter_conversations",
+        "versao": 21
       }
     ],
     "banco": "harness.db",
     "caminho": "data/harness.db",
     "versao_antes": 0,
-    "versao_depois": 20
+    "versao_depois": 21
   },
   "ja_estava_em_dia": false,
   "rag": {

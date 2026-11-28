@@ -78,3 +78,6 @@ tokens_globais = []
 [site_chat]
 max_text_bytes = 16384
 allowed_tools = []
+
+[adapter_chat]
+max_text_bytes = 16384
