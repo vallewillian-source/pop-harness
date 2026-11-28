@@ -705,3 +705,68 @@ fn minimal_ir_with_instruction(instruction: &str) -> Ir {
         defs: Vec::new(),
     }
 }
+
+const SCHEDULE: &str = r#"fluxo(
+    id = "agenda",
+    nome = "Agenda",
+    inicio = "entrada",
+    gatilho = gatilho(
+        quando = "O cliente quer agendar.",
+        nao_quando = "O cliente nao quer agendar.",
+        exemplos = ["quero agendar"],
+    ),
+)
+
+etapa(
+    id = "entrada",
+    nome = "Entrada",
+    campos = [
+        campo("data", "Data", obrigatorio = True),
+        campo("fim", "Fim"),
+        campo("endereco", "Endereço"),
+        campo("executor", "Executor"),
+    ],
+    ao_entrar = [sincronizar_agenda("update", inicio = "{entrada.data}")],
+    acoes = [acao(
+        "seguir",
+        "Seguir",
+        exige = ["data", "fim", "endereco", "executor"],
+        efeitos = [sincronizar_agenda(
+            "create",
+            inicio = "{entrada.data}",
+            fim = "{entrada.fim}",
+            titulo = "Visita {ficha.id}",
+            local = "{entrada.endereco}",
+            executor = "{entrada.executor}",
+        )],
+        vai_para = fim("pronto"),
+    )],
+)
+
+etapa(
+    id = "fim_visita",
+    nome = "Fim da visita",
+    acoes = [acao("fechar", "Fechar", efeitos = [sincronizar_agenda("remove")], vai_para = fim("pronto"))],
+)
+"#;
+
+#[test]
+fn calendar_effect_round_trips_through_the_canonical_form() {
+    let first = compiles(SCHEDULE);
+    let printed = print(&first);
+    let second = compiles(&printed);
+    assert_eq!(first, second, "a ida e volta mudou a IR:\n{printed}");
+    assert_eq!(
+        format(&printed).expect("o texto canônico compila"),
+        printed,
+        "o texto impresso não é ponto fixo"
+    );
+    assert!(
+        printed.contains("sincronizar_agenda(\"remove\")"),
+        "a remoção tem de sair com a forma curta:\n{printed}"
+    );
+    assert!(
+        !printed.contains("operacao ="),
+        "a operação sai posicional, sem o nome do argumento:\n{printed}"
+    );
+}

@@ -820,6 +820,7 @@ name	servidor	published chave toml: servidor
 name	sha256	published coluna: sha256
 name	show	published comando cli: show
 name	simultaneos	published chave toml: simultaneos
+name	sincronizar_agenda	flow language word, frozen by P6
 name	site	published rota: site
 name	site_chat	published chave toml: site_chat
 name	site_conversation_cursors	published tabela: site_conversation_cursors

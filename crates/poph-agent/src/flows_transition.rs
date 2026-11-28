@@ -43,6 +43,21 @@ pub fn effect_of_transition(produced: &ProducedEffect) -> TransitionEffect {
         poph_flows::ir::Effect::Encaminhar { departamento } => {
             serde_json::json!({ "departamento": departamento })
         }
+        poph_flows::ir::Effect::SyncCalendar {
+            operation,
+            start,
+            end,
+            title,
+            location,
+            executor,
+        } => serde_json::json!({
+            "operacao": operation,
+            "inicio": start,
+            "fim": end,
+            "titulo": title,
+            "local": location,
+            "executor": executor,
+        }),
     };
     TransitionEffect {
         key: produced.chave.clone(),

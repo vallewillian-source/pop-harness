@@ -99,11 +99,7 @@ pub struct ProducedEffect {
 
 impl ProducedEffect {
     pub fn tipo(&self) -> &'static str {
-        match self.effect {
-            Effect::MessageToCustomer { .. } => "mensagem_ao_cliente",
-            Effect::NotifyWhatsApp { .. } => "notificar_whatsapp",
-            Effect::Encaminhar { .. } => "encaminhar",
-        }
+        self.effect.tipo()
     }
 }
 
@@ -612,6 +608,31 @@ fn declared_effects(
                 Effect::Encaminhar { departamento } => Effect::Encaminhar {
                     departamento: departamento.clone(),
                 },
+                Effect::SyncCalendar {
+                    operation,
+                    start,
+                    end,
+                    title,
+                    location,
+                    executor,
+                } => Effect::SyncCalendar {
+                    operation: operation.clone(),
+                    start: start
+                        .as_deref()
+                        .map(|texto| interpolate(texto, dados, context)),
+                    end: end
+                        .as_deref()
+                        .map(|texto| interpolate(texto, dados, context)),
+                    title: title
+                        .as_deref()
+                        .map(|texto| interpolate(texto, dados, context)),
+                    location: location
+                        .as_deref()
+                        .map(|texto| interpolate(texto, dados, context)),
+                    executor: executor
+                        .as_deref()
+                        .map(|texto| interpolate(texto, dados, context)),
+                },
             };
             ProducedEffect {
                 chave: format!("{no}/{index}"),
@@ -975,6 +996,147 @@ fn digits(texto: &str) -> bool {
     !texto.is_empty() && texto.bytes().all(|byte| byte.is_ascii_digit())
 }
 
+pub(crate) fn calendar_instant(text: &str) -> Option<i64> {
+    if !text.is_ascii() {
+        return None;
+    }
+    let (date, rest) = text.split_once('T')?;
+    let (year, month, day) = calendar_date(date)?;
+    let (seconds, offset) = calendar_time(rest)?;
+    let days = days_from_civil(year, month, day);
+    Some(days * 86_400 + seconds - offset)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CalendarIssue {
+    MissingStart,
+    MalformedStart,
+    MalformedEnd,
+    EndNotAfterStart,
+}
+
+pub(crate) fn calendar_window_issue(
+    operation: &str,
+    start: Option<&str>,
+    end: Option<&str>,
+) -> Option<CalendarIssue> {
+    if !matches!(operation, "create" | "update") {
+        return None;
+    }
+    let start = match start.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(start) => start,
+        None => return Some(CalendarIssue::MissingStart),
+    };
+    let start_instant = if start.contains('{') {
+        None
+    } else {
+        match calendar_instant(start) {
+            Some(instant) => Some(instant),
+            None => return Some(CalendarIssue::MalformedStart),
+        }
+    };
+    let end = end.map(str::trim).filter(|value| !value.is_empty())?;
+    let end_instant = if end.contains('{') {
+        None
+    } else {
+        match calendar_instant(end) {
+            Some(instant) => Some(instant),
+            None => return Some(CalendarIssue::MalformedEnd),
+        }
+    };
+    if let (Some(start), Some(end)) = (start_instant, end_instant)
+        && end <= start
+    {
+        return Some(CalendarIssue::EndNotAfterStart);
+    }
+    None
+}
+
+fn calendar_date(date: &str) -> Option<(i64, i64, i64)> {
+    let (year, month, day) = {
+        let mut parts = date.split('-');
+        let year = parts.next()?;
+        let month = parts.next()?;
+        let day = parts.next()?;
+        if parts.next().is_some() {
+            return None;
+        }
+        (year, month, day)
+    };
+    let number = |text: &str, size: usize| -> Option<i64> {
+        if text.len() != size || !digits(text) {
+            return None;
+        }
+        text.parse().ok()
+    };
+    let year = number(year, 4)?;
+    let month = number(month, 2)?;
+    let day = number(day, 2)?;
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    Some((year, month, day))
+}
+
+fn calendar_time(rest: &str) -> Option<(i64, i64)> {
+    let (clock, offset) = match rest.strip_suffix('Z') {
+        Some(clock) => (clock, 0),
+        None => {
+            let position = rest.rfind(['+', '-'])?;
+            let (clock, zone) = rest.split_at(position);
+            let sign = if zone.starts_with('-') { -1 } else { 1 };
+            let (hour, minute) = zone.get(1..)?.split_once(':')?;
+            if hour.len() != 2 || minute.len() != 2 || !digits(hour) || !digits(minute) {
+                return None;
+            }
+            let hour: i64 = hour.parse().ok()?;
+            let minute: i64 = minute.parse().ok()?;
+            if hour > 23 || minute > 59 {
+                return None;
+            }
+            (clock, sign * (hour * 3_600 + minute * 60))
+        }
+    };
+    let (hms, fraction) = match clock.split_once('.') {
+        Some((hms, fraction)) => (hms, Some(fraction)),
+        None => (clock, None),
+    };
+    if let Some(fraction) = fraction
+        && !digits(fraction)
+    {
+        return None;
+    }
+    let parts: Vec<&str> = hms.split(':').collect();
+    let (hour, minute, second) = match parts.as_slice() {
+        [hour, minute] => (*hour, *minute, "00"),
+        [hour, minute, second] => (*hour, *minute, *second),
+        _ => return None,
+    };
+    let two = |text: &str| -> Option<i64> {
+        if text.len() != 2 || !digits(text) {
+            return None;
+        }
+        text.parse().ok()
+    };
+    let hour = two(hour)?;
+    let minute = two(minute)?;
+    let second = two(second)?;
+    if hour > 23 || minute > 59 || second > 59 {
+        return None;
+    }
+    Some((hour * 3_600 + minute * 60 + second, offset))
+}
+
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let year_of_era = year - era * 400;
+    let month_prime = (month + 9) % 12;
+    let day_of_year = (153 * month_prime + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era * 146_097 + day_of_era - 719_468
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1012,6 +1174,42 @@ mod tests {
         ] {
             assert!(!valid_iso_date(texto), "aceitou `{texto}`");
         }
+    }
+
+    #[test]
+    fn calendar_instant_requires_full_datetime_with_offset() {
+        for texto in [
+            "2026-11-22T14:42:00-03:00",
+            "2026-11-22T14:42:00Z",
+            "2026-11-22T14:42:00.500+00:00",
+            "2026-11-22T14:42-03:00",
+            "2027-01-10T18:00:00+05:30",
+        ] {
+            assert!(
+                calendar_instant(texto).is_some(),
+                "recusou o instante `{texto}`"
+            );
+        }
+        for texto in [
+            "2026-11-22",
+            "2026-11-22T14:42:00",
+            "2026-11-22T24:00:00-03:00",
+            "2026-13-01T10:00:00-03:00",
+            "2026-11-22T14:42:00-3:00",
+            "22/11/2026 14:42",
+            "",
+        ] {
+            assert!(calendar_instant(texto).is_none(), "aceitou `{texto}`");
+        }
+    }
+
+    #[test]
+    fn calendar_instant_compares_offsets() {
+        let local = calendar_instant("2026-11-22T14:42:00-03:00").expect("instante local");
+        let utc = calendar_instant("2026-11-22T17:42:00Z").expect("instante UTC");
+        assert_eq!(local, utc, "o mesmo instante em fusos diferentes");
+        let earlier = calendar_instant("2026-11-22T14:41:59-03:00").expect("instante anterior");
+        assert!(earlier < local);
     }
 
     #[test]

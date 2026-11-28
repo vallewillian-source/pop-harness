@@ -1074,3 +1074,119 @@ fn same_input_with_decision_and_effect_gives_same_result() {
     assert_eq!(first_result, second_result);
     assert!(first_result.ends_service == second_result.ends_service);
 }
+
+fn flow_with_calendar_effects() -> Ir {
+    fluxo(
+        vec![
+            etapa(
+                "coleta",
+                vec![
+                    campo("data", FieldKind::Text, true),
+                    campo("fim", FieldKind::Text, false),
+                    campo("endereco", FieldKind::Text, false),
+                    campo("executor", FieldKind::Text, false),
+                ],
+                vec![action_for(
+                    "confirmar",
+                    None,
+                    goes_for("fim_visita"),
+                    vec![Effect::SyncCalendar {
+                        operation: "create".to_owned(),
+                        start: Some("{coleta.data}".to_owned()),
+                        end: Some("{coleta.fim}".to_owned()),
+                        title: Some("Visita {ficha.id}".to_owned()),
+                        location: Some("{coleta.endereco}".to_owned()),
+                        executor: Some("{coleta.executor}".to_owned()),
+                    }],
+                )],
+                Vec::new(),
+            ),
+            etapa(
+                "fim_visita",
+                Vec::new(),
+                Vec::new(),
+                vec![Effect::SyncCalendar {
+                    operation: "update".to_owned(),
+                    start: Some("{coleta.data}".to_owned()),
+                    end: None,
+                    title: None,
+                    location: None,
+                    executor: None,
+                }],
+            ),
+        ],
+        Vec::new(),
+    )
+}
+
+#[test]
+fn calendar_effect_is_interpolated_and_keyed_on_action_and_entry() {
+    let ir = flow_with_calendar_effects();
+    let estado = start(&ir).expect("início");
+    let evaluator = RuleEvaluator::without_functions();
+    let context = Context::new(&evaluator)
+        .with_case("ficha-42")
+        .with_client("5521900000000");
+
+    let resultado = execute_action(
+        &ir,
+        &estado,
+        "confirmar",
+        &campos(json!({
+            "data": "2027-01-10T18:00:00-03:00",
+            "fim": "2027-01-10T19:00:00-03:00",
+            "endereco": "Rua das Flores, 10",
+            "executor": "0199a11d-2000-7000-8000-000000000001",
+        })),
+        ActionActor::Agent,
+        None,
+        &context,
+    )
+    .expect("a ação é válida");
+
+    assert_eq!(
+        resultado
+            .effects
+            .iter()
+            .map(|effect| (effect.chave.as_str(), effect.tipo()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("acao:coleta.confirmar/0", "sincronizar_agenda"),
+            ("etapa:fim_visita/0", "sincronizar_agenda"),
+        ]
+    );
+    assert_eq!(
+        resultado.effects[0].effect,
+        Effect::SyncCalendar {
+            operation: "create".to_owned(),
+            start: Some("2027-01-10T18:00:00-03:00".to_owned()),
+            end: Some("2027-01-10T19:00:00-03:00".to_owned()),
+            title: Some("Visita ficha-42".to_owned()),
+            location: Some("Rua das Flores, 10".to_owned()),
+            executor: Some("0199a11d-2000-7000-8000-000000000001".to_owned()),
+        }
+    );
+    assert_eq!(
+        resultado.effects[1].effect,
+        Effect::SyncCalendar {
+            operation: "update".to_owned(),
+            start: Some("2027-01-10T18:00:00-03:00".to_owned()),
+            end: None,
+            title: None,
+            location: None,
+            executor: None,
+        }
+    );
+    let json = serde_json::to_value(&resultado.effects[1].effect).expect("JSON do efeito");
+    assert_eq!(json["tipo"], json!("sincronizar_agenda"));
+    assert_eq!(json["fim"], Json::Null, "opcional ausente sai como null");
+    assert_eq!(
+        resultado
+            .events
+            .iter()
+            .filter(|evento| evento.tipo == RecordEventKind::EffectCreated)
+            .count(),
+        2,
+        "cada efeito entra na fila com o seu evento"
+    );
+}

@@ -13,7 +13,7 @@ Commands:
   metric, table, column, index, trigger, route, `operationId`, JSON field, CLI command and flag,
   `poph.toml` key, plugin protocol term and backup format key.
 - `--gerar`: rewrites the table region of `docs/GLOSSARY.md`.
-- `--validar`: checks the table on disk against the measurement, the published inventory and the 41
+- `--validar`: checks the table on disk against the measurement, the published inventory and the 42
   flow language names. It exits non zero on the first problem.
 
 The string and comment reader is the one of `scripts/strip-comments.py` (imported, not copied): it
@@ -889,7 +889,7 @@ def published_inventory():
 def frozen_terms(inventory, mapping):
     """Portuguese term to the scopes where it is a published name.
 
-    The 41 flow language names are frozen whole (the word `mensagem_ao_cliente` is not split: it is
+    The 42 flow language names are frozen whole (the word `mensagem_ao_cliente` is not split: it is
     the one stored in the database). The other published names come in through the terms that
     compose them, and only when the term is Portuguese: a published name in English needs no row in
     the glossary.
@@ -1034,8 +1034,8 @@ def validate(measurement, mapping, mapping_errors, inventory, frozen):
             failures.append(f"{term}: it has both roles and needs both rows")
 
     language_names = flow_language_names()
-    if len(language_names) != 41:
-        failures.append(f"linguagem.rs: expected 41 names, found {len(language_names)}")
+    if len(language_names) != 42:
+        failures.append(f"linguagem.rs: expected 42 names, found {len(language_names)}")
     for name in language_names:
         if (name, "congelado") not in seen:
             failures.append(f"{name}: flow language word without a 'congelado' row")

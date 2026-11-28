@@ -46,6 +46,7 @@ pub enum Code {
     VariableFromOwnStep,
     LongText,
     UnknownDepartment,
+    InvalidEffect,
 }
 
 impl Code {
@@ -91,6 +92,7 @@ impl Code {
         Self::VariableFromOwnStep,
         Self::LongText,
         Self::UnknownDepartment,
+        Self::InvalidEffect,
     ];
 
     pub fn from_compiler() -> impl Iterator<Item = Self> {
@@ -143,6 +145,7 @@ impl Code {
             Self::VariableFromOwnStep => "FLX63",
             Self::LongText => "FLX64",
             Self::UnknownDepartment => "FLX65",
+            Self::InvalidEffect => "FLX29",
         }
     }
 
@@ -314,9 +317,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn closed_list_has_the_41_document_codes() {
-        assert_eq!(Code::ALL.len(), 41);
-        assert_eq!(Code::from_compiler().count(), 40);
+    fn closed_list_has_the_42_document_codes() {
+        assert_eq!(Code::ALL.len(), 42);
+        assert_eq!(Code::from_compiler().count(), 41);
         assert!(!Code::from_compiler().any(|c| c == Code::UnknownDepartment));
     }
 

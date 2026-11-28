@@ -945,6 +945,19 @@ fn describe_effect(effect: &Effect) -> String {
         Effect::Encaminhar { departamento } => {
             format!("encaminhar o atendimento ao departamento `{departamento}`")
         }
+        Effect::SyncCalendar {
+            operation,
+            start,
+            end,
+            ..
+        } => match operation.as_str() {
+            "remove" => "remover o evento da agenda".to_owned(),
+            other => format!(
+                "sincronizar a agenda ({other}) de `{}` a `{}`",
+                start.as_deref().unwrap_or(""),
+                end.as_deref().unwrap_or("duração do fluxo")
+            ),
+        },
     }
 }
 

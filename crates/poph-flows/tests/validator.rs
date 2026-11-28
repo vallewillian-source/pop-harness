@@ -697,3 +697,126 @@ fn all_codes_are_documented() {
         "código fora do §10 do FLUXOS_LINGUAGEM.md: {missing:?}"
     );
 }
+
+fn schedule_script() -> &'static str {
+    r#"fluxo(
+    id = "agenda",
+    nome = "Agenda",
+    inicio = "entrada",
+    gatilho = gatilho(
+        quando = "O cliente quer agendar.",
+        nao_quando = "O cliente nao quer agendar.",
+        exemplos = ["quero agendar"],
+    ),
+)
+
+etapa(
+    id = "entrada",
+    nome = "Entrada",
+    campos = [
+        campo("data", "Data", obrigatorio = True),
+        campo("fim", "Fim"),
+        campo("endereco", "Endereço"),
+        campo("executor", "Executor"),
+    ],
+    acoes = [acao(
+        "seguir",
+        "Seguir",
+        exige = ["data", "fim", "endereco", "executor"],
+        efeitos = [sincronizar_agenda(
+            "create",
+            inicio = "{entrada.data}",
+            fim = "{entrada.fim}",
+            titulo = "Visita {ficha.id}",
+            local = "{entrada.endereco}",
+            executor = "{entrada.executor}",
+        )],
+        vai_para = "remarcar",
+    )],
+)
+
+etapa(
+    id = "remarcar",
+    nome = "Remarcar",
+    ao_entrar = [sincronizar_agenda("update", inicio = "{entrada.data}")],
+    acoes = [acao("fechar", "Fechar", efeitos = [sincronizar_agenda("remove")], vai_para = fim("pronto"))],
+)
+"#
+}
+
+fn schedule_value() -> Value {
+    let compiled = compile(schedule_script(), &Limites::default());
+    assert!(compiled.ir.is_some(), "{:?}", compiled.diagnostics);
+    let ir = compiled.ir.expect("IR da agenda");
+    serde_json::to_value(&ir).expect("IR em JSON")
+}
+
+#[test]
+fn calendar_effect_valid_ir_has_no_diagnostic() {
+    let diagnostic = validar(&ir(&schedule_value()));
+    assert!(diagnostic.is_empty(), "{diagnostic:?}");
+}
+
+#[test]
+fn calendar_effect_shape_is_validated_on_external_ir() {
+    type Mutation = fn(&mut Value);
+    let mutations: Vec<(&str, Mutation, Code)> = vec![
+        (
+            "operação desconhecida",
+            |v| v["etapas"][0]["acoes"][0]["efeitos"][0]["operacao"] = json!("delete"),
+            Code::InvalidEffect,
+        ),
+        (
+            "create sem inicio",
+            |v| v["etapas"][0]["acoes"][0]["efeitos"][0]["inicio"] = Value::Null,
+            Code::InvalidEffect,
+        ),
+        (
+            "inicio malformado",
+            |v| v["etapas"][0]["acoes"][0]["efeitos"][0]["inicio"] = json!("22/11/2026 14:42"),
+            Code::InvalidEffect,
+        ),
+        (
+            "inicio sem fuso",
+            |v| v["etapas"][0]["acoes"][0]["efeitos"][0]["inicio"] = json!("2027-01-10T18:00:00"),
+            Code::InvalidEffect,
+        ),
+        (
+            "fim antes do inicio",
+            |v| {
+                v["etapas"][0]["acoes"][0]["efeitos"][0]["inicio"] =
+                    json!("2027-01-10T18:00:00-03:00");
+                v["etapas"][0]["acoes"][0]["efeitos"][0]["fim"] =
+                    json!("2027-01-10T17:00:00-03:00");
+            },
+            Code::InvalidEffect,
+        ),
+        (
+            "remove com argumento",
+            |v| {
+                v["etapas"][0]["acoes"][0]["efeitos"][0]["operacao"] = json!("remove");
+                v["etapas"][0]["acoes"][0]["efeitos"][0]["titulo"] = json!("Visita");
+            },
+            Code::InvalidEffect,
+        ),
+        (
+            "variável inexistente no inicio",
+            |v| v["etapas"][0]["acoes"][0]["efeitos"][0]["inicio"] = json!("{entrada.nao_existe}"),
+            Code::VariableWithoutField,
+        ),
+        (
+            "variável com formato inválido",
+            |v| v["etapas"][0]["acoes"][0]["efeitos"][0]["inicio"] = json!("{cliente.nome}"),
+            Code::InvalidVariable,
+        ),
+    ];
+    for (nome, mutation, code) in mutations {
+        let mut value = schedule_value();
+        mutation(&mut value);
+        let diagnostic = validar(&ir(&value));
+        assert!(
+            diagnostic.iter().any(|d| d.code == code),
+            "{nome}: esperava {code}, veio {diagnostic:?}"
+        );
+    }
+}

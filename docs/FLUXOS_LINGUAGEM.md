@@ -83,7 +83,7 @@ Todo nome que um script pode usar, e nada além disso. O compilador registra **e
 |---|---|---|
 | Declarações | `fluxo`, `etapa`, `decisao` | estrutura do fluxo |
 | Valores de declaração | `gatilho`, `campo`, `acao`, `fim`, `funcao` | partes de uma declaração |
-| Efeitos | `mensagem_ao_cliente`, `notificar_whatsapp`, `encaminhar` | o que acontece fora do fluxo |
+| Efeitos | `mensagem_ao_cliente`, `notificar_whatsapp`, `encaminhar`, `sincronizar_agenda` | o que acontece fora do fluxo |
 | Combinadores | `igual`, `diferente`, `maior`, `menor`, `contem`, `vazio`, `e`, `ou`, `nao` | regra declarativa |
 | Constantes | `True`, `False`, `None` | valores |
 | Funções puras (só dentro de `def`) | `abs`, `all`, `any`, `bool`, `dict`, `enumerate`, `float`, `int`, `len`, `list`, `max`, `min`, `range`, `reversed`, `sorted`, `str`, `tuple`, `zip` | cálculo de regra |
@@ -155,7 +155,7 @@ Convenções desta seção: **posicional** = argumento sem nome, na ordem mostra
 
 **O valor de um argumento é sempre literal** — texto entre aspas, número, `True`/`False`/`None`, lista de literais, ou uma chamada de declaração (`campo(...)`, `acao(...)`, `fim(...)`, `gatilho(...)`, um combinador). Expressão calculada (`"a" + "b"`, `"x" * 3`, f-string, indexação) dá `FLX06`: calcule o valor antes de escrever o fluxo. Cálculo existe só dentro de `def`.
 
-Cada declaração aceita **uma** forma de chamada, a dos exemplos: `campo`, `acao`, `fim`, `mensagem_ao_cliente`, `encaminhar` e os combinadores recebem os primeiros argumentos por posição; `fluxo`, `etapa`, `decisao`, `gatilho` e `notificar_whatsapp` são todos nomeados. A outra forma é `FLX12`.
+Cada declaração aceita **uma** forma de chamada, a dos exemplos: `campo`, `acao`, `fim`, `mensagem_ao_cliente`, `encaminhar` e os combinadores recebem os primeiros argumentos por posição; `fluxo`, `etapa`, `decisao`, `gatilho` e `notificar_whatsapp` são todos nomeados; `sincronizar_agenda` recebe a operação por posição e o resto por nome. A outra forma é `FLX12`.
 
 ### 4.1 `fluxo(...)` — o cabeçalho do fluxo
 
@@ -486,6 +486,7 @@ Efeito é o que acontece **fora** do fluxo: falar com o cliente, avisar a equipe
 | `mensagem_ao_cliente` | `mensagem_ao_cliente("texto")` | manda um texto fixo ao cliente, já interpolado | fila de saída da conversa (`outbox`), depois da resposta do turno; fora do turno, com `turn_id` novo |
 | `notificar_whatsapp` | `notificar_whatsapp(para = "5521999990000", mensagem = "texto")` | manda mensagem para **outro número** (equipe) | fila própria do fluxo (`fluxo_efeitos`), porque a `outbox` é por conversa |
 | `encaminhar` | `encaminhar("Logística")` | transfere a conversa para o departamento (nome na org) | mesma operação de transferência do turno; a Ficha **continua aberta** e o agente deixa de responder |
+| `sincronizar_agenda` | `sincronizar_agenda("create", inicio = "{agendamento.data}", fim = "{agendamento.fim}")` | cria, atualiza ou remove o evento da Ficha no calendário | fila própria do fluxo (`fluxo_efeitos`), entregue por HTTP ao serviço de calendário (A-04); o motor só interpola e enfileira |
 
 **Configurar → o que acontece no atendimento**
 
@@ -497,6 +498,9 @@ Efeito é o que acontece **fora** do fluxo: falar com o cliente, avisar a equipe
 | `encaminhar` | a conversa vai para o departamento; a pessoa que assume vê a Ficha aberta; o agente para de responder naquela conversa (D12) |
 | `encaminhar("Logistica")` com o departamento gravado como `Logística` | aviso `FLX65` na publicação (nome não casa) e efeito `falhou` no atendimento; o casamento ignora caixa e espaços nas pontas, mas **não** ignora acento |
 | `encaminhar` com nome que existe em dois departamentos da org | aviso `FLX65` (o nome não diz para onde ir) e efeito `falhou` no atendimento |
+| `sincronizar_agenda("create"...)` em `ao_entrar` | o evento nasce quando a etapa é entrada; use `ao_entrar` para criar na entrada e `efeitos` da ação para criar/atualizar/remover na saída |
+| `sincronizar_agenda` com `inicio` fixo fora do ISO 8601 com fuso | erro `FLX29` na publicação (valor interpolado só é conferido na produção e no receptor) |
+| `sincronizar_agenda("remove")` | remove o evento da Ficha; não aceita nenhum outro argumento (`FLX12`) |
 | efeito sem variável | aviso `FLX58` (a equipe recebe sempre o mesmo texto) |
 | efeito com variável inexistente | aviso `FLX59` na publicação; no atendimento, o trecho sai vazio |
 | falha de entrega | o efeito fica `falhou` com tentativas e espera crescente; **a transição não é desfeita** e o caso vira evento na Ficha |
@@ -510,7 +514,25 @@ notificar_whatsapp(para = "5521999990000", mensagem = "Pedido entregue")  # vál
 encaminhar()                                                   # FLX11: falta o departamento
 enviar_email("x")                                              # FLX05: efeito desconhecido
 mensagem_ao_cliente("Olá {cliente.nome}")                      # FLX25: `cliente.nome` não existe; use {cliente.peer}
+sincronizar_agenda("delete", inicio = "2027-01-10T18:00:00-03:00")  # FLX29: operação fora de create/update/remove
+sincronizar_agenda("create")                                  # FLX11: falta `inicio`
+sincronizar_agenda("create", inicio = "10/01/2027 18:00")      # FLX29: não é ISO 8601 com fuso
+sincronizar_agenda("create", inicio = "2027-01-10T18:00:00-03:00", fim = "2027-01-10T17:00:00-03:00")  # FLX29: fim antes do inicio
+sincronizar_agenda("remove", titulo = "Visita")                # FLX12: remove não aceita outro argumento
 ```
+
+**`sincronizar_agenda(operacao, ...)`**
+
+| Argumento | Regra |
+|---|---|
+| operação, posicional | `create`, `update` ou `remove`; qualquer outra coisa é erro (`FLX29`) |
+| `inicio` | obrigatório em `create` e `update`; interpolado na produção e tem de resolver para ISO 8601 **com fuso** (`AAAA-MM-DDTHH:MM:SS-03:00`). Valor fixo fora do formato é erro `FLX29`; valor interpolado é conferido pelo receptor |
+| `fim` | opcional; mesmo formato e depois de `inicio` (valor fixo comparado na publicação, erro `FLX29`). Ausente, o receptor usa a duração do template e, sem ela, 60 minutos |
+| `titulo`, `local` | texto interpolado opcional; o receptor limita a 200 e 500 caracteres |
+| `executor` | id público do executor, opcional e interpolado |
+| `remove` | não aceita nenhum outro argumento (`FLX12`) |
+
+A IR guarda o efeito aditivamente, no schema versão 1, com os seis campos sempre presentes: `{"tipo":"sincronizar_agenda","operacao":"create","inicio":"{agendamento.data}","fim":null,"titulo":"Visita {ficha.id}","local":null,"executor":null}`. A chave de deduplicação continua sendo `<no>/<índice>`: uma declaração produz um efeito por execução.
 
 ## 5. Tipos de campo e os dados de uma execução
 
@@ -632,7 +654,7 @@ Só existem três formas, e só nos textos que são enviados:
 | `{ficha.id}` | o id da Ficha do atendimento | `"(ficha {ficha.id})"` para a equipe localizar |
 | `{cliente.peer}` | o identificador do cliente no canal (no WhatsApp, o número) | `"Cliente {cliente.peer} pediu retorno."` |
 
-Onde interpolam: `mensagem_ao_cliente(texto)` e `notificar_whatsapp(mensagem = ...)`. **Em qualquer outro texto** (`nome`, `rotulo`, `instrucao`, `quando`, `nao_quando`, `descricao`, `resultado`, `ajuda`), `{...}` é **erro** (`FLX26`): esses textos são lidos como estão pelo agente, pelo Jev e pelas telas.
+Onde interpolam: `mensagem_ao_cliente(texto)`, `notificar_whatsapp(mensagem = ...)` e os argumentos `inicio`, `fim`, `titulo`, `local` e `executor` de `sincronizar_agenda`. **Em qualquer outro texto** (`nome`, `rotulo`, `instrucao`, `quando`, `nao_quando`, `descricao`, `resultado`, `ajuda`), `{...}` é **erro** (`FLX26`): esses textos são lidos como estão pelo agente, pelo Jev e pelas telas.
 
 Comportamento:
 
@@ -724,6 +746,7 @@ A comparação de `carregar` (FX-10) é entre o **JSON canônico** (compacto, se
 {"tipo": "mensagem_ao_cliente", "texto": "Vou confirmar a entrega do pedido {identificacao.pedido} com você."}
 {"tipo": "notificar_whatsapp",  "para": "5521999990000", "mensagem": "Pedido {identificacao.pedido} entregue (ficha {ficha.id})."}
 {"tipo": "encaminhar",          "departamento": "Logística"}
+{"tipo": "sincronizar_agenda", "operacao": "create", "inicio": "{agendamento.data}", "fim": null, "titulo": "Visita {ficha.id}", "local": null, "executor": null}
 ```
 
 `encaminhar` guarda o **nome** do departamento; o id do departamento no momento da publicação vai para `fluxo_revisoes.resolucoes_json` (o mesmo mecanismo previsto no PRD §7.1). Departamento que não existe na org é aviso na publicação e efeito `falhou` no atendimento, com evento.
@@ -899,8 +922,8 @@ A lista é conferida em **duas direções**, e o ponto do diagnóstico muda com 
 
 | Direção | Entrada | Onde o diagnóstico aponta | Códigos |
 |---|---|---|---|
-| **Compilador** (FX-10) | o texto do script | **linha e coluna** do trecho (`linha`/`coluna`, 1-based) | `FLX01`–`FLX28`, `FLX51`–`FLX64` |
-| **Validador** (FX-11) | uma **IR** já compilada | **caminho do nó** na estrutura (`etapas[2] (id "entrega") > acoes[1] > vai_para`), sem linha e sem coluna | os semânticos: `FLX14`–`FLX19`, `FLX21`–`FLX23`, `FLX25`, `FLX27`, `FLX51`–`FLX55`, `FLX59`–`FLX63`, `FLX65` |
+| **Compilador** (FX-10) | o texto do script | **linha e coluna** do trecho (`linha`/`coluna`, 1-based) | `FLX01`–`FLX29`, `FLX51`–`FLX64` |
+| **Validador** (FX-11) | uma **IR** já compilada | **caminho do nó** na estrutura (`etapas[2] (id "entrega") > acoes[1] > vai_para`), sem linha e sem coluna | os semânticos: `FLX14`–`FLX19`, `FLX21`–`FLX23`, `FLX25`, `FLX27`, `FLX29`, `FLX51`–`FLX55`, `FLX59`–`FLX63`, `FLX65` |
 
 O validador existe para a estrutura que **não** passou pelo compilador agora: fluxo importado, revisão antiga, IR gravada à mão. Ver §10.4. Os códigos que só fazem sentido no texto (`FLX01`–`FLX13`, `FLX20`, `FLX24`, `FLX26`, `FLX28`, `FLX56`–`FLX58`, `FLX64`) não são reemitidos sobre a IR: ali a forma já está garantida, e os de texto longo e de gatilho são dica de escrita, que o compilador já deu na publicação.
 
@@ -932,9 +955,10 @@ O validador existe para a estrutura que **não** passou pelo compilador agora: f
 | `FLX23` | ciclo entre decisões (inclusive decisão que aponta para si mesma) | "As decisões formam um ciclo: `a → b → a`. Um fluxo não pode voltar a uma decisão já avaliada." |
 | `FLX24` | `def` fora do formato: não é `def nome(dados)`, usa nome reservado do dialeto, ou repete o nome de outra `def` | "`def problema_grave(dados, extra)` precisa receber um único argumento chamado `dados`." |
 | `FLX25` | variável com formato inválido — inclusive prefixo reservado com campo que não existe (`{cliente.nome}`, `{ficha.aberta_em}`): só `{ficha.id}` e `{cliente.peer}` valem | "`{cliente.nome}` não existe. As variáveis são `{etapa.campo}`, `{ficha.id}` e `{cliente.peer}`." |
-| `FLX26` | `{...}` em texto que não interpola | "A `instrucao` da etapa `coleta` tem `{...}`, mas instrução não interpola: o agente lê o texto como está. Use variável só em `mensagem_ao_cliente` e `notificar_whatsapp`." |
+| `FLX26` | `{...}` em texto que não interpola | "A `instrucao` da etapa `coleta` tem `{...}`, mas instrução não interpola: o agente lê o texto como está. Use variável só em `mensagem_ao_cliente`, `notificar_whatsapp` e `sincronizar_agenda`." |
 | `FLX27` | acima de 60 nós (etapas + decisões + fins) | "O fluxo tem 72 nós e o limite é 60. Junte etapas parecidas ou divida o fluxo." |
 | `FLX28` | `notificar_whatsapp` com número inválido | "O número `123` não serve: use dígitos com DDI, por exemplo `5521999990000`." |
+| `FLX29` | `sincronizar_agenda` malformado: operação fora de `create`/`update`/`remove`, `inicio`/`fim` fixo fora do ISO 8601 com fuso, `fim` que não é depois do `inicio` (o validador repete sobre a IR) | "`sincronizar_agenda` não tem a operação `delete`: use `create`, `update` ou `remove`." |
 
 ### 10.2 Avisos (não bloqueiam)
 
@@ -1011,7 +1035,7 @@ Duas operações puras trabalham sobre a IR, sem banco, sem rede, sem relógio e
 
 Os três são carregados pelo validador e terminam sem nenhum diagnóstico; a IR de cada um é gerada por `poph flow ir`.
 
-Os **40 diagnósticos do compilador** (`FLX01`–`FLX28`, `FLX51`–`FLX64`) têm, cada um, um caso mutado que o dispara, na pasta de testes do crate; o `FLX65` tem caso sobre a IR (§10.4). As falhas de execução (`FLXR01`–`FLXR06`) são do motor (FX-13 em diante) e não são cobertas por esses validadores.
+Os **41 diagnósticos do compilador** (`FLX01`–`FLX29`, `FLX51`–`FLX64`) têm, cada um, um caso mutado que o dispara, na pasta de testes do crate; o `FLX65` tem caso sobre a IR (§10.4). As falhas de execução (`FLXR01`–`FLXR06`) são do motor (FX-13 em diante) e não são cobertas por esses validadores.
 
 ## 12. O que muda em relação ao POP Atende
 

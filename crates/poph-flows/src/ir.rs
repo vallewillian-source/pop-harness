@@ -197,6 +197,32 @@ pub enum Effect {
     Encaminhar {
         departamento: String,
     },
+    #[serde(rename = "sincronizar_agenda")]
+    SyncCalendar {
+        #[serde(rename = "operacao")]
+        operation: String,
+        #[serde(rename = "inicio", default)]
+        start: Option<String>,
+        #[serde(rename = "fim", default)]
+        end: Option<String>,
+        #[serde(rename = "titulo", default)]
+        title: Option<String>,
+        #[serde(rename = "local", default)]
+        location: Option<String>,
+        #[serde(default)]
+        executor: Option<String>,
+    },
+}
+
+impl Effect {
+    pub fn tipo(&self) -> &'static str {
+        match self {
+            Self::MessageToCustomer { .. } => "mensagem_ao_cliente",
+            Self::NotifyWhatsApp { .. } => "notificar_whatsapp",
+            Self::Encaminhar { .. } => "encaminhar",
+            Self::SyncCalendar { .. } => "sincronizar_agenda",
+        }
+    }
 }
 
 impl Ir {

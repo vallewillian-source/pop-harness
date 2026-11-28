@@ -80,13 +80,16 @@ Se já existe execução ativa, o turno não pergunta nada ao Jev: o bloco da et
 
 ## 4. Efeitos
 
-Efeitos são o que sai do atendimento para fora da conversa. O motor só **produz** efeitos; a entrega é feita por um laço do servidor. São três tipos:
+Efeitos são o que sai do atendimento para fora da conversa. O motor só **produz** efeitos; a entrega é feita por um laço do servidor. São quatro tipos:
 
 | Efeito | O que faz | Por onde sai |
 |---|---|---|
 | `mensagem_ao_cliente(texto)` | Texto fixo para o cliente | Fila de saída da conversa. Espera o turno da conversa terminar, para não chegar antes da resposta do agente. |
 | `notificar_whatsapp(para, mensagem)` | Aviso para outro número (equipe) | Integração de WhatsApp do agente da Ficha. Não usa a fila da conversa. |
 | `encaminhar(departamento)` | Transfere a conversa para o departamento pelo nome | Transferência pela operação do turno. A Ficha continua aberta e o agente para de responder. |
+| `sincronizar_agenda(operacao, ...)` | Cria, atualiza ou remove o evento da Ficha no calendário | Fila de efeitos do fluxo (`fluxo_efeitos`), entregue por HTTP ao serviço de calendário da A-04. O motor só resolve as variáveis e enfileira; não chama CalDAV. |
+
+**Agenda.** `sincronizar_agenda` guarda `operacao` (`create`, `update`, `remove`), `inicio`, `fim`, `titulo`, `local` e `executor` no payload do efeito, com os opcionais como `null` quando ausentes (schema versão 1, mudança aditiva). A chave de deduplicação continua sendo `<nó>/<índice>`, então uma declaração produz um efeito por execução. Enquanto a A-04 não entrega o tipo, um efeito de agenda enfileirado fica `falhou` com "tipo de efeito desconhecido na fila"; a declaração e a produção já são válidas.
 
 **Gravação e entrega.** Os efeitos são gravados na mesma transação que a transição da etapa. O laço de entrega roda uma vez por segundo, e só com o motor ligado.
 
@@ -468,7 +471,7 @@ marks the dependency as used, because the Rust `unused_dependencies` lint breaks
   step (a flow that loops back) reuse the key, so its `ao_entrar` is not enqueued twice: one
   message per effect, and a loop with `mensagem_ao_cliente` in `ao_entrar` reaches the customer
   once.
-- Interpolation applies to text only: `{step.field}`, `{ficha.id}` and `{client.peer}`. A variable
+- Interpolation applies to text only: `{step.field}`, `{ficha.id}` and `{client.peer}`. The `sincronizar_agenda` arguments `inicio`, `fim`, `titulo`, `local` and `executor` interpolate; the operation is a literal `create`, `update` or `remove`. A variable
   that does not exist becomes empty text (the publish warning FLX59 says so), and an unmatched `{`
   stays as it is. The `para` of `notificar_whatsapp` and the department of `encaminhar` are
   identifiers and are not interpolated.

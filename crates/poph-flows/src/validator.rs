@@ -356,14 +356,106 @@ impl<'a> Validator<'a> {
     fn check_variables(&mut self, etapa: &'a Etapa, base: &str) {
         for (j, effect) in etapa.on_enter.iter().enumerate() {
             let path = sub(base, &format!("ao_entrar[{j}]"));
+            self.check_effect_shape(effect, &path);
             self.check_effect_variables(effect, &path, Some(etapa));
         }
         for (j, acao) in etapa.actions.iter().enumerate() {
             let path_action = sub(base, &format!("acoes[{j}]"));
             for (k, effect) in acao.effects.iter().enumerate() {
                 let path = sub(&path_action, &format!("efeitos[{k}]"));
+                self.check_effect_shape(effect, &path);
                 self.check_effect_variables(effect, &path, None);
             }
+        }
+    }
+
+    fn check_effect_shape(&mut self, effect: &Effect, path: &str) {
+        let Effect::SyncCalendar {
+            operation,
+            start,
+            end,
+            title,
+            location,
+            executor,
+        } = effect
+        else {
+            return;
+        };
+        let operation = operation.trim();
+        if !matches!(operation, "create" | "update" | "remove") {
+            self.error_at(
+                Code::InvalidEffect,
+                format!(
+                    "`sincronizar_agenda` não tem a operação `{operation}`: use `create`, `update` ou `remove`."
+                ),
+                sub(path, "operacao"),
+            );
+            return;
+        }
+        if operation == "remove" {
+            let extras: Vec<&str> = [
+                ("inicio", start),
+                ("fim", end),
+                ("titulo", title),
+                ("local", location),
+                ("executor", executor),
+            ]
+            .into_iter()
+            .filter_map(|(field, value)| {
+                value
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|text| !text.is_empty())
+                    .map(|_| field)
+            })
+            .collect();
+            if !extras.is_empty() {
+                self.error_at(
+                    Code::InvalidEffect,
+                    format!(
+                        "`sincronizar_agenda(\"remove\")` não aceita outros argumentos (veio {}): a remoção do evento usa só a operação.",
+                        extras.join(", ")
+                    ),
+                    path,
+                );
+            }
+            return;
+        }
+        use crate::engine::CalendarIssue;
+        match crate::engine::calendar_window_issue(operation, start.as_deref(), end.as_deref()) {
+            None => {}
+            Some(CalendarIssue::MissingStart) => self.error_at(
+                Code::InvalidEffect,
+                format!(
+                    "`sincronizar_agenda(\"{operation}\")` precisa de `inicio`, que é obrigatório em create e update."
+                ),
+                sub(path, "inicio"),
+            ),
+            Some(CalendarIssue::MalformedStart) => self.error_at(
+                Code::InvalidEffect,
+                format!(
+                    "O `inicio` de `sincronizar_agenda` é `{}`, que não é ISO 8601 com fuso: use `AAAA-MM-DDTHH:MM:SS-03:00` (ou uma variável que resolva nesse formato).",
+                    start.as_deref().unwrap_or_default().trim()
+                ),
+                sub(path, "inicio"),
+            ),
+            Some(CalendarIssue::MalformedEnd) => self.error_at(
+                Code::InvalidEffect,
+                format!(
+                    "O `fim` de `sincronizar_agenda` é `{}`, que não é ISO 8601 com fuso: use `AAAA-MM-DDTHH:MM:SS-03:00` ou deixe vazio.",
+                    end.as_deref().unwrap_or_default().trim()
+                ),
+                sub(path, "fim"),
+            ),
+            Some(CalendarIssue::EndNotAfterStart) => self.error_at(
+                Code::InvalidEffect,
+                format!(
+                    "O `fim` de `sincronizar_agenda` (`{}`) não é depois do `inicio` (`{}`): corrija a janela do evento.",
+                    end.as_deref().unwrap_or_default().trim(),
+                    start.as_deref().unwrap_or_default().trim()
+                ),
+                sub(path, "fim"),
+            ),
         }
     }
 
@@ -373,17 +465,23 @@ impl<'a> Validator<'a> {
         path: &str,
         to_enter_of_stage: Option<&'a Etapa>,
     ) {
-        let (texto, campo, what) = match effect {
-            Effect::MessageToCustomer { texto } => (texto.as_str(), "texto", "mensagem ao cliente"),
-            Effect::NotifyWhatsApp { mensagem, .. } => {
-                (mensagem.as_str(), "mensagem", "notificação para a equipe")
-            }
-            Effect::Encaminhar { .. } => return,
-        };
-        let path = sub(path, campo);
+        for (field, text, what) in effect_texts(effect) {
+            self.check_text_variables(field, text, what, path, to_enter_of_stage);
+        }
+    }
+
+    fn check_text_variables(
+        &mut self,
+        field: &str,
+        text: &str,
+        what: &str,
+        path: &str,
+        to_enter_of_stage: Option<&'a Etapa>,
+    ) {
+        let path = sub(path, field);
         let ir = self.ir;
-        for variable in crate::compilador::form::variables(texto) {
-            let Some((prefix, nome)) = variable.split_once('.') else {
+        for variable in crate::compilador::form::variables(text) {
+            let Some((prefix, name)) = variable.split_once('.') else {
                 self.error_at(
                     Code::InvalidVariable,
                     format!(
@@ -416,11 +514,11 @@ impl<'a> Validator<'a> {
                 );
                 continue;
             };
-            if !ir.stages[index].campos.iter().any(|c| c.id == nome) {
+            if !ir.stages[index].campos.iter().any(|c| c.id == name) {
                 self.warning_at(
                     Code::VariableWithoutField,
                     format!(
-                        "A {what} usa `{{{variable}}}`, mas a etapa `{prefix}` não tem o campo `{nome}`: no atendimento sai vazio."
+                        "A {what} usa `{{{variable}}}`, mas a etapa `{prefix}` não tem o campo `{name}`: no atendimento sai vazio."
                     ),
                     path.clone(),
                 );
@@ -907,6 +1005,41 @@ impl<'a> Validator<'a> {
                 format!("defs[{index}] (nome \"{nome}\")"),
             );
         }
+    }
+}
+
+fn effect_texts(effect: &Effect) -> Vec<(&'static str, &str, &'static str)> {
+    match effect {
+        Effect::MessageToCustomer { texto } => {
+            vec![("texto", texto.as_str(), "mensagem ao cliente")]
+        }
+        Effect::NotifyWhatsApp { mensagem, .. } => {
+            vec![("mensagem", mensagem.as_str(), "notificação para a equipe")]
+        }
+        Effect::SyncCalendar {
+            start,
+            end,
+            title,
+            location,
+            executor,
+            ..
+        } => [
+            ("inicio", start),
+            ("fim", end),
+            ("titulo", title),
+            ("local", location),
+            ("executor", executor),
+        ]
+        .into_iter()
+        .filter_map(|(field, value)| {
+            let value = value
+                .as_deref()
+                .map(str::trim)
+                .filter(|text| !text.is_empty())?;
+            Some((field, value, "sincronização de agenda"))
+        })
+        .collect(),
+        Effect::Encaminhar { .. } => Vec::new(),
     }
 }
 

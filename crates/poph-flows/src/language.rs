@@ -11,7 +11,12 @@ pub const DECLARATIONS: &[&str] = &["fluxo", "etapa", "decisao"];
 
 pub const VALUES: &[&str] = &["gatilho", "campo", "acao", "fim", "funcao"];
 
-pub const EFFECTS: &[&str] = &["mensagem_ao_cliente", "notificar_whatsapp", "encaminhar"];
+pub const EFFECTS: &[&str] = &[
+    "mensagem_ao_cliente",
+    "notificar_whatsapp",
+    "encaminhar",
+    "sincronizar_agenda",
+];
 
 pub const COMBINATORS: &[&str] = &[
     "igual",
@@ -139,6 +144,13 @@ fn declarations(builder: &mut GlobalsBuilder) {
         Ok(NoneType)
     }
 
+    fn sincronizar_agenda<'v>(
+        _operation: &str,
+        #[starlark(kwargs)] _kwargs: Value<'v>,
+    ) -> starlark::Result<NoneType> {
+        Ok(NoneType)
+    }
+
     fn igual(_field: &str, _value: &str) -> starlark::Result<NoneType> {
         Ok(NoneType)
     }
@@ -243,6 +255,7 @@ mod tests {
             "mensagem_ao_cliente",
             "notificar_whatsapp",
             "encaminhar",
+            "sincronizar_agenda",
             "igual",
             "diferente",
             "maior",
@@ -275,7 +288,7 @@ mod tests {
             "zip",
         ];
         assert_eq!(allowed_names(), expected.to_vec());
-        assert_eq!(allowed_names().len(), 41);
+        assert_eq!(allowed_names().len(), 42);
         for nome in [
             "time", "open", "random", "os", "socket", "print", "load", "eval", "fail",
         ] {

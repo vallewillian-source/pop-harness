@@ -459,6 +459,28 @@ fn effect_value(effect: &Effect) -> Value {
         Effect::Encaminhar { departamento } => {
             call("encaminhar", vec![positional(literal(departamento))])
         }
+        Effect::SyncCalendar {
+            operation,
+            start,
+            end,
+            title,
+            location,
+            executor,
+        } => {
+            let mut args = vec![positional(literal(operation))];
+            for (nome, value) in [
+                ("inicio", start),
+                ("fim", end),
+                ("titulo", title),
+                ("local", location),
+                ("executor", executor),
+            ] {
+                if let Some(value) = value {
+                    args.push(named(nome, literal(value)));
+                }
+            }
+            call("sincronizar_agenda", args)
+        }
     }
 }
 

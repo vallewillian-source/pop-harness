@@ -39,6 +39,7 @@ const ARGS_ACTION: &[&str] = &["id", "rotulo", "vai_para", "exige", "ator", "efe
 const ARGS_END: &[&str] = &["id", "resultado", "encerra_atendimento"];
 const ARGS_DECISION: &[&str] = &["id", "se", "entao", "senao"];
 const ARGS_NOTIFY: &[&str] = &["para", "mensagem"];
+const ARGS_CALENDAR: &[&str] = &["inicio", "fim", "titulo", "local", "executor"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Pos {
@@ -101,7 +102,7 @@ struct CollectedDecision {
 
 struct CollectedEffect {
     effect: Effect,
-    text_pos: Pos,
+    texts: Vec<(String, Pos)>,
     etapa: String,
     on_enter: bool,
 }
@@ -435,7 +436,7 @@ impl<'a> Form<'a> {
                 self.error(
                     Code::ForbiddenInterpolation,
                     format!(
-                        "A `instrucao` da etapa `{id}` tem `{{...}}`, mas instrução não interpola: o agente lê o texto como está. Use variável só em `mensagem_ao_cliente` e `notificar_whatsapp`."
+                        "A `instrucao` da etapa `{id}` tem `{{...}}`, mas instrução não interpola: o agente lê o texto como está. Use variável só em `mensagem_ao_cliente`, `notificar_whatsapp` e `sincronizar_agenda`."
                     ),
                     instruction_pos,
                 );
@@ -494,7 +495,7 @@ impl<'a> Form<'a> {
                 on_enter.push(effect.effect.clone());
                 self.effects.push(CollectedEffect {
                     effect: effect.effect,
-                    text_pos: effect.text_pos,
+                    texts: effect.texts,
                     etapa: id.clone(),
                     on_enter: true,
                 });
@@ -807,7 +808,7 @@ impl<'a> Form<'a> {
                     effects.push(effect.effect.clone());
                     self.effects.push(CollectedEffect {
                         effect: effect.effect,
-                        text_pos: effect.text_pos,
+                        texts: effect.texts,
                         etapa: etapa.to_owned(),
                         on_enter: false,
                     });
@@ -847,7 +848,7 @@ impl<'a> Form<'a> {
             let Some((nome, items)) = self.as_call(item, location) else {
                 continue;
             };
-            let mut text_end_pos = pos;
+            let mut texts: Vec<(String, Pos)> = Vec::new();
             let effect = match nome.as_str() {
                 "mensagem_ao_cliente" => {
                     let mut reader = Reader::new("`mensagem_ao_cliente`", pos, &[], items);
@@ -863,7 +864,7 @@ impl<'a> Form<'a> {
                         continue;
                     };
                     self.check_variable_format(&texto, location, text_pos);
-                    text_end_pos = text_pos;
+                    texts.push((texto.clone(), text_pos));
                     Effect::MessageToCustomer { texto }
                 }
                 "notificar_whatsapp" => {
@@ -895,7 +896,6 @@ impl<'a> Form<'a> {
                     };
                     let mensagem = match mensagem {
                         Some(mensagem) => {
-                            text_end_pos = message_pos;
                             self.check_variable_format(&mensagem, location, message_pos);
                             if variables(&mensagem).is_empty() {
                                 self.warning(
@@ -904,6 +904,7 @@ impl<'a> Form<'a> {
                                     message_pos,
                                 );
                             }
+                            texts.push((mensagem.clone(), message_pos));
                             mensagem
                         }
                         None => {
@@ -933,21 +934,179 @@ impl<'a> Form<'a> {
                         }
                     }
                 }
+                "sincronizar_agenda" => {
+                    let Some((effect, collected)) = self.collect_calendar(location, pos, items)
+                    else {
+                        continue;
+                    };
+                    texts = collected;
+                    effect
+                }
                 other => {
                     self.error(
                         Code::InvalidTopLevel,
-                        format!("{location} usa o efeito `{other}(...)`; use `mensagem_ao_cliente`, `notificar_whatsapp` ou `encaminhar`."),
+                        format!("{location} usa o efeito `{other}(...)`; use `mensagem_ao_cliente`, `notificar_whatsapp`, `encaminhar` ou `sincronizar_agenda`."),
                         pos,
                     );
                     continue;
                 }
             };
-            saida.push(ReadEffect {
-                effect,
-                text_pos: text_end_pos,
-            });
+            saida.push(ReadEffect { effect, texts });
         }
         saida
+    }
+
+    fn collect_calendar(
+        &mut self,
+        location: &str,
+        pos: Pos,
+        items: Vec<Item<'a>>,
+    ) -> Option<(Effect, Vec<(String, Pos)>)> {
+        let remove = matches!(
+            items.iter().find(|item| item.nome.is_none()).map(|item| &item.expr.node),
+            Some(Expr::Literal(AstLiteral::String(text))) if text.node == "remove"
+        );
+        let known: &'static [&'static str] = if remove { &[] } else { ARGS_CALENDAR };
+        let mut reader = Reader::new("`sincronizar_agenda`", pos, known, items);
+        let operation = reader.positional_text(self, 0);
+        let operation_pos = reader.pos_of("__pos0").unwrap_or(pos);
+        if remove {
+            reader.refuse_leftovers(
+                self,
+                "`sincronizar_agenda(\"remove\")` não aceita outros argumentos: a remoção do evento usa só a operação.",
+            );
+            return Some((
+                Effect::SyncCalendar {
+                    operation: operation.unwrap_or_else(|| "remove".to_owned()),
+                    start: None,
+                    end: None,
+                    title: None,
+                    location: None,
+                    executor: None,
+                },
+                Vec::new(),
+            ));
+        }
+        let start = reader.texto(self, "inicio");
+        let start_pos = reader.pos_of("inicio").unwrap_or(pos);
+        let end = reader.texto(self, "fim");
+        let end_pos = reader.pos_of("fim").unwrap_or(pos);
+        let title = reader.texto(self, "titulo");
+        let title_pos = reader.pos_of("titulo").unwrap_or(pos);
+        let location_value = reader.texto(self, "local");
+        let location_pos = reader.pos_of("local").unwrap_or(pos);
+        let executor = reader.texto(self, "executor");
+        let executor_pos = reader.pos_of("executor").unwrap_or(pos);
+        reader.close(self);
+
+        let mut texts: Vec<(String, Pos)> = Vec::new();
+        for (value, value_pos) in [
+            (&start, start_pos),
+            (&end, end_pos),
+            (&title, title_pos),
+            (&location_value, location_pos),
+            (&executor, executor_pos),
+        ] {
+            let Some(value) = value else { continue };
+            self.check_variable_format(value, location, value_pos);
+            if !value.trim().is_empty() {
+                texts.push((value.clone(), value_pos));
+            }
+        }
+
+        let operation = match operation {
+            Some(operation) if matches!(operation.as_str(), "create" | "update" | "remove") => {
+                operation
+            }
+            Some(operation) => {
+                self.error(
+                    Code::InvalidEffect,
+                    format!(
+                        "`sincronizar_agenda` não tem a operação `{operation}`: use `create`, `update` ou `remove`."
+                    ),
+                    operation_pos,
+                );
+                return None;
+            }
+            None => {
+                self.error(
+                    Code::MissingArgument,
+                    format!(
+                        "{location} tem `sincronizar_agenda` sem a operação: use `sincronizar_agenda(\"create\", inicio = \"...\")`, `\"update\"` ou `\"remove\"`."
+                    ),
+                    pos,
+                );
+                return None;
+            }
+        };
+
+        self.check_calendar_window(
+            &operation,
+            start.as_deref(),
+            start_pos,
+            end.as_deref(),
+            end_pos,
+            location,
+        );
+
+        Some((
+            Effect::SyncCalendar {
+                operation,
+                start: non_empty(start),
+                end: non_empty(end),
+                title: non_empty(title),
+                location: non_empty(location_value),
+                executor: non_empty(executor),
+            },
+            texts,
+        ))
+    }
+
+    fn check_calendar_window(
+        &mut self,
+        operation: &str,
+        start: Option<&str>,
+        start_pos: Pos,
+        end: Option<&str>,
+        end_pos: Pos,
+        location: &str,
+    ) {
+        use crate::engine::CalendarIssue;
+        match crate::engine::calendar_window_issue(operation, start, end) {
+            None => {}
+            Some(CalendarIssue::MissingStart) => self.error(
+                Code::MissingArgument,
+                format!(
+                    "{location} tem `sincronizar_agenda(\"{operation}\")` sem `inicio`: o evento precisa do começo em ISO 8601 com fuso, por exemplo `2027-01-10T18:00:00-03:00` ou `{{agendamento.data}}`."
+                ),
+                start_pos,
+            ),
+            Some(CalendarIssue::MalformedStart) => self.error(
+                Code::InvalidEffect,
+                format!(
+                    "O `inicio` de `sincronizar_agenda` é `{}`, que não é ISO 8601 com fuso: use `AAAA-MM-DDTHH:MM:SS-03:00` (ou uma variável que resolva nesse formato).",
+                    start.unwrap_or_default().trim()
+                ),
+                start_pos,
+            ),
+            Some(CalendarIssue::MalformedEnd) => self.error(
+                Code::InvalidEffect,
+                format!(
+                    "O `fim` de `sincronizar_agenda` é `{}`, que não é ISO 8601 com fuso: use `AAAA-MM-DDTHH:MM:SS-03:00` (ou deixe vazio para o serviço usar a duração do fluxo).",
+                    end.unwrap_or_default().trim()
+                ),
+                end_pos,
+            ),
+            Some(CalendarIssue::EndNotAfterStart) => self.error(
+                Code::InvalidEffect,
+                format!(
+                    "O `fim` de `sincronizar_agenda` (`{}`) não é depois do `inicio` (`{}`): corrija a janela do evento.",
+                    end.unwrap_or_default().trim(),
+                    start.unwrap_or_default().trim()
+                ),
+                end_pos,
+            ),
+        }
     }
 
     fn collect_decision(&mut self, args: ArgsAst<'a>, pos: Pos) {
@@ -1896,26 +2055,24 @@ impl<'a> Form<'a> {
                 etapa.campos.iter().map(|c| c.id.as_str()).collect(),
             );
         }
-        let pending: Vec<(String, String, Pos, String, bool)> = self
-            .effects
-            .iter()
-            .filter_map(|coletado| {
-                let (texto, what) = match &coletado.effect {
-                    Effect::MessageToCustomer { texto } => (texto.clone(), "mensagem ao cliente"),
-                    Effect::NotifyWhatsApp { mensagem, .. } => {
-                        (mensagem.clone(), "notificação para a equipe")
-                    }
-                    Effect::Encaminhar { .. } => return None,
-                };
-                Some((
-                    texto,
+        let mut pending: Vec<(String, String, Pos, String, bool)> = Vec::new();
+        for coletado in &self.effects {
+            let what = match &coletado.effect {
+                Effect::MessageToCustomer { .. } => "mensagem ao cliente",
+                Effect::NotifyWhatsApp { .. } => "notificação para a equipe",
+                Effect::SyncCalendar { .. } => "sincronização de agenda",
+                Effect::Encaminhar { .. } => continue,
+            };
+            for (texto, text_pos) in &coletado.texts {
+                pending.push((
+                    texto.clone(),
                     what.to_owned(),
-                    coletado.text_pos,
+                    *text_pos,
                     coletado.etapa.clone(),
                     coletado.on_enter,
-                ))
-            })
-            .collect();
+                ));
+            }
+        }
         let mut warnings: Vec<(Code, String, Pos)> = Vec::new();
         for (texto, what, pos, effect_step, on_enter) in pending {
             for variable in variables(&texto) {
@@ -2140,7 +2297,11 @@ impl<'a> Form<'a> {
 
 struct ReadEffect {
     effect: Effect,
-    text_pos: Pos,
+    texts: Vec<(String, Pos)>,
+}
+
+fn non_empty(value: Option<String>) -> Option<String> {
+    value.filter(|text| !text.trim().is_empty())
 }
 
 fn valid_id(id: &str) -> bool {
@@ -2363,6 +2524,17 @@ impl<'a> Reader<'a> {
         self.positions.insert(format!("__pos{index}"), pos);
         let place = format!("o argumento posicional {} de {}", index + 1, self.place);
         form.texto(expr, &place)
+    }
+
+    fn refuse_leftovers(&mut self, form: &mut Form<'a>, message: &str) {
+        for (i, item) in self.items.iter().enumerate() {
+            if self.used_names.get(i).copied().unwrap_or(false) {
+                continue;
+            }
+            let pos = form.pos(item.expr.span);
+            form.error(Code::UnknownArgument, message.to_owned(), pos);
+        }
+        self.used_names = vec![true; self.items.len()];
     }
 
     fn close(&mut self, form: &mut Form<'a>) {

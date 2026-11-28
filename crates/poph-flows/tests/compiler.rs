@@ -94,6 +94,7 @@ fn positions() -> Vec<(Code, u32, u32)> {
         (Code::ActorWithoutAction, 15, 14),
         (Code::VariableFromOwnStep, 15, 38),
         (Code::LongText, 15, 17),
+        (Code::InvalidEffect, 16, 56),
     ]
 }
 
@@ -312,7 +313,31 @@ fn cases() -> Vec<Case> {
                 &format!("    nome = \"Entrada\",\n    instrucao = \"{}\",\n", "a".repeat(1200)),
             ),
         ),
+        case(Code::InvalidEffect, invalid_calendar_flow()),
     ]
+}
+
+fn invalid_calendar_flow() -> String {
+    r#"fluxo(
+    id = "agenda",
+    nome = "Agenda",
+    inicio = "entrada",
+    gatilho = gatilho(
+        quando = "O cliente quer agendar.",
+        nao_quando = "O cliente nao quer agendar.",
+        exemplos = ["quero agendar"],
+    ),
+)
+
+etapa(
+    id = "entrada",
+    nome = "Entrada",
+    campos = [campo("data", "Data", obrigatorio = True)],
+    ao_entrar = [sincronizar_agenda("create", inicio = "22/11/2026 14:42")],
+    acoes = [acao("seguir", "Seguir", exige = ["data"], vai_para = fim("pronto"))],
+)
+"#
+    .to_owned()
 }
 
 fn flow_with_61_nodes() -> String {
@@ -376,8 +401,8 @@ fn each_code_list_closed_has_case() {
     assert_eq!(seen.len(), total, "dois casos para o mesmo código");
     assert_eq!(
         seen.len(),
-        40,
-        "a lista fechada tem 40 códigos do compilador"
+        41,
+        "a lista fechada tem 41 códigos do compilador"
     );
     for code in Code::from_compiler() {
         assert!(seen.contains(&code), "{code} sem caso que o dispare");
@@ -412,7 +437,7 @@ fn each_diagnostic_points_line_and_column_passage() {
 }
 
 #[test]
-fn base_flow_fires_none_of_40_codes() {
+fn base_flow_fires_none_of_41_codes() {
     let compiled = compiles(BASE);
     for code in Code::from_compiler() {
         assert!(
@@ -752,4 +777,190 @@ fn ir_ignores_unknown_field_on_read() {
     json["campo_do_futuro"] = serde_json::json!({"qualquer": "coisa"});
     let read = poph_flows::Ir::from_json(&json.to_string()).expect("campo desconhecido é ignorado");
     assert_eq!(read, ir);
+}
+
+fn schedule_flow() -> String {
+    r#"fluxo(
+    id = "agenda",
+    nome = "Agenda",
+    inicio = "entrada",
+    gatilho = gatilho(
+        quando = "O cliente quer agendar.",
+        nao_quando = "O cliente nao quer agendar.",
+        exemplos = ["quero agendar"],
+    ),
+)
+
+etapa(
+    id = "entrada",
+    nome = "Entrada",
+    campos = [
+        campo("data", "Data", obrigatorio = True),
+        campo("fim", "Fim"),
+        campo("endereco", "Endereço"),
+        campo("executor", "Executor"),
+    ],
+    acoes = [acao(
+        "seguir",
+        "Seguir",
+        exige = ["data", "fim", "endereco", "executor"],
+        efeitos = [sincronizar_agenda(
+            "create",
+            inicio = "{entrada.data}",
+            fim = "{entrada.fim}",
+            titulo = "Visita {ficha.id}",
+            local = "{entrada.endereco}",
+            executor = "{entrada.executor}",
+        )],
+        vai_para = "remarcar",
+    )],
+)
+
+etapa(
+    id = "remarcar",
+    nome = "Remarcar",
+    ao_entrar = [sincronizar_agenda("update", inicio = "{entrada.data}")],
+    acoes = [acao(
+        "fechar",
+        "Fechar",
+        efeitos = [sincronizar_agenda("remove")],
+        vai_para = fim("pronto"),
+    )],
+)
+"#
+    .to_owned()
+}
+
+#[test]
+fn calendar_effect_compiles_create_update_and_remove() {
+    let compiled = compiles(&schedule_flow());
+    assert!(
+        compiled.diagnostics.is_empty(),
+        "o fluxo da agenda tem de passar limpo: {:?}",
+        compiled.diagnostics
+    );
+    let ir = compiled.ir.expect("IA da agenda");
+    let value: serde_json::Value = serde_json::from_str(&ir.to_json()).expect("JSON da IR");
+    assert_eq!(
+        value["etapas"][0]["acoes"][0]["efeitos"][0],
+        serde_json::json!({
+            "tipo": "sincronizar_agenda",
+            "operacao": "create",
+            "inicio": "{entrada.data}",
+            "fim": "{entrada.fim}",
+            "titulo": "Visita {ficha.id}",
+            "local": "{entrada.endereco}",
+            "executor": "{entrada.executor}",
+        })
+    );
+    assert_eq!(
+        value["etapas"][1]["ao_entrar"][0],
+        serde_json::json!({
+            "tipo": "sincronizar_agenda",
+            "operacao": "update",
+            "inicio": "{entrada.data}",
+            "fim": null,
+            "titulo": null,
+            "local": null,
+            "executor": null,
+        }),
+        "os argumentos opcionais ausentes saem como null no schema versão 1"
+    );
+    assert_eq!(
+        value["etapas"][1]["acoes"][0]["efeitos"][0],
+        serde_json::json!({
+            "tipo": "sincronizar_agenda",
+            "operacao": "remove",
+            "inicio": null,
+            "fim": null,
+            "titulo": null,
+            "local": null,
+            "executor": null,
+        })
+    );
+}
+
+fn schedule_with_effect(effect: &str) -> String {
+    format!(
+        r#"fluxo(
+    id = "agenda",
+    nome = "Agenda",
+    inicio = "entrada",
+    gatilho = gatilho(
+        quando = "O cliente quer agendar.",
+        nao_quando = "O cliente nao quer agendar.",
+        exemplos = ["quero agendar"],
+    ),
+)
+
+etapa(
+    id = "entrada",
+    nome = "Entrada",
+    campos = [campo("data", "Data", obrigatorio = True)],
+    acoes = [acao("seguir", "Seguir", exige = ["data"], efeitos = [{effect}], vai_para = fim("pronto"))],
+)
+"#
+    )
+}
+
+#[test]
+fn calendar_effect_refuses_every_invalid_form() {
+    for (effect, code) in [
+        (
+            "sincronizar_agenda(\"delete\", inicio = \"2027-01-10T18:00:00-03:00\")",
+            Code::InvalidEffect,
+        ),
+        ("sincronizar_agenda()", Code::MissingArgument),
+        (
+            "sincronizar_agenda(\"remove\", inicio = \"2027-01-10T18:00:00-03:00\")",
+            Code::UnknownArgument,
+        ),
+        ("sincronizar_agenda(\"create\")", Code::MissingArgument),
+        (
+            "sincronizar_agenda(\"create\", inicio = \"2027-01-10 18:00\")",
+            Code::InvalidEffect,
+        ),
+        (
+            "sincronizar_agenda(\"update\", inicio = \"2027-01-10T18:00:00-03:00\", fim = \"2027-01-10T17:00:00-03:00\")",
+            Code::InvalidEffect,
+        ),
+        (
+            "sincronizar_agenda(\"create\", inicio = \"2027-01-10T18:00:00-03:00\", quando = \"x\")",
+            Code::UnknownArgument,
+        ),
+        (
+            "sincronizar_agenda(\"create\", inicio = \"{cliente.nome}\")",
+            Code::InvalidVariable,
+        ),
+    ] {
+        let compiled = compiles(&schedule_with_effect(effect));
+        assert!(
+            compiled
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == code && diagnostic.is_error()),
+            "`{effect}` devia dar {code}: {:?}",
+            compiled.diagnostics
+        );
+    }
+}
+
+#[test]
+fn calendar_effect_warns_but_compiles_with_unknown_field_variable() {
+    let compiled = compiles(&schedule_with_effect(
+        "sincronizar_agenda(\"create\", inicio = \"{entrada.nao_existe}\")",
+    ));
+    assert!(
+        compiled.ir.is_some(),
+        "variável desconhecida é aviso, não erro: {:?}",
+        compiled.diagnostics
+    );
+    assert!(
+        compiled
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == Code::VariableWithoutField),
+        "{:?}",
+        compiled.diagnostics
+    );
 }
