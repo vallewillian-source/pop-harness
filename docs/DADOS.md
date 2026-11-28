@@ -8,7 +8,7 @@ como **decisão** abaixo.
 
 | Arquivo | O que guarda | Situação |
 |---|---|---|
-| `data/harness.db` | tudo que é durável: orgs, agentes, instruções, base, produtos, integrações, conversas, mensagens, entrada/saída, turnos, auditoria, fichas, fluxos e execuções | **esquema completo** (versão 18: migrações 0001 a 0018) |
+| `data/harness.db` | tudo que é durável: orgs, agentes, instruções, base, produtos, integrações, conversas, mensagens, entrada/saída, turnos, auditoria, fichas, fluxos e execuções | **esquema completo** (versão 20: migrações 0001 a 0020) |
 | `data/rag.db` | trechos, vetores int8 e índice de texto (FTS5) | arquivo criado, **sem tabelas** (a HR-16 cria as migrações) |
 
 Caminhos vêm da configuração (`dados.diretorio`, `dados.harness_db`, `dados.rag_db`) — ver
@@ -380,9 +380,12 @@ Regras que o banco garante sozinho (teste `crates/poph-store/tests/flows_migrati
 - **Coerência entre situação e instante**: `CHECK` amarra `fluxo_execucoes.status` a `finalizada_em`,
   `fluxo_execucao_etapas.status` a `concluiu_em` e `fluxo_efeitos.estado` a `enviado_em`, num sentido
   e no outro.
-- **Os textos de situação** (`status`, `estado`) e os três tipos de efeito (`mensagem_ao_cliente`,
-  `notificar_whatsapp`, `encaminhar`) são lista fechada; o teste cruza com o vocabulário de
+- **Os textos de situação** (`status`, `estado`) e os tipos de efeito (`tipo`) são lista fechada; o teste cruza com o vocabulário de
   `poph-types` (FX-03) e confirma que valor inventado é recusado.
+  Os tipos de efeito são `mensagem_ao_cliente`, `notificar_whatsapp` e `encaminhar` (migração `0013`), mais
+  `sincronizar_agenda` e `agendar_transicao`, acrescentados pela migração `0020_flow_http_effects`. The `0020` migration
+  rebuilds `fluxo_efeitos` in one transaction, keeps every id, state, payload and index, and only widens the `tipo` check.
+  `agendar_transicao` is accepted by the database but is not enabled (PA-138b not released).
 
 Decisões que o leitor do esquema precisa saber:
 

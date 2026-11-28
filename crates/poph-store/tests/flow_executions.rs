@@ -1282,3 +1282,63 @@ fn execution_from_other_org_is_neither_seen_nor_written() {
     assert_eq!(total(&scenario, "fluxo_efeitos", &org_a), 0);
     assert_eq!(total(&scenario, "fluxo_efeitos", &org_b), 0);
 }
+
+#[test]
+fn http_effect_types_of_the_next_cut_are_stored_and_listed() {
+    let scenario = Scenario::new("efeitos-http");
+    let org = scenario.org("a");
+    let agent = scenario.agent(&org, "a");
+    let (_conversation, case) = scenario.case(&org, &agent);
+    let (flow, revision) = scenario.flow(&org, "agendar_visita");
+    let opened = scenario.open(&org, &agent, case, flow, revision);
+
+    let mut transition = transition_advance("coleta", "confirmacao");
+    transition.effects = vec![
+        TransitionEffect {
+            key: "acao:coleta.agenda/0".to_owned(),
+            tipo: "sincronizar_agenda".to_owned(),
+            payload_json: "{\"operacao\":\"create\"}".to_owned(),
+        },
+        TransitionEffect {
+            key: "acao:coleta.retorno/0".to_owned(),
+            tipo: "agendar_transicao".to_owned(),
+            payload_json: "{}".to_owned(),
+        },
+    ];
+    scenario
+        .store()
+        .executions()
+        .apply_transition(
+            org.id,
+            opened.execution.id,
+            opened.execution.version,
+            &transition,
+            "chave-efeitos-http",
+            without_extras(),
+        )
+        .expect("a versão 20 aceita os dois tipos novos");
+
+    let effects = scenario
+        .store()
+        .executions()
+        .effects(org.id, opened.execution.id)
+        .expect("efeitos");
+    let mut listed: Vec<(String, String)> = effects
+        .iter()
+        .map(|effect| (effect.key.clone(), effect.tipo.clone()))
+        .collect();
+    listed.sort();
+    assert_eq!(
+        listed,
+        vec![
+            (
+                "acao:coleta.agenda/0".to_owned(),
+                "sincronizar_agenda".to_owned()
+            ),
+            (
+                "acao:coleta.retorno/0".to_owned(),
+                "agendar_transicao".to_owned()
+            ),
+        ]
+    );
+}

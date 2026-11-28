@@ -102,6 +102,11 @@ pub const HARNESS_MIGRATIONS: &[Migration] = &[
         name: "0019_site_conversations",
         sql: include_str!("../migrations/harness/0019_site_conversations.sql"),
     },
+    Migration {
+        version: 20,
+        name: "0020_flow_http_effects",
+        sql: include_str!("../migrations/harness/0020_flow_http_effects.sql"),
+    },
 ];
 
 pub const RAG_MIGRATIONS: &[Migration] = &[];

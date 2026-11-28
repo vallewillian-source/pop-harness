@@ -2,6 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use poph_store::migrations::migrate;
 use poph_store::{HARNESS_MIGRATIONS, Store, file_version, harness_target_version};
 use poph_types::{EffectState, ExecutionStatus, StepStatus};
 use rusqlite::Connection;
@@ -914,5 +915,205 @@ fn steps_and_effects_disappear_with_execution_and_executions_with_case() {
     assert_eq!(
         count_rows(&scenario.conn, "SELECT count(*) FROM fluxo_revisoes"),
         1
+    );
+}
+
+const MIGRATION_HTTP_EFFECTS: &str = "0020_flow_http_effects";
+
+const EFFECTS_SNAPSHOT: &str = "SELECT id || '|' || org_id || '|' || ficha_id || '|' || execucao_id || '|' \
+    || chave || '|' || tipo || '|' || payload_json || '|' || estado || '|' || tentativas || '|' \
+    || coalesce(ultimo_erro, '<nulo>') || '|' || coalesce(proxima_tentativa, '<nulo>') || '|' \
+    || coalesce(enviado_em, '<nulo>') || '|' || created_at \
+    FROM fluxo_efeitos ORDER BY id";
+
+const INDEXES_SNAPSHOT: &str = "SELECT name || ' ' || coalesce(sql, '<automatico>') FROM sqlite_master \
+    WHERE type = 'index' AND tbl_name = 'fluxo_efeitos' ORDER BY name";
+
+fn snapshot(conn: &Connection, sql: &str) -> Vec<String> {
+    conn.prepare(sql)
+        .expect("prepara a leitura")
+        .query_map([], |row| row.get::<_, String>(0))
+        .expect("lê")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("linhas")
+}
+
+fn seed_effects_version_19(conn: &Connection) {
+    let org = new_id();
+    conn.execute(
+        "INSERT INTO orgs (id, name, slug, created_at, updated_at) VALUES (?1, 'Org', 'org-effects', 1, 1)",
+        rusqlite::params![org],
+    )
+    .expect("org");
+    let agent = new_id();
+    conn.execute(
+        "INSERT INTO agents (id, org_id, name, slug, provider, model, created_at, updated_at)
+         VALUES (?1, ?2, 'Agente', 'agente-effects', 'antigravity2api', 'gemini', 1, 1)",
+        rusqlite::params![agent, org],
+    )
+    .expect("agente");
+    let case = new_id();
+    conn.execute(
+        "INSERT INTO fichas (id, org_id, conversation_id, agent_id, canal, status, aberta_em)
+         VALUES (?1, ?2, NULL, ?3, 'whatsapp', 'open', 1)",
+        rusqlite::params![case, org, agent],
+    )
+    .expect("ficha");
+    let flow = new_id();
+    conn.execute(
+        "INSERT INTO fluxos (id, org_id, slug, nome, descricao) VALUES (?1, ?2, 'agendar', 'Fluxo agendar', '')",
+        rusqlite::params![flow, org],
+    )
+    .expect("fluxo");
+    let revision = new_id();
+    conn.execute(
+        "INSERT INTO fluxo_revisoes
+            (id, org_id, fluxo_id, numero, fonte, fonte_sha256, definicao_json, publicada_em, publicada_por)
+         VALUES (?1, ?2, ?3, 1, 'fluxo(id = \"x\")', 'sha', '{}', 1, 'cli')",
+        rusqlite::params![revision, org, flow],
+    )
+    .expect("revisão");
+    let execution = new_id();
+    conn.execute(
+        "INSERT INTO fluxo_execucoes
+            (id, org_id, ficha_id, fluxo_id, revisao_id, status, no_atual, iniciada_em)
+         VALUES (?1, ?2, ?3, ?4, ?5, 'ativa', 'inicio', 1)",
+        rusqlite::params![execution, org, case, flow, revision],
+    )
+    .expect("execução");
+
+    type EffectV19 = (
+        &'static str,
+        &'static str,
+        i64,
+        Option<&'static str>,
+        Option<i64>,
+        Option<i64>,
+    );
+    let effects: [EffectV19; 4] = [
+        ("pendente", "mensagem_ao_cliente", 0, None, Some(10), None),
+        ("enviando", "notificar_whatsapp", 1, None, Some(20), None),
+        ("enviado", "encaminhar", 1, None, None, Some(30)),
+        (
+            "falhou",
+            "mensagem_ao_cliente",
+            3,
+            Some("timeout"),
+            None,
+            None,
+        ),
+    ];
+    for (index, (estado, tipo, tentativas, failure, next_try, sent_at)) in
+        effects.iter().enumerate()
+    {
+        conn.execute(
+            "INSERT INTO fluxo_efeitos
+                (id, org_id, ficha_id, execucao_id, chave, tipo, payload_json, estado,
+                 tentativas, ultimo_erro, proxima_tentativa, enviado_em, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, '{\"texto\":\"oi\"}', ?7, ?8, ?9, ?10, ?11, 1)",
+            rusqlite::params![
+                new_id(),
+                org,
+                case,
+                execution,
+                format!("efeito-{}", index + 1),
+                tipo,
+                estado,
+                tentativas,
+                failure,
+                next_try,
+                sent_at
+            ],
+        )
+        .unwrap_or_else(|error| panic!("efeito {estado} recusado: {error}"));
+    }
+}
+
+#[test]
+fn upgrade_from_version_19_keeps_effect_rows_and_indexes_and_accepts_new_types() {
+    let folder = folder_new("effects-0020");
+    let harness = folder.join("harness.db");
+    let before = HARNESS_MIGRATIONS
+        .iter()
+        .position(|m| m.name == MIGRATION_HTTP_EFFECTS)
+        .expect("a migração 0020 está registrada");
+    assert_eq!(HARNESS_MIGRATIONS[before - 1].version, 19);
+
+    let (rows_before, indexes_before) = {
+        let conn = Connection::open(&harness).expect("abre o banco da versão 19");
+        migrate(
+            &conn,
+            "harness.db",
+            &harness,
+            &HARNESS_MIGRATIONS[..before],
+            1,
+        )
+        .expect("migra até a versão 19");
+        seed_effects_version_19(&conn);
+        (
+            snapshot(&conn, EFFECTS_SNAPSHOT),
+            snapshot(&conn, INDEXES_SNAPSHOT),
+        )
+    };
+    assert_eq!(rows_before.len(), 4, "{rows_before:?}");
+    for estado in ["pendente", "enviando", "enviado", "falhou"] {
+        assert!(
+            rows_before
+                .iter()
+                .any(|row| row.contains(&format!("|{estado}|"))),
+            "falta o estado {estado} antes da migração"
+        );
+    }
+    assert_eq!(indexes_before.len(), 4, "{indexes_before:?}");
+
+    let store = Store::open_at(&harness, &folder.join("rag.db")).expect("aplica a versão 20");
+    drop(store);
+
+    let conn = connection(&harness);
+    assert_eq!(
+        file_version(&harness).expect("versão"),
+        Some(harness_target_version())
+    );
+    assert_eq!(
+        snapshot(&conn, EFFECTS_SNAPSHOT),
+        rows_before,
+        "ids, conteúdo ou estados mudaram na migração"
+    );
+    assert_eq!(
+        snapshot(&conn, INDEXES_SNAPSHOT),
+        indexes_before,
+        "índices mudaram na migração"
+    );
+
+    let (org, case, execution): (String, String, String) = conn
+        .query_row(
+            "SELECT org_id, ficha_id, execucao_id FROM fluxo_efeitos LIMIT 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("uma linha de efeito");
+    for tipo in ["sincronizar_agenda", "agendar_transicao"] {
+        conn.execute(
+            "INSERT INTO fluxo_efeitos
+                (id, org_id, ficha_id, execucao_id, chave, tipo, estado, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pendente', 1)",
+            rusqlite::params![new_id(), org, case, execution, format!("novo-{tipo}"), tipo],
+        )
+        .unwrap_or_else(|error| panic!("tipo {tipo} recusado pela versão 20: {error}"));
+    }
+    assert!(
+        conn.execute(
+            "INSERT INTO fluxo_efeitos
+                (id, org_id, ficha_id, execucao_id, chave, tipo, estado, created_at)
+             VALUES (?1, ?2, ?3, ?4, 'desconhecido', 'ligar_para_cliente', 'pendente', 1)",
+            rusqlite::params![new_id(), org, case, execution],
+        )
+        .is_err(),
+        "tipo desconhecido tem que ser recusado pela versão 20"
+    );
+    assert_eq!(
+        count_rows(&conn, "SELECT count(*) FROM fluxo_efeitos"),
+        6,
+        "as duas inserções novas entram e a recusada não"
     );
 }
