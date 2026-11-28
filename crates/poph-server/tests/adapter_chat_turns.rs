@@ -19,8 +19,9 @@ use poph_flows::ir::Effect;
 use poph_server::ServerState;
 use poph_server::flow_effects::{FlowEffectOptions, FlowEffects, effect_of_transition};
 use poph_store::{
-    AdapterTurnKey, AdapterTurnSubmission, ExecutionStart, ExecutionState, NewAdapterTurn,
-    NewAgent, NewOrg, OutboxState, Store, TransitionEffect,
+    AdapterTurnKey, AdapterTurnSubmission, Direction, ExecutionStart, ExecutionState,
+    NewAdapterTurn, NewAgent, NewMessage, NewOrg, Origin, OutboxState, Role, Store,
+    TransitionEffect,
 };
 use poph_types::{
     AgentId, ConversationId, EffectState, EventActor, ExecutionStatus, FlowId, HarnessConfig,
@@ -713,6 +714,102 @@ async fn restart_marks_running_turns_failed_and_processes_queued_turns_once() {
         ["Resposta recuperada.", "Mensagem antes da interrupção"]
     );
     assert_eq!(fake.received().len(), 1);
+    assert_outbox_empty(&fixture);
+}
+
+#[tokio::test]
+async fn restart_keeps_a_turn_whose_reply_is_already_stored_succeeded() {
+    let mut fixture = Fixture::new();
+    let org = fixture.account.org;
+    let agent = fixture.account.agent;
+    let conversation = fixture
+        .store
+        .adapter_chat()
+        .create_or_resume(
+            org,
+            agent,
+            "email".to_owned(),
+            "thread-stored-reply".to_owned(),
+            true,
+        )
+        .expect("conversation")
+        .0;
+    let AdapterTurnSubmission::Accepted { turn, .. } = fixture
+        .store
+        .adapter_chat()
+        .submit_turn(
+            org,
+            conversation,
+            NewAdapterTurn {
+                idempotency_key: "k1".to_owned(),
+                text: "Pergunta".to_owned(),
+                author_name: None,
+                external_message_id: None,
+            },
+        )
+        .expect("accepted turn")
+    else {
+        panic!("turn was not accepted");
+    };
+    let key = AdapterTurnKey {
+        org,
+        conversation,
+        turn,
+    };
+    assert!(
+        fixture
+            .store
+            .adapter_chat()
+            .claim_turn(key)
+            .expect("claim")
+            .is_some()
+    );
+    let engine_turn = poph_types::TurnId::generate();
+    fixture
+        .store
+        .adapter_chat()
+        .record_engine_turn(key, engine_turn)
+        .expect("engine turn");
+    fixture
+        .store
+        .messages()
+        .write(
+            org,
+            NewMessage {
+                conversation_id: conversation,
+                direction: Direction::Outbound,
+                role: Role::Assistant,
+                texto: "Resposta antes da queda.".to_owned(),
+                attachments_json: "[]".to_owned(),
+                external_id: None,
+                turn_id: Some(engine_turn),
+                origin: Origin::Agente,
+                author_name: None,
+            },
+        )
+        .expect("stored reply");
+    fixture.store = Arc::new(Store::open(&fixture.config).expect("reopen database"));
+    let fake = Arc::new(FakeProvider::with_scripts(Vec::new()));
+    let server = fixture.start(fake.clone()).await;
+    let account = &fixture.account;
+    let state = server
+        .turn(
+            account,
+            &conversation.to_string(),
+            &turn.to_string(),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(state["status"], "succeeded", "{state}");
+    assert_eq!(state["reply_text"], "Resposta antes da queda.");
+    assert!(state["finished_at"].is_number());
+    assert_eq!(
+        fake.received().len(),
+        0,
+        "the stored reply is not generated again"
+    );
+    let history = server.history(account, &conversation.to_string()).await;
+    assert_eq!(texts(&history), ["Resposta antes da queda.", "Pergunta"]);
     assert_outbox_empty(&fixture);
 }
 

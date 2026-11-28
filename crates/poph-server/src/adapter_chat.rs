@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use poph_agent::turno::TurnInput;
-use poph_store::{AdapterTurnKey, AdapterTurnOutcome};
+use poph_agent::turno::{TurnEvent, TurnInput, TurnObserver};
+use poph_store::{AdapterTurnKey, AdapterTurnOutcome, Store};
 use poph_types::TurnId;
 
 use crate::ServerState;
@@ -62,9 +62,11 @@ pub(crate) fn launch(state: ServerState, key: AdapterTurnKey) {
         state.adapter_workers.insert(key, input.clone());
         let result = match &state.engine {
             Some(engine) => {
-                engine
-                    .run(input, &mut poph_agent::turno::NoopObserver)
-                    .await
+                let mut observer = AdapterObserver {
+                    key,
+                    store: &state.store,
+                };
+                engine.run(input, &mut observer).await
             }
             None => {
                 finish(&state, key, AdapterTurnOutcome::Failed("model_unavailable"));
@@ -92,6 +94,24 @@ pub(crate) fn launch(state: ServerState, key: AdapterTurnKey) {
         finish(&state, key, outcome);
         state.adapter_workers.remove(key.turn);
     });
+}
+
+struct AdapterObserver<'a> {
+    key: AdapterTurnKey,
+    store: &'a Store,
+}
+
+impl TurnObserver for AdapterObserver<'_> {
+    fn evento(&mut self, event: TurnEvent) {
+        if let TurnEvent::Started { turno, .. } = event
+            && let Err(error) = self
+                .store
+                .adapter_chat()
+                .record_engine_turn(self.key, turno)
+        {
+            tracing::warn!(%error, turn_id = %self.key.turn, "adapter turn engine id could not be recorded");
+        }
+    }
 }
 
 fn finish(state: &ServerState, key: AdapterTurnKey, outcome: AdapterTurnOutcome) {

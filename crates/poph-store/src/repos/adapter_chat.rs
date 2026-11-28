@@ -606,17 +606,28 @@ impl AdapterChat<'_> {
             .write(move |conn| finish_turn(conn, key, outcome, now))
     }
 
+    pub fn record_engine_turn(&self, key: AdapterTurnKey, engine: TurnId) -> Resultado<()> {
+        self.0.write(move |conn| {
+            conn.execute(
+                "UPDATE adapter_turns SET engine_turn_id = ?4
+                  WHERE org_id = ?1 AND conversation_id = ?2 AND id = ?3 AND status = 'running'",
+                params![
+                    key.org.to_string(),
+                    key.conversation.to_string(),
+                    key.turn.to_string(),
+                    engine.to_string()
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
     pub fn recover_turns(&self) -> Resultado<Vec<AdapterTurnKey>> {
         let now = self.0.now();
         self.0.write(move |conn| {
             let interrupted = scan_turns(conn, "running")?;
             for key in interrupted {
-                finish_turn(
-                    conn,
-                    key,
-                    AdapterTurnOutcome::Failed("server_restarted"),
-                    now,
-                )?;
+                recover_turn(conn, key, now)?;
             }
             scan_turns(conn, "queued")
         })
@@ -640,6 +651,55 @@ impl AdapterChat<'_> {
                 .is_some())
         })
     }
+}
+
+fn recover_turn(conn: &Connection, key: AdapterTurnKey, now: i64) -> Resultado<()> {
+    let ids = (
+        key.org.to_string(),
+        key.conversation.to_string(),
+        key.turn.to_string(),
+    );
+    let engine: Option<Option<String>> = conn
+        .query_row(
+            "SELECT engine_turn_id FROM adapter_turns
+              WHERE org_id = ?1 AND conversation_id = ?2 AND id = ?3",
+            params![ids.0, ids.1, ids.2],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if let Some(Some(engine)) = engine {
+        let reply: Option<String> = conn
+            .query_row(
+                "SELECT id FROM messages
+                  WHERE org_id = ?1 AND conversation_id = ?2 AND turn_id = ?3
+                    AND role = 'assistant'
+                  ORDER BY created_at DESC, id DESC LIMIT 1",
+                params![ids.0, ids.1, engine],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if reply.is_some() {
+            conn.execute(
+                "UPDATE adapter_turns
+                    SET status = 'succeeded', reply_message_id = ?4, error_code = NULL,
+                        input_tokens = COALESCE((SELECT input_tokens FROM turns
+                          WHERE org_id = ?1 AND conversation_id = ?2 AND id = ?5), 0),
+                        output_tokens = COALESCE((SELECT output_tokens FROM turns
+                          WHERE org_id = ?1 AND conversation_id = ?2 AND id = ?5), 0),
+                        finished_at = ?6
+                  WHERE org_id = ?1 AND conversation_id = ?2 AND id = ?3",
+                params![ids.0, ids.1, ids.2, reply, engine, now],
+            )?;
+            return Ok(());
+        }
+    }
+    finish_turn(
+        conn,
+        key,
+        AdapterTurnOutcome::Failed("server_restarted"),
+        now,
+    )?;
+    Ok(())
 }
 
 fn scan_turns(conn: &Connection, status: &str) -> Resultado<Vec<AdapterTurnKey>> {

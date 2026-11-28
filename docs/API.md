@@ -1543,8 +1543,10 @@ agent message in the history and returned in `reply_text`, and no `outbox` row i
 responsible for delivering the reply. The input limit comes from `adapter_chat.max_text_bytes` (16 KiB by
 default, accepted range 1 byte to 256 KiB in `poph.toml`) and applies to both the message and the turn
 routes. A turn that was `running` when the process stopped becomes `failed` with `error_code`
-`server_restarted` on the next boot, and a `queued` turn is started again; a successful turn is never
-answered twice because the reply message is written before the turn is marked `succeeded`.
+`server_restarted` on the next boot, unless the reply message was already stored for that turn: then the
+turn is marked `succeeded` with the stored reply, so a restart never answers the same turn twice. A
+`queued` turn is started again. A successful turn is never answered twice because the reply message is
+written before the turn is marked `succeeded`.
 
 Flow effects triggered during an adapter turn follow the normal queue. A `notificar_whatsapp` effect cannot
 be delivered from an adapter conversation because it has no WhatsApp integration: `FlowEffects::plan`
