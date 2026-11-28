@@ -131,12 +131,20 @@ impl Default for TurnOptions {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TurnDelivery {
+    #[default]
+    Outbox,
+    WithoutOutbox,
+}
+
 #[derive(Debug, Clone)]
 pub struct TurnInput {
     pub org: OrgId,
     pub conversa: ConversationId,
     pub mensagem: MessageId,
     pub cancellation: Cancellation,
+    pub delivery: TurnDelivery,
 }
 
 impl TurnInput {
@@ -146,7 +154,13 @@ impl TurnInput {
             conversa,
             mensagem,
             cancellation: Cancellation::new(),
+            delivery: TurnDelivery::Outbox,
         }
+    }
+
+    pub fn without_outbox(mut self) -> Self {
+        self.delivery = TurnDelivery::WithoutOutbox;
+        self
     }
 }
 
@@ -459,6 +473,30 @@ impl TurnEngine {
 
     pub fn options(&self) -> &TurnOptions {
         &self.options
+    }
+
+    fn store_reply(&self, org: OrgId, fresh: NewMessage, delivery: TurnDelivery) -> Resultado<()> {
+        if delivery == TurnDelivery::WithoutOutbox {
+            self.store.messages().write(org, fresh)?;
+            return Ok(());
+        }
+        let conversation_id = fresh.conversation_id;
+        let text = fresh.texto.clone();
+        let turn_id = fresh.turn_id.ok_or_else(|| {
+            AgentError::Internal("outbox reply without a turn identifier".to_owned())
+        })?;
+        self.store.messages().write_with_output(
+            org,
+            fresh,
+            NewOutboxItem {
+                conversation_id,
+                turn_id,
+                seq: 0,
+                tipo: "text".to_owned(),
+                content_json: json!({ "texto": text }).to_string(),
+            },
+        )?;
+        Ok(())
     }
 
     pub async fn run(
@@ -793,6 +831,7 @@ impl TurnEngine {
                             .unwrap_or(u64::MAX),
                     ),
                     started_at,
+                    input.delivery,
                     observer,
                 )
                 .await;
@@ -832,6 +871,7 @@ impl TurnEngine {
                                 .unwrap_or(u64::MAX),
                         ),
                         started_at,
+                        input.delivery,
                         observer,
                     );
                 }
@@ -856,6 +896,7 @@ impl TurnEngine {
                                     .unwrap_or(u64::MAX),
                             ),
                             started_at,
+                            input.delivery,
                             observer,
                         )
                         .await;
@@ -883,6 +924,7 @@ impl TurnEngine {
                     u64::try_from(assembly_started_at.elapsed().as_millis()).unwrap_or(u64::MAX),
                 ),
                 started_at,
+                input.delivery,
                 observer,
             );
         }
@@ -1058,7 +1100,7 @@ impl TurnEngine {
 
         let texto = reply.texto.trim().to_owned();
         if !texto.is_empty() {
-            self.store.messages().write_with_output(
+            self.store_reply(
                 org,
                 NewMessage {
                     conversation_id,
@@ -1071,13 +1113,7 @@ impl TurnEngine {
                     origin: poph_store::Origin::Agente,
                     author_name: None,
                 },
-                NewOutboxItem {
-                    conversation_id,
-                    turn_id: turno.id,
-                    seq: 0,
-                    tipo: "text".to_owned(),
-                    content_json: json!({ "texto": texto }).to_string(),
-                },
+                input.delivery,
             )?;
             self.metrics.responses_stored.increment(1);
         }
@@ -1955,6 +1991,7 @@ impl TurnEngine {
         group_ids: Vec<MessageId>,
         (queue_ms, assembly_ms): (u64, u64),
         started_at: Instant,
+        delivery: TurnDelivery,
         observer: &mut dyn TurnObserver,
     ) -> Resultado<TurnSummary> {
         let org = target.org;
@@ -1973,7 +2010,7 @@ impl TurnEngine {
                 "transferência sem mensagem automática configurada: cliente não recebe texto"
             );
         } else {
-            self.store.messages().write_with_output(
+            self.store_reply(
                 org,
                 NewMessage {
                     conversation_id,
@@ -1986,13 +2023,7 @@ impl TurnEngine {
                     origin: poph_store::Origin::Agente,
                     author_name: None,
                 },
-                NewOutboxItem {
-                    conversation_id,
-                    turn_id: turno,
-                    seq: 0,
-                    tipo: "text".to_owned(),
-                    content_json: json!({ "texto": texto }).to_string(),
-                },
+                delivery,
             )?;
             self.metrics.responses_stored.increment(1);
         }
@@ -2120,6 +2151,7 @@ impl TurnEngine {
         group_ids: Vec<MessageId>,
         (queue_ms, assembly_ms): (u64, u64),
         started_at: Instant,
+        delivery: TurnDelivery,
         observer: &mut dyn TurnObserver,
     ) -> Resultado<TurnSummary> {
         let org = target.org;
@@ -2128,7 +2160,7 @@ impl TurnEngine {
 
         let texto = poph_jev::g7_response_from_agent(&hot_agent.agente.jev_json)
             .unwrap_or_else(|| G7_DEFAULT_REPLY.to_owned());
-        self.store.messages().write_with_output(
+        self.store_reply(
             org,
             NewMessage {
                 conversation_id,
@@ -2141,13 +2173,7 @@ impl TurnEngine {
                 origin: poph_store::Origin::Agente,
                 author_name: None,
             },
-            NewOutboxItem {
-                conversation_id,
-                turn_id: turno,
-                seq: 0,
-                tipo: "text".to_owned(),
-                content_json: json!({ "texto": texto }).to_string(),
-            },
+            delivery,
         )?;
         self.metrics.responses_stored.increment(1);
         self.store
@@ -2220,6 +2246,7 @@ impl TurnEngine {
         group_ids: Vec<MessageId>,
         (queue_ms, assembly_ms): (u64, u64),
         started_at: Instant,
+        delivery: TurnDelivery,
         observer: &mut dyn TurnObserver,
     ) -> Resultado<TurnSummary> {
         let org = target.org;
@@ -2231,7 +2258,7 @@ impl TurnEngine {
             .trim()
             .to_owned();
         if !texto.is_empty() {
-            self.store.messages().write_with_output(
+            self.store_reply(
                 org,
                 NewMessage {
                     conversation_id,
@@ -2244,13 +2271,7 @@ impl TurnEngine {
                     origin: poph_store::Origin::Agente,
                     author_name: None,
                 },
-                NewOutboxItem {
-                    conversation_id,
-                    turn_id: turno,
-                    seq: 0,
-                    tipo: "text".to_owned(),
-                    content_json: json!({ "texto": texto }).to_string(),
-                },
+                delivery,
             )?;
             self.metrics.responses_stored.increment(1);
         }

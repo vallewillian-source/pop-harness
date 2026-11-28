@@ -300,6 +300,11 @@ impl FlowEffects {
                         conversation_status_label(current.status)
                     )));
                 }
+                if self.store.adapter_chat().is_adapter(org, conversation_id)? {
+                    return Ok(Plan::Wait(
+                        "a conversa é de adaptador e a entrega não passa pela outbox",
+                    ));
+                }
                 if self.store.turns().in_progress(org, conversation_id)? {
                     return Ok(Plan::Wait("o turno da conversa ainda está em andamento"));
                 }

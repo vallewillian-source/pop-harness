@@ -1041,6 +1041,21 @@ fn cases() -> Vec<IsolationCase> {
             "/admin/v1/orgs/{org_id}/adapter-conversations/{id}/messages",
             Empty,
         ),
+        isolation_case(
+            "post",
+            "/admin/v1/orgs/{org_id}/adapter-conversations/{id}/turns",
+            Json(r#"{"text":"Invadido","idempotency_key":"invasao"}"#),
+        ),
+        isolation_case(
+            "get",
+            "/admin/v1/orgs/{org_id}/adapter-conversations/{id}/turns/{turn_id}",
+            Empty,
+        ),
+        isolation_case(
+            "post",
+            "/admin/v1/orgs/{org_id}/adapter-conversations/{id}/turns/{turn_id}/cancel",
+            Empty,
+        ),
     ]
 }
 

@@ -1,4 +1,4 @@
-use poph_types::{AgentId, ConversationId, MessageId, OrgId, RecordId};
+use poph_types::{AgentId, ConversationId, MessageId, OrgId, RecordId, TurnId};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 
@@ -57,6 +57,63 @@ pub struct NewAdapterMessage {
 pub enum AdapterSubmission {
     Stored(AdapterMessage, bool),
     Conflict,
+}
+
+pub struct NewAdapterTurn {
+    pub idempotency_key: String,
+    pub text: String,
+    pub author_name: Option<String>,
+    pub external_message_id: Option<String>,
+}
+
+pub enum AdapterTurnSubmission {
+    Accepted {
+        message: MessageId,
+        turn: TurnId,
+    },
+    Replayed {
+        message: MessageId,
+        turn: TurnId,
+        status: String,
+    },
+    Conflict,
+    Busy(TurnId),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct AdapterTurnKey {
+    pub org: OrgId,
+    pub conversation: ConversationId,
+    pub turn: TurnId,
+}
+
+pub struct AdapterTurnClaim {
+    pub agent: AgentId,
+    pub message: MessageId,
+}
+
+pub enum AdapterTurnOutcome {
+    Success {
+        engine_turn: TurnId,
+        input_tokens: u32,
+        output_tokens: u32,
+    },
+    Failed(&'static str),
+    Cancelled,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct AdapterTurn {
+    pub id: TurnId,
+    pub conversation_id: ConversationId,
+    pub status: String,
+    pub reply_text: Option<String>,
+    pub error_code: Option<String>,
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+    pub created_at: i64,
+    pub started_at: Option<i64>,
+    pub finished_at: Option<i64>,
 }
 
 pub struct AdapterChat<'a>(pub(crate) &'a Store);
@@ -170,15 +227,12 @@ impl AdapterChat<'_> {
                 }
                 .into());
             }
-            let fingerprint = serde_json::to_string(&Fingerprint {
-                text: &fresh.text,
-                origin: fresh.origin.as_text(),
-                author_name: fresh.author_name.as_deref(),
-                external_message_id: fresh.external_message_id.as_deref(),
-            })
-            .map_err(|error| {
-                StoreError::Internal(format!("impressão digital de mensagem inválida: {error}"))
-            })?;
+            let fingerprint = message_fingerprint(
+                &fresh.text,
+                fresh.origin.as_text(),
+                fresh.author_name.as_deref(),
+                fresh.external_message_id.as_deref(),
+            )?;
             let previous: Option<(String, String)> = conn
                 .query_row(
                     "SELECT message_id, fingerprint FROM adapter_message_keys
@@ -346,4 +400,373 @@ fn message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AdapterMessage> {
         external_message_id: row.get(5)?,
         created_at: row.get(6)?,
     })
+}
+
+fn message_fingerprint(
+    text: &str,
+    origin: &str,
+    author_name: Option<&str>,
+    external_message_id: Option<&str>,
+) -> Resultado<String> {
+    serde_json::to_string(&Fingerprint {
+        text,
+        origin,
+        author_name,
+        external_message_id,
+    })
+    .map_err(|error| StoreError::Internal(format!("invalid message fingerprint: {error}")))
+}
+
+const TURN_COLUMNS: &str = "t.id, t.conversation_id, t.status, m.text, t.error_code,
+    t.input_tokens, t.output_tokens, t.created_at, t.started_at, t.finished_at";
+
+impl AdapterChat<'_> {
+    pub fn submit_turn(
+        &self,
+        org: OrgId,
+        conversation: ConversationId,
+        fresh: NewAdapterTurn,
+    ) -> Resultado<AdapterTurnSubmission> {
+        let turn = TurnId::generate();
+        let message = MessageId::generate();
+        let now = self.0.now();
+        self.0.write(move |conn| {
+            let text_org = org.to_string();
+            let text_conversation = conversation.to_string();
+            let found: Option<(String, String)> = conn
+                .query_row(
+                    "SELECT a.channel, c.status FROM adapter_conversations a
+                       JOIN conversations c ON c.org_id = a.org_id AND c.id = a.id
+                      WHERE a.org_id = ?1 AND a.id = ?2",
+                    params![text_org, text_conversation],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            let Some((_channel, status)) = found else {
+                return require::<AdapterTurnSubmission>(None, "conversa", &text_conversation);
+            };
+            if status != "open" {
+                return Err(poph_types::DomainError::ConversationClosed {
+                    id: text_conversation.clone(),
+                }
+                .into());
+            }
+            let fingerprint = message_fingerprint(
+                &fresh.text,
+                Origin::Agente.as_text(),
+                fresh.author_name.as_deref(),
+                fresh.external_message_id.as_deref(),
+            )?;
+            let previous: Option<(String, String, String, String)> = conn
+                .query_row(
+                    "SELECT id, message_id, fingerprint, status FROM adapter_turns
+                      WHERE org_id = ?1 AND conversation_id = ?2 AND idempotency_key = ?3",
+                    params![text_org, text_conversation, fresh.idempotency_key],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )
+                .optional()?;
+            if let Some((stored_turn, stored_message, original, status)) = previous {
+                if original != fingerprint {
+                    return Ok(AdapterTurnSubmission::Conflict);
+                }
+                let stored_turn = stored_turn
+                    .parse()
+                    .map_err(|_| StoreError::Internal("invalid turn identifier".to_owned()))?;
+                let stored_message = stored_message
+                    .parse()
+                    .map_err(|_| StoreError::Internal("invalid message identifier".to_owned()))?;
+                return Ok(AdapterTurnSubmission::Replayed {
+                    message: stored_message,
+                    turn: stored_turn,
+                    status,
+                });
+            }
+            let active: Option<String> = conn
+                .query_row(
+                    "SELECT id FROM adapter_turns
+                      WHERE org_id = ?1 AND conversation_id = ?2
+                        AND status IN ('queued', 'running')
+                      LIMIT 1",
+                    params![text_org, text_conversation],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if let Some(active) = active {
+                let active = active
+                    .parse()
+                    .map_err(|_| StoreError::Internal("invalid turn identifier".to_owned()))?;
+                return Ok(AdapterTurnSubmission::Busy(active));
+            }
+            let taken: Option<i64> = conn
+                .query_row(
+                    "SELECT 1 FROM adapter_message_keys
+                      WHERE org_id = ?1 AND conversation_id = ?2 AND idempotency_key = ?3",
+                    params![text_org, text_conversation, fresh.idempotency_key],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if taken.is_some() {
+                return Ok(AdapterTurnSubmission::Conflict);
+            }
+            conn.execute(
+                "INSERT INTO messages
+                    (id, org_id, conversation_id, direction, role, text, attachments_json,
+                     external_id, turn_id, created_at, origin, author_name)
+                 VALUES (?1, ?2, ?3, 'in', 'user', ?4, '[]', NULL, NULL, ?5, ?6, ?7)",
+                params![
+                    message.to_string(),
+                    text_org,
+                    text_conversation,
+                    fresh.text,
+                    now,
+                    Origin::Agente.as_text(),
+                    fresh.author_name.as_deref()
+                ],
+            )
+            .map_err(StoreError::from)?;
+            conn.execute(
+                "INSERT INTO adapter_turns
+                    (org_id, conversation_id, id, message_id, idempotency_key, fingerprint,
+                     status, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'queued', ?7)",
+                params![
+                    text_org,
+                    text_conversation,
+                    turn.to_string(),
+                    message.to_string(),
+                    fresh.idempotency_key,
+                    fingerprint,
+                    now
+                ],
+            )
+            .map_err(StoreError::from)?;
+            conn.execute(
+                "INSERT INTO adapter_message_keys
+                    (org_id, conversation_id, idempotency_key, message_id, fingerprint,
+                     external_message_id, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    text_org,
+                    text_conversation,
+                    fresh.idempotency_key,
+                    message.to_string(),
+                    fingerprint,
+                    fresh.external_message_id.as_deref(),
+                    now
+                ],
+            )
+            .map_err(StoreError::from)?;
+            conn.execute(
+                "UPDATE conversations SET last_message_at = ?3, updated_at = ?3
+                  WHERE org_id = ?1 AND id = ?2",
+                params![text_org, text_conversation, now],
+            )
+            .map_err(StoreError::from)?;
+            Ok(AdapterTurnSubmission::Accepted { message, turn })
+        })
+    }
+
+    pub fn claim_turn(&self, key: AdapterTurnKey) -> Resultado<Option<AdapterTurnClaim>> {
+        let now = self.0.now();
+        self.0.write(move |conn| {
+            let ids = (
+                key.org.to_string(),
+                key.conversation.to_string(),
+                key.turn.to_string(),
+            );
+            let message: Option<MessageId> = conn
+                .query_row(
+                    "UPDATE adapter_turns SET status = 'running', started_at = ?4
+                      WHERE org_id = ?1 AND conversation_id = ?2 AND id = ?3
+                        AND status = 'queued'
+                      RETURNING message_id",
+                    params![ids.0, ids.1, ids.2, now],
+                    |row| column_id(row, 0),
+                )
+                .optional()?;
+            let Some(message) = message else {
+                return Ok(None);
+            };
+            let agent: AgentId = conn.query_row(
+                "SELECT agent_id FROM conversations WHERE org_id = ?1 AND id = ?2",
+                params![ids.0, ids.1],
+                |row| column_id(row, 0),
+            )?;
+            Ok(Some(AdapterTurnClaim { agent, message }))
+        })
+    }
+
+    pub fn finish_turn(
+        &self,
+        key: AdapterTurnKey,
+        outcome: AdapterTurnOutcome,
+    ) -> Resultado<AdapterTurn> {
+        let now = self.0.now();
+        self.0
+            .write(move |conn| finish_turn(conn, key, outcome, now))
+    }
+
+    pub fn recover_turns(&self) -> Resultado<Vec<AdapterTurnKey>> {
+        let now = self.0.now();
+        self.0.write(move |conn| {
+            let interrupted = scan_turns(conn, "running")?;
+            for key in interrupted {
+                finish_turn(
+                    conn,
+                    key,
+                    AdapterTurnOutcome::Failed("server_restarted"),
+                    now,
+                )?;
+            }
+            scan_turns(conn, "queued")
+        })
+    }
+
+    pub fn turn(&self, key: AdapterTurnKey) -> Resultado<AdapterTurn> {
+        self.0.read(|conn| load_turn(conn, key))
+    }
+
+    pub fn is_adapter(&self, org: OrgId, conversation: ConversationId) -> Resultado<bool> {
+        let text_org = org.to_string();
+        let text_conversation = conversation.to_string();
+        self.0.read(move |conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT 1 FROM adapter_conversations WHERE org_id = ?1 AND id = ?2",
+                    params![text_org, text_conversation],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()?
+                .is_some())
+        })
+    }
+}
+
+fn scan_turns(conn: &Connection, status: &str) -> Resultado<Vec<AdapterTurnKey>> {
+    let mut statement = conn.prepare(
+        "SELECT org_id, conversation_id, id FROM adapter_turns WHERE status = ?1
+          ORDER BY created_at, id",
+    )?;
+    let rows = statement.query_map([status], |row| {
+        Ok(AdapterTurnKey {
+            org: column_id(row, 0)?,
+            conversation: column_id(row, 1)?,
+            turn: column_id(row, 2)?,
+        })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+fn load_turn(conn: &Connection, key: AdapterTurnKey) -> Resultado<AdapterTurn> {
+    let found = conn
+        .query_row(
+            &format!(
+                "SELECT {TURN_COLUMNS} FROM adapter_turns t
+                   LEFT JOIN messages m ON m.org_id = t.org_id AND m.id = t.reply_message_id
+                  WHERE t.org_id = ?1 AND t.conversation_id = ?2 AND t.id = ?3"
+            ),
+            params![
+                key.org.to_string(),
+                key.conversation.to_string(),
+                key.turn.to_string()
+            ],
+            |row| {
+                Ok(AdapterTurn {
+                    id: column_id(row, 0)?,
+                    conversation_id: column_id(row, 1)?,
+                    status: row.get(2)?,
+                    reply_text: row.get(3)?,
+                    error_code: row.get(4)?,
+                    input_tokens: u32::try_from(column_u64(row, 5)?).unwrap_or(u32::MAX),
+                    output_tokens: u32::try_from(column_u64(row, 6)?).unwrap_or(u32::MAX),
+                    created_at: row.get(7)?,
+                    started_at: row.get(8)?,
+                    finished_at: row.get(9)?,
+                })
+            },
+        )
+        .optional()?;
+    require(found, "turno", &key.turn.to_string())
+}
+
+fn finish_turn(
+    conn: &Connection,
+    key: AdapterTurnKey,
+    outcome: AdapterTurnOutcome,
+    now: i64,
+) -> Resultado<AdapterTurn> {
+    let current = load_turn(conn, key)?;
+    if !matches!(current.status.as_str(), "queued" | "running") {
+        return Ok(current);
+    }
+    let ids = (
+        key.org.to_string(),
+        key.conversation.to_string(),
+        key.turn.to_string(),
+    );
+    let stored_reply = |engine_turn: TurnId| -> Resultado<Option<String>> {
+        Ok(conn
+            .query_row(
+                "SELECT id FROM messages
+                  WHERE org_id = ?1 AND conversation_id = ?2 AND turn_id = ?3
+                    AND role = 'assistant'
+                  ORDER BY created_at DESC, id DESC LIMIT 1",
+                params![ids.0, ids.1, engine_turn.to_string()],
+                |row| row.get(0),
+            )
+            .optional()?)
+    };
+    match outcome {
+        AdapterTurnOutcome::Success {
+            engine_turn,
+            input_tokens,
+            output_tokens,
+        } => match stored_reply(engine_turn)? {
+            Some(reply) => {
+                conn.execute(
+                    "UPDATE adapter_turns
+                        SET status = 'succeeded', engine_turn_id = ?4, reply_message_id = ?5,
+                            error_code = NULL, input_tokens = ?6, output_tokens = ?7,
+                            finished_at = ?8
+                      WHERE org_id = ?1 AND conversation_id = ?2 AND id = ?3",
+                    params![
+                        ids.0,
+                        ids.1,
+                        ids.2,
+                        engine_turn.to_string(),
+                        reply,
+                        i64::from(input_tokens),
+                        i64::from(output_tokens),
+                        now
+                    ],
+                )?;
+            }
+            None => {
+                conn.execute(
+                    "UPDATE adapter_turns
+                        SET status = 'failed', engine_turn_id = ?4, error_code = 'turn_failed',
+                            finished_at = ?5
+                      WHERE org_id = ?1 AND conversation_id = ?2 AND id = ?3",
+                    params![ids.0, ids.1, ids.2, engine_turn.to_string(), now],
+                )?;
+            }
+        },
+        AdapterTurnOutcome::Failed(code) => {
+            conn.execute(
+                "UPDATE adapter_turns
+                    SET status = 'failed', error_code = ?4, finished_at = ?5
+                  WHERE org_id = ?1 AND conversation_id = ?2 AND id = ?3",
+                params![ids.0, ids.1, ids.2, code, now],
+            )?;
+        }
+        AdapterTurnOutcome::Cancelled => {
+            conn.execute(
+                "UPDATE adapter_turns
+                    SET status = 'cancelled', error_code = NULL, finished_at = ?4
+                  WHERE org_id = ?1 AND conversation_id = ?2 AND id = ?3",
+                params![ids.0, ids.1, ids.2, now],
+            )?;
+        }
+    }
+    load_turn(conn, key)
 }

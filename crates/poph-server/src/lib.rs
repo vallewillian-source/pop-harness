@@ -1,3 +1,4 @@
+mod adapter_chat;
 pub mod api;
 pub mod auth;
 pub mod case_service;
@@ -64,6 +65,7 @@ where
 {
     turn_input::recover_interrupted_turns(&estado);
     site_chat::recover(&estado).map_err(std::io::Error::other)?;
+    adapter_chat::recover(&estado).map_err(std::io::Error::other)?;
     let saida = whatsapp_output::start(&estado);
     let effects = flow_effects::start(&estado);
     let turno = turn_input::start(&estado);

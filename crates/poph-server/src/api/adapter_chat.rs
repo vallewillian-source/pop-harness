@@ -4,10 +4,11 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
 use poph_store::{
-    AdapterSubmission, Direction, LIMIT_AUTHOR_NAME, LIMIT_EXTERNAL_MESSAGE_ID, LIMIT_EXTERNAL_REF,
-    LIMIT_IDEMPOTENCY_KEY, NewAdapterMessage, Origin, RESERVED_CHANNELS, Role,
+    AdapterSubmission, AdapterTurnKey, AdapterTurnOutcome, AdapterTurnSubmission, Direction,
+    LIMIT_AUTHOR_NAME, LIMIT_EXTERNAL_MESSAGE_ID, LIMIT_EXTERNAL_REF, LIMIT_IDEMPOTENCY_KEY,
+    NewAdapterMessage, NewAdapterTurn, Origin, RESERVED_CHANNELS, Role,
 };
-use poph_types::{AgentId, ConversationId, MessageId, OrgId};
+use poph_types::{AgentId, ConversationId, MessageId, OrgId, TurnId};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use utoipa::ToSchema;
@@ -32,6 +33,18 @@ pub fn routes() -> Router<ServerState> {
         .route(
             "/admin/v1/orgs/{org_id}/adapter-conversations/{id}/messages",
             get(history).post(write_message),
+        )
+        .route(
+            "/admin/v1/orgs/{org_id}/adapter-conversations/{id}/turns",
+            post(submit_turn),
+        )
+        .route(
+            "/admin/v1/orgs/{org_id}/adapter-conversations/{id}/turns/{turn_id}",
+            get(show_turn),
+        )
+        .route(
+            "/admin/v1/orgs/{org_id}/adapter-conversations/{id}/turns/{turn_id}/cancel",
+            post(cancel_turn),
         )
 }
 
@@ -74,6 +87,25 @@ pub struct MessageBody {
 pub struct HistoryQuery {
     before: Option<String>,
     limit: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct TurnPath {
+    org_id: String,
+    id: String,
+    turn_id: String,
+}
+
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TurnBody {
+    text: String,
+    #[schema(min_length = 1, max_length = 128)]
+    idempotency_key: String,
+    #[schema(max_length = 128)]
+    author_name: Option<String>,
+    #[schema(max_length = 128)]
+    external_message_id: Option<String>,
 }
 
 fn validation(field: &str, reason: &str) -> ApiError {
@@ -163,6 +195,25 @@ fn scoped_conversation(
     let id = parse_path_id::<ConversationId>(raw_id)?;
     let conversation = state.store.adapter_chat().get(org, id)?;
     Ok((org, id, conversation))
+}
+
+fn scoped_turn(
+    state: &ServerState,
+    identity: &Identity,
+    path: &TurnPath,
+) -> Result<AdapterTurnKey, ApiError> {
+    let (org, conversation, _) = scoped_conversation(state, identity, &path.org_id, &path.id)?;
+    let turn = path
+        .turn_id
+        .parse::<TurnId>()
+        .map_err(|_| validation("turn_id", "informe um id de turno"))?;
+    let key = AdapterTurnKey {
+        org,
+        conversation,
+        turn,
+    };
+    state.store.adapter_chat().turn(key)?;
+    Ok(key)
 }
 
 fn limit(raw: Option<&str>, max: u32, default: u32) -> Result<u32, ApiError> {
@@ -303,4 +354,122 @@ pub async fn history(
     Ok(Json(
         json!({"messages": state.store.adapter_chat().history(org, conversation, before, limit)?}),
     ))
+}
+
+#[utoipa::path(operation_id = "adapter_turn_create", post, path="/admin/v1/orgs/{org_id}/adapter-conversations/{id}/turns", tag="adapter-conversations", security(("bearer"=[])), params(("org_id"=String, Path), ("id"=String, Path)), request_body=TurnBody, responses((status=202, description="Turno aceito", body=Value), (status=200, description="Repetição da chave", body=Value), (status=404, description="Conversa não encontrada", body=crate::ErrorResponse), (status=409, description="Turno em andamento, chave repetida com outro conteúdo ou conversa encerrada", body=crate::ErrorResponse), (status=422, description="Dados recusados", body=crate::ErrorResponse)))]
+pub async fn submit_turn(
+    State(state): State<ServerState>,
+    identity: Identity,
+    Path(path): Path<ConversationPath>,
+    json: Result<Json<TurnBody>, JsonRejection>,
+) -> Result<Response, ApiError> {
+    let (org, conversation, _) = scoped_conversation(&state, &identity, &path.org_id, &path.id)?;
+    let data = body(json)?;
+    let max = state.config.adapter_chat.max_text_bytes;
+    if !(1..=max).contains(&data.text.len()) {
+        return Err(validation("text", &format!("informe de 1 a {max} bytes")));
+    }
+    if !(1..=LIMIT_IDEMPOTENCY_KEY).contains(&data.idempotency_key.chars().count()) {
+        return Err(validation(
+            "idempotency_key",
+            "informe de 1 a 128 caracteres",
+        ));
+    }
+    let author_name = optional_name(data.author_name, "author_name", LIMIT_AUTHOR_NAME)?;
+    let external_message_id = optional_name(
+        data.external_message_id,
+        "external_message_id",
+        LIMIT_EXTERNAL_MESSAGE_ID,
+    )?;
+    let (status, message, turn, state_label) = match state.store.adapter_chat().submit_turn(
+        org,
+        conversation,
+        NewAdapterTurn {
+            idempotency_key: data.idempotency_key,
+            text: data.text,
+            author_name,
+            external_message_id,
+        },
+    )? {
+        AdapterTurnSubmission::Accepted { message, turn } => {
+            super::audit::register(
+                &state,
+                &identity,
+                Some(org),
+                "adapter_chat_turn",
+                "turn",
+                turn.to_string(),
+            )?;
+            crate::adapter_chat::launch(
+                state.clone(),
+                AdapterTurnKey {
+                    org,
+                    conversation,
+                    turn,
+                },
+            );
+            (StatusCode::ACCEPTED, message, turn, "queued".to_owned())
+        }
+        AdapterTurnSubmission::Replayed {
+            message,
+            turn,
+            status,
+        } => (StatusCode::OK, message, turn, status),
+        AdapterTurnSubmission::Conflict => {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "idempotency_conflict",
+                "a chave já foi usada para outro conteúdo",
+            ));
+        }
+        AdapterTurnSubmission::Busy(turn) => {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "turn_in_progress",
+                "esta conversa já tem um turno em andamento",
+            )
+            .with_details(json!({"turn_id": turn})));
+        }
+    };
+    Ok((
+        status,
+        Json(json!({"turn_id": turn, "message_id": message, "status": state_label})),
+    )
+        .into_response())
+}
+
+#[utoipa::path(operation_id = "adapter_turn_show", get, path="/admin/v1/orgs/{org_id}/adapter-conversations/{id}/turns/{turn_id}", tag="adapter-conversations", security(("bearer"=[])), params(("org_id"=String, Path), ("id"=String, Path), ("turn_id"=String, Path)), responses((status=200, description="Estado do turno", body=Value), (status=404, description="Turno não encontrado", body=crate::ErrorResponse)))]
+pub async fn show_turn(
+    State(state): State<ServerState>,
+    identity: Identity,
+    Path(path): Path<TurnPath>,
+) -> Result<Json<Value>, ApiError> {
+    let key = scoped_turn(&state, &identity, &path)?;
+    Ok(Json(json!(state.store.adapter_chat().turn(key)?)))
+}
+
+#[utoipa::path(operation_id = "adapter_turn_cancel", post, path="/admin/v1/orgs/{org_id}/adapter-conversations/{id}/turns/{turn_id}/cancel", tag="adapter-conversations", security(("bearer"=[])), params(("org_id"=String, Path), ("id"=String, Path), ("turn_id"=String, Path)), responses((status=200, description="Estado final do turno", body=Value), (status=404, description="Turno não encontrado", body=crate::ErrorResponse)))]
+pub async fn cancel_turn(
+    State(state): State<ServerState>,
+    identity: Identity,
+    Path(path): Path<TurnPath>,
+) -> Result<Json<Value>, ApiError> {
+    let key = scoped_turn(&state, &identity, &path)?;
+    let previous = state.store.adapter_chat().turn(key)?;
+    let result = state
+        .store
+        .adapter_chat()
+        .finish_turn(key, AdapterTurnOutcome::Cancelled)?;
+    state.adapter_workers.cancel(key);
+    if previous.status != "cancelled" && result.status == "cancelled" {
+        super::audit::register(
+            &state,
+            &identity,
+            Some(key.org),
+            "adapter_chat_turn_cancel",
+            "turn",
+            key.turn.to_string(),
+        )?;
+    }
+    Ok(Json(json!(result)))
 }

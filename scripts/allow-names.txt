@@ -129,6 +129,7 @@ name	adapter_conversations	published tabela: adapter_conversations
 name	adapter_message_create	published operation id: adapter_message_create
 name	adapter_message_history	published operation id: adapter_message_history
 name	adapter_message_keys	published tabela: adapter_message_keys
+name	adapter_turns	published tabela: adapter_turns
 name	admin	published rota: admin
 name	admin_tokens	published tabela: admin_tokens
 name	age_buckets	published campo json: age_buckets
@@ -330,6 +331,7 @@ name	enabled	published coluna: enabled
 name	enabled_at	published coluna: enabled_at
 name	encaminhar	flow language word, frozen by P6
 name	endereco	published flag cli: endereco
+name	engine_turn_id	published coluna: engine_turn_id
 name	entity	published coluna: entity
 name	entity_id	published coluna: entity_id
 name	entrou_em	published coluna: entrou_em
@@ -472,6 +474,8 @@ name	item	published comando cli: item
 name	items	published rota: items
 name	ix_adapter_conversations_ref	published indice: ix_adapter_conversations_ref
 name	ix_adapter_message_keys_message	published indice: ix_adapter_message_keys_message
+name	ix_adapter_turns_active	published indice: ix_adapter_turns_active
+name	ix_adapter_turns_conversation	published indice: ix_adapter_turns_conversation
 name	ix_admin_tokens_org	published indice: ix_admin_tokens_org
 name	ix_agent_instructions_org	published indice: ix_agent_instructions_org
 name	ix_agent_knowledge_groups_org	published indice: ix_agent_knowledge_groups_org
@@ -801,6 +805,7 @@ name	remetente	published protocolo plugin: remetente
 name	remoto	published flag cli: remoto
 name	removed	published campo json: removed
 name	reopen	published rota: reopen
+name	reply_message_id	published coluna: reply_message_id
 name	reply_to	published protocolo plugin: reply_to
 name	resolucoes_json	published coluna: resolucoes_json
 name	RespostaErro	published schema openapi: RespostaErro

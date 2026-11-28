@@ -1700,6 +1700,14 @@ async fn all_openapi_writes_require_audit_coverage() {
             "post",
             "/admin/v1/orgs/{org_id}/adapter-conversations/{id}/messages",
         ),
+        (
+            "post",
+            "/admin/v1/orgs/{org_id}/adapter-conversations/{id}/turns",
+        ),
+        (
+            "post",
+            "/admin/v1/orgs/{org_id}/adapter-conversations/{id}/turns/{turn_id}/cancel",
+        ),
     ]
     .into_iter()
     .map(|(m, p)| (m.to_owned(), p.to_owned()))
@@ -3533,6 +3541,18 @@ async fn org_isolation_covers_all_published_operations() {
         (
             "get",
             "/admin/v1/orgs/{org_id}/adapter-conversations/{id}/messages",
+        ),
+        (
+            "post",
+            "/admin/v1/orgs/{org_id}/adapter-conversations/{id}/turns",
+        ),
+        (
+            "get",
+            "/admin/v1/orgs/{org_id}/adapter-conversations/{id}/turns/{turn_id}",
+        ),
+        (
+            "post",
+            "/admin/v1/orgs/{org_id}/adapter-conversations/{id}/turns/{turn_id}/cancel",
         ),
     ];
     let expected_set: BTreeSet<_> = expected

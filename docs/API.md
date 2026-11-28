@@ -358,6 +358,9 @@ Colunas:
 | Conversas de adaptador | GET | `/admin/v1/orgs/{org_id}/adapter-conversations/{id}` | exceção: sem equivalente na CLI | n/a | n/a | sim |
 | Conversas de adaptador | POST | `/admin/v1/orgs/{org_id}/adapter-conversations/{id}/messages` | exceção: sem equivalente na CLI | n/a | sim | sim |
 | Conversas de adaptador | GET | `/admin/v1/orgs/{org_id}/adapter-conversations/{id}/messages` | exceção: sem equivalente na CLI | n/a | n/a | sim |
+| Conversas de adaptador | POST | `/admin/v1/orgs/{org_id}/adapter-conversations/{id}/turns` | exceção: sem equivalente na CLI | n/a | sim | sim |
+| Conversas de adaptador | GET | `/admin/v1/orgs/{org_id}/adapter-conversations/{id}/turns/{turn_id}` | exceção: sem equivalente na CLI | n/a | n/a | sim |
+| Conversas de adaptador | POST | `/admin/v1/orgs/{org_id}/adapter-conversations/{id}/turns/{turn_id}/cancel` | exceção: sem equivalente na CLI | n/a | sim | sim |
 
 ## Fechar conversa (MX-06)
 
@@ -1503,9 +1506,9 @@ notify a human. Attachments and lead capture are reserved for later versions.
 
 A trusted adapter, such as the e-mail channel or the POP Bot, calls these routes under
 `/admin/v1/orgs/{org_id}` with an organization-scoped service credential. The adapter owns delivery and
-brings its own idempotency keys; the Harness owns the conversation, the Case and the history. These routes
-record messages in either direction and never start a turn or enqueue outbound channel work. The adapter
-turn is a later capability.
+brings its own idempotency keys; the Harness owns the conversation, the Case, the history and the adapter
+turn. The message routes record messages in either direction without starting a turn; the turn routes run
+the agent with the full tool set of the agent and never enqueue outbound channel work.
 
 | Method and path | Contract |
 | --- | --- |
@@ -1513,6 +1516,9 @@ turn is a later capability.
 | `GET /adapter-conversations/{id}` | Returns `{id, org_id, agent_id, channel, external_ref, create_case, status, version, created_at, updated_at, last_message_at, ficha_id}`. `ficha_id` is null when the conversation has no Case. |
 | `POST /adapter-conversations/{id}/messages` | Takes `{"text":"…","origin":"…","idempotency_key":"…","author_name":"…","external_message_id":"…"}`. `origin` is `customer` (inbound user message, stored with origin `agent`), `human` (outbound assistant message, origin `human`) or `agent` (outbound assistant message, origin `agent`). Text has 1 to `adapter_chat.max_text_bytes` UTF-8 bytes. `idempotency_key` has 1–128 characters; `author_name` and `external_message_id` accept up to 128 characters and are optional. Returns the message with 201. The same key and payload returns 200 with the same message; the same key with another payload returns 409 `idempotency_conflict`; a closed conversation returns 409 `conversa_encerrada`. |
 | `GET /adapter-conversations/{id}/messages?before=<id>&limit=<n>` | Returns `{"messages":[...]}` in descending message ID order. Each row has `id`, `role` (`user` or `assistant`), `origin`, `author_name`, `text`, `external_message_id` and `created_at`. The cursor is exclusive and omitted on the first page. The limit defaults to 50 and accepts 1–100. |
+| `POST /adapter-conversations/{id}/turns` | Takes `{"text":"…","idempotency_key":"…","author_name":"…","external_message_id":"…"}`. Text has 1 to `adapter_chat.max_text_bytes` UTF-8 bytes; `idempotency_key` has 1–128 characters. Stores the customer message and answers 202 `{"turn_id","message_id","status":"queued"}`. The same key and payload returns 200 with the same turn and its current status; the same key with another payload returns 409 `idempotency_conflict`. A second turn while one is `queued` or `running` returns 409 `turn_in_progress` with `details.turn_id`. A conversation that is not `open` returns 409 `conversa_encerrada`. |
+| `GET /adapter-conversations/{id}/turns/{turn_id}` | Returns `{id, conversation_id, status, reply_text, error_code, input_tokens, output_tokens, created_at, started_at, finished_at}`. `status` is `queued`, `running`, `succeeded`, `failed` or `cancelled`. `reply_text` is the stored agent message and is null until the turn succeeds. |
+| `POST /adapter-conversations/{id}/turns/{turn_id}/cancel` | Marks a `queued` or `running` turn as `cancelled` and signals the running turn. It is idempotent: a terminal turn answers 200 with its current state. |
 
 The channel matches `[a-z0-9_-]{1,32}`. The channels `test`, `site`, `whatsapp`, `matrix` and `api` are
 reserved and answered with 422 `validation_error` with `details.field` = `channel`, because each one has its
@@ -1529,6 +1535,23 @@ A message and its idempotency record are written in one transaction. These route
 rows. The organization bearer token follows the usual 401 and 403 rules. Lookup within the requested
 organization returns 404 for missing conversations, conversations of another channel and conversations of
 another organization.
+
+The turn follows the same rules as a channel turn: one turn per conversation, a durable state in
+`adapter_turns`, and the same `TurnEngine::run` used by WhatsApp and the test chat, with the full tool set
+of the agent (the site policy does not apply). The difference is the delivery: the reply is stored as an
+agent message in the history and returned in `reply_text`, and no `outbox` row is written. The adapter is
+responsible for delivering the reply. The input limit comes from `adapter_chat.max_text_bytes` (16 KiB by
+default, accepted range 1 byte to 256 KiB in `poph.toml`) and applies to both the message and the turn
+routes. A turn that was `running` when the process stopped becomes `failed` with `error_code`
+`server_restarted` on the next boot, and a `queued` turn is started again; a successful turn is never
+answered twice because the reply message is written before the turn is marked `succeeded`.
+
+Flow effects triggered during an adapter turn follow the normal queue. A `notificar_whatsapp` effect cannot
+be delivered from an adapter conversation because it has no WhatsApp integration: `FlowEffects::plan`
+returns `Plan::Wait`, the effect keeps `state = pending` with `proxima_tentativa` set and consumes no
+attempt, instead of failing. A `mensagem_ao_cliente` effect is deferred the same way, because adapter
+conversations never write `outbox` rows and delivery belongs to the adapter; the turn reply is the message
+the adapter reads from the history.
 
 ## Server internals: boot order, Console delivery and tokens (EN-13c)
 
