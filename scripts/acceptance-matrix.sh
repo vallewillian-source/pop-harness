@@ -194,11 +194,11 @@ done
 echo "== 4. banco, org, departamentos, agente e token =="
 "$POPH" migrate > "$DIR/migrate.txt" 2>&1
 "$POPH" --offline org create --name "Aceite Matrix" --slug aceite-matrix --json > "$DIR/org.json"
-"$POPH" --offline --org aceite-matrix department create --name Comercial --json > "$DIR/dep-comercial.json"
-"$POPH" --offline --org aceite-matrix department create --name Suporte --json > "$DIR/dep-suporte.json"
+"$POPH" --offline --org aceite-matrix department create --name Comercial --json > "$DIR/dep-sales.json"
+"$POPH" --offline --org aceite-matrix department create --name Suporte --json > "$DIR/dep-support.json"
 ORG="$(python3 -c "import json;print(json.load(open('$DIR/org.json'))['org']['id'])")"
-SALES_DEPT="$(python3 -c "import json;print(json.load(open('$DIR/dep-comercial.json'))['department']['id'])")"
-SUPPORT_DEPT="$(python3 -c "import json;print(json.load(open('$DIR/dep-suporte.json'))['department']['id'])")"
+SALES_DEPT="$(python3 -c "import json;print(json.load(open('$DIR/dep-sales.json'))['department']['id'])")"
+SUPPORT_DEPT="$(python3 -c "import json;print(json.load(open('$DIR/dep-support.json'))['department']['id'])")"
 "$POPH" --offline --org aceite-matrix agent create --name "Ana Comercial" --slug ana \
     --department "$SALES_DEPT" --grouping-window-ms 0 --json > "$DIR/agent.json"
 AGENT_ID="$(python3 -c "import json;print(json.load(open('$DIR/agent.json'))['agent']['id'])")"
@@ -240,11 +240,11 @@ docker exec "$CONTAINER" register_new_matrix_user -c /data/homeserver.yaml \
 curl -fsS -X POST "$SYNAPSE/_matrix/client/v3/login" -H 'Content-Type: application/json' \
     -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"$AGENT_USER\"},\"password\":\"$AGENT_PASSWORD\"}" \
     > "$DIR/login.json"
-HUMANO_TOKEN="$(python3 -c "import json;print(json.load(open('$DIR/login.json'))['access_token'])")"
-printf '%s' "$HUMANO_TOKEN" > "$DIR/atendente.token"
+HUMAN_TOKEN="$(python3 -c "import json;print(json.load(open('$DIR/login.json'))['access_token'])")"
+printf '%s' "$HUMAN_TOKEN" > "$DIR/atendente.token"
 chmod 600 "$DIR/atendente.token"
-sed -i "s|^export ACEITE_TOKEN_HUMANO=.*|export ACEITE_TOKEN_HUMANO=\"$HUMANO_TOKEN\"|" "$DIR/ambiente.sh"
-export ACEITE_TOKEN_HUMANO="$HUMANO_TOKEN"
+sed -i "s|^export ACEITE_TOKEN_HUMANO=.*|export ACEITE_TOKEN_HUMANO=\"$HUMAN_TOKEN\"|" "$DIR/ambiente.sh"
+export ACEITE_TOKEN_HUMANO="$HUMAN_TOKEN"
 
 python3 "$AUX" espacos "$DIR" > "$DIR/espacos.log"
 SPACE_SALES="$(python3 -c "import json;print(json.load(open('$DIR/espacos.json'))['comercial']['alias'])")"
@@ -395,15 +395,15 @@ FIMSQL
     sleep 1
 done
 
-python3 "$AUX" estado-sala "$ROOM" > "$DIR/estado-sala-a1.json"
+python3 "$AUX" estado-sala "$ROOM" > "$DIR/room-state-a1.json"
 NAME="$(python3 -c "
 import json
-d=json.load(open('$DIR/estado-sala-a1.json'))
+d=json.load(open('$DIR/room-state-a1.json'))
 print(d['m.room.name'].get('name',''))
 ")"
 NAME_META="$(python3 -c "
 import json
-d=json.load(open('$DIR/estado-sala-a1.json'))
+d=json.load(open('$DIR/room-state-a1.json'))
 for k,v in d.items():
     if k.endswith('.atendimento.metadata'):
         print(v.get('client_name',''))
@@ -564,10 +564,10 @@ else
         grep -q '^200' "$DIR/entrar-nome.json" && break
         sleep 1
     done
-    python3 "$AUX" estado-sala "$ROOM2" > "$DIR/estado-nome-antes.json"
+    python3 "$AUX" estado-sala "$ROOM2" > "$DIR/room-name-before.json"
     NAME_BEFORE="$(python3 -c "
 import json
-d=json.load(open('$DIR/estado-nome-antes.json'))
+d=json.load(open('$DIR/room-name-before.json'))
 print(d['m.room.name'].get('name',''))
 ")"
     GHOST_BEFORE="$(python3 "$AUX" perfil "@ph_wa_${PHONE_LATE}:matrix-dev.local" | python3 -c "import json,sys;print(json.load(sys.stdin).get('displayname',''))")"
@@ -585,10 +585,10 @@ print(d['m.room.name'].get('name',''))
         [ "$NAME_AFTER" = "Carlos Pereira" ] && break
         sleep 1
     done
-    python3 "$AUX" estado-sala "$ROOM2" > "$DIR/estado-nome-depois.json"
+    python3 "$AUX" estado-sala "$ROOM2" > "$DIR/room-name-after.json"
     NAME_META2="$(python3 -c "
 import json
-d=json.load(open('$DIR/estado-nome-depois.json'))
+d=json.load(open('$DIR/room-name-after.json'))
 for k,v in d.items():
     if k.endswith('.atendimento.metadata'):
         print(v.get('client_name',''))
@@ -672,7 +672,7 @@ if [ "$PHASE2" = 1 ]; then
     reiniciar_serve() {
         kill "$SERVE_PID" 2>/dev/null || true
         wait "$SERVE_PID" 2>/dev/null || true
-        "$POPH" serve > "$DIR/serve-fase2.log" 2>&1 &
+        "$POPH" serve > "$DIR/serve-phase2.log" 2>&1 &
         SERVE_PID=$!
         PIDS+=("$SERVE_PID")
         for _ in $(seq 1 150); do
@@ -680,7 +680,7 @@ if [ "$PHASE2" = 1 ]; then
             sleep 0.2
         done
         curl -fsS -m 2 -o /dev/null "http://127.0.0.1:$SERVE_PORT/healthz" \
-            || fail "o servidor não voltou depois do reinício (veja $DIR/serve-fase2.log)"
+            || fail "o servidor não voltou depois do reinício (veja $DIR/serve-phase2.log)"
     }
 
     echo "== 16. A14/MX-43: imagem e PDF do cliente aparecem na sala =="
@@ -720,8 +720,8 @@ FIMSQL
     python3 "$AUX" webhook-midia "$ORG" aceite ACEITE-F2-PDF documento \
         "Segue o laudo assinado." "Ana Souza" > "$DIR/f2-pdf.json" 2>&1 || true
     for _ in $(seq 1 60); do
-        python3 "$AUX" eventos "$ROOM3" 80 > "$DIR/eventos-f2.json"
-        if python3 - "$DIR/eventos-f2.json" <<'PY'
+        python3 "$AUX" eventos "$ROOM3" 80 > "$DIR/events-f2.json"
+        if python3 - "$DIR/events-f2.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 types = {e["msgtype"] for e in d}
@@ -730,7 +730,7 @@ PY
         then break; fi
         sleep 1
     done
-    RESULT_MX43="$(python3 - "$DIR/eventos-f2.json" "$PHONE_F2" <<'PY'
+    RESULT_MX43="$(python3 - "$DIR/events-f2.json" "$PHONE_F2" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 client = "@ph_wa_%s:matrix-dev.local" % sys.argv[2]
@@ -774,17 +774,17 @@ PY
             > "$DIR/f2-$media_kind.json" 2>&1 || true
     done
     for _ in $(seq 1 60); do
-        python3 "$AUX" eventos "$ROOM3" 100 > "$DIR/eventos-f2b.json"
-        N_AVISOS="$(python3 - "$DIR/eventos-f2b.json" <<'PY'
+        python3 "$AUX" eventos "$ROOM3" 100 > "$DIR/events-f2b.json"
+        N_NOTICES="$(python3 - "$DIR/events-f2b.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 print(len([e for e in d if e["msgtype"] == "m.notice" and "ainda não é suportado" in (e["corpo"] or "")]))
 PY
 )"
-        [ "$N_AVISOS" -ge 6 ] && break
+        [ "$N_NOTICES" -ge 6 ] && break
         sleep 1
     done
-    RESULT_MX45="$(python3 - "$DIR/eventos-f2b.json" "$DIR/data/harness.db" <<'PY'
+    RESULT_MX45="$(python3 - "$DIR/events-f2b.json" "$DIR/data/harness.db" <<'PY'
 import json, sqlite3, sys
 d = json.load(open(sys.argv[1]))
 notices = {e["corpo"] for e in d if e["msgtype"] == "m.notice"}
@@ -811,10 +811,10 @@ PY
 
     echo "== 18. A14/MX-41/42: mensagem do aparelho, sem eco duplicado =="
     python3 "$AUX" webhook-aparelho "$ORG" aceite ACEITE-F2-APARELHO \
-        "Mensagem digitada no celular da loja." > "$DIR/f2-aparelho.json" 2>&1 || true
+        "Mensagem digitada no celular da loja." > "$DIR/f2-device.json" 2>&1 || true
     for _ in $(seq 1 60); do
-        python3 "$AUX" eventos "$ROOM3" 120 > "$DIR/eventos-f2c.json"
-        N_DEVICE="$(python3 - "$DIR/eventos-f2c.json" <<'PY'
+        python3 "$AUX" eventos "$ROOM3" 120 > "$DIR/events-f2c.json"
+        N_DEVICE="$(python3 - "$DIR/events-f2c.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 print(len([e for e in d if (e["corpo"] or "") == "Mensagem digitada no celular da loja."]))
@@ -824,10 +824,10 @@ PY
         sleep 1
     done
     python3 "$AUX" webhook-aparelho "$ORG" aceite ACEITE-F2-APARELHO \
-        "Mensagem digitada no celular da loja." > "$DIR/f2-aparelho-2.json" 2>&1 || true
+        "Mensagem digitada no celular da loja." > "$DIR/f2-device-2.json" 2>&1 || true
     sleep 4
-    python3 "$AUX" eventos "$ROOM3" 120 > "$DIR/eventos-f2c2.json"
-    RESULT_MX41="$(python3 - "$DIR/eventos-f2c2.json" "$DIR/data/harness.db" "$DIR/f2-aparelho-2.json" "$CONVERSATION3" <<'PY'
+    python3 "$AUX" eventos "$ROOM3" 120 > "$DIR/events-f2c2.json"
+    RESULT_MX41="$(python3 - "$DIR/events-f2c2.json" "$DIR/data/harness.db" "$DIR/f2-device-2.json" "$CONVERSATION3" <<'PY'
 import json, sqlite3, sys
 d = json.load(open(sys.argv[1]))
 target = "Mensagem digitada no celular da loja."
@@ -863,7 +863,7 @@ PY
         [ "$AFTER_MEDIA" -ge $((BEFORE_MEDIA + 2)) ] && break
         sleep 1
     done
-    RESULT_MX44="$(python3 - "$DIR/falsos/evo_midia.jsonl" "$BEFORE_MEDIA" "$DIR/serve-fase2.log" <<'PY'
+    RESULT_MX44="$(python3 - "$DIR/falsos/evo_midia.jsonl" "$BEFORE_MEDIA" "$DIR/serve-phase2.log" <<'PY'
 import json, os, sys
 path, before = sys.argv[1], int(sys.argv[2])
 lines = []
@@ -890,8 +890,8 @@ else:
 PY
 )"
     if printf '%s' "$RESULT_MX44" | grep -q FALHOU; then
-        python3 "$AUX" eventos "$ROOM3" 120 > "$DIR/eventos-f2d.json"
-        MXC_AND_SENDER="$(python3 - "$DIR/eventos-f2d.json" <<'PY'
+        python3 "$AUX" eventos "$ROOM3" 120 > "$DIR/events-f2d.json"
+        MXC_AND_SENDER="$(python3 - "$DIR/events-f2d.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 for e in d:
@@ -915,7 +915,7 @@ PY
 
     echo "== 20. MX-49: áudio e vídeo do atendente chegam ao Evolution =="
     BEFORE_MEDIA49="$(wc -l < "$DIR/falsos/evo_midia.jsonl" 2>/dev/null || echo 0)"
-    python3 "$AUX" eventos "$ROOM3" 200 > "$DIR/eventos-mx49-antes.json"
+    python3 "$AUX" eventos "$ROOM3" 200 > "$DIR/events-mx49-antes.json"
     TXN_AUDIO="aceite-mx49-audio-$(python3 -c 'import time;print(int(time.time()*1000))')"
     TXN_VIDEO="aceite-mx49-video-$(python3 -c 'import time;print(int(time.time()*1000))')"
     python3 "$AUX" atendente-envia-midia "$ROOM3" "$AGENT_AUDIO" audio/ogg \
@@ -929,12 +929,12 @@ PY
         sleep 1
     done
     python3 "$AUX" atendente-envia-midia "$ROOM3" "$AGENT_AUDIO" audio/ogg \
-        "audio-da-loja.ogg" "$TXN_AUDIO" > "$DIR/mx49-audio-reentrega.json" 2>&1 || true
+        "audio-da-loja.ogg" "$TXN_AUDIO" > "$DIR/mx49-audio-redelivery.json" 2>&1 || true
     sleep 5
-    python3 "$AUX" eventos "$ROOM3" 200 > "$DIR/eventos-mx49-depois.json"
+    python3 "$AUX" eventos "$ROOM3" 200 > "$DIR/events-mx49-depois.json"
     RESULT_MX49="$(python3 - "$DIR/falsos/evo_midia.jsonl" "$BEFORE_MEDIA49" \
-        "$AGENT_AUDIO" "$AGENT_VIDEO" "$DIR/eventos-mx49-antes.json" \
-        "$DIR/eventos-mx49-depois.json" <<'PY'
+        "$AGENT_AUDIO" "$AGENT_VIDEO" "$DIR/events-mx49-antes.json" \
+        "$DIR/events-mx49-depois.json" <<'PY'
 import hashlib, json, os, sys
 
 evo, before, audio_path, video_path, before_json, after_json = sys.argv[1:7]
@@ -1002,7 +1002,7 @@ PY
     if [ -z "$ADMIN_TOKEN" ]; then
         note MX46 "NÃO CONFERIDO: credenciais do MX-01 sem POPH_MATRIX_DEV_ADMIN_TOKEN"
     else
-        python3 "$AUX" preparar-expiracao "$DIR/data/harness.db" 1 > "$DIR/f2-expiracao.json"
+        python3 "$AUX" preparar-expiracao "$DIR/data/harness.db" 1 > "$DIR/f2-expiration.json"
         reiniciar_serve
         for _ in $(seq 1 40); do
             PENDING="$(python3 - "$DIR/data/harness.db" <<'PY'
@@ -1014,7 +1014,7 @@ PY
             [ "$PENDING" = "0" ] && break
             sleep 1
         done
-        python3 "$AUX" eventos "$ROOM3" 120 > "$DIR/eventos-f2e.json"
+        python3 "$AUX" eventos "$ROOM3" 120 > "$DIR/events-f2e.json"
         VANISHED=0
         TOTAL_MEDIA=0
         for MXC in $(python3 - "$DIR/data/harness.db" <<'PY'
@@ -1026,10 +1026,10 @@ PY
 ); do
             TOTAL_MEDIA=$((TOTAL_MEDIA + 1))
             MEDIA_STATE="$(python3 "$AUX" midia-existe "$MXC")"
-            printf 'apagada\t%s\t%s\n' "$MXC" "$MEDIA_STATE" >> "$DIR/f2-expiracao-arquivos.txt"
+            printf 'apagada\t%s\t%s\n' "$MXC" "$MEDIA_STATE" >> "$DIR/f2-expiration-files.txt"
             printf '%s' "$MEDIA_STATE" | grep -q '"status": 404' && VANISHED=$((VANISHED + 1))
         done
-        RESULT_MX46="$(python3 - "$DIR/eventos-f2e.json" "$DIR/data/harness.db" "$VANISHED" "$TOTAL_MEDIA" "$DIR/serve-fase2.log" <<'PY'
+        RESULT_MX46="$(python3 - "$DIR/events-f2e.json" "$DIR/data/harness.db" "$VANISHED" "$TOTAL_MEDIA" "$DIR/serve-phase2.log" <<'PY'
 import json, sqlite3, sys
 d = json.load(open(sys.argv[1]))
 con = sqlite3.connect(sys.argv[2])
