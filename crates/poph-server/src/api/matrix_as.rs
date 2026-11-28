@@ -485,6 +485,23 @@ mod tests {
         response.status()
     }
 
+    static LOG_SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    async fn serial_logs() -> tokio::sync::MutexGuard<'static, ()> {
+        LOG_SERIAL.lock().await
+    }
+
+    fn capture_logs(captured: Arc<Mutex<Vec<u8>>>) -> tracing::subscriber::DefaultGuard {
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_ansi(false)
+            .with_writer(move || Writer(Arc::clone(&captured)))
+            .finish();
+        let guard = tracing::subscriber::set_default(subscriber);
+        tracing::callsite::rebuild_interest_cache();
+        guard
+    }
+
     #[test]
     fn memory_respects_cap_and_forgets_oldest() {
         let mut memory = Processed::new(2);
@@ -528,6 +545,7 @@ mod tests {
 
     #[tokio::test]
     async fn missing_token_is_401_wrong_token_is_403() {
+        let _serial = serial_logs().await;
         let annotator = Arc::new(Annotator::default());
         let receiver = receiver(Arc::clone(&annotator), 8);
 
@@ -565,6 +583,7 @@ mod tests {
 
     #[tokio::test]
     async fn valid_transaction_runs_once_and_replay_does_not_repeat() {
+        let _serial = serial_logs().await;
         let annotator = Arc::new(Annotator::default());
         let receiver = receiver(Arc::clone(&annotator), 8);
         let header = bearer_header(CANARIO);
@@ -587,6 +606,7 @@ mod tests {
 
     #[tokio::test]
     async fn delivery_5xx_failure_does_not_mark_the_transaction() {
+        let _serial = serial_logs().await;
         let annotator = Arc::new(Annotator::default());
         let receiver = receiver(Arc::clone(&annotator), 8);
         let header = bearer_header(CANARIO);
@@ -604,6 +624,7 @@ mod tests {
 
     #[tokio::test]
     async fn malformed_or_large_body_answers_200_without_processing() {
+        let _serial = serial_logs().await;
         let annotator = Arc::new(Annotator::default());
         let receiver = receiver(Arc::clone(&annotator), 8);
         let header = bearer_header(CANARIO);
@@ -639,19 +660,12 @@ mod tests {
 
     #[tokio::test]
     async fn canary_value_never_appears_in_response_or_log() {
+        let _serial = serial_logs().await;
         let annotator = Arc::new(Annotator::default());
         let receiver = receiver(Arc::clone(&annotator), 8);
 
         let captured = Arc::new(Mutex::new(Vec::<u8>::new()));
-        let subscriber = tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::TRACE)
-            .with_ansi(false)
-            .with_writer({
-                let captured = Arc::clone(&captured);
-                move || Writer(Arc::clone(&captured))
-            })
-            .finish();
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let _guard = capture_logs(Arc::clone(&captured));
 
         let mut bodies = Vec::new();
         for (header, body) in [
