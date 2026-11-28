@@ -450,7 +450,16 @@ async fn turns_exchange_replies_and_store_history_without_outbox() {
             "Olá"
         ]
     );
-    assert_eq!(fake.received().len(), 2, "one model call per turn");
+    let replay = server
+        .send_turn(account, &conversation_id, "k1", "Olá", StatusCode::OK)
+        .await;
+    assert_eq!(replay["turn_id"], first_turn);
+    assert_eq!(replay["status"], "succeeded");
+    assert_eq!(
+        fake.received().len(),
+        2,
+        "replay does not call the model again"
+    );
     assert_outbox_empty(&fixture);
 
     let crossed = server
