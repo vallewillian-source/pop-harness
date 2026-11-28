@@ -507,8 +507,8 @@ export function AgentModelJev() {
                                         : t("modelJev.keyUndefined")}
                                     <div className="poph-mono-muted">
                                         {item.explanation}
-                                        {item.ondeEdita
-                                            ? t("modelJev.keyEditIn", { where: item.ondeEdita })
+                                        {item.editHint
+                                            ? t("modelJev.keyEditIn", { where: item.editHint })
                                             : ""}
                                     </div>
                                 </li>

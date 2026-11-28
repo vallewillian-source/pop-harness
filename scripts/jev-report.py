@@ -15,8 +15,8 @@ something else: the error the client feels. Each gate has its own:
   is not the ideal one. The report separates the four things and groups by department configuration (2, 3, 5, 12).
 
 Usage:
-    poph jev eval g1 tests/jev/g1.jsonl --json > relatorio.json
-    python3 scripts/jev-report.py relatorio.json [--conjunto tests/jev/g1.jsonl] [--gate g2]
+    poph jev eval g1 tests/jev/g1.jsonl --json > report.json
+    python3 scripts/jev-report.py report.json [--set tests/jev/g1.jsonl] [--gate g2]
 
 The set is read to show the client's text for each wrong case and to group by `categoria`.
 """
@@ -68,12 +68,12 @@ def client_text(case: dict) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Matriz de confusão do gate G1")
-    parser.add_argument("relatorio", help="JSON do `poph jev eval --json`")
-    parser.add_argument("--conjunto", default="tests/jev/g1.jsonl", help="conjunto rotulado")
+    parser.add_argument("report", help="JSON do `poph jev eval --json`")
+    parser.add_argument("--set", default="tests/jev/g1.jsonl", help="conjunto rotulado")
     parser.add_argument(
         "--gate", default="g1", choices=sorted([*GATES, "g4"]), help="gate medido"
     )
-    parser.add_argument("--ate", type=int, default=None, help="mede só os N primeiros casos")
+    parser.add_argument("--limit", type=int, default=None, help="mede só os N primeiros casos")
     args = parser.parse_args()
 
     if args.gate == "g4":
@@ -81,15 +81,15 @@ def main() -> int:
 
     rule = GATES[args.gate]
     positive = rule["positive"]
-    raw = json.load(open(args.relatorio, encoding="utf-8"))
-    report = raw.get("relatorio", raw)
+    raw = json.load(open(args.report, encoding="utf-8"))
+    report = raw.get("report", raw)
     details = report["detalhes"]
     try:
-        cases = load_set(args.conjunto)
+        cases = load_set(args.set)
     except OSError:
         cases = []
 
-    limit = args.ate or len(details)
+    limit = args.limit or len(details)
     rows = []
     for index, detail in enumerate(details[:limit], start=1):
         expected = detail["esperado"]
@@ -165,11 +165,11 @@ def main() -> int:
 
 def report_g4(args) -> int:
     """G4 matrix: right choice, confident wrong choice, abstention (falls on the default)."""
-    raw = json.load(open(args.relatorio, encoding="utf-8"))
-    report = raw.get("relatorio", raw)
+    raw = json.load(open(args.report, encoding="utf-8"))
+    report = raw.get("report", raw)
     details = report["detalhes"]
     try:
-        cases = load_set(args.conjunto)
+        cases = load_set(args.set)
     except OSError:
         cases = []
 

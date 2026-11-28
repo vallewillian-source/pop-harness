@@ -39,7 +39,7 @@ is marked as such.
 | A5: crash during recording of the human reply | Crash before the write: the retransmission writes once only | `crash_before_reply_record_writes_once` |
 | Poison message | A message permanently refused by Synapse is isolated; the others go out in order | `poison_message_is_isolated_and_queue_continues` |
 
-The tests are in `crates/poph-server/tests/matrix_resiliencia.rs`. There are ten tests that run in a normal `cargo test`
+The tests are in `crates/poph-server/tests/matrix_resilience.rs`. There are ten tests that run in a normal `cargo test`
 (about 8 s) and one `#[ignore]`d test: the measurement. The test for the defect found has been running active since the
 fix (commit `869664d4`).
 
@@ -125,7 +125,7 @@ summary shows the median and p95 of each scenario.
 (which means: a failed invite in the batch is redone on the next pass), which was marked
 `#[ignore]` until the fix. The fix is in `crates/poph-matrix/src/spaces.rs` (commit `869664d4`) and the test runs active.
 
-- **Reproduction (before the fix):** `cargo test -p poph-server --test matrix_resiliencia -- --ignored failed_invite_in_batch`
+- **Reproduction (before the fix):** `cargo test -p poph-server --test matrix_resilience -- --ignored failed_invite_in_batch`
 - **Result:** fails with `@humano1:matrix-dev.local não foi convidado: a passagem seguinte não refez o convite falho`
   (test assertion message emitted by the code, in Portuguese; in English: "was not invited: the next pass did not redo
   the failed invite"). The first invite failed (Synapse answered 503 once), the first pass recorded a failed invite and
@@ -168,7 +168,7 @@ summary shows the median and p95 of each scenario.
 
 ## Files in this delivery
 
-- `crates/poph-server/tests/matrix_resiliencia.rs`: the resilience tests, the measurement and the defect test.
+- `crates/poph-server/tests/matrix_resilience.rs`: the resilience tests, the measurement and the defect test.
 - `scripts/measure-resilience.sh`: repeats the measurement.
 - `docs/MATRIZ_RESILIENCIA.md`: this document.
 - The MX-29 line in the internal task list (not published).

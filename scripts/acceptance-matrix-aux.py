@@ -25,7 +25,7 @@ def _record(directory, name, data):
 
 def _llm_response():
     return os.environ.get(
-        "ACEITE_RESPOSTA", "Olá! Sou a Ana, do time Comercial. Como posso ajudar?"
+        "ACCEPTANCE_REPLY", "Olá! Sou a Ana, do time Comercial. Como posso ajudar?"
     )
 
 
@@ -405,7 +405,7 @@ def webhook(org, instance, secret, external_id, text, push_name):
         "instance": instance,
         "apikey": "chave-falsa",
         "data": {
-            "key": {"id": external_id, "remoteJid": os.environ.get("ACEITE_TELEFONE", "5521988887777") + "@s.whatsapp.net", "fromMe": False},
+            "key": {"id": external_id, "remoteJid": os.environ.get("ACCEPTANCE_PHONE", "5521988887777") + "@s.whatsapp.net", "fromMe": False},
             "pushName": push_name,
             "messageType": "conversation",
             "message": {"conversation": text},
@@ -424,7 +424,7 @@ def webhook(org, instance, secret, external_id, text, push_name):
 
 def join_room(room):
     base = os.environ.get("SYNAPSE", "http://127.0.0.1:18008")
-    status, d = _request("POST", f"/_matrix/client/v3/rooms/{_q(room)}/join", {}, token=os.environ["ACEITE_TOKEN_HUMANO"])
+    status, d = _request("POST", f"/_matrix/client/v3/rooms/{_q(room)}/join", {}, token=os.environ["ACCEPTANCE_HUMAN_TOKEN"])
     print(status, d)
 
 
@@ -531,8 +531,8 @@ def _request_raw(method, path, payload=None, token=None, content_type="applicati
 
 def webhook_attachment(org, instance, external_id, kind, caption, push_name):
     base = os.environ.get("HARNESS", "http://127.0.0.1:18010")
-    phone = os.environ.get("ACEITE_TELEFONE", "5521988887777")
-    if kind == "imagem":
+    phone = os.environ.get("ACCEPTANCE_PHONE", "5521988887777")
+    if kind == "image":
         content = {
             "imageMessage": {"mimetype": "image/png", "caption": caption, "fileLength": 4096}
         }
@@ -569,7 +569,7 @@ def webhook_attachment(org, instance, external_id, kind, caption, push_name):
         method="POST",
         headers={
             "Content-Type": "application/json",
-            "X-Evolution-Webhook-Secret": os.environ["ACEITE_SEGREDO_WEBHOOK"],
+            "X-Evolution-Webhook-Secret": os.environ["ACCEPTANCE_WEBHOOK_SECRET"],
         },
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
@@ -579,10 +579,10 @@ def webhook_attachment(org, instance, external_id, kind, caption, push_name):
 OUT_OF_SCOPE_KINDS = {
     "audio": ("audioMessage", {"ptt": True, "seconds": 4}),
     "video": ("videoMessage", {"seconds": 3}),
-    "figurinha": ("stickerMessage", {"isAnimated": False}),
-    "contato": ("contactMessage", {"displayName": "Contato de teste"}),
-    "localizacao": ("locationMessage", {"degreesLatitude": -22.9, "degreesLongitude": -43.2}),
-    "enquete": ("pollCreationMessage", {"name": "Enquete de teste", "selectableOptionsCount": 2}),
+    "sticker": ("stickerMessage", {"isAnimated": False}),
+    "contact": ("contactMessage", {"displayName": "Contato de teste"}),
+    "location": ("locationMessage", {"degreesLatitude": -22.9, "degreesLongitude": -43.2}),
+    "poll": ("pollCreationMessage", {"name": "Enquete de teste", "selectableOptionsCount": 2}),
 }
 
 
@@ -599,7 +599,7 @@ def write_fixtures(directory):
 
 def webhook_type(org, instance, external_id, kind, push_name):
     base = os.environ.get("HARNESS", "http://127.0.0.1:18010")
-    phone = os.environ.get("ACEITE_TELEFONE", "5521988887777")
+    phone = os.environ.get("ACCEPTANCE_PHONE", "5521988887777")
     if kind not in OUT_OF_SCOPE_KINDS:
         raise SystemExit(f"tipo fora do escopo desconhecido: {kind}")
     key, content = OUT_OF_SCOPE_KINDS[kind]
@@ -625,7 +625,7 @@ def webhook_type(org, instance, external_id, kind, push_name):
         method="POST",
         headers={
             "Content-Type": "application/json",
-            "X-Evolution-Webhook-Secret": os.environ["ACEITE_SEGREDO_WEBHOOK"],
+            "X-Evolution-Webhook-Secret": os.environ["ACCEPTANCE_WEBHOOK_SECRET"],
         },
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
@@ -634,7 +634,7 @@ def webhook_type(org, instance, external_id, kind, push_name):
 
 def webhook_device(org, instance, external_id, text):
     base = os.environ.get("HARNESS", "http://127.0.0.1:18010")
-    phone = os.environ.get("ACEITE_TELEFONE", "5521988887777")
+    phone = os.environ.get("ACCEPTANCE_PHONE", "5521988887777")
     body = {
         "event": "messages.upsert",
         "instance": instance,
@@ -657,7 +657,7 @@ def webhook_device(org, instance, external_id, text):
         method="POST",
         headers={
             "Content-Type": "application/json",
-            "X-Evolution-Webhook-Secret": os.environ["ACEITE_SEGREDO_WEBHOOK"],
+            "X-Evolution-Webhook-Secret": os.environ["ACCEPTANCE_WEBHOOK_SECRET"],
         },
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
@@ -665,7 +665,7 @@ def webhook_device(org, instance, external_id, text):
 
 
 def agent_send_attachment(room, path, mime, name, txn=None):
-    token = os.environ["ACEITE_TOKEN_HUMANO"]
+    token = os.environ["ACCEPTANCE_HUMAN_TOKEN"]
     with open(path, "rb") as file:
         payload = file.read()
     status, d = _request_raw(
@@ -705,7 +705,7 @@ def agent_send_attachment(room, path, mime, name, txn=None):
 
 
 def events(room, limit=80):
-    token = os.environ["ACEITE_TOKEN_HUMANO"]
+    token = os.environ["ACCEPTANCE_HUMAN_TOKEN"]
     status, d = _request(
         "GET",
         f"/_matrix/client/v3/rooms/{_q(room)}/messages?dir=b&limit={int(limit)}",
@@ -749,7 +749,7 @@ def events(room, limit=80):
 
 
 def event_by_id(room, event_id):
-    token = os.environ["ACEITE_TOKEN_HUMANO"]
+    token = os.environ["ACCEPTANCE_HUMAN_TOKEN"]
     status, d = _request(
         "GET",
         f"/_matrix/client/v3/rooms/{_q(room)}/event/{_q(event_id)}",
@@ -759,7 +759,7 @@ def event_by_id(room, event_id):
 
 
 def attachment_exists(mxc):
-    token = os.environ["ACEITE_TOKEN_HUMANO"]
+    token = os.environ["ACCEPTANCE_HUMAN_TOKEN"]
     if not mxc.startswith("mxc://"):
         print(json.dumps({"erro": "endereco nao e mxc"}))
         return
@@ -828,49 +828,49 @@ def main(argv):
     if len(argv) < 2:
         raise SystemExit("uso: acceptance-matrix-aux.py <comando> ...")
     command = argv[1]
-    if command == "falsos":
+    if command == "fakes":
         fake_commands(argv[2], int(argv[3]), int(argv[4]))
-    elif command == "espacos":
-        spaces(argv[2], os.environ["ACEITE_TOKEN_HUMANO"], os.environ["ACEITE_AS_TOKEN"], os.environ.get("ACEITE_BOT", "@ph_as_bot:matrix-dev.local"))
+    elif command == "spaces":
+        spaces(argv[2], os.environ["ACCEPTANCE_HUMAN_TOKEN"], os.environ["ACCEPTANCE_AS_TOKEN"], os.environ.get("ACCEPTANCE_BOT", "@ph_as_bot:matrix-dev.local"))
     elif command == "webhook":
-        webhook(argv[2], argv[3], os.environ["ACEITE_SEGREDO_WEBHOOK"], argv[4], argv[5], argv[6])
-    elif command == "entrar":
+        webhook(argv[2], argv[3], os.environ["ACCEPTANCE_WEBHOOK_SECRET"], argv[4], argv[5], argv[6])
+    elif command == "join":
         join_room(argv[2])
-    elif command == "atendente-envia":
-        agent_send(argv[2], argv[3], os.environ["ACEITE_TOKEN_HUMANO"])
-    elif command == "estado-sala":
-        room_state(argv[2], os.environ["ACEITE_TOKEN_HUMANO"])
-    elif command == "hierarquia":
-        hierarchy(argv[2], os.environ["ACEITE_TOKEN_HUMANO"])
-    elif command == "pai-do-espaco":
-        space_parent(argv[2], argv[3], os.environ["ACEITE_TOKEN_HUMANO"])
-    elif command == "pai-da-sala":
-        room_parent(argv[2], os.environ["ACEITE_TOKEN_HUMANO"])
-    elif command == "avisos":
-        notices(argv[2], os.environ["ACEITE_TOKEN_HUMANO"])
-    elif command == "perfil":
-        profile(argv[2], os.environ["ACEITE_TOKEN_HUMANO"])
-    elif command == "tocar":
+    elif command == "attendant-send":
+        agent_send(argv[2], argv[3], os.environ["ACCEPTANCE_HUMAN_TOKEN"])
+    elif command == "room-state":
+        room_state(argv[2], os.environ["ACCEPTANCE_HUMAN_TOKEN"])
+    elif command == "hierarchy":
+        hierarchy(argv[2], os.environ["ACCEPTANCE_HUMAN_TOKEN"])
+    elif command == "space-parent":
+        space_parent(argv[2], argv[3], os.environ["ACCEPTANCE_HUMAN_TOKEN"])
+    elif command == "room-parent":
+        room_parent(argv[2], os.environ["ACCEPTANCE_HUMAN_TOKEN"])
+    elif command == "notices":
+        notices(argv[2], os.environ["ACCEPTANCE_HUMAN_TOKEN"])
+    elif command == "profile":
+        profile(argv[2], os.environ["ACCEPTANCE_HUMAN_TOKEN"])
+    elif command == "play":
         play(argv[2], argv[3])
-    elif command == "transferir":
+    elif command == "transfer":
         transfer_department(argv[2], argv[3], argv[4])
-    elif command == "webhook-midia":
+    elif command == "webhook-media":
         webhook_attachment(argv[2], argv[3], argv[4], argv[5], argv[6], argv[7])
-    elif command == "webhook-aparelho":
+    elif command == "webhook-device":
         webhook_device(argv[2], argv[3], argv[4], argv[5])
-    elif command == "webhook-tipo":
+    elif command == "webhook-type":
         webhook_type(argv[2], argv[3], argv[4], argv[5], argv[6])
-    elif command == "atendente-envia-midia":
+    elif command == "attendant-send-media":
         agent_send_attachment(argv[2], argv[3], argv[4], argv[5], argv[6] if len(argv) > 6 else None)
-    elif command == "eventos":
+    elif command == "events":
         events(argv[2], argv[3] if len(argv) > 3 else 80)
-    elif command == "evento":
+    elif command == "event":
         event_by_id(argv[2], argv[3])
-    elif command == "midia-existe":
+    elif command == "media-exists":
         attachment_exists(argv[2])
-    elif command == "preparar-expiracao":
+    elif command == "prepare-expiry":
         prepare_expiry(argv[2], argv[3])
-    elif command == "estado-expiracao":
+    elif command == "expiry-state":
         expiry_state(argv[2])
     elif command == "fixtures":
         write_fixtures(argv[2])

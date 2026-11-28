@@ -75,7 +75,7 @@ function memory(value: number | undefined): string {
 
 export function messageFailure(error: unknown, what: string): string {
     if (error instanceof ApiError) {
-        if (error.semServidor) return translate("operation.errorOffline");
+        if (error.noServer) return translate("operation.errorOffline");
         if (error.status === 401) return translate("operation.errorSession");
         if (error.status === 403) return translate("operation.errorForbidden");
         if (error.status === 404) return translate("operation.errorNotFound", { what });
@@ -201,7 +201,7 @@ export function failureReload(error: unknown): FailureReload {
             };
         }
         if (error.status === 403) return { tipo: "sem_permissao" };
-        if (error.semServidor) return { tipo: "sem_resposta" };
+        if (error.noServer) return { tipo: "sem_resposta" };
     }
     return { tipo: "outra", error: error };
 }

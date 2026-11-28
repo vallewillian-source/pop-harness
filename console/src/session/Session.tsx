@@ -126,7 +126,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         }
         setToken(clean);
         try {
-            const list = await request<OrgList>("/admin/v1/orgs?limit=200", {}, { "encerraSessao": false });
+            const list = await request<OrgList>("/admin/v1/orgs?limit=200", {}, { "closeSession": false });
             const copy: Session = {
                 token: clean,
                 scope: tokenScope(clean, list.items),

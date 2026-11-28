@@ -465,7 +465,7 @@ export function AgentChatTest() {
                 conversa,
                 { texto: textClient, files: sent },
                 {
-                    sinal: control.signal,
+                    signal: control.signal,
                     onEvent: (evento) => {
                         if (activeRef.current !== conversa) return;
                         started = true;

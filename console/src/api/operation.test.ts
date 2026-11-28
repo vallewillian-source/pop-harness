@@ -86,7 +86,7 @@ describe("consultarSaude", () => {
         const failure = await fetchHealth().catch((error: unknown) => error);
 
         expect(failure).toBeInstanceOf(ApiError);
-        expect((failure as ApiError)["semServidor"]).toBe(true);
+        expect((failure as ApiError)["noServer"]).toBe(true);
     });
 });
 

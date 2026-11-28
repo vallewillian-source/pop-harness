@@ -10,7 +10,7 @@ fn variable(name: &str) -> Option<String> {
         .filter(|value| !value.trim().is_empty())
 }
 
-fn numero(name: &str, default: u64) -> u64 {
+fn number(name: &str, default: u64) -> u64 {
     match variable(name) {
         Some(value) => value
             .trim()
@@ -35,16 +35,16 @@ fn create_org(store: &Store) -> OrgId {
 #[test]
 #[ignore = "semeadura da medição MX-30; roda por scripts/measure-memory.sh"]
 fn seeds_conversations_for_memory_measurement() {
-    let dir = PathBuf::from(variable("MX30_PASTA").expect("MX30_PASTA é obrigatória"));
-    let rooms = numero("MX30_SALAS", 100);
-    let messages_per_room = numero("MX30_MENSAGENS_POR_SALA", 1);
-    let enabled = numero("MX30_LIGADO", 1) == 1;
+    let dir = PathBuf::from(variable("MX30_DIR").expect("MX30_DIR é obrigatória"));
+    let rooms = number("MX30_ROOMS", 100);
+    let messages_per_room = number("MX30_MESSAGES_PER_ROOM", 1);
+    let enabled = number("MX30_ENABLED", 1) == 1;
 
-    let dados = dir.join("dados");
-    fs::create_dir_all(&dados).expect("pasta de dados");
+    let data = dir.join("dados");
+    fs::create_dir_all(&data).expect("pasta de dados");
 
     let mut config = HarnessConfig::default();
-    config.data.directory = dados;
+    config.data.directory = data;
     let store = Store::open(&config).expect("abre o banco da medição");
 
     let org = create_org(&store);

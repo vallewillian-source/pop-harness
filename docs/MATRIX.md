@@ -279,7 +279,7 @@ in the file named in brackets.
 - **Room placed in the department space (MX-51, `matrix_beginning`):** when the state loop sees a conversation before its
   room exists, the room still joins the space. The state read that finds the space the room belongs to is used when the
   conversation record is empty.
-- **Backfill cut (P8, `matrix_resiliencia`, `matrix_beginning`):** turning the module on moves the backfill cut to now.
+- **Backfill cut (P8, `matrix_resilience`, `matrix_beginning`):** turning the module on moves the backfill cut to now.
   Messages written while the org was off are not mirrored; only later ones are. Turning an org off stops its mirroring
   without a restart, because the loop rereads the org list on every cycle.
 - **Customer identifier (RP-02, `matrix_beginning`):** the room metadata and the listing by customer use the same rule. A
@@ -314,15 +314,15 @@ in the file named in brackets.
   the cursor. A media refused for good by Synapse leaves the notice before it is isolated.
 - **Media expiry (MX-46, `matrix_midia`):** each delivered media is recorded to expire, with the event and the `mxc` the
   room received. The expiry routine reads that record after the deadline.
-- **Client first (A1/A4, `matrix_resiliencia`):** the customer gets the reply even when Synapse is down or slow (5 s per
+- **Client first (A1/A4, `matrix_resilience`):** the customer gets the reply even when Synapse is down or slow (5 s per
   call). The check is by order, not by time: when the second reply reaches the Evolution fake, no Synapse call of the
   module has been answered yet. The numbers are in `MATRIZ_RESILIENCIA.md`.
-- **Synapse outage (A4, `matrix_resiliencia`):** messages pile up in the queue. When Synapse returns, the room receives all
+- **Synapse outage (A4, `matrix_resilience`):** messages pile up in the queue. When Synapse returns, the room receives all
   of them in database order, once. Retried attempts are fine; each `txnId` is accepted once.
-- **Poisoned message (`matrix_resiliencia`, `matrix_falhas_aviso`):** a message that Synapse refuses for good is isolated
+- **Poisoned message (`matrix_resilience`, `matrix_falhas_aviso`):** a message that Synapse refuses for good is isolated
   after the definitive-failure limit (`TENTATIVAS_DEFINITIVAS`). The messages behind it go out in the same cycle or the next
   one.
-- **Crashes (A5, `matrix_resiliencia`):** a crash during room creation does not create a second room: the next start finds
+- **Crashes (A5, `matrix_resilience`):** a crash during room creation does not create a second room: the next start finds
   the room by its alias and completes the row. A crash during a mirror send is redone with the same `txnId`, so the room
   does not receive the message twice. A crash before the attendant's response is recorded is written once on the next start.
 - **Log values (`matrix_metricas`):** the customer's phone, the message text and the tokens never appear in the logs. The

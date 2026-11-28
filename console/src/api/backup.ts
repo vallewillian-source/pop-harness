@@ -225,7 +225,7 @@ export function backupFailure(error: unknown, operation: "export" | "import"): B
         };
     }
 
-    if (error["semServidor"]) {
+    if (error["noServer"]) {
         return {
             "title": translate(operation === "export" ? "orgs.backupExportFailed" : "orgs.backupImportFailed"),
             texto: translate("orgs.backupOffline"),

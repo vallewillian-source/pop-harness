@@ -162,7 +162,7 @@ export async function sendTestMessage(
     agente: string,
     conversa: string,
     mensagem: ClientMessage,
-    options: { "sinal"?: AbortSignal; "onEvent": (evento: TurnEvent) => void },
+    options: { "signal"?: AbortSignal; "onEvent": (evento: TurnEvent) => void },
 ): Promise<void> {
     const body = new FormData();
     const texto = mensagem.texto.trim();
@@ -175,12 +175,12 @@ export async function sendTestMessage(
 
     const response = await requestFlow(
         `${conversationsPath(org, agente)}/${encodeURIComponent(conversa)}/messages`,
-        { method: "POST", body: body, signal: options["sinal"] },
+        { method: "POST", body: body, signal: options["signal"] },
     );
     if (!response.body) {
         throw new ApiError(response.status, "sem_fluxo", translate("testChat.streamWithoutEvents"));
     }
-    await readFlow(response.body, options["onEvent"], options["sinal"]);
+    await readFlow(response.body, options["onEvent"], options["signal"]);
 }
 
 export function parseFrame(frame: string): TurnEvent | null {

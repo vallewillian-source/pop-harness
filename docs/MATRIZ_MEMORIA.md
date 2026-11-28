@@ -259,13 +259,13 @@ cd apps/pop-harness
 export PATH="$HOME/.cargo/bin:$PATH"
 cargo build --release --locked -p poph          # the script uses target/release/poph
 
-bash scripts/measure-memory.sh --modo desligado --salas 1000 --rodada 1
-bash scripts/measure-memory.sh --modo ligado   --salas 1000 --mensagens 1  --rodada 1
-bash scripts/measure-memory.sh --modo ligado   --salas 1000 --mensagens 10 --rodada 1   # throughput
-bash scripts/measure-memory.sh --modo real     --salas 20   --rodada 1                  # development Synapse
+bash scripts/measure-memory.sh --mode off --rooms 1000 --round 1
+bash scripts/measure-memory.sh --mode on --rooms 1000 --messages 1  --round 1
+bash scripts/measure-memory.sh --mode on --rooms 1000 --messages 10 --round 1   # throughput
+bash scripts/measure-memory.sh --mode real --rooms 20 --round 1                  # development Synapse
 
 bash scripts/measure-memory-runbook.sh           # the full matrix (7–8 min)
-bash scripts/measure-memory-runbook.sh rapido    # 100 rooms, quick check
+bash scripts/measure-memory-runbook.sh quick    # 100 rooms, quick check
 ```
 
 Each round writes one line to `target/mx30/memoria.csv` (outside git), with startup RSS, steady state, peak, drain time,
@@ -279,8 +279,8 @@ never onto the command line or into the CSV.
 ### Rules of the measurement scripts
 
 - `measure-memory.sh` stops with an error if `target/release/poph` does not exist: build it first. It needs ports 18431
-  (fake Synapse) and 18432 (`poph serve`) free; change them with `MX30_PORTA_FALSO` and `MX30_PORTA_SERVE`.
-- `MX30_LIMITE_S` (default 3600 s) caps the wait for the throughput run. If the fake has not received every message by
+  (fake Synapse) and 18432 (`poph serve`) free; change them with `MX30_FAKE_PORT` and `MX30_SERVE_PORT`.
+- `MX30_LIMIT_S` (default 3600 s) caps the wait for the throughput run. If the fake has not received every message by
   then, the round stops with an error.
 - In the `desligado` mode the fake still runs, but `poph serve` is configured without the `[matrix]` section and never
   talks to it.

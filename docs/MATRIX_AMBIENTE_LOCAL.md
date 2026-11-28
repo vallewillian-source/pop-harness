@@ -15,9 +15,9 @@ and, later, for the `#[ignore]` tests of the module.
 
 ```bash
 cd apps/pop-harness
-bash scripts/matrix-dev.sh subir    # starts/restarts and waits for /_matrix/client/versions to respond
-bash scripts/matrix-dev.sh parar    # stops the container, keeps the data
-bash scripts/matrix-dev.sh limpar   # deletes ONLY what the script created
+bash scripts/matrix-dev.sh up    # starts/restarts and waits for /_matrix/client/versions to respond
+bash scripts/matrix-dev.sh stop    # stops the container, keeps the data
+bash scripts/matrix-dev.sh clean   # deletes ONLY what the script created
 bash scripts/matrix-dev.sh url      # prints the URL and the server_name
 ```
 
@@ -77,7 +77,7 @@ Nothing needs to be listening on those ports for MX-01: the Synapse only calls t
 the AS. For MX-02, start the receiver on ports 18009/18010 (or change the urls before starting):
 
 ```bash
-POPH_MATRIX_DEV_URL_H="http://192.168.0.123:18010/matrix" bash scripts/matrix-dev.sh subir
+POPH_MATRIX_DEV_URL_H="http://192.168.0.123:18010/matrix" bash scripts/matrix-dev.sh up
 ```
 
 Accepted variables: `POPH_MATRIX_DEV_DIR`, `POPH_MATRIX_DEV_PORTA`, `POPH_MATRIX_DEV_PORTA_PY`,
@@ -91,7 +91,7 @@ real one, with the environment's tokens:
 
 ```bash
 # 1. starts (or restarts) the environment and writes the fictitious tokens to credenciais.env
-bash scripts/matrix-dev.sh subir
+bash scripts/matrix-dev.sh up
 
 # 2. generates the Harness registration with the SAME tokens, outside git
 . ~/.cache/poph-matrix/credenciais.env
@@ -104,7 +104,7 @@ POPH_MATRIX_HS_TOKEN="$POPH_MATRIX_DEV_HARNESS_HS_TOKEN" \
 # 3. the Synapse now loads that file, reusing the tokens from step 1
 POPH_MATRIX_DEV_REUSAR_TOKENS=1 \
 POPH_MATRIX_DEV_REGISTRO_H="$HOME/.cache/poph-matrix/registro-gerado.yaml" \
-  bash scripts/matrix-dev.sh subir
+  bash scripts/matrix-dev.sh up
 ```
 
 - `POPH_MATRIX_DEV_REGISTRO_H=<file>` makes the script copy a **ready** registration to
@@ -165,8 +165,8 @@ node scripts/acceptance-matrix-element.mjs final <output> <room> <space> <direct
 - Banners that cover the screen ("Mais tarde", "Ok", "Dispensar") and the first-login modals ("Not now") are dismissed.
   None of them changes the app; they only get in the way of the capture.
 - The Element texts above are matched literally. If Element changes its wording or language, these strings must change too.
-- Environment: `CHROME_BIN` (default `google-chrome`), `ACEITE_ELEMENT` (default `http://127.0.0.1:18403`),
-  `ACEITE_USUARIO` and `ACEITE_SENHA` (default: read from `<directory>/atendente.usuario` and `atendente.senha`).
+- Environment: `CHROME_BIN` (default `google-chrome`), `ACCEPTANCE_ELEMENT` (default `http://127.0.0.1:18403`),
+  `ACCEPTANCE_USER` and `ACCEPTANCE_PASSWORD` (default: read from `<directory>/atendente.usuario` and `atendente.senha`).
 
 ## Limits of this environment
 
@@ -189,13 +189,13 @@ Usage:
 
 ```bash
 bash apps/pop-harness/scripts/acceptance-matrix.sh                  # full run
-bash apps/pop-harness/scripts/acceptance-matrix.sh --sem-element    # no screenshots
-bash apps/pop-harness/scripts/acceptance-matrix.sh --fase2          # includes acceptance A14 (phase 2)
-bash apps/pop-harness/scripts/acceptance-matrix.sh --manter         # keeps the working folder
+bash apps/pop-harness/scripts/acceptance-matrix.sh --no-element    # no screenshots
+bash apps/pop-harness/scripts/acceptance-matrix.sh --phase2          # includes acceptance A14 (phase 2)
+bash apps/pop-harness/scripts/acceptance-matrix.sh --keep         # keeps the working folder
 ```
 
 Variables: `POPH_ACEITE_DIR` (working folder, default `~/.cache/poph-aceite-matrix`),
-`CHROME_BIN` (browser for the screenshots, default `google-chrome`), `ACEITE_ESPERA_ESPACO`
+`CHROME_BIN` (browser for the screenshots, default `google-chrome`), `ACCEPTANCE_SPACE_WAIT`
 (seconds the A6 check waits for the room to leave the old space, default 60).
 
 Exit codes: 0 when every checked criterion passes, 1 when one fails, 2 when an environment
@@ -208,8 +208,8 @@ Rules the run depends on:
   registration, does not change the Synapse registration and does not restore anything at
   the end.
 - **Admin token (MX-46).** It is not created by `matrix-dev.sh`. It lives in its own file,
-  because `matrix-dev.sh subir` rewrites the credentials file on every run.
-- **Phase 2 retention.** With `--fase2`, media retention is set to 1 day, only in the working
+  because `matrix-dev.sh up` rewrites the credentials file on every run.
+- **Phase 2 retention.** With `--phase2`, media retention is set to 1 day, only in the working
   folder of this run. The report says which value was used.
 - **Room placement (MX-15).** The Harness writes `m.space.child` on the new space, sends the
   invites and only then records the room's space in `matrix_rooms.space_room_id`. A transfer
@@ -220,7 +220,7 @@ Rules the run depends on:
 - **A6 (transfer moves the room).** The product enters the new space before it leaves the old
   one. That is intentional: a crash in between leaves the room in two spaces, never in none.
   The assertion requires both conditions together, with an explicit limit
-  (`ACEITE_ESPERA_ESPACO`), and fails when the limit runs out. There is no fixed sleep.
+  (`ACCEPTANCE_SPACE_WAIT`), and fails when the limit runs out. There is no fixed sleep.
 - **Space check after transfer.** `fora_do_espaco` returns 0 when the space has no
   `m.space.child` for the room (Synapse answers 404 for a missing state event and 200 with `{}`
   for a removed child), 1 when the room is still there, and 2 when the state could not be read

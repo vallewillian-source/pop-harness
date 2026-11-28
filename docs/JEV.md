@@ -313,12 +313,12 @@ fixa sem aumentar mensagens cortadas") é este teste.
 python3 scripts/fake-jev.py --porta 18097 &
 TYPESAFE_API_KEY=ficticia target/debug/poph --config /tmp/poph-hr30/poph-falso.toml \
     jev eval g2 tests/jev/g2.jsonl --json > /tmp/g2-falso.json
-python3 scripts/jev-report.py /tmp/g2-falso.json --conjunto tests/jev/g2.jsonl --gate g2
+python3 scripts/jev-report.py /tmp/g2-falso.json --set tests/jev/g2.jsonl --gate g2
 
 # Jev real (chave só no ambiente):
 TYPESAFE_API_KEY=… target/debug/poph --config /tmp/poph-hr30/poph-real.toml \
     jev eval g2 tests/jev/g2.jsonl --json > /tmp/g2-real.json
-python3 scripts/jev-report.py /tmp/g2-real.json --conjunto tests/jev/g2.jsonl --gate g2
+python3 scripts/jev-report.py /tmp/g2-real.json --set tests/jev/g2.jsonl --gate g2
 ```
 
 No simulado o número é 71/75 (89,7% de recall, 4 falsos negativos, zero falso positivo): ele lê só o
@@ -425,12 +425,12 @@ defensável — mas é decisão de produto, não de código, e por isso **o limi
 python3 scripts/fake-jev.py --porta 18093 &
 TYPESAFE_API_KEY=ficticia target/debug/poph --config /tmp/poph-hr32/poph-falso.toml \
     jev eval g4 tests/jev/g4.jsonl --json > /tmp/g4-falso.json
-python3 scripts/jev-report.py /tmp/g4-falso.json --conjunto tests/jev/g4.jsonl --gate g4
+python3 scripts/jev-report.py /tmp/g4-falso.json --set tests/jev/g4.jsonl --gate g4
 
 # Jev real (chave só no ambiente):
 TYPESAFE_API_KEY=… target/debug/poph --config /tmp/poph-hr32/poph-real.toml \
     jev eval g4 tests/jev/g4.jsonl --json > /tmp/g4-real1.json
-python3 scripts/jev-report.py /tmp/g4-real1.json --conjunto tests/jev/g4.jsonl --gate g4
+python3 scripts/jev-report.py /tmp/g4-real1.json --set tests/jev/g4.jsonl --gate g4
 ```
 
 O `--gate g4` do relatório imprime a matriz do G4: acerto, escolha errada confiante (o erro grave),
@@ -1635,7 +1635,7 @@ Comando para repetir (chave só no ambiente, nunca em arquivo):
 ```bash
 TYPESAFE_API_KEY=… target/debug/poph --config /tmp/jev-real.toml \
     jev eval g1 tests/jev/g1.jsonl --json > /tmp/g1-real.json
-python3 scripts/jev-report.py /tmp/g1-real.json --conjunto tests/jev/g1.jsonl
+python3 scripts/jev-report.py /tmp/g1-real.json --set tests/jev/g1.jsonl
 ```
 
 

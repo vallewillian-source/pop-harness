@@ -97,7 +97,7 @@ compare)
     work="$(scratch)" || exit 1
     trap 'rm -rf "$work"' EXIT
     capture "$work" || { echo "contracts: captura falhou" >&2; exit 1; }
-    differences="$(diff -r -x LEIAME.md "$BASE" "$work")"
+    differences="$(diff -r -x "LEIAME.md" "$BASE" "$work")"
     status=$?
     if [ "$status" -eq 0 ]; then
         echo "0 diferenças"

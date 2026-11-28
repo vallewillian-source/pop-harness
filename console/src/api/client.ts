@@ -34,15 +34,15 @@ export class ApiError extends Error {
         this["details"] = details;
     }
 
-    get "naoAutorizado"(): boolean {
+    get "unauthorized"(): boolean {
         return this.status === 401;
     }
 
-    get "semServidor"(): boolean {
+    get "noServer"(): boolean {
         return this.status === 0;
     }
 
-    get "semPermissao"(): boolean {
+    get "forbidden"(): boolean {
         return this.status === 403;
     }
 }
@@ -68,7 +68,7 @@ function networkMessage(error: unknown): string {
 }
 
 export type RequestOptions = {
-    "encerraSessao"?: boolean;
+    "closeSession"?: boolean;
 };
 
 export async function request<T>(
@@ -98,7 +98,7 @@ export async function request<T>(
 
     const body = readBody(await response.text());
     if (!response.ok) {
-        throw responseError(response, body, options["encerraSessao"] ?? true);
+        throw responseError(response, body, options["closeSession"] ?? true);
     }
 
     return body as T;
@@ -150,7 +150,7 @@ export async function requestFlow(
         return response;
     }
     const body = readBody(await response.text());
-    throw responseError(response, body, options["encerraSessao"] ?? true);
+    throw responseError(response, body, options["closeSession"] ?? true);
 }
 
 export type BinaryResponse = {
@@ -176,7 +176,7 @@ export async function requestBytes(
 
     if (!response.ok) {
         const body = readBody(await response.text());
-        throw responseError(response, body, options["encerraSessao"] ?? true);
+        throw responseError(response, body, options["closeSession"] ?? true);
     }
 
     return { blob: await response.blob(), headers: response.headers };

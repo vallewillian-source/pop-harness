@@ -4,9 +4,9 @@ import { join } from 'node:path';
 
 const [MODE, OUTPUT, ROOM, SPACE, DIR, ROOM2] = process.argv.slice(2);
 const CHROME = process.env.CHROME_BIN || 'google-chrome';
-const BASE = process.env.ACEITE_ELEMENT || 'http://127.0.0.1:18403';
-const PASSWORD = process.env.ACEITE_SENHA || readFileSync(join(DIR, 'atendente.senha'), 'utf8').trim();
-const USER = process.env.ACEITE_USUARIO || readFileSync(join(DIR, 'atendente.usuario'), 'utf8').trim();
+const BASE = process.env.ACCEPTANCE_ELEMENT || 'http://127.0.0.1:18403';
+const PASSWORD = process.env.ACCEPTANCE_PASSWORD || readFileSync(join(DIR, 'atendente.senha'), 'utf8').trim();
+const USER = process.env.ACCEPTANCE_USER || readFileSync(join(DIR, 'atendente.usuario'), 'utf8').trim();
 const PROFILE = join(DIR, 'chrome-profile-' + MODE);
 mkdirSync(OUTPUT, { recursive: true });
 mkdirSync(PROFILE, { recursive: true });

@@ -86,13 +86,13 @@ export const GATE_DESCRIPTION: Record<IdGate, { "title": string; "explanation": 
     },
 };
 
-export const PRESERVED_KEYS: ReadonlyArray<{ chave: string; "explanation": string; "ondeEdita"?: string }> = [
+export const PRESERVED_KEYS: ReadonlyArray<{ chave: string; "explanation": string; "editHint"?: string }> = [
     {
         chave: "situacoes_de_handoff",
         get "explanation"() {
             return translate("modelJev.preservedHandoffDescription");
         },
-        get "ondeEdita"() {
+        get "editHint"() {
             return translate("modelJev.preservedHandoffWhere");
         },
     },

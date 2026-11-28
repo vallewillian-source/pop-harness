@@ -253,12 +253,12 @@ url() {
 }
 
 case "${1:-}" in
-    subir)  up ;;
-    parar)  stop ;;
-    limpar) clean ;;
+    up)  up ;;
+    stop)  stop ;;
+    clean) clean ;;
     url)    url ;;
     *)
-        echo "usage: $0 {subir|parar|limpar|url}" >&2
+        echo "usage: $0 {up|stop|clean|url}" >&2
         exit 2
         ;;
 esac

@@ -34,7 +34,7 @@ const SCHEMA_PLUGIN: SchemaObject = {
     properties: {
         endpoint: { type: "string", description: "URL do serviço do plugin." },
         tentativas: { type: "integer", minimum: 1, maximum: 5, default: 3 },
-        avisar: { type: "boolean", default: false },
+        notify: { type: "boolean", default: false },
     },
     required: ["endpoint"],
 };
@@ -93,7 +93,7 @@ describe("FormularioEsquema", () => {
         expect(campos.map((campo) => [campo.nome, campo.secret])).toEqual([
             ["endpoint", false],
             ["tentativas", false],
-            ["avisar", false],
+            ["notify", false],
             ["api_key", true],
         ]);
     });
@@ -102,7 +102,7 @@ describe("FormularioEsquema", () => {
         const errors = validateValuesSchema(SCHEMA_PLUGIN, SECRETS_PLUGIN, {
             endpoint: "",
             tentativas: 3,
-            avisar: false,
+            notify: false,
             api_key: "",
         });
 
@@ -112,7 +112,7 @@ describe("FormularioEsquema", () => {
         const completos = validateValuesSchema(SCHEMA_PLUGIN, SECRETS_PLUGIN, {
             endpoint: "https://plugin.exemplo",
             tentativas: 3,
-            avisar: false,
+            notify: false,
             api_key: "chave",
         });
         expect(completos).toEqual({});
@@ -159,9 +159,9 @@ describe("FormularioEsquema", () => {
 
     it("desenha booleano como caixa e avisa quando o esquema não tem campo", async () => {
         const user = userEvent.setup();
-        render(<FormTest configuracao={SCHEMA_PLUGIN} iniciais={{ endpoint: "", avisar: false }} />);
+        render(<FormTest configuracao={SCHEMA_PLUGIN} iniciais={{ endpoint: "", notify: false }} />);
 
-        const notify = screen.getByLabelText("Avisar");
+        const notify = screen.getByLabelText("Notify");
         expect(notify).not.toBeChecked();
         await user.click(notify);
         expect(notify).toBeChecked();
@@ -177,7 +177,7 @@ describe("FormularioEsquema", () => {
         const errors = validateValuesSchema(SCHEMA_PLUGIN, SECRETS_PLUGIN, {
             endpoint: "",
             tentativas: 9,
-            avisar: false,
+            notify: false,
             api_key: "",
         });
         expect(errors["endpoint"]).toBe("required field");

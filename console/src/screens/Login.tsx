@@ -43,9 +43,9 @@ export function Login() {
             navigate(resolveDefaultOrgPath(session.orgs), { replace: true });
         } catch (error) {
             if (error instanceof ApiError) {
-                if (error.naoAutorizado) {
+                if (error.unauthorized) {
                     setTokenError(translate("login.invalidToken"));
-                } else if (error.semServidor) {
+                } else if (error.noServer) {
                     setNetworkError(
                         translate("login.unreachableInstance", { origin: instancia() }),
                     );

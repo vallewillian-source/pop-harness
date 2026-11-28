@@ -230,11 +230,11 @@ a new set of artifacts in `target/`, and Cargo never deletes the old ones, so th
 and types that made every test binary grow by hundreds of megabytes.
 
 ```bash
-bash scripts/clean-cache.sh --seco     # shows what it would delete
+bash scripts/clean-cache.sh --dry-run     # shows what it would delete
 bash scripts/clean-cache.sh            # prunes units unused for 3 days; tightens retention above 25 GB
-bash scripts/clean-cache.sh --dias 7   # longer retention
-bash scripts/clean-cache.sh --tudo     # cargo clean
+bash scripts/clean-cache.sh --days 7   # longer retention
+bash scripts/clean-cache.sh --all     # cargo clean
 ```
 
 Pruning refuses to run while `cargo` or `rustc` is running, so it does not break a build in progress.
-`--forcar` ignores that guard and is only for controlled experiments.
+`--force` ignores that guard and is only for controlled experiments.

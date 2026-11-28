@@ -148,7 +148,7 @@ describe("Aba Modelo e Jev", () => {
                     situacoes_de_handoff: ["cliente pede segunda via"],
                     resposta_segura: "Vou confirmar e já te respondo.",
                     g7_acao: "registrar",
-                    chave_desconhecida: 7,
+                    unknown_key: 7,
                     gates: { g8: false },
                 },
             }),
@@ -168,7 +168,7 @@ describe("Aba Modelo e Jev", () => {
             situacoes_de_handoff: ["cliente pede segunda via"],
             resposta_segura: "Vou confirmar e já te respondo.",
             g7_acao: "registrar",
-            chave_desconhecida: 7,
+            unknown_key: 7,
             gates: { g8: false, g2: true },
         });
     });

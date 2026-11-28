@@ -1646,11 +1646,11 @@ async fn measure_round(mode: Mode, round: usize, samples: usize) -> Vec<Amostra>
 #[tokio::test]
 #[ignore = "medição: rodar por scripts/measure-resilience.sh"]
 async fn measure_customer_first() {
-    let rounds: usize = std::env::var("MX29_RODADAS")
+    let rounds: usize = std::env::var("MX29_ROUNDS")
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(3);
-    let samples: usize = std::env::var("MX29_AMOSTRAS")
+    let samples: usize = std::env::var("MX29_SAMPLES")
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(20);

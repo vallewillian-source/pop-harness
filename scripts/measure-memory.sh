@@ -8,44 +8,44 @@ MODE=""
 ROOMS=""
 MESSAGES=1
 ROUND=1
-PORT_SERVE="${MX30_PORTA_SERVE:-18432}"
-PORT_FAKE="${MX30_PORTA_FALSO:-18431}"
-LIMIT_S="${MX30_LIMITE_S:-3600}"
+PORT_SERVE="${MX30_SERVE_PORT:-18432}"
+PORT_FAKE="${MX30_FAKE_PORT:-18431}"
+LIMIT_S="${MX30_LIMIT_S:-3600}"
 ROOT="$(pwd)/target/mx30"
 BIN="$(pwd)/target/release/poph"
-CSV="$ROOT/memoria.csv"
+CSV="$ROOT/memory.csv"
 
 fail() { echo "error: $*" >&2; exit 1; }
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --modo) MODE="$2"; shift 2 ;;
-        --salas) ROOMS="$2"; shift 2 ;;
-        --mensagens) MESSAGES="$2"; shift 2 ;;
-        --rodada) ROUND="$2"; shift 2 ;;
+        --mode) MODE="$2"; shift 2 ;;
+        --rooms) ROOMS="$2"; shift 2 ;;
+        --messages) MESSAGES="$2"; shift 2 ;;
+        --round) ROUND="$2"; shift 2 ;;
         *) fail "unknown argument: $1" ;;
     esac
 done
 
 case "$MODE" in
-    desligado|ligado|real) ;;
-    *) fail "--modo must be desligado, ligado or real" ;;
+    off|on|real) ;;
+    *) fail "--mode must be off, on or real" ;;
 esac
-[ -n "$ROOMS" ] || fail "--salas is required"
+[ -n "$ROOMS" ] || fail "--rooms is required"
 [ -x "$BIN" ] || fail "$BIN does not exist: build it first with 'cargo build --release --locked -p poph'"
 
 mkdir -p "$ROOT/logs"
-DIR="$ROOT/banco-$MODE-$ROOMS-$MESSAGES-$ROUND"
+DIR="$ROOT/db-$MODE-$ROOMS-$MESSAGES-$ROUND"
 rm -rf "$DIR"
 mkdir -p "$DIR"
 
 port_busy() { ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]$1$"; }
-port_busy "$PORT_SERVE" && fail "port $PORT_SERVE is in use (set MX30_PORTA_SERVE)"
-port_busy "$PORT_FAKE" && fail "port $PORT_FAKE is in use (set MX30_PORTA_FALSO)"
+port_busy "$PORT_SERVE" && fail "port $PORT_SERVE is in use (set MX30_SERVE_PORT)"
+port_busy "$PORT_FAKE" && fail "port $PORT_FAKE is in use (set MX30_FAKE_PORT)"
 
 if [ "$MODE" = real ]; then
     CREDS="$HOME/.cache/poph-matrix/credenciais.env"
-    [ -f "$CREDS" ] || fail "dev Synapse credentials missing (run matrix-dev.sh subir)"
+    [ -f "$CREDS" ] || fail "dev Synapse credentials missing (run matrix-dev.sh up)"
     set -a; . "$CREDS"; set +a
     AS_TOKEN="${POPH_MATRIX_DEV_HARNESS_AS_TOKEN:-}"
     HS_TOKEN="${POPH_MATRIX_DEV_HARNESS_HS_TOKEN:-}"
@@ -62,14 +62,14 @@ export POPH_MATRIX_AS_TOKEN="$AS_TOKEN"
 export POPH_MATRIX_HS_TOKEN="$HS_TOKEN"
 
 ENABLED=0
-[ "$MODE" = ligado ] && ENABLED=1
+[ "$MODE" = on ] && ENABLED=1
 [ "$MODE" = real ] && ENABLED=1
 
 SEED_START=$(date +%s%N)
-MX30_PASTA="$DIR" MX30_SALAS="$ROOMS" MX30_MENSAGENS_POR_SALA="$MESSAGES" MX30_LIGADO="$ENABLED" \
-    cargo test --locked -p poph-server --test matrix_medicao_memoria -- --ignored --nocapture \
-    seeds_conversations_for_memory_measurement >"$ROOT/logs/semeadura-$MODE-$ROOMS-$MESSAGES-$ROUND.log" 2>&1 \
-    || fail "seeding failed; see $ROOT/logs/semeadura-$MODE-$ROOMS-$MESSAGES-$ROUND.log"
+MX30_DIR="$DIR" MX30_ROOMS="$ROOMS" MX30_MESSAGES_PER_ROOM="$MESSAGES" MX30_ENABLED="$ENABLED" \
+    cargo test --locked -p poph-server --test matrix_memory_measurement -- --ignored --nocapture \
+    seeds_conversations_for_memory_measurement >"$ROOT/logs/seeding-$MODE-$ROOMS-$MESSAGES-$ROUND.log" 2>&1 \
+    || fail "seeding failed; see $ROOT/logs/seeding-$MODE-$ROOMS-$MESSAGES-$ROUND.log"
 SEED_END=$(date +%s%N)
 SEED_MS=$(( (SEED_END - SEED_START) / 1000000 ))
 
@@ -85,7 +85,7 @@ CONFIG="$DIR/poph.toml"
     echo "[log]"
     echo "nivel = \"info\""
     echo "formato = \"legivel\""
-    if [ "$MODE" != desligado ]; then
+    if [ "$MODE" != off ]; then
         echo ""
         echo "[matrix]"
         echo "habilitado = true"
@@ -149,7 +149,7 @@ TICKS_FAKE0=0
 
 EXPECTED=$(( ROOMS * MESSAGES ))
 DRAIN_S=0
-if [ "$MODE" != desligado ]; then
+if [ "$MODE" != off ]; then
     while :; do
         if [ -n "$FAKE_PID" ]; then
             SENDS=$(stats | python3 -I -c 'import json,sys; print(json.load(sys.stdin).get("envios_unicos",0))' 2>/dev/null || echo 0)
@@ -201,7 +201,7 @@ fi
 THROUGHPUT="0"
 CPU_SERVE=${CPU_SERVE:-0}
 CPU_FAKE=${CPU_FAKE:-0}
-if [ "$MODE" != desligado ] && [ "$UNIQUE_SENDS" -gt 0 ]; then
+if [ "$MODE" != off ] && [ "$UNIQUE_SENDS" -gt 0 ]; then
     THROUGHPUT=$(python3 -I -c "print(round($UNIQUE_SENDS/$DRAIN_S, 1))")
 fi
 

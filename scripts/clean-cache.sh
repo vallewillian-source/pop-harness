@@ -16,11 +16,11 @@
 #
 # Usage:
 #   scripts/clean-cache.sh                 # prunes what is older than 3 days; reduces if over 25 GB
-#   scripts/clean-cache.sh --seco          # only shows what would be deleted
-#   scripts/clean-cache.sh --dias 7        # longer retention
-#   scripts/clean-cache.sh --limite-gb 40  # size ceiling for target
-#   scripts/clean-cache.sh --tudo          # `cargo clean` (deletes the whole target; respects an active build)
-#   scripts/clean-cache.sh --forcar        # prunes even with a build running (test only)
+#   scripts/clean-cache.sh --dry-run          # only shows what would be deleted
+#   scripts/clean-cache.sh --days 7        # longer retention
+#   scripts/clean-cache.sh --limit-gb 40  # size ceiling for target
+#   scripts/clean-cache.sh --all          # `cargo clean` (deletes the whole target; respects an active build)
+#   scripts/clean-cache.sh --force        # prunes even with a build running (test only)
 #
 # Output: summary with bytes freed. Exit code 0 also when it skips because a build is running —
 # CI must not fail because of pruning.
@@ -44,21 +44,21 @@ usage() {
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --dias) DAYS="${2:-}"; shift 2 ;;
-        --dias=*) DAYS="${1#*=}"; shift ;;
-        --limite-gb) LIMIT_GB="${2:-}"; shift 2 ;;
-        --limite-gb=*) LIMIT_GB="${1#*=}"; shift ;;
-        --minutos-ativos) ACTIVE_MINUTES="${2:-}"; shift 2 ;;
-        --seco|--dry-run) DRY=1; shift ;;
-        --tudo) ALL=1; shift ;;
-        --forcar) FORCE=1; shift ;;
-        -h|--ajuda|--help) usage; exit 0 ;;
+        --days) DAYS="${2:-}"; shift 2 ;;
+        --days=*) DAYS="${1#*=}"; shift ;;
+        --limit-gb) LIMIT_GB="${2:-}"; shift 2 ;;
+        --limit-gb=*) LIMIT_GB="${1#*=}"; shift ;;
+        --active-minutes) ACTIVE_MINUTES="${2:-}"; shift 2 ;;
+        --dry-run) DRY=1; shift ;;
+        --all) ALL=1; shift ;;
+        --force) FORCE=1; shift ;;
+        -h|--help) usage; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
 
-case "$DAYS" in ''|*[!0-9.]*) echo "--dias needs a number (e.g. 3 or 0.5)" >&2; exit 2 ;; esac
-case "$LIMIT_GB" in ''|*[!0-9]*) echo "--limite-gb needs an integer" >&2; exit 2 ;; esac
+case "$DAYS" in ''|*[!0-9.]*) echo "--days needs a number (e.g. 3 or 0.5)" >&2; exit 2 ;; esac
+case "$LIMIT_GB" in ''|*[!0-9]*) echo "--limit-gb needs an integer" >&2; exit 2 ;; esac
 
 num() { awk -v b="${1:-0}" 'BEGIN{ printf "%.2f GB", b/1073741824 }'; }
 
@@ -70,12 +70,12 @@ fi
 
 if [ "$ALL" -eq 1 ]; then
     if [ "$FORCE" -eq 0 ] && { pgrep -x cargo >/dev/null 2>&1 || pgrep -x rustc >/dev/null 2>&1; }; then
-        echo "cache: a cargo/rustc is running on this machine — --tudo postponed (use --forcar to delete anyway)"
+        echo "cache: a cargo/rustc is running on this machine — --all postponed (use --force to delete anyway)"
         exit 0
     fi
     before=$(du -sb "$TARGET" 2>/dev/null | cut -f1)
     if [ "$DRY" -eq 1 ]; then
-        echo "cache: --seco with --tudo: would delete the whole target/ ($(num "$before") )"
+        echo "cache: --dry-run with --all: would delete the whole target/ ($(num "$before") )"
         exit 0
     fi
     echo "cache: deleting the whole target/ (cargo clean)"

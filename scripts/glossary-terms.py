@@ -212,7 +212,7 @@ class TermReader:
                 index += 1
         return names
 
-    def _abre_jsx(self, source, index, previous):
+    def _opens_jsx(self, source, index, previous):
         following = source[index + 1] if index + 1 < len(source) else ""
         if not (following in IDENT_START or following == ">"):
             return False
@@ -341,7 +341,7 @@ class TermReader:
                 index += 1
                 previous = "}"
                 continue
-            if jsx and char == "<" and self._abre_jsx(source, index, previous):
+            if jsx and char == "<" and self._opens_jsx(source, index, previous):
                 if source.startswith("<>", index):
                     stack.append(["children", 0, False])
                     index += 2
@@ -413,8 +413,18 @@ class TermReader:
         tokens = []
         size = len(source)
         frames = []
+        depths = []
         heredocs = []
         index = 0
+
+        def push(frame):
+            frames.append(frame)
+            depths.append(0)
+
+        def pop():
+            frames.pop()
+            depths.pop()
+
         while index < size:
             char = source[index]
             frame = frames[-1] if frames else "root"
@@ -423,7 +433,7 @@ class TermReader:
                     index += 2
                     continue
                 if char == "'":
-                    frames.pop()
+                    pop()
                 index += 1
                 continue
             if frame == "double":
@@ -431,11 +441,15 @@ class TermReader:
                     index += 2
                     continue
                 if char == '"':
-                    frames.pop()
+                    pop()
                     index += 1
                     continue
+                if char == "$" and source.startswith("$(", index):
+                    push("command")
+                    index += 2
+                    continue
                 if char == "$" and source.startswith("${", index):
-                    frames.append("brace")
+                    push("brace")
                     index += 2
                     continue
                 if char == "$":
@@ -451,7 +465,7 @@ class TermReader:
                     index += 2
                     continue
                 if char == "`":
-                    frames.pop()
+                    pop()
                     index += 1
                     continue
                 if char in IDENT_START:
@@ -462,7 +476,7 @@ class TermReader:
                 continue
             if frame == "brace":
                 if char == "}":
-                    frames.pop()
+                    pop()
                     index += 1
                     continue
                 if char in IDENT_START:
@@ -471,6 +485,18 @@ class TermReader:
                     continue
                 index += 1
                 continue
+            if frame == "command":
+                if char == ")":
+                    if depths[-1] == 0:
+                        pop()
+                    else:
+                        depths[-1] -= 1
+                    index += 1
+                    continue
+                if char == "(":
+                    depths[-1] += 1
+                    index += 1
+                    continue
             if char == "#":
                 stop = source.find("\n", index)
                 index = size if stop < 0 else stop
@@ -486,20 +512,24 @@ class TermReader:
                 index = self.m.skip_heredocs(source, index + 1, heredocs)
                 heredocs = []
                 continue
+            if char == "$" and index + 1 < size and source[index + 1] == "(":
+                push("command")
+                index += 2
+                continue
             if char == "'":
-                frames.append("single")
+                push("single")
                 index += 1
                 continue
             if char == '"':
-                frames.append("double")
+                push("double")
                 index += 1
                 continue
             if char == "`":
-                frames.append("backtick")
+                push("backtick")
                 index += 1
                 continue
             if char == "$" and index + 1 < size and source[index + 1] == "'":
-                frames.append("ansi")
+                push("ansi")
                 index += 2
                 continue
             if char in IDENT_START:

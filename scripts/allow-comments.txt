@@ -7,7 +7,6 @@
 *.sh	shebang		primeira linha do script: o kernel precisa do shebang para executá-lo
 *.py	shebang		primeira linha do script: o kernel precisa do shebang para executá-lo
 *	directive	noqa		diretiva do flake8/ruff; sair faz o linter reprovar a linha
-*	directive	type: ignore	diretiva do mypy; sair faz o verificador de tipos reprovar a linha
 *	directive	shellcheck disable=	diretiva do shellcheck; sair faz o linter reprovar o source dinâmico
 scripts/clean-cache.sh	data	lines:2-30	the usage block is read by usage() with sed on line 43; it is data, not a comment
 console/gen-api.sh	data	lines:2-16	bloco de uso lido pela própria opção --help com sed na linha 28; é dado, não comentário
