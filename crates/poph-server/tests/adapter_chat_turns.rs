@@ -9,7 +9,8 @@ use poph_agent::config_hot::{ConfigHot, HotConfigOptions};
 use poph_agent::limites::{LimitOptions, Limiter};
 use poph_agent::metrics::{MetricsMemory, MetricsTurn};
 use poph_agent::turno::{
-    DefaultRegistry, InternalTool, ToolContext, ToolFuture, TurnEngine, TurnOptions,
+    DefaultRegistry, HttpToolRegistry, InternalTool, ToolContext, ToolFuture, TurnEngine,
+    TurnOptions,
 };
 use poph_core::llm::{
     FakeProvider, FinishReason, LlmError, LlmEvent, LlmProvider, Script, ToolCall,
@@ -25,7 +26,7 @@ use poph_store::{
 };
 use poph_types::{
     AgentId, ConversationId, EffectState, EventActor, ExecutionStatus, FlowId, HarnessConfig,
-    OrgId, RevisionId, StructuredInstructions, ToolConfig,
+    OrgId, RevisionId, Secret, StructuredInstructions, ToolConfig,
 };
 use rand_core::OsRng;
 use reqwest::{Client, Method, Response, StatusCode};
@@ -34,6 +35,10 @@ use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
 const TEAM_PHONE: &str = "5521988880002";
+const HTTP_TOOL: &str = "consultar_pedido";
+const HTTP_ENV: &str = "POPH_HTTP_TOOL_ADAPTER_TEST";
+const HTTP_AUTHORIZATION: &str = "Bearer credencial-ficticia-da-ferramenta";
+const HTTP_CALL_ID: &str = "consulta-1";
 
 struct Account {
     org: OrgId,
@@ -99,17 +104,32 @@ impl InternalTool for RecordingTool {
 
 impl Fixture {
     fn new() -> Self {
+        Self::build(None)
+    }
+
+    fn with_http_tool(url: &str) -> Self {
+        Self::build(Some(url))
+    }
+
+    fn build(http_tool_url: Option<&str>) -> Self {
         let root = std::env::temp_dir().join(format!("poph-adapter-turns-{}", OrgId::generate()));
         let mut config = HarnessConfig::default();
         config.data.directory = root.clone();
         config.adapter_chat.max_text_bytes = 256;
         let store = Arc::new(Store::open(&config).expect("open"));
         let account = add_account(&store, "primeira");
+        let mut tools = vec!["consultar_base".to_owned()];
+        if let Some(url) = http_tool_url {
+            config.http_tools = http_tool_config(account.org, url);
+            tools.push(HTTP_TOOL.to_owned());
+        }
         let instructions = StructuredInstructions {
-            tools: vec![ToolConfig::new("consultar_base")],
+            tools: tools.iter().map(ToolConfig::new).collect(),
             ..Default::default()
         };
-        instructions.validar().expect("closed tool list");
+        config
+            .validate_agent_instructions(account.org, &instructions)
+            .expect("closed tool list");
         store
             .instructions()
             .save(
@@ -146,6 +166,15 @@ impl Fixture {
         );
         let registry = DefaultRegistry::new().com(Arc::clone(&self.tool) as Arc<dyn InternalTool>);
         let engine = engine.with_tools(Arc::new(registry));
+        let engine = if self.config.http_tools.is_empty() {
+            engine
+        } else {
+            let http = HttpToolRegistry::from_config(&self.config.http_tools, |name| {
+                (name == HTTP_ENV).then(|| Secret::new(HTTP_AUTHORIZATION.to_owned()))
+            })
+            .expect("ferramentas HTTP");
+            engine.with_http_tools(http)
+        };
         let state = ServerState::new(self.store.clone(), self.config.clone())
             .expect("state")
             .with_engine(Arc::new(engine));
@@ -162,6 +191,22 @@ impl Fixture {
             task,
         }
     }
+}
+
+fn http_tool_config(org: OrgId, url: &str) -> poph_types::config::HttpToolsConfig {
+    let config: HarnessConfig = toml::from_str(&format!(
+        r#"
+[http_tools."{org}"."{HTTP_TOOL}"]
+url = "{url}"
+method = "POST"
+authorization_env = "{HTTP_ENV}"
+description = "Consulta o estado de um pedido."
+parameters = {{ type = "object", properties = {{ pedido = {{ type = "string" }} }}, required = ["pedido"] }}
+response_fields = {{ estado = "/pedido/estado" }}
+"#
+    ))
+    .expect("declaração TOML da ferramenta HTTP");
+    config.http_tools
 }
 
 fn add_agent(store: &Store, org: OrgId, slug: &str) -> AgentId {
@@ -1164,4 +1209,93 @@ async fn notification_effect_on_adapter_conversation_stays_pending() {
             .any(|effect| effect.tipo == "mensagem_ao_cliente")
     );
     assert_outbox_empty(&fixture);
+}
+
+async fn record_order(
+    axum::extract::State(calls): axum::extract::State<
+        tokio::sync::mpsc::UnboundedSender<(axum::http::HeaderMap, Value)>,
+    >,
+    headers: axum::http::HeaderMap,
+    axum::Json(body): axum::Json<Value>,
+) -> axum::Json<Value> {
+    calls.send((headers, body)).expect("chamada HTTP");
+    axum::Json(json!({"pedido": {"estado": "enviado"}}))
+}
+
+#[tokio::test]
+async fn declared_http_tool_receives_the_adapter_turn_id() {
+    let backend_listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("porta da ferramenta");
+    let backend_url = format!(
+        "http://{}/pedidos",
+        backend_listener.local_addr().expect("address")
+    );
+    let (calls, mut received) = tokio::sync::mpsc::unbounded_channel();
+    let backend = axum::Router::new()
+        .route("/pedidos", axum::routing::post(record_order))
+        .with_state(calls);
+    let backend_task = tokio::spawn(axum::serve(backend_listener, backend).into_future());
+
+    let fixture = Fixture::with_http_tool(&backend_url);
+    let fake = Arc::new(FakeProvider::with_scripts(vec![
+        tool_call(HTTP_CALL_ID, HTTP_TOOL, json!({"pedido": "123"})),
+        answer("Seu pedido foi enviado."),
+    ]));
+    let server = fixture.start(fake.clone()).await;
+    let account = &fixture.account;
+    let conversation = server
+        .open(account, account.agent, "thread-http", StatusCode::CREATED)
+        .await;
+    let conversation_id = conversation["id"]
+        .as_str()
+        .expect("conversation")
+        .to_owned();
+    let accepted = server
+        .send_turn(
+            account,
+            &conversation_id,
+            "chave-http",
+            "Como está meu pedido?",
+            StatusCode::ACCEPTED,
+        )
+        .await;
+    let turn_id = accepted["turn_id"].as_str().expect("turn_id").to_owned();
+    let finished = wait_terminal(&server, account, &conversation_id, &turn_id).await;
+    assert_eq!(finished["status"], "succeeded", "{finished}");
+    assert_eq!(finished["reply_text"], "Seu pedido foi enviado.");
+
+    let (headers, body) = received.try_recv().expect("chamada da ferramenta");
+    assert_eq!(headers["authorization"], HTTP_AUTHORIZATION);
+    assert_eq!(
+        headers["idempotency-key"],
+        format!("{turn_id}:{HTTP_CALL_ID}")
+    );
+    assert_eq!(body["context"]["turn_id"], json!(turn_id));
+    assert_eq!(body["context"]["conversation_id"], json!(conversation_id));
+    assert_eq!(body["context"]["agent_id"], json!(account.agent));
+    assert_eq!(body["arguments"], json!({"pedido": "123"}));
+    assert!(received.try_recv().is_err());
+
+    let engine_turns = fixture
+        .store
+        .turns()
+        .list(
+            account.org,
+            conversation_id.parse().expect("conversation id"),
+            poph_store::Page::with_limit(2),
+        )
+        .expect("turnos do motor");
+    assert_eq!(engine_turns.len(), 1);
+    assert_ne!(
+        engine_turns[0].id.to_string(),
+        turn_id,
+        "the context carries the adapter turn id, not the engine turn id"
+    );
+    assert_eq!(finished["id"], json!(turn_id));
+
+    assert_outbox_empty(&fixture);
+    server.stop().await;
+    backend_task.abort();
+    let _ = backend_task.await;
 }

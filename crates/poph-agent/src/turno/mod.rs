@@ -145,6 +145,7 @@ pub struct TurnInput {
     pub mensagem: MessageId,
     pub cancellation: Cancellation,
     pub delivery: TurnDelivery,
+    pub adapter_turn: Option<TurnId>,
 }
 
 impl TurnInput {
@@ -155,11 +156,17 @@ impl TurnInput {
             mensagem,
             cancellation: Cancellation::new(),
             delivery: TurnDelivery::Outbox,
+            adapter_turn: None,
         }
     }
 
     pub fn without_outbox(mut self) -> Self {
         self.delivery = TurnDelivery::WithoutOutbox;
+        self
+    }
+
+    pub fn for_adapter_turn(mut self, turn: TurnId) -> Self {
+        self.adapter_turn = Some(turn);
         self
     }
 }
@@ -306,6 +313,7 @@ struct TurnTarget {
     org: OrgId,
     conversa: ConversationId,
     turno: TurnId,
+    adapter_turn: Option<TurnId>,
 }
 
 #[derive(Clone)]
@@ -820,6 +828,7 @@ impl TurnEngine {
                         org,
                         conversa: conversation_id,
                         turno: turno.id,
+                        adapter_turn: input.adapter_turn,
                     },
                     &hot_agent,
                     &recent_messages,
@@ -863,6 +872,7 @@ impl TurnEngine {
                             org,
                             conversa: conversation_id,
                             turno: turno.id,
+                            adapter_turn: input.adapter_turn,
                         },
                         &hot_agent,
                         jev_result,
@@ -885,6 +895,7 @@ impl TurnEngine {
                                 org,
                                 conversa: conversation_id,
                                 turno: turno.id,
+                                adapter_turn: input.adapter_turn,
                             },
                             &hot_agent,
                             &recent_messages,
@@ -917,6 +928,7 @@ impl TurnEngine {
                     org,
                     conversa: conversation_id,
                     turno: turno.id,
+                    adapter_turn: input.adapter_turn,
                 },
                 &hot_agent,
                 &jev_result,
@@ -1025,6 +1037,7 @@ impl TurnEngine {
                 org,
                 conversa: conversation_id,
                 turno: turno.id,
+                adapter_turn: input.adapter_turn,
             },
             &hot_agent,
             prepared,
@@ -1203,7 +1216,7 @@ impl TurnEngine {
             org_id: target.org,
             agent_id: hot_agent.agente.id,
             conversation_id: target.conversa,
-            turn_id: target.turno,
+            turn_id: target.adapter_turn.unwrap_or(target.turno),
             message_id: prepared.trigger_message_id,
         };
         let mut http_calls = HttpToolCalls::default();

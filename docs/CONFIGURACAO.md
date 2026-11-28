@@ -140,7 +140,10 @@ HTTP retries are disabled.
 
 The request carries `Idempotency-Key: <turn_id>:<call_id>`. The body has `context` with
 `org_id`, `agent_id`, `conversation_id`, `turn_id` and `message_id`, plus the original
-provider `call_id` and a separate `arguments` object from the model. The receiving service
+provider `call_id` and a separate `arguments` object from the model. In an adapter
+conversation, `turn_id` is the adapter turn id returned by
+`POST /admin/v1/orgs/{org_id}/adapter-conversations/{id}/turns`, so it is stable across a
+retry or a restart. In site, WhatsApp and console turns it is the engine turn id. The receiving service
 resolves the organization from the credential and verifies the supplied context. Treat
 `arguments` as untrusted input. The message ID identifies the message that triggered the turn.
 

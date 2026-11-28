@@ -1548,7 +1548,10 @@ The turn follows the same rules as a channel turn: one turn per conversation, a 
 `adapter_turns`, and the same `TurnEngine::run` used by WhatsApp and the test chat, with the full tool set
 of the agent (the site policy does not apply). The difference is the delivery: the reply is stored as an
 agent message in the history and returned in `reply_text`, and no `outbox` row is written. The adapter is
-responsible for delivering the reply. The input limit comes from `adapter_chat.max_text_bytes` (16 KiB by
+responsible for delivering the reply. In a declared HTTP tool call made during an adapter turn,
+`context.turn_id` is the adapter turn id returned by `POST /adapter-conversations/{id}/turns`; in turns
+that do not come from an adapter conversation (site, WhatsApp, console) it remains the engine turn id.
+The input limit comes from `adapter_chat.max_text_bytes` (16 KiB by
 default, accepted range 1 byte to 256 KiB in `poph.toml`) and applies to both the message and the turn
 routes. A turn that was `running` when the process stopped becomes `failed` with `error_code`
 `server_restarted` on the next boot, unless the reply message was already stored for that turn: then the

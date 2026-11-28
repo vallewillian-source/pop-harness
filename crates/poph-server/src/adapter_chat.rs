@@ -49,9 +49,9 @@ pub(crate) fn recover(state: &ServerState) -> Result<(), poph_store::StoreError>
 pub(crate) fn launch(state: ServerState, key: AdapterTurnKey) {
     tokio::spawn(async move {
         let input = match state.store.adapter_chat().claim_turn(key) {
-            Ok(Some(claim)) => {
-                TurnInput::new(key.org, key.conversation, claim.message).without_outbox()
-            }
+            Ok(Some(claim)) => TurnInput::new(key.org, key.conversation, claim.message)
+                .without_outbox()
+                .for_adapter_turn(key.turn),
             Ok(None) => return,
             Err(error) => {
                 tracing::error!(%error, turn_id = %key.turn, "adapter turn could not start");

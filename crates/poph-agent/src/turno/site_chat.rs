@@ -143,6 +143,7 @@ impl TurnEngine {
                     org,
                     conversa: id,
                     turno: job.key.turn,
+                    adapter_turn: None,
                 },
                 &hot,
                 PreparedTurn {
