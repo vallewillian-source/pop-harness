@@ -57,6 +57,38 @@ export interface paths {
         patch: operations["orgs_atualizar"];
         trace?: never;
     };
+    "/admin/v1/orgs/{org_id}/adapter-conversations/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["adapter_conversation_show"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/v1/orgs/{org_id}/adapter-conversations/{id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["adapter_message_history"];
+        put?: never;
+        post: operations["adapter_message_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/v1/orgs/{org_id}/agents": {
         parameters: {
             query?: never;
@@ -87,6 +119,22 @@ export interface paths {
         options?: never;
         head?: never;
         patch: operations["atualizar"];
+        trace?: never;
+    };
+    "/admin/v1/orgs/{org_id}/agents/{agent_id}/adapter-conversations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["adapter_conversation_create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/admin/v1/orgs/{org_id}/agents/{agent_id}/files": {
@@ -2408,6 +2456,136 @@ export interface operations {
             };
         };
     };
+    adapter_conversation_show: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_id: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Conversa de adaptador */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Conversa não encontrada */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+        };
+    };
+    adapter_message_history: {
+        parameters: {
+            query?: {
+                before?: string;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                org_id: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Histórico da conversa, da mais nova para a mais antiga */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Conversa não encontrada */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+        };
+    };
+    adapter_message_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_id: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MessageBody"];
+            };
+        };
+        responses: {
+            /** @description Repetição idêntica */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Mensagem gravada */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Conversa não encontrada */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Chave repetida com outro conteúdo ou conversa encerrada */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Dados recusados */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+        };
+    };
     listar: {
         parameters: {
             query?: {
@@ -2534,6 +2712,60 @@ export interface operations {
             };
             /** @description Conflito */
             412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+        };
+    };
+    adapter_conversation_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_id: string;
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateBody"];
+            };
+        };
+        responses: {
+            /** @description Conversa existente */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Conversa criada */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Agente fora da organização */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RespostaErro"];
+                };
+            };
+            /** @description Canal ou dados recusados */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
