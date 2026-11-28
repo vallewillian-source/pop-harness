@@ -1514,7 +1514,7 @@ the agent with the full tool set of the agent and never enqueue outbound channel
 
 | Method and path | Contract |
 | --- | --- |
-| `POST /agents/{agent_id}/adapter-conversations` | Takes `{"channel":"…","external_ref":"…","create_case":true}`. `create_case` defaults to true and opens a Case together with the conversation; false leaves the conversation without a Case, now and at close. Returns the conversation object. A new active `(org, agent, channel, external_ref)` answers 201; the existing one answers 200. A conversation in `open` or `transferred` is resumed; after `closed`, the next call creates another conversation and, with `create_case`, another Case. |
+| `POST /agents/{agent_id}/adapter-conversations` | Takes `{"channel":"…","external_ref":"…","create_case":true}`. `create_case` defaults to `false` for `popbot` and to `true` for every other accepted channel. An explicit value overrides the default when creating a conversation. `true` opens a Case with the conversation. `false` leaves it without a Case, including at close. Returns the conversation object. A new active `(org, agent, channel, external_ref)` answers 201; the existing one answers 200. A conversation in `open` or `transferred` is resumed; after `closed`, the next call creates another conversation and, with `create_case`, another Case. |
 | `GET /adapter-conversations/{id}` | Returns `{id, org_id, agent_id, channel, external_ref, create_case, status, version, created_at, updated_at, last_message_at, ficha_id}`. `ficha_id` is null when the conversation has no Case. |
 | `POST /adapter-conversations/{id}/messages` | Takes `{"text":"…","origin":"…","idempotency_key":"…","author_name":"…","external_message_id":"…"}`. `origin` is `customer` (inbound user message, stored with origin `agent`), `human` (outbound assistant message, origin `human`) or `agent` (outbound assistant message, origin `agent`). Text has 1 to `adapter_chat.max_text_bytes` UTF-8 bytes. `idempotency_key` has 1–128 characters; `author_name` and `external_message_id` accept up to 128 characters and are optional. Returns the message with 201. The same key and payload returns 200 with the same message; the same key with another payload returns 409 `idempotency_conflict`; a closed conversation returns 409 `conversa_encerrada`. |
 | `GET /adapter-conversations/{id}/messages?before=<id>&limit=<n>` | Returns `{"messages":[...]}` in descending message ID order. Each row has `id`, `role` (`user` or `assistant`), `origin`, `author_name`, `text`, `external_message_id` and `created_at`. The cursor is exclusive and omitted on the first page. The limit defaults to 50 and accepts 1–100. |
@@ -1531,9 +1531,13 @@ own rules. An agent outside the organization answers 404 on creation.
 Adapter conversations appear in the general routes: `/conversations` lists them with the informed channel,
 the detail and the close, transfer and reopen routes accept them, and conversation analytics counts them
 under that channel. They carry no integration and no participant policy: the adapter is responsible for the
-customer and for the agent in the organization. The Matrix mirror skips only `site`, so an `email`
-conversation is mirrored like any other channel; the conversation JSON exposes `matrix_room_id` when the
-Matrix module is linked and the room is ready.
+customer and for the agent in the organization. The Matrix mirror skips `site` and `popbot`. It mirrors
+`email` conversations, and the conversation JSON exposes `matrix_room_id` when the Matrix module is
+linked and the room is ready.
+
+The platform agent uses the `popbot` channel and the HTTP tools the operator declares for its platform
+organization and enables in the agent's instructions. See [Internal HTTP tools](CONFIGURACAO.md#internal-http-tools).
+The POP Bot gateway (PB-07) will define its tool names when the gateway is available.
 
 A message and its idempotency record are written in one transaction. These routes never write `outbox`
 rows. The organization bearer token follows the usual 401 and 403 rules. Lookup within the requested

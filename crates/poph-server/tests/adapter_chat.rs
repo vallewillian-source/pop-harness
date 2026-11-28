@@ -203,6 +203,37 @@ fn customer(text: &str, key: &str) -> Value {
 }
 
 #[tokio::test]
+async fn popbot_defaults_to_no_case_and_honors_an_explicit_override() {
+    let fixture = Fixture::new();
+    let server = fixture.start().await;
+    let account = &fixture.account;
+
+    for (channel, reference, create_case, expected_case) in [
+        ("popbot", "popbot-default", None, false),
+        ("popbot", "popbot-with-case", Some(true), true),
+        ("email", "email-default", None, true),
+    ] {
+        let conversation = server
+            .open(
+                account,
+                account.agent,
+                channel,
+                reference,
+                create_case,
+                StatusCode::CREATED,
+            )
+            .await;
+        assert_eq!(conversation["channel"], channel);
+        assert_eq!(conversation["create_case"], expected_case, "{reference}");
+        if expected_case {
+            assert!(conversation["ficha_id"].is_string(), "{reference}");
+        } else {
+            assert_eq!(conversation.get("ficha_id"), Some(&Value::Null));
+        }
+    }
+}
+
+#[tokio::test]
 async fn creates_resumes_writes_and_isolates_adapter_conversations() {
     let fixture = Fixture::new();
     let other = add_account(&fixture.store, "segunda");

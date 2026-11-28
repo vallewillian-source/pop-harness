@@ -749,7 +749,7 @@ impl<D: MatrixTarget> MatrixMirror<D> {
                 continue;
             };
 
-            if data.room.channel == "site" {
+            if matches!(data.room.channel.as_str(), "site" | "popbot") {
                 continue;
             }
 

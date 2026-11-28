@@ -258,7 +258,7 @@ pub async fn create(
     let data = body(json)?;
     let channel = channel(&data.channel)?;
     let reference = reference(&data.external_ref)?;
-    let create_case = data.create_case.unwrap_or(true);
+    let create_case = data.create_case.unwrap_or(channel != "popbot");
     let (conversation, created) =
         state
             .store

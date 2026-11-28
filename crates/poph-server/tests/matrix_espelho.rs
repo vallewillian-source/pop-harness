@@ -436,6 +436,59 @@ fn room_for(conversation: ConversationId) -> String {
 }
 
 #[tokio::test]
+async fn skips_site_and_popbot_but_mirrors_email() {
+    let scenario = Scenario::new("adapter-channels");
+    let store = scenario.store();
+    let org = create_org(&store, "a");
+    let agent = create_agent(&store, org);
+    store.matrix().enable(org).expect("liga");
+
+    let (site, _) = store
+        .site_chat()
+        .create(org, agent, "site-thread".to_owned())
+        .expect("cria conversa do site");
+    let (popbot, _) = store
+        .adapter_chat()
+        .create_or_resume(
+            org,
+            agent,
+            "popbot".to_owned(),
+            "bot-thread".to_owned(),
+            false,
+        )
+        .expect("cria conversa do POP Bot");
+    let (email, _) = store
+        .adapter_chat()
+        .create_or_resume(
+            org,
+            agent,
+            "email".to_owned(),
+            "mail-thread".to_owned(),
+            true,
+        )
+        .expect("cria conversa de e-mail");
+
+    client_message(&store, org, site, "Mensagem do site");
+    client_message(&store, org, popbot, "Mensagem do POP Bot");
+    let email_message = client_message(&store, org, email, "Mensagem de e-mail");
+
+    let destination = Fake::new(Mode::Normal);
+    let report = mirror(store, Arc::clone(&destination))
+        .cycle()
+        .await
+        .expect("ciclo");
+
+    assert_eq!(report.sent, 1);
+    assert_eq!(destination.room_calls.load(Ordering::SeqCst), 1);
+    assert!(destination.room_txns(&room_for(site)).is_empty());
+    assert!(destination.room_txns(&room_for(popbot)).is_empty());
+    assert_eq!(
+        destination.room_txns(&room_for(email)),
+        [txn_for(&email_message)]
+    );
+}
+
+#[tokio::test]
 async fn order_inside_room_and_parallel_between_rooms() {
     let scenario = Scenario::new("ordem");
     let store = scenario.store();
