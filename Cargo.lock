@@ -2629,7 +2629,7 @@ dependencies = [
 name = "poph-evolution"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "poph-types",
  "regex",
  "reqwest 0.13.5",

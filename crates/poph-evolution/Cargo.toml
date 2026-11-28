@@ -10,7 +10,7 @@ publish.workspace = true
 [dependencies]
 poph-types = { path = "../poph-types" }
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
-base64 = "0.22"
+base64 = "0.23"
 regex = "1"
 serde.workspace = true
 serde_json.workspace = true
