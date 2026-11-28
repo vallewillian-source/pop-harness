@@ -3554,6 +3554,14 @@ async fn org_isolation_covers_all_published_operations() {
             "post",
             "/admin/v1/orgs/{org_id}/adapter-conversations/{id}/turns/{turn_id}/cancel",
         ),
+        (
+            "get",
+            "/admin/v1/orgs/{org_id}/adapter-conversations/{id}/events",
+        ),
+        (
+            "get",
+            "/admin/v1/orgs/{org_id}/agents/{agent_id}/adapter-conversations/{id}/events",
+        ),
     ];
     let expected_set: BTreeSet<_> = expected
         .iter()

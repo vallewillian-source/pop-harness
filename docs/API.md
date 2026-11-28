@@ -361,6 +361,8 @@ Colunas:
 | Conversas de adaptador | POST | `/admin/v1/orgs/{org_id}/adapter-conversations/{id}/turns` | exceção: sem equivalente na CLI | n/a | sim | sim |
 | Conversas de adaptador | GET | `/admin/v1/orgs/{org_id}/adapter-conversations/{id}/turns/{turn_id}` | exceção: sem equivalente na CLI | n/a | n/a | sim |
 | Conversas de adaptador | POST | `/admin/v1/orgs/{org_id}/adapter-conversations/{id}/turns/{turn_id}/cancel` | exceção: sem equivalente na CLI | n/a | sim | sim |
+| Adapter conversations | GET | `/admin/v1/orgs/{org_id}/adapter-conversations/{id}/events` | exceção: no CLI equivalent | n/a | n/a | sim |
+| Adapter conversations | GET | `/admin/v1/orgs/{org_id}/agents/{agent_id}/adapter-conversations/{id}/events` | exceção: no CLI equivalent | n/a | n/a | sim |
 
 ## Fechar conversa (MX-06)
 
@@ -1519,6 +1521,8 @@ the agent with the full tool set of the agent and never enqueue outbound channel
 | `POST /adapter-conversations/{id}/turns` | Takes `{"text":"…","idempotency_key":"…","author_name":"…","external_message_id":"…"}`. Text has 1 to `adapter_chat.max_text_bytes` UTF-8 bytes; `idempotency_key` has 1–128 characters. Stores the customer message and answers 202 `{"turn_id","message_id","status":"queued"}`. The same key and payload returns 200 with the same turn and its current status; the same key with another payload returns 409 `idempotency_conflict`. A second turn while one is `queued` or `running` returns 409 `turn_in_progress` with `details.turn_id`. A conversation that is not `open` returns 409 `conversa_encerrada`. |
 | `GET /adapter-conversations/{id}/turns/{turn_id}` | Returns `{id, conversation_id, status, reply_text, error_code, input_tokens, output_tokens, created_at, started_at, finished_at}`. `status` is `queued`, `running`, `succeeded`, `failed` or `cancelled`. `reply_text` is the stored agent message and is null until the turn succeeds. |
 | `POST /adapter-conversations/{id}/turns/{turn_id}/cancel` | Marks a `queued` or `running` turn as `cancelled` and signals the running turn. It is idempotent: a terminal turn answers 200 with its current state. |
+| `GET /adapter-conversations/{id}/events?after=<seq>&limit=<n>` | Returns `{"events":[...]}` in ascending sequence order. `after` is exclusive and defaults to 0. `limit` defaults to 100 and accepts 1–200. An invalid cursor or limit returns 422 `validation_error`. |
+| `GET /agents/{agent_id}/adapter-conversations/{id}/events?after=<seq>&limit=<n>` | Reads the same event feed and returns 404 if the conversation belongs to a different agent. |
 
 The channel matches `[a-z0-9_-]{1,32}`. The channels `test`, `site`, `whatsapp`, `matrix` and `api` are
 reserved and answered with 422 `validation_error` with `details.field` = `channel`, because each one has its
@@ -1547,6 +1551,24 @@ routes. A turn that was `running` when the process stopped becomes `failed` with
 turn is marked `succeeded` with the stored reply, so a restart never answers the same turn twice. A
 `queued` turn is started again. A successful turn is never answered twice because the reply message is
 written before the turn is marked `succeeded`.
+
+The event feed uses the site's `{seq, type, turn_id}` envelope. Poll with the last received `seq` to
+continue. Every event type adds only the fields listed below.
+
+| Type | Additional fields |
+| --- | --- |
+| `turn_start` | None. The turn has been claimed. |
+| `text_delta` | `text`. This text is provisional. The committed reply is available in the turn status and message history. |
+| `tool_call` | `tool_name`. A tool call is being handled. |
+| `tool_result` | `tool_name`, `result` (`executed` or `refused`) and `error_code` for a refusal. The summary carries the outcome of the call. |
+| `turn_end` | None. The reply was committed and the turn succeeded. |
+| `turn_failed` | `error_code`. |
+| `turn_cancelled` | None. A queued turn can be cancelled before it has a start event. |
+
+The feed uses HTTP polling. It persists in the database across restarts. Recovery appends `turn_failed`
+with `server_restarted` for a running turn without a stored reply, or `turn_end` if the reply was already
+stored. The sequence is unique per conversation and remains monotonic when retention removes older turns.
+Completed turns from before event recording started have no event history.
 
 Flow effects triggered during an adapter turn follow the normal queue. A `notificar_whatsapp` effect cannot
 be delivered from an adapter conversation because it has no WhatsApp integration: `FlowEffects::plan`

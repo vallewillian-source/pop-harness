@@ -126,6 +126,7 @@ name	adapter_chat	published chave toml: adapter_chat
 name	adapter_conversation_create	published operation id: adapter_conversation_create
 name	adapter_conversation_show	published operation id: adapter_conversation_show
 name	adapter_conversations	published tabela: adapter_conversations
+name	adapter_events	published tabela: adapter_events
 name	adapter_message_create	published operation id: adapter_message_create
 name	adapter_message_history	published operation id: adapter_message_history
 name	adapter_message_keys	published tabela: adapter_message_keys
@@ -473,6 +474,7 @@ name	intervalo_despacho_ms	published chave toml: intervalo_despacho_ms
 name	item	published comando cli: item
 name	items	published rota: items
 name	ix_adapter_conversations_ref	published indice: ix_adapter_conversations_ref
+name	ix_adapter_events_turn	published indice: ix_adapter_events_turn
 name	ix_adapter_message_keys_message	published indice: ix_adapter_message_keys_message
 name	ix_adapter_turns_active	published indice: ix_adapter_turns_active
 name	ix_adapter_turns_conversation	published indice: ix_adapter_turns_conversation
@@ -527,6 +529,7 @@ name	knowledge_groups	published tabela: knowledge_groups
 name	knowledge_items	published tabela: knowledge_items
 name	label	published coluna: label
 name	last_error	published coluna: last_error
+name	last_event_seq	published coluna: last_event_seq
 name	last_failure	published campo json: last_failure
 name	last_message_at	published coluna: last_message_at
 name	last_seq	published coluna: last_seq
@@ -809,6 +812,7 @@ name	reply_message_id	published coluna: reply_message_id
 name	reply_to	published protocolo plugin: reply_to
 name	resolucoes_json	published coluna: resolucoes_json
 name	RespostaErro	published schema openapi: RespostaErro
+name	result	published coluna: result
 name	resultado	published coluna: resultado
 name	retencao	published chave toml: retencao
 name	retentativas	published chave toml: retentativas
@@ -911,6 +915,7 @@ name	tokens_mostrar	published operation id: tokens_mostrar
 name	tokens_revogar	published operation id: tokens_revogar
 name	TokenUsageJson	published schema openapi: TokenUsageJson
 name	tool	published flag cli: tool
+name	tool_name	published coluna: tool_name
 name	tools_json	published coluna: tools_json
 name	top	published flag cli: top
 name	total	published campo json: total

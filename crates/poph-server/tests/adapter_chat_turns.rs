@@ -209,6 +209,24 @@ fn add_account(store: &Store, slug: &str) -> Account {
 }
 
 impl Server {
+    async fn stop(mut self) {
+        self.task.abort();
+        assert!(
+            (&mut self.task)
+                .await
+                .expect_err("server stopped")
+                .is_cancelled()
+        );
+    }
+
+    async fn events(&self, account: &Account, path: &str) -> Vec<Value> {
+        let response = self.request(account, Method::GET, path, None).await;
+        read(response, StatusCode::OK).await["events"]
+            .as_array()
+            .expect("events")
+            .clone()
+    }
+
     async fn request(
         &self,
         account: &Account,
@@ -525,10 +543,149 @@ async fn knowledge_tool_runs_and_is_recorded_in_the_reply_path() {
 }
 
 #[tokio::test]
+async fn adapter_events_page_in_order_and_survive_a_server_restart() {
+    let mut fixture = Fixture::new();
+    let scripts = vec![
+        tool_call("call-1", "consultar_base", json!({"consulta": "prazo"})),
+        Script::Events(vec![
+            LlmEvent::Texto("Cinco ".to_owned()),
+            LlmEvent::Texto("dias úteis.".to_owned()),
+            LlmEvent::Fim(FinishReason::Completed),
+        ]),
+    ];
+    let server = fixture
+        .start(Arc::new(FakeProvider::with_scripts(scripts)))
+        .await;
+    let account = &fixture.account;
+    let conversation = server
+        .open(account, account.agent, "eventos", StatusCode::CREATED)
+        .await;
+    let id = conversation["id"].as_str().expect("conversation id");
+    let path = format!(
+        "/agents/{}/adapter-conversations/{id}/events",
+        account.agent
+    );
+    let short_path = format!("/adapter-conversations/{id}/events");
+
+    assert!(server.events(account, &path).await.is_empty());
+    let sent = server
+        .send_turn(
+            account,
+            id,
+            "eventos-1",
+            "Qual o prazo?",
+            StatusCode::ACCEPTED,
+        )
+        .await;
+    let turn = sent["turn_id"].as_str().expect("turn");
+    assert_eq!(
+        wait_terminal(&server, account, id, turn).await["status"],
+        "succeeded"
+    );
+    let expected = vec![
+        json!({"seq": 1, "type": "turn_start", "turn_id": turn}),
+        json!({"seq": 2, "type": "tool_call", "turn_id": turn, "tool_name": "consultar_base"}),
+        json!({"seq": 3, "type": "tool_result", "turn_id": turn, "tool_name": "consultar_base", "result": "executed"}),
+        json!({"seq": 4, "type": "text_delta", "turn_id": turn, "text": "Cinco "}),
+        json!({"seq": 5, "type": "text_delta", "turn_id": turn, "text": "dias úteis."}),
+        json!({"seq": 6, "type": "turn_end", "turn_id": turn}),
+    ];
+    assert_eq!(
+        server.events(account, &format!("{path}?after=0")).await,
+        expected
+    );
+    assert_eq!(server.events(account, &short_path).await, expected);
+    assert_eq!(
+        server.events(account, &format!("{path}?limit=2")).await,
+        expected[..2]
+    );
+    assert_eq!(
+        server
+            .events(account, &format!("{path}?after=2&limit=1"))
+            .await,
+        expected[2..3]
+    );
+    assert!(
+        server
+            .events(account, &format!("{path}?after=6"))
+            .await
+            .is_empty()
+    );
+
+    for (query, field) in [
+        ("after=-1", "after"),
+        ("limit=0", "limit"),
+        ("limit=201", "limit"),
+    ] {
+        let response = server
+            .request(account, Method::GET, &format!("{path}?{query}"), None)
+            .await;
+        assert_eq!(
+            read(response, StatusCode::UNPROCESSABLE_ENTITY).await["details"]["field"],
+            field
+        );
+    }
+    let other = add_account(&fixture.store, "outra-org");
+    let different_agent = add_agent(&fixture.store, account.org, "outro-agente");
+    let missing = ConversationId::generate();
+    for (caller, forbidden_path) in [
+        (
+            &other,
+            format!("/agents/{}/adapter-conversations/{id}/events", other.agent),
+        ),
+        (&other, short_path.clone()),
+        (
+            account,
+            format!("/agents/{different_agent}/adapter-conversations/{id}/events"),
+        ),
+        (
+            account,
+            format!(
+                "/agents/{}/adapter-conversations/{missing}/events",
+                account.agent
+            ),
+        ),
+    ] {
+        let response = server
+            .request(caller, Method::GET, &forbidden_path, None)
+            .await;
+        let denied = read(response, StatusCode::NOT_FOUND).await;
+        assert_eq!(denied["code"], "not_found");
+        assert!(denied.get("events").is_none());
+    }
+
+    server.stop().await;
+    fixture.store = Arc::new(Store::open(&fixture.config).expect("reopen database"));
+    let account = &fixture.account;
+    let server = fixture
+        .start(Arc::new(FakeProvider::with_scripts(vec![answer(
+            "De nada.",
+        )])))
+        .await;
+    assert_eq!(server.events(account, &path).await, expected);
+    let sent = server
+        .send_turn(account, id, "eventos-2", "Obrigado", StatusCode::ACCEPTED)
+        .await;
+    let turn = sent["turn_id"].as_str().expect("second turn");
+    assert_eq!(
+        wait_terminal(&server, account, id, turn).await["status"],
+        "succeeded"
+    );
+    assert_eq!(
+        server.events(account, &format!("{path}?after=6")).await,
+        vec![
+            json!({"seq": 7, "type": "turn_start", "turn_id": turn}),
+            json!({"seq": 8, "type": "text_delta", "turn_id": turn, "text": "De nada."}),
+            json!({"seq": 9, "type": "turn_end", "turn_id": turn}),
+        ]
+    );
+}
+
+#[tokio::test]
 async fn replay_is_idempotent_and_a_second_turn_gets_409_until_cancelled() {
     let fixture = Fixture::new();
     let fake = Arc::new(FakeProvider::with_scripts(vec![Script::Pending {
-        events: Vec::new(),
+        events: vec![LlmEvent::Texto("Resposta provisória.".to_owned())],
         after: Duration::from_secs(60),
         error: LlmError::Cancelled,
     }]));
@@ -591,6 +748,25 @@ async fn replay_is_idempotent_and_a_second_turn_gets_409_until_cancelled() {
         .await;
     assert_eq!(refused["details"]["field"], "text");
 
+    let events_path = format!("/adapter-conversations/{conversation_id}/events");
+    let live_events = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let events = server.events(account, &events_path).await;
+            if events.len() >= 2 {
+                break events;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("the partial text becomes readable before the turn ends");
+    assert_eq!(
+        live_events,
+        vec![
+            json!({"seq": 1, "type": "turn_start", "turn_id": turn}),
+            json!({"seq": 2, "type": "text_delta", "turn_id": turn, "text": "Resposta provisória."}),
+        ]
+    );
     let cancelled = server
         .cancel(account, &conversation_id, &turn, StatusCode::OK)
         .await;
@@ -604,6 +780,13 @@ async fn replay_is_idempotent_and_a_second_turn_gets_409_until_cancelled() {
         .turn(account, &conversation_id, &turn, StatusCode::OK)
         .await;
     assert_eq!(turn_state["status"], "cancelled");
+    let events = server.events(account, &events_path).await;
+    assert_eq!(events.len(), 3);
+    assert_eq!(events[..2], live_events);
+    assert_eq!(
+        events[2],
+        json!({"seq": 3, "type": "turn_cancelled", "turn_id": turn})
+    );
     assert_eq!(
         fixture
             .store
@@ -697,6 +880,15 @@ async fn restart_marks_running_turns_failed_and_processes_queued_turns_once() {
     assert_eq!(interrupted["status"], "failed");
     assert_eq!(interrupted["error_code"], "server_restarted");
     assert!(interrupted["finished_at"].is_number());
+    assert_eq!(
+        server
+            .events(account, &format!("/adapter-conversations/{running}/events"))
+            .await,
+        vec![
+            json!({"seq": 1, "type": "turn_start", "turn_id": running_key.turn}),
+            json!({"seq": 2, "type": "turn_failed", "turn_id": running_key.turn, "error_code": "server_restarted"}),
+        ]
+    );
     let replay = server
         .send_turn(
             account,
@@ -819,6 +1011,18 @@ async fn restart_keeps_a_turn_whose_reply_is_already_stored_succeeded() {
     );
     let history = server.history(account, &conversation.to_string()).await;
     assert_eq!(texts(&history), ["Resposta antes da queda.", "Pergunta"]);
+    assert_eq!(
+        server
+            .events(
+                account,
+                &format!("/adapter-conversations/{conversation}/events")
+            )
+            .await,
+        vec![
+            json!({"seq": 1, "type": "turn_start", "turn_id": turn}),
+            json!({"seq": 2, "type": "turn_end", "turn_id": turn}),
+        ]
+    );
     assert_outbox_empty(&fixture);
 }
 

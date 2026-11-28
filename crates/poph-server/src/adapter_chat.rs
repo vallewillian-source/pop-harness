@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use poph_agent::turno::{TurnEvent, TurnInput, TurnObserver};
-use poph_store::{AdapterTurnKey, AdapterTurnOutcome, Store};
+use poph_agent::turno::{Desfecho, TurnEvent, TurnInput, TurnObserver};
+use poph_store::{AdapterTurnKey, AdapterTurnOutcome, AdapterTurnProgress, Store};
 use poph_types::TurnId;
 
 use crate::ServerState;
@@ -103,13 +103,39 @@ struct AdapterObserver<'a> {
 
 impl TurnObserver for AdapterObserver<'_> {
     fn evento(&mut self, event: TurnEvent) {
-        if let TurnEvent::Started { turno, .. } = event
-            && let Err(error) = self
-                .store
-                .adapter_chat()
-                .record_engine_turn(self.key, turno)
-        {
-            tracing::warn!(%error, turn_id = %self.key.turn, "adapter turn engine id could not be recorded");
+        let chat = self.store.adapter_chat();
+        let result = match event {
+            TurnEvent::Started { turno, .. } => chat.record_engine_turn(self.key, turno),
+            TurnEvent::Texto(text) => {
+                chat.record_progress(self.key, AdapterTurnProgress::TextDelta(text))
+            }
+            TurnEvent::Tool { nome, .. } => {
+                chat.record_progress(self.key, AdapterTurnProgress::ToolCall(nome))
+            }
+            _ => return,
+        };
+        self.log_persistence_error(result);
+    }
+
+    fn tool_result(&mut self, name: &str, outcome: Desfecho) {
+        let refusal = match outcome {
+            Desfecho::Executed => None,
+            Desfecho::Refused(code) => Some(code),
+        };
+        self.log_persistence_error(self.store.adapter_chat().record_progress(
+            self.key,
+            AdapterTurnProgress::ToolResult {
+                name: name.to_owned(),
+                refusal,
+            },
+        ));
+    }
+}
+
+impl AdapterObserver<'_> {
+    fn log_persistence_error(&self, result: Result<(), poph_store::StoreError>) {
+        if let Err(error) = result {
+            tracing::warn!(%error, turn_id = %self.key.turn, "não foi possível gravar o progresso do turno de adaptador");
         }
     }
 }

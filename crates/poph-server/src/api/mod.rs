@@ -514,6 +514,8 @@ pub fn document() -> utoipa::openapi::OpenApi {
         adapter_chat::submit_turn,
         adapter_chat::show_turn,
         adapter_chat::cancel_turn,
+        adapter_chat::events,
+        adapter_chat::agent_events,
         site_chat::create,
         site_chat::submit,
         site_chat::turn,

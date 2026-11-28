@@ -46,6 +46,14 @@ pub fn routes() -> Router<ServerState> {
             "/admin/v1/orgs/{org_id}/adapter-conversations/{id}/turns/{turn_id}/cancel",
             post(cancel_turn),
         )
+        .route(
+            "/admin/v1/orgs/{org_id}/adapter-conversations/{id}/events",
+            get(events),
+        )
+        .route(
+            "/admin/v1/orgs/{org_id}/agents/{agent_id}/adapter-conversations/{id}/events",
+            get(agent_events),
+        )
 }
 
 #[derive(Deserialize)]
@@ -87,6 +95,19 @@ pub struct MessageBody {
 pub struct HistoryQuery {
     before: Option<String>,
     limit: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct EventsQuery {
+    after: Option<String>,
+    limit: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct AgentConversationPath {
+    org_id: String,
+    agent_id: String,
+    id: String,
 }
 
 #[derive(Deserialize)]
@@ -472,4 +493,46 @@ pub async fn cancel_turn(
         )?;
     }
     Ok(Json(json!(result)))
+}
+
+#[utoipa::path(operation_id = "adapter_conversation_events", get, path="/admin/v1/orgs/{org_id}/adapter-conversations/{id}/events", tag="adapter-conversations", security(("bearer"=[])), params(("org_id"=String, Path), ("id"=String, Path), ("after"=Option<i64>, Query), ("limit"=Option<u32>, Query)), responses((status=200, description="Eventos ordenados após o cursor", body=Value), (status=404, description="Conversa não encontrada", body=crate::ErrorResponse), (status=422, description="Cursor ou limite inválido", body=crate::ErrorResponse)))]
+pub async fn events(
+    State(state): State<ServerState>,
+    identity: Identity,
+    Path(path): Path<ConversationPath>,
+    parsed: Result<Query<EventsQuery>, QueryRejection>,
+) -> Result<Json<Value>, ApiError> {
+    let (org, id, _) = scoped_conversation(&state, &identity, &path.org_id, &path.id)?;
+    read_events(&state, org, id, query(parsed)?)
+}
+
+#[utoipa::path(operation_id = "adapter_agent_conversation_events", get, path="/admin/v1/orgs/{org_id}/agents/{agent_id}/adapter-conversations/{id}/events", tag="adapter-conversations", security(("bearer"=[])), params(("org_id"=String, Path), ("agent_id"=String, Path), ("id"=String, Path), ("after"=Option<i64>, Query), ("limit"=Option<u32>, Query)), responses((status=200, description="Eventos ordenados após o cursor", body=Value), (status=404, description="Conversa não encontrada", body=crate::ErrorResponse), (status=422, description="Cursor ou limite inválido", body=crate::ErrorResponse)))]
+pub async fn agent_events(
+    State(state): State<ServerState>,
+    identity: Identity,
+    Path(path): Path<AgentConversationPath>,
+    parsed: Result<Query<EventsQuery>, QueryRejection>,
+) -> Result<Json<Value>, ApiError> {
+    let (org, id, conversation) = scoped_conversation(&state, &identity, &path.org_id, &path.id)?;
+    if parse_path_id::<AgentId>(&path.agent_id)? != conversation.agent_id {
+        return Err(ApiError::not_found("conversa", &path.id));
+    }
+    read_events(&state, org, id, query(parsed)?)
+}
+
+fn read_events(
+    state: &ServerState,
+    org: OrgId,
+    id: ConversationId,
+    options: EventsQuery,
+) -> Result<Json<Value>, ApiError> {
+    let after = options.after.as_deref().map_or(Ok(0), |raw| {
+        raw.parse::<i64>()
+            .ok()
+            .filter(|value| *value >= 0)
+            .ok_or_else(|| validation("after", "informe um inteiro não negativo"))
+    })?;
+    let limit = limit(options.limit.as_deref(), 200, 100)?;
+    let events = state.store.adapter_chat().events(org, id, after, limit)?;
+    Ok(Json(json!({"events": events})))
 }

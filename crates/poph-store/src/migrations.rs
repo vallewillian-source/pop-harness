@@ -117,6 +117,11 @@ pub const HARNESS_MIGRATIONS: &[Migration] = &[
         name: "0022_adapter_turns",
         sql: include_str!("../migrations/harness/0022_adapter_turns.sql"),
     },
+    Migration {
+        version: 23,
+        name: "0023_adapter_events",
+        sql: include_str!("../migrations/harness/0023_adapter_events.sql"),
+    },
 ];
 
 pub const RAG_MIGRATIONS: &[Migration] = &[];

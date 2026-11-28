@@ -34,10 +34,10 @@ mod usage;
 pub use usage::{AgentUsage, DayUsage, TokenUsage, Usage};
 
 pub use adapter_chat::{
-    AdapterChat, AdapterConversation, AdapterMessage, AdapterSubmission, AdapterTurn,
-    AdapterTurnClaim, AdapterTurnKey, AdapterTurnOutcome, AdapterTurnSubmission, LIMIT_AUTHOR_NAME,
-    LIMIT_EXTERNAL_MESSAGE_ID, LIMIT_EXTERNAL_REF, LIMIT_IDEMPOTENCY_KEY, NewAdapterMessage,
-    NewAdapterTurn, RESERVED_CHANNELS,
+    AdapterChat, AdapterConversation, AdapterEvent, AdapterMessage, AdapterSubmission, AdapterTurn,
+    AdapterTurnClaim, AdapterTurnKey, AdapterTurnOutcome, AdapterTurnProgress,
+    AdapterTurnSubmission, LIMIT_AUTHOR_NAME, LIMIT_EXTERNAL_MESSAGE_ID, LIMIT_EXTERNAL_REF,
+    LIMIT_IDEMPOTENCY_KEY, NewAdapterMessage, NewAdapterTurn, RESERVED_CHANNELS,
 };
 pub use agents::{Agents, agents_by_provider_at};
 pub use analytics::{Analytics, NodeCount, OperationalSummary};

@@ -192,6 +192,8 @@ pub enum TurnEvent {
 
 pub trait TurnObserver: Send {
     fn evento(&mut self, evento: TurnEvent);
+
+    fn tool_result(&mut self, _name: &str, _outcome: Desfecho) {}
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -1342,6 +1344,7 @@ impl TurnEngine {
                     self.execute_tool(target, hot_agent, usage, call).await
                 };
                 let duration = call_started_at.elapsed();
+                observer.tool_result(&call.nome, desfecho.for_record());
                 let result = desfecho.texto();
                 let http_result = http_tool.map(|tool| tool.audit_result(&call.nome, result));
                 turn_calls.register(

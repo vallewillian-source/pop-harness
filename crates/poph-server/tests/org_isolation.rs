@@ -1056,6 +1056,16 @@ fn cases() -> Vec<IsolationCase> {
             "/admin/v1/orgs/{org_id}/adapter-conversations/{id}/turns/{turn_id}/cancel",
             Empty,
         ),
+        isolation_case(
+            "get",
+            "/admin/v1/orgs/{org_id}/adapter-conversations/{id}/events",
+            Empty,
+        ),
+        isolation_case(
+            "get",
+            "/admin/v1/orgs/{org_id}/agents/{agent_id}/adapter-conversations/{id}/events",
+            Empty,
+        ),
     ]
 }
 

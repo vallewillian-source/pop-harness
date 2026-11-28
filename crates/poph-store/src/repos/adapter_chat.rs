@@ -116,6 +116,39 @@ pub struct AdapterTurn {
     pub finished_at: Option<i64>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct AdapterEvent {
+    pub seq: i64,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub turn_id: TurnId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
+}
+
+pub enum AdapterTurnProgress {
+    TextDelta(String),
+    ToolCall(String),
+    ToolResult {
+        name: String,
+        refusal: Option<&'static str>,
+    },
+}
+
+enum Event<'a> {
+    Start,
+    Progress(AdapterTurnProgress),
+    End,
+    Failed(&'a str),
+    Cancelled,
+}
+
 pub struct AdapterChat<'a>(pub(crate) &'a Store);
 
 #[derive(Serialize)]
@@ -592,7 +625,63 @@ impl AdapterChat<'_> {
                 params![ids.0, ids.1],
                 |row| column_id(row, 0),
             )?;
+            append_event(conn, key, Event::Start)?;
             Ok(Some(AdapterTurnClaim { agent, message }))
+        })
+    }
+
+    pub fn record_progress(
+        &self,
+        key: AdapterTurnKey,
+        progress: AdapterTurnProgress,
+    ) -> Resultado<()> {
+        self.0.write(move |conn| {
+            let running = conn.query_row(
+                "SELECT EXISTS (
+                    SELECT 1 FROM adapter_turns
+                    WHERE org_id = ?1 AND conversation_id = ?2 AND id = ?3 AND status = 'running'
+                )",
+                params![
+                    key.org.to_string(),
+                    key.conversation.to_string(),
+                    key.turn.to_string()
+                ],
+                |row| row.get::<_, bool>(0),
+            )?;
+            if running {
+                append_event(conn, key, Event::Progress(progress))?;
+            }
+            Ok(())
+        })
+    }
+
+    pub fn events(
+        &self,
+        org: OrgId,
+        conversation: ConversationId,
+        after: i64,
+        limit: u32,
+    ) -> Resultado<Vec<AdapterEvent>> {
+        self.0.read(|conn| {
+            let mut statement = conn.prepare(
+                "SELECT seq, kind, turn_id, text, tool_name, result, error_code FROM adapter_events
+                  WHERE org_id = ?1 AND conversation_id = ?2 AND seq > ?3 ORDER BY seq LIMIT ?4",
+            )?;
+            let rows = statement.query_map(
+                params![org.to_string(), conversation.to_string(), after, limit],
+                |row| {
+                    Ok(AdapterEvent {
+                        seq: row.get(0)?,
+                        kind: row.get(1)?,
+                        turn_id: column_id(row, 2)?,
+                        text: row.get(3)?,
+                        tool_name: row.get(4)?,
+                        result: row.get(5)?,
+                        error_code: row.get(6)?,
+                    })
+                },
+            )?;
+            Ok(rows.collect::<rusqlite::Result<_>>()?)
         })
     }
 
@@ -690,7 +779,7 @@ fn recover_turn(conn: &Connection, key: AdapterTurnKey, now: i64) -> Resultado<(
                   WHERE org_id = ?1 AND conversation_id = ?2 AND id = ?3",
                 params![ids.0, ids.1, ids.2, reply, engine, now],
             )?;
-            return Ok(());
+            return append_event(conn, key, Event::End);
         }
     }
     finish_turn(
@@ -776,7 +865,7 @@ fn finish_turn(
             )
             .optional()?)
     };
-    match outcome {
+    let event = match outcome {
         AdapterTurnOutcome::Success {
             engine_turn,
             input_tokens,
@@ -800,6 +889,7 @@ fn finish_turn(
                         now
                     ],
                 )?;
+                Event::End
             }
             None => {
                 conn.execute(
@@ -809,6 +899,7 @@ fn finish_turn(
                       WHERE org_id = ?1 AND conversation_id = ?2 AND id = ?3",
                     params![ids.0, ids.1, ids.2, engine_turn.to_string(), now],
                 )?;
+                Event::Failed("turn_failed")
             }
         },
         AdapterTurnOutcome::Failed(code) => {
@@ -818,6 +909,7 @@ fn finish_turn(
                   WHERE org_id = ?1 AND conversation_id = ?2 AND id = ?3",
                 params![ids.0, ids.1, ids.2, code, now],
             )?;
+            Event::Failed(code)
         }
         AdapterTurnOutcome::Cancelled => {
             conn.execute(
@@ -826,7 +918,52 @@ fn finish_turn(
                   WHERE org_id = ?1 AND conversation_id = ?2 AND id = ?3",
                 params![ids.0, ids.1, ids.2, now],
             )?;
+            Event::Cancelled
         }
-    }
+    };
+    append_event(conn, key, event)?;
     load_turn(conn, key)
+}
+
+fn append_event(conn: &Connection, key: AdapterTurnKey, event: Event<'_>) -> Resultado<()> {
+    let org = key.org.to_string();
+    let conversation = key.conversation.to_string();
+    let seq: i64 = conn.query_row(
+        "UPDATE adapter_conversations SET last_event_seq = last_event_seq + 1
+          WHERE org_id = ?1 AND id = ?2 RETURNING last_event_seq",
+        params![org, conversation],
+        |row| row.get(0),
+    )?;
+    let (kind, text, tool, result, error) = match &event {
+        Event::Start => ("turn_start", None, None, None, None),
+        Event::Progress(AdapterTurnProgress::TextDelta(text)) => {
+            ("text_delta", Some(text.as_str()), None, None, None)
+        }
+        Event::Progress(AdapterTurnProgress::ToolCall(name)) => {
+            ("tool_call", None, Some(name.as_str()), None, None)
+        }
+        Event::Progress(AdapterTurnProgress::ToolResult { name, refusal }) => {
+            let result = if refusal.is_some() {
+                "refused"
+            } else {
+                "executed"
+            };
+            (
+                "tool_result",
+                None,
+                Some(name.as_str()),
+                Some(result),
+                *refusal,
+            )
+        }
+        Event::End => ("turn_end", None, None, None, None),
+        Event::Failed(code) => ("turn_failed", None, None, None, Some(*code)),
+        Event::Cancelled => ("turn_cancelled", None, None, None, None),
+    };
+    conn.execute(
+        "INSERT INTO adapter_events (org_id, conversation_id, seq, turn_id, kind, text, tool_name, result, error_code)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![org, conversation, seq, key.turn.to_string(), kind, text, tool, result, error],
+    )?;
+    Ok(())
 }
